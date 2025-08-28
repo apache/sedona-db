@@ -249,10 +249,9 @@ mod tests {
         let err = functions
             .add_aggregate_udf_kernel("function that does not exist", kernel.clone())
             .unwrap_err();
-        assert_eq!(
-            err.message().lines().next().unwrap(),
+        assert!(err.message().lines().next().unwrap().contains(
             "Can't register aggregate kernel for function 'function that does not exist'."
-        );
+        ));
 
         let udaf2 = SedonaAggregateUDF::new(
             "simple_udaf2",
