@@ -3,11 +3,12 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, internal_err};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::{Dimensions, GeometryTrait};
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
@@ -108,7 +109,7 @@ fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<bool>> {
             match dim_index {
                 2 => Ok(Some(matches!(geom_dim, Dimensions::Xyz | Dimensions::Xyzm))),
                 3 => Ok(Some(matches!(geom_dim, Dimensions::Xym | Dimensions::Xyzm))),
-                _ => internal_err!("unexpected dim_index"),
+                _ => sedona_internal_err!("unexpected dim_index"),
             }
         }
     }

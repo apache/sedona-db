@@ -3,8 +3,9 @@ use std::iter::zip;
 use arrow_array::ArrayRef;
 use datafusion_common::cast::{as_binary_array, as_binary_view_array};
 use datafusion_common::error::Result;
-use datafusion_common::{internal_err, DataFusionError, ScalarValue};
+use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
@@ -300,7 +301,7 @@ impl IterGeo for ArrayRef {
         func: F,
     ) -> Result<()> {
         if num_iterations != self.len() {
-            return internal_err!(
+            return sedona_internal_err!(
                 "Expected {num_iterations} items but got Array with {} items",
                 self.len()
             );
@@ -313,7 +314,7 @@ impl IterGeo for ArrayRef {
                 // We could cast here as a fallback, iterate and cast per-element, or
                 // implement iter_as_something_else()/supports_iter_xxx() when more geo array types
                 // are supported.
-                internal_err!("Can't iterate over {:?} as Wkb", sedona_type)
+                sedona_internal_err!("Can't iterate over {:?} as Wkb", sedona_type)
             }
         }
     }
@@ -326,7 +327,7 @@ impl ScalarGeo for ScalarValue {
             | ScalarValue::BinaryView(maybe_item)
             | ScalarValue::LargeBinary(maybe_item) => Ok(maybe_item.as_deref()),
             ScalarValue::Null => Ok(None),
-            _ => internal_err!("Can't iterate over {:?} ScalarValue as &[u8]", self),
+            _ => sedona_internal_err!("Can't iterate over {:?} ScalarValue as &[u8]", self),
         }
     }
 }
@@ -379,7 +380,7 @@ fn iter_wkb_wkb_array<
         _ => {
             // We could do casting of one or both sides to support other cases as they
             // arise to manage the complexity/performance balance
-            internal_err!(
+            sedona_internal_err!(
                 "Can't iterate over {:?} and {:?} arrays as a pair of Wkb scalars",
                 types.0,
                 types.1
