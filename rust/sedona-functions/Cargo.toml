@@ -25,6 +25,7 @@ arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
+sedona-common = { path = "../sedona-common" }
 sedona-expr = { path = "../sedona-expr" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }

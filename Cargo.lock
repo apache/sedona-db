@@ -4883,6 +4883,7 @@ dependencies = [
  "datafusion-expr",
  "geo-traits 0.2.0",
  "rstest",
+ "sedona-common",
  "sedona-expr",
  "sedona-geometry",
  "sedona-schema",
