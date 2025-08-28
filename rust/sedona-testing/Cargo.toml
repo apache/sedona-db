@@ -30,6 +30,7 @@ geo-traits = { workspace = true }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
 rand = { workspace = true }
+sedona-common = { path = "../sedona-common" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-expr = { path = "../sedona-expr" }
 sedona-schema = { path = "../sedona-schema" }

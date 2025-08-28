@@ -16,7 +16,7 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{internal_err, not_impl_err, plan_err, GetExt, Result, Statistics};
+use datafusion_common::{not_impl_err, plan_err, GetExt, Result, Statistics};
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet,
@@ -25,6 +25,7 @@ use datafusion_physical_plan::{
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
+use sedona_common::sedona_internal_err;
 use sedona_expr::projection::wrap_physical_expressions;
 
 use sedona_schema::{
@@ -76,7 +77,7 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         if let Some(parquet_format) = inner_format.as_any().downcast_ref::<ParquetFormat>() {
             Ok(Arc::new(GeoParquetFormat::new(parquet_format)))
         } else {
-            internal_err!(
+            sedona_internal_err!(
                 "Unexpected format from ParquetFormatFactory: {:?}",
                 inner_format
             )
@@ -376,7 +377,7 @@ impl GeoParquetFileSource {
                 predicate: new_predicate,
             })
         } else {
-            internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
+            sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
         }
     }
 

@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use abi_stable::StableAbi;
 use arrow_schema::{DataType, Field, FieldRef, Schema};
 use datafusion::physical_plan::{expressions::Column, PhysicalExpr};
-use datafusion_common::{internal_err, DataFusionError, Result, ScalarValue};
+use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDF, AggregateUDFImpl, ColumnarValue, ReturnFieldArgs,
@@ -13,6 +13,7 @@ use datafusion_ffi::{
     udaf::{FFI_AggregateUDF, ForeignAggregateUDF},
     udf::{FFI_ScalarUDF, ForeignScalarUDF},
 };
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
 use sedona_expr::{
@@ -96,7 +97,7 @@ impl ScalarUDFImpl for ExportedScalarKernel {
     }
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        internal_err!("should not be called")
+        sedona_internal_err!("should not be called")
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {

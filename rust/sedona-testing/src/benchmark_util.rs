@@ -3,11 +3,12 @@ use std::{fmt::Debug, sync::Arc, vec};
 use arrow_array::{ArrayRef, Float64Array};
 use arrow_schema::DataType;
 
-use datafusion_common::{internal_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{AggregateUDF, ScalarUDF};
 use geo_types::Rect;
 use rand::{distributions::Uniform, rngs::StdRng, Rng, SeedableRng};
 
+use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 
@@ -392,7 +393,10 @@ impl BenchmarkData {
     /// Invoke an aggregate function on this data
     pub fn invoke_aggregate(&self, udf: &AggregateUDF) -> Result<ScalarValue> {
         if !matches!(self.config, BenchmarkArgs::Array(_)) {
-            return internal_err!("invoke_aggregate() not implemented for {:?}", self.config);
+            return sedona_internal_err!(
+                "invoke_aggregate() not implemented for {:?}",
+                self.config
+            );
         }
 
         let tester = AggregateUdfTester::new(udf.clone(), self.config.sedona_types().clone());

@@ -12,7 +12,6 @@ use datafusion::{
 };
 use datafusion_common::ScalarValue;
 use datafusion_common::{
-    internal_err,
     tree_node::{Transformed, TreeNode},
     JoinSide,
 };
@@ -24,7 +23,7 @@ use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
-use sedona_common::option::SedonaOptions;
+use sedona_common::{option::SedonaOptions, sedona_internal_err};
 
 /// Physical planner extension for spatial joins
 ///
@@ -362,7 +361,7 @@ impl SpatialJoinOptimizer {
             }
 
             if !found {
-                return internal_err!(
+                return sedona_internal_err!(
                     "Cannot find matching field for '{}' ({:?}) at position {} in spatial join output. \
                      Please check column name mappings and schema compatibility between HashJoinExec and SpatialJoinExec.",
                     expected_field.name(),

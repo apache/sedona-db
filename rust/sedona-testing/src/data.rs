@@ -1,6 +1,7 @@
 use std::{env, fs};
 
-use datafusion_common::{internal_err, Result};
+use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
 
 /// Find the most likely path to the test GeoParquet file
 ///
@@ -16,7 +17,7 @@ pub fn test_geoparquet(group: &str, name: &str) -> Result<String> {
         }
     }
 
-    internal_err!(
+    sedona_internal_err!(
         "geoarrow-data test file '{path}' does not exist.\n{}\n{}",
         "You may need to check the value of the SEDONA_GEOARROW_DATA_DIR environment variable,",
         "run submodules/download-assets.py, or check the name of the file you requested"
@@ -34,7 +35,7 @@ pub fn geoarrow_data_dir() -> Result<String> {
         if fs::exists(&from_env)? {
             return Ok(from_env);
         } else {
-            return internal_err!(
+            return sedona_internal_err!(
                 "{}\n{}{}{}",
                 "Can't resolve geoarrow-data from the current working directory because",
                 "the value of the SEDONA_GEOARROW_DATA_DIR (",
@@ -59,7 +60,7 @@ pub fn geoarrow_data_dir() -> Result<String> {
         }
     }
 
-    internal_err!(
+    sedona_internal_err!(
         "{}\n{}\n{}",
         "Can't resolve geoarrow-data from the current working directory",
         "You may need to run `git submodule init && git submodule update --recursive` or",

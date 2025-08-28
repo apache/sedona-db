@@ -1,8 +1,9 @@
 use std::fs::File;
 
 use arrow_array::{ArrayRef, RecordBatchReader};
-use datafusion_common::{internal_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::data::test_geoparquet;
@@ -59,7 +60,7 @@ pub fn read_geoarrow_data_geometry(
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
     if reader.schema().fields().is_empty() {
-        return internal_err!("Unexpected schema: zero columns");
+        return sedona_internal_err!("Unexpected schema: zero columns");
     }
 
     // True for all geoarrow-data files

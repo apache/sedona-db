@@ -2,12 +2,13 @@ use std::{iter::zip, sync::Arc};
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, FieldRef, Schema};
-use datafusion_common::{internal_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDF, ColumnarValue, Expr, Literal, ScalarFunctionArgs, ScalarUDF,
 };
 use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -195,7 +196,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Scalar(scalar) = self.invoke(args)? {
             Ok(scalar)
         } else {
-            internal_err!("Expected scalar result from scalar invoke")
+            sedona_internal_err!("Expected scalar result from scalar invoke")
         }
     }
 
@@ -218,7 +219,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Scalar(scalar) = self.invoke(args)? {
             Ok(scalar)
         } else {
-            internal_err!("Expected scalar result from binary scalar invoke")
+            sedona_internal_err!("Expected scalar result from binary scalar invoke")
         }
     }
 
@@ -238,7 +239,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Scalar(scalar) = self.invoke(args)? {
             Ok(scalar)
         } else {
-            internal_err!("Expected scalar result from binary scalar invoke")
+            sedona_internal_err!("Expected scalar result from binary scalar invoke")
         }
     }
 
@@ -309,7 +310,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Array(array) = self.invoke(args)? {
             Ok(array)
         } else {
-            internal_err!("Expected array result from scalar/array invoke")
+            sedona_internal_err!("Expected array result from scalar/array invoke")
         }
     }
 
@@ -325,7 +326,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Array(array) = self.invoke(args)? {
             Ok(array)
         } else {
-            internal_err!("Expected array result from array/scalar invoke")
+            sedona_internal_err!("Expected array result from array/scalar invoke")
         }
     }
 
@@ -347,7 +348,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Array(array) = self.invoke(args)? {
             Ok(array)
         } else {
-            internal_err!("Expected array result from array/scalar invoke")
+            sedona_internal_err!("Expected array result from array/scalar invoke")
         }
     }
 
@@ -361,7 +362,7 @@ impl ScalarUdfTester {
         if let ColumnarValue::Array(array) = self.invoke(args)? {
             Ok(array)
         } else {
-            internal_err!("Expected array result from array invoke")
+            sedona_internal_err!("Expected array result from array invoke")
         }
     }
 
@@ -406,13 +407,13 @@ impl ScalarUdfTester {
                 } else if scalar.is_null() {
                     Ok(create_scalar(None, sedona_type))
                 } else {
-                    internal_err!("Can't interpret scalar {scalar} as type {sedona_type}")
+                    sedona_internal_err!("Can't interpret scalar {scalar} as type {sedona_type}")
                 }
             } else {
                 scalar.cast_to(&sedona_type.data_type())
             }
         } else {
-            internal_err!("Can't use test scalar invoke where .lit() returns non-literal")
+            sedona_internal_err!("Can't use test scalar invoke where .lit() returns non-literal")
         }
     }
 

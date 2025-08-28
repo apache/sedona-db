@@ -21,6 +21,7 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 geo-traits = { workspace = true }
+sedona-common = { path = "../sedona-common" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
 serde = { workspace = true }

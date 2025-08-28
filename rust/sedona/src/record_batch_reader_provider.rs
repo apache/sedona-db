@@ -16,7 +16,8 @@ use datafusion::{
     physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties},
     prelude::Expr,
 };
-use datafusion_common::{internal_err, DataFusionError};
+use datafusion_common::DataFusionError;
+use sedona_common::sedona_internal_err;
 use sedona_expr::projection::wrap_batch;
 use sedona_schema::projection::wrap_schema;
 
@@ -79,7 +80,7 @@ impl TableProvider for RecordBatchReaderProvider {
         if let Some(reader) = writable_reader.take() {
             Ok(Arc::new(RecordBatchReaderExec::new(reader, limit)))
         } else {
-            internal_err!("Can't scan RecordBatchReader provider more than once")
+            sedona_internal_err!("Can't scan RecordBatchReader provider more than once")
         }
     }
 }
@@ -169,7 +170,7 @@ impl ExecutionPlan for RecordBatchReaderExec {
         let reader = if let Some(reader) = writable_reader.take() {
             reader
         } else {
-            return internal_err!("Can't scan RecordBatchReader provider more than once");
+            return sedona_internal_err!("Can't scan RecordBatchReader provider more than once");
         };
 
         let limit = self.limit;

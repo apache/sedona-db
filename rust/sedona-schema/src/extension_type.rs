@@ -3,9 +3,9 @@ use std::{collections::HashMap, sync::Arc};
 use arrow_array::{ArrayRef, StructArray};
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::error::Result;
-use datafusion_common::internal_err;
 use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::ColumnarValue;
+use sedona_common::sedona_internal_err;
 
 /// Parsed representation of an Arrow extension type
 ///
@@ -96,7 +96,7 @@ impl ExtensionType {
     /// Wrap storage array as a StructArray
     pub fn wrap_array(&self, array: ArrayRef) -> Result<ArrayRef> {
         if array.data_type() != &self.storage_type {
-            return internal_err!(
+            return sedona_internal_err!(
                 "Type to wrap ({}) does not match storage type ({})",
                 array.data_type(),
                 &self.storage_type

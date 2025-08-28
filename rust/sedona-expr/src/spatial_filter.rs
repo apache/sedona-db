@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use datafusion_common::{internal_err, DataFusionError, Result, ScalarValue};
+use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::{
     expressions::{BinaryExpr, Column, Literal},
     PhysicalExpr, ScalarFunctionExpr,
 };
 use geo_traits::Dimensions;
+use sedona_common::sedona_internal_err;
 use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
 use sedona_schema::datatypes::SedonaType;
 
@@ -107,7 +108,9 @@ impl SpatialFilter {
             match scalar_fun.fun().name() {
                 "st_intersects" => {
                     if args.len() != 2 {
-                        return internal_err!("unexpected argument count in filter evaluation");
+                        return sedona_internal_err!(
+                            "unexpected argument count in filter evaluation"
+                        );
                     }
 
                     match (&args[0], &args[1]) {
@@ -126,7 +129,9 @@ impl SpatialFilter {
                 }
                 "st_hasz" => {
                     if args.len() != 1 {
-                        return internal_err!("unexpected argument count in filter evaluation");
+                        return sedona_internal_err!(
+                            "unexpected argument count in filter evaluation"
+                        );
                     }
 
                     match &args[0] {
@@ -191,7 +196,7 @@ fn literal_bounds(literal: &Literal) -> Result<BoundingBox> {
         _ => {}
     }
 
-    internal_err!("Unexpected scalar type in filter expression")
+    sedona_internal_err!("Unexpected scalar type in filter expression")
 }
 
 fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {

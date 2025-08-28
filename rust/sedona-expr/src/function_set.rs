@@ -2,8 +2,9 @@ use crate::{
     aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF},
     scalar_udf::{ScalarKernelRef, SedonaScalarUDF},
 };
-use datafusion_common::{error::Result, internal_err};
+use datafusion_common::error::Result;
 use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
+use sedona_common::sedona_internal_err;
 use std::collections::HashMap;
 
 /// Helper for managing groups of functions
@@ -110,7 +111,7 @@ impl FunctionSet {
             function.add_kernel(kernel);
             Ok(self.aggregate_udf(name).unwrap())
         } else {
-            internal_err!("Can't register aggregate kernel for function '{}'", name)
+            sedona_internal_err!("Can't register aggregate kernel for function '{}'", name)
         }
     }
 }

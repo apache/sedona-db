@@ -3,10 +3,10 @@ use std::sync::{
     Arc, OnceLock,
 };
 
-use datafusion_common::{internal_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result};
 use geos::{Geom, PreparedGeometry};
 use parking_lot::Mutex;
-use sedona_common::{ExecutionMode, SpatialJoinOptions};
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use wkb::reader::{to_geos::GEOSWkbFactory, Wkb};
 
@@ -316,7 +316,7 @@ impl IndexQueryResultRefiner for GeosRefiner {
             ExecutionMode::PrepareBuild => self.refine_prepare_build(probe, index_query_results),
             ExecutionMode::PrepareProbe => self.refine_prepare_probe(probe, index_query_results),
             ExecutionMode::Speculative(_) => {
-                internal_err!(
+                sedona_internal_err!(
                     "Speculative execution mode should be translated to other execution modes"
                 )
             }

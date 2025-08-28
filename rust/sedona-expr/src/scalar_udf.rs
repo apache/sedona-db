@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::{any::Any, fmt::Debug};
 
 use arrow_schema::{DataType, Field, FieldRef};
-use datafusion_common::{internal_err, not_impl_err, plan_err, Result, ScalarValue};
+use datafusion_common::{not_impl_err, plan_err, Result, ScalarValue};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
     Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::{Edges, SedonaType};
 
 pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel + Send + Sync>;
@@ -121,7 +122,7 @@ impl ArgMatcher {
                     (Some(lhs_crs), Some(rhs_crs)) => {
                         plan_err!("Mismatched CRS arguments: {lhs_crs} vs {rhs_crs}\n{hint}")
                     }
-                    _ => internal_err!("None vs. None should be considered equal"),
+                    _ => sedona_internal_err!("None vs. None should be considered equal"),
                 };
             }
         }
@@ -876,13 +877,13 @@ mod tests {
                 }
             }
 
-            internal_err!("unrecognized target value")
+            sedona_internal_err!("unrecognized target value")
         }
     }
 
     impl SedonaScalarKernel for SimpleCast {
         fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
-            internal_err!("Should not be called")
+            sedona_internal_err!("Should not be called")
         }
 
         fn return_type_from_args_and_scalars(

@@ -4863,6 +4863,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "geo-traits 0.2.0",
+ "sedona-common",
  "sedona-geometry",
  "sedona-schema",
  "sedona-testing",
@@ -4974,6 +4975,7 @@ dependencies = [
  "geo-traits 0.2.0",
  "object_store",
  "parquet",
+ "sedona-common",
  "sedona-expr",
  "sedona-geometry",
  "sedona-schema",
@@ -5060,6 +5062,7 @@ dependencies = [
  "arrow-schema",
  "datafusion-common",
  "datafusion-expr",
+ "sedona-common",
  "serde_json",
 ]
 
@@ -5118,6 +5121,7 @@ dependencies = [
  "parquet",
  "rand 0.8.5",
  "rstest",
+ "sedona-common",
  "sedona-expr",
  "sedona-geometry",
  "sedona-schema",

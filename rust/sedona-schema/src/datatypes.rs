@@ -1,8 +1,9 @@
 use arrow_array::ArrayRef;
 use arrow_schema::{DataType, Field};
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_common::{internal_err, ScalarValue};
+use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
+use sedona_common::sedona_internal_err;
 use serde_json::Value;
 use std::fmt::{Debug, Display};
 
@@ -149,7 +150,7 @@ impl SedonaType {
         if extension.extension_name == "geoarrow.wkb" {
             sedona_type_wkb(edges, crs, extension.storage_type)
         } else {
-            internal_err!(
+            sedona_internal_err!(
                 "Extension type not implemented: <{}>:{}",
                 extension.extension_name,
                 extension.storage_type
@@ -289,7 +290,7 @@ fn sedona_type_wkb(edges: Edges, crs: Crs, storage_type: DataType) -> Result<Sed
     match storage_type {
         DataType::Binary => Ok(SedonaType::Wkb(edges, crs)),
         DataType::BinaryView => Ok(SedonaType::WkbView(edges, crs)),
-        _ => internal_err!(
+        _ => sedona_internal_err!(
             "Expected Wkb type with Binary storage but got {}",
             storage_type
         ),
@@ -312,7 +313,10 @@ fn deserialize_edges_and_crs(value: &Option<String>) -> Result<(Edges, Crs)> {
                 DataFusionError::Internal(format!("Error deserializing GeoArrow metadata: {err}"))
             })?;
             if !json_value.is_object() {
-                return internal_err!("Expected GeoArrow metadata as JSON object but got {}", val);
+                return sedona_internal_err!(
+                    "Expected GeoArrow metadata as JSON object but got {}",
+                    val
+                );
             }
 
             let edges = match json_value.get("edges") {
@@ -363,11 +367,11 @@ fn deserialize_edges(edges: &Value) -> Result<Edges> {
             } else if edges_str == "spherical" {
                 Ok(Edges::Spherical)
             } else {
-                internal_err!("Unsupported edges value {}", edges_str)
+                sedona_internal_err!("Unsupported edges value {}", edges_str)
             }
         }
         None => {
-            internal_err!("Unsupported edges JSON type in metadata {}", edges)
+            sedona_internal_err!("Unsupported edges JSON type in metadata {}", edges)
         }
     }
 }

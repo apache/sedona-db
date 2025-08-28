@@ -6,8 +6,8 @@ use std::{
     },
 };
 
-use datafusion_common::{internal_err, DataFusionError, Result};
-use sedona_common::{ExecutionMode, SpatialJoinOptions, TgIndexType};
+use datafusion_common::{DataFusionError, Result};
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions, TgIndexType};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_tg::tg::{self, BinaryPredicate};
 use wkb::reader::Wkb;
@@ -244,7 +244,7 @@ impl IndexQueryResultRefiner for TgRefiner {
                 self.refine_not_prepare_build(probe, index_query_results, self.index_type)
             }
             ExecutionMode::Speculative(_) => {
-                internal_err!(
+                sedona_internal_err!(
                     "Speculative execution mode should be translated to other execution modes"
                 )
             }

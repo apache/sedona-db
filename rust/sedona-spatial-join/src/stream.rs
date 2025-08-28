@@ -1,7 +1,7 @@
 use arrow::array::BooleanBufferBuilder;
 use arrow::compute::interleave_record_batch;
 use arrow_array::{UInt32Array, UInt64Array};
-use datafusion_common::{internal_err, JoinSide, Result};
+use datafusion_common::{JoinSide, Result};
 use datafusion_expr::JoinType;
 use datafusion_physical_plan::joins::utils::StatefulStreamResult;
 use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
@@ -10,6 +10,7 @@ use datafusion_physical_plan::{handle_state, RecordBatchStream, SendableRecordBa
 use futures::stream::StreamExt;
 use futures::{ready, task::Poll};
 use parking_lot::Mutex;
+use sedona_common::sedona_internal_err;
 use sedona_functions::st_analyze_aggr::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use std::collections::HashMap;
@@ -276,7 +277,9 @@ impl SpatialJoinStream {
         &mut self,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
         let Some(spatial_index) = self.spatial_index.as_ref() else {
-            return Poll::Ready(internal_err!("Expected spatial index to be available"));
+            return Poll::Ready(sedona_internal_err!(
+                "Expected spatial index to be available"
+            ));
         };
 
         let is_last_stream = spatial_index.report_probe_completed();
@@ -339,7 +342,7 @@ impl SpatialJoinStream {
                 (batch_opt, is_complete)
             }
             _ => {
-                return Poll::Ready(internal_err!(
+                return Poll::Ready(sedona_internal_err!(
                     "process_unmatched_build_batch called with invalid state"
                 ))
             }
@@ -845,7 +848,7 @@ impl UnmatchedBuildBatchIterator {
     ) -> Result<Self> {
         let visited_left_side = spatial_index.visited_left_side();
         let Some(vec_visited_left_side) = visited_left_side else {
-            return internal_err!("The bitmap for visited left side is not created");
+            return sedona_internal_err!("The bitmap for visited left side is not created");
         };
 
         let total_batches = {
@@ -872,7 +875,7 @@ impl UnmatchedBuildBatchIterator {
         while self.current_batch_idx < self.total_batches && !self.is_complete {
             let visited_left_side = self.spatial_index.visited_left_side();
             let Some(vec_visited_left_side) = visited_left_side else {
-                return internal_err!("The bitmap for visited left side is not created");
+                return sedona_internal_err!("The bitmap for visited left side is not created");
             };
 
             let batch = {

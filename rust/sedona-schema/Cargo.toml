@@ -16,4 +16,5 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+sedona-common = { path = "../sedona-common" }
 serde_json = { workspace = true }

@@ -1,8 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
-use datafusion_common::{internal_err, Result};
+use datafusion_common::Result;
 use geo_generic_alg::{Contains, Distance, Euclidean, Intersects, Relate, Within};
-use sedona_common::{ExecutionMode, SpatialJoinOptions};
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use wkb::reader::Wkb;
@@ -150,7 +150,7 @@ impl IndexQueryResultRefiner for GeoRefiner {
             }
             ExecutionMode::PrepareProbe => self.refine_prepare_probe(probe, index_query_results),
             ExecutionMode::Speculative(_) => {
-                internal_err!(
+                sedona_internal_err!(
                     "Speculative execution mode should be translated to other execution modes"
                 )
             }
