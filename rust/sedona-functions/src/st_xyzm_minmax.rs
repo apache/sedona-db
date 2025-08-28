@@ -3,11 +3,12 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, internal_err, DataFusionError};
+use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::GeometryTrait;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     bounds::{geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z},
@@ -197,7 +198,7 @@ fn invoke_scalar(
                 .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {}", e)))?;
             m_bounds
         }
-        _ => internal_err!("unexpected dim index")?,
+        _ => sedona_internal_err!("unexpected dim index")?,
     };
 
     if interval.is_empty() {

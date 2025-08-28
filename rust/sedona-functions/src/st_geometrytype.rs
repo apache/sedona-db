@@ -3,11 +3,12 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, internal_err};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::GeometryTrait;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
@@ -80,7 +81,7 @@ fn invoke_scalar(item: &Wkb) -> Result<Option<String>> {
         }
 
         // Other geometry types in geo that we should not get here: Rect, Triangle, Line
-        _ => internal_err!("unexpected geometry type"),
+        _ => sedona_internal_err!("unexpected geometry type"),
     }
 }
 

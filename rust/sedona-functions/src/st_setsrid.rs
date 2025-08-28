@@ -1,10 +1,11 @@
 use std::{sync::Arc, vec};
 
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, internal_err, DataFusionError, ScalarValue};
+use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType};
@@ -87,7 +88,7 @@ impl SedonaScalarKernel for STSetSRID {
             }
         }
 
-        internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
+        sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
     }
 
     fn invoke_batch(
@@ -99,7 +100,7 @@ impl SedonaScalarKernel for STSetSRID {
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        internal_err!(
+        sedona_internal_err!(
             "Should not be called because return_type_from_args_and_scalars() is implemented"
         )
     }

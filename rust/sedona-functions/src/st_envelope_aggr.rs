@@ -6,11 +6,12 @@ use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
 use datafusion_common::{
     error::{DataFusionError, Result},
-    internal_err, ScalarValue,
+    ScalarValue,
 };
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::{
     aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
     scalar_udf::ArgMatcher,
@@ -108,7 +109,7 @@ impl BoundsAccumulator2D {
             )));
         }
         if input.len() != expected {
-            return internal_err!(
+            return sedona_internal_err!(
                 "Unexpected input length in {} (expected {}, got {})",
                 context,
                 expected,

@@ -3,11 +3,12 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::Int8Builder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, internal_err};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::{GeometryCollectionTrait, GeometryTrait, GeometryType};
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
@@ -76,7 +77,7 @@ fn invoke_scalar(item: &Wkb) -> Result<i8> {
             }
             Ok(highest_dim)
         }
-        _ => internal_err!("Invalid geometry type"),
+        _ => sedona_internal_err!("Invalid geometry type"),
     }
 }
 
