@@ -8,10 +8,10 @@ macro_rules! sedona_internal_err {
             Please help us to resolve this by filing a bug report in our issue tracker: \
             https://github.com/apache/sedona-db/issues",
             std::format!($($args),*),
-            DataFusionError::get_back_trace(),
+            datafusion_common::DataFusionError::get_back_trace(),
         );
         // We avoid using Internal to avoid the message suggesting it's internal to DataFusion
-        Err(DataFusionError::External(msg.into()))
+        Err(datafusion_common::DataFusionError::External(msg.into()))
     }};
 }
 
