@@ -3,10 +3,7 @@ use std::{sync::Arc, vec};
 use crate::executor::WkbExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::{
-    error::{DataFusionError, Result},
-    internal_err,
-};
+use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -14,6 +11,7 @@ use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
@@ -108,7 +106,7 @@ impl SedonaScalarKernel for STXyzm {
             "y" => 1,
             "z" => 2,
             "m" => 3,
-            _ => internal_err!("unexpected dimension")?,
+            _ => sedona_internal_err!("unexpected dimension")?,
         };
 
         let executor = WkbExecutor::new(arg_types, args);
@@ -209,7 +207,7 @@ where
             }
             _ => {}
         },
-        _ => internal_err!("unexpected dimension index")?,
+        _ => sedona_internal_err!("unexpected dimension index")?,
     }
     Ok(None)
 }
