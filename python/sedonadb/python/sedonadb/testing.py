@@ -129,8 +129,12 @@ class DBEngine:
         else:
             return tab.to_pandas()
 
-    def result_to_tuples(self, result, *, datatype = "string", wkt_precision=None) -> List[Tuple[Union[str, bytes]]]:
+    def result_to_tuples(
+        self, result, *, datatype="string", wkt_precision=None
+    ) -> List[Tuple[Union[str, bytes]]]:
         """Convert a query result into row tuples
+
+
 
         This option strips away fine-grained type information but is helpful for
         generally asserting a query result or verifying results between engines
@@ -229,7 +233,9 @@ class DBEngine:
             result_df = self.result_to_pandas(result)
             assert result_df.shape == (1, 1)
             result_value = result_df.iloc[0, 0]
-            assert math.isclose(result_value, expected), f"Expected {expected}, got {result_value}"
+            assert math.isclose(result_value, expected), (
+                f"Expected {expected}, got {result_value}"
+            )
         elif expected is None:
             self.assert_result(result, [(None,)], **kwargs)
         else:
