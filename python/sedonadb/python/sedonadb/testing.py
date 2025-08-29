@@ -1,6 +1,23 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 import os
 import math
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 import geoarrow.pyarrow as ga
@@ -10,6 +27,29 @@ if TYPE_CHECKING:
     import pandas
 
     import sedonadb
+
+
+def skip_if_not_exists(path: Path):
+    """Skip a test using pytest.skip() if path does not exist
+
+    If SEDONADB_PYTHON_NO_SKIP_TESTS is set, this function will never skip to
+    avoid accidentally skipping tests on CI.
+    """
+    if _env_no_skip():
+        return
+
+    if not path.exists():
+        import pytest
+
+        pytest.skip(
+            f"Test asset '{path}' not found. "
+            "Run submodules/download-assets.py to test with submodule assets"
+        )
+
+
+def _env_no_skip():
+    env_no_skip = os.environ.get("SEDONADB_PYTHON_NO_SKIP_TESTS", "false")
+    return env_no_skip in ("true", "1")
 
 
 class DBEngine:
@@ -44,12 +84,14 @@ class DBEngine:
         This is the constructor that should be used in tests to ensure that integration
         style tests don't cause failure for contributors working on Python-only
         behaviour.
+
+        If SEDONADB_PYTHON_NO_SKIP_TESTS is set, this function will never skip to
+        avoid accidentally skipping tests on CI.
         """
         import pytest
 
         # Ensure we can force this to succeed (or fail in CI)
-        env_no_skip = os.environ.get("SEDONADB_PYTHON_ENSURE_ALL_ENGINES", "false")
-        if env_no_skip in ("true", "1"):
+        if _env_no_skip():
             return cls(*args, **kwargs)
 
         # By default, allow construction to fail (e.g., for contributors running
@@ -280,7 +322,8 @@ class SedonaDB(DBEngine):
         return self
 
     def execute_and_collect(self, query) -> "sedonadb.dataframe.DataFrame":
-        return self.con.sql(query).collect()
+        # Use to_arrow_table() to maintain ordering of the input table
+        return self.con.sql(query).to_arrow_table()
 
 
 class DuckDB(DBEngine):
