@@ -2,7 +2,8 @@ use std::{sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use arrow_array::{
-    builder::StringBuilder, cast::AsArray, Array, GenericListArray, OffsetSizeTrait, StructArray,
+    builder::StringBuilder, cast::AsArray, Array, GenericListArray, GenericListViewArray,
+    OffsetSizeTrait, StructArray,
 };
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::{
@@ -183,6 +184,15 @@ fn columnar_value_to_formatted_value(
                 }
                 _ => internal_err!("Unsupported list columnar value"),
             },
+            DataType::ListView(field) => match columnar_value {
+                ColumnarValue::Array(array) => {
+                    let list_array = array.as_list_view::<i32>();
+                    let formatted_list_array =
+                        list_view_value_to_formatted_value(field, list_array, maybe_width_hint)?;
+                    Ok(ColumnarValue::Array(Arc::new(formatted_list_array)))
+                }
+                _ => internal_err!("Unsupported list view columnar value"),
+            },
             _ => Ok(columnar_value.clone()),
         },
     }
@@ -283,6 +293,37 @@ fn list_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     Ok(GenericListArray::<OffsetSize>::new(
         Arc::new(new_field),
         offsets.clone(),
+        new_values_array,
+        nulls.cloned(),
+    ))
+}
+
+fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
+    field: &Field,
+    list_view_array: &GenericListViewArray<OffsetSize>,
+    maybe_width_hint: Option<usize>,
+) -> Result<GenericListViewArray<OffsetSize>> {
+    let values_array = list_view_array.values();
+    let offsets = list_view_array.offsets();
+    let sizes = list_view_array.sizes();
+    let nulls = list_view_array.nulls();
+
+    let new_field = field_to_formatted_field(field)?;
+    let sedona_type = SedonaType::from_data_type(field.data_type())?;
+    let unwrapped_values_array = sedona_type.unwrap_array(values_array)?;
+    let new_columnar_value = columnar_value_to_formatted_value(
+        &sedona_type,
+        &ColumnarValue::Array(unwrapped_values_array),
+        maybe_width_hint,
+    )?;
+    let ColumnarValue::Array(new_values_array) = new_columnar_value else {
+        return internal_err!("Expected Array");
+    };
+
+    Ok(GenericListViewArray::<OffsetSize>::new(
+        Arc::new(new_field),
+        offsets.clone(),
+        sizes.clone(),
         new_values_array,
         nulls.cloned(),
     ))
@@ -617,8 +658,6 @@ mod tests {
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
         sedona_type: SedonaType,
     ) -> Result<()> {
-        use std::sync::Arc;
-
         let udf = sd_format_udf();
 
         // Create an array of WKB geometries using storage format
@@ -659,6 +698,62 @@ mod tests {
         } else {
             panic!(
                 "Expected list elements to be formatted as UTF8 strings, got: {:?}",
+                values_array.data_type()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[rstest]
+    fn sd_format_should_format_spatial_list_views(
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        sedona_type: SedonaType,
+    ) -> Result<()> {
+        let udf = sd_format_udf();
+
+        // Create an array of WKB geometries using storage format
+        let geom_values = vec![
+            Some("POINT(1 2)"),
+            Some("LINESTRING(0 0,1 1)"),
+            None,
+            Some("POLYGON((0 0,1 1,1 0,0 0))"),
+        ];
+        let geom_array = create_array(&geom_values, &sedona_type);
+
+        // Create a ListView containing the geometry array
+        let field = Arc::new(Field::new("geom", sedona_type.data_type(), true));
+        let offsets = ScalarBuffer::from(vec![0i32, 2i32]); // Two list views: [0,2) and [2,4)
+        let sizes = ScalarBuffer::from(vec![2i32, 2i32]); // Each list view has 2 elements
+        let list_view_array = ListViewArray::new(field, offsets, sizes, geom_array, None);
+
+        // Create tester
+        let input_sedona_type = SedonaType::Arrow(list_view_array.data_type().clone());
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![input_sedona_type]);
+
+        // Execute the UDF
+        let result = tester.invoke_array(Arc::new(list_view_array));
+        let output_array = result.unwrap();
+        let formatted_list_view = output_array
+            .as_any()
+            .downcast_ref::<ListViewArray>()
+            .unwrap();
+
+        // Check that the list view field type is now UTF8 (formatted from WKB)
+        let list_field = formatted_list_view.data_type();
+        if let DataType::ListView(inner_field) = list_field {
+            assert_eq!(inner_field.data_type(), &DataType::Utf8);
+        } else {
+            panic!("Expected ListView data type, got: {:?}", list_field);
+        }
+
+        // Check the actual formatted values in the list view
+        let values_array = formatted_list_view.values();
+        if let Some(utf8_array) = values_array.as_any().downcast_ref::<StringArray>() {
+            assert_wkt_values_match(utf8_array, &geom_values);
+        } else {
+            panic!(
+                "Expected list view elements to be formatted as UTF8 strings, got: {:?}",
                 values_array.data_type()
             );
         }
