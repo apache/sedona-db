@@ -1,5 +1,6 @@
 *.ipynb
 *.json
+*.svg
 c/sedona-geoarrow-c/src/geoarrow/*
 c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-tg/src/tg/*
