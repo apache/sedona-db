@@ -27,9 +27,10 @@ LICENSES = {
     "license_py.txt": [
         ".clang-format",
         ".cmake-format",
+        ".gitattributes",
         ".gitignore",
+        ".gitmodules",
         "*.cmake",
-        "*.gitmodules",
         "*.ps1",
         "*.py",
         "*.R",
