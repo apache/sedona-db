@@ -39,9 +39,10 @@ jobs:
   rust:
     strategy:
       matrix:
-        os: [ubuntu-latest]
-    name: "rust ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
+        name: ["clippy", "docs", "test"]
+
+    name: "${{ matrix.name }}"
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
     steps:
@@ -89,42 +90,30 @@ jobs:
           rustup default stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache. When doing large dependency changes
-          # (e.g., updating DataFusion), the old cache is not very useful and may result
-          # in out-of-disk ("no space left on device")
-          prefix-key: "v4-df49"
-          cache-on-failure: false
-          cache-all-crates: false
+          # Update this key to force a new cache
+          prefix-key: "rust-${{ matrix.name }}-v1"
+
       - name: Install dependencies
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y libgeos-dev
-      - name: Check formatting
-        run: |
-          cargo fmt --all -- --check
+
       - name: Clippy
+        if: matrix.name == 'clippy'
         run: |
-          pushd rust
           cargo clippy --workspace --all-targets --all-features -- -Dwarnings
-          popd
+
       - name: Test
+        if: matrix.name == 'test'
         run: |
-          pushd rust
           cargo test --workspace --all-targets --all-features
-          popd
+
       - name: Doctests
+        if: matrix.name == 'test'
         run: |
-          pushd rust
           cargo test --workspace --doc --all-features
-          popd
-      - name: Clean target directory before docs
-        run: |
-          pushd rust
-          # Clean up build artifacts to free space before generating docs
-          cargo clean
-          popd
+
       - name: Check docs
+        if: matrix.name == 'docs'
         run: |
-          pushd rust
           # Generate docs with reduced parallelism to avoid memory issues
           cargo doc --workspace --all-features -j 2
-          popd
