@@ -260,7 +260,10 @@ fn struct_value_to_formatted_value(
         )?;
 
         let ColumnarValue::Array(new_array) = new_column else {
-            return internal_err!("Expected Array");
+            return internal_err!(
+                "Expected Array in struct field formatting, got: {:?}",
+                new_column
+            );
         };
 
         new_fields.push((Arc::new(new_field), new_array));
@@ -286,8 +289,13 @@ fn list_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
         &ColumnarValue::Array(unwrapped_values_array),
         maybe_width_hint,
     )?;
+
     let ColumnarValue::Array(new_values_array) = new_columnar_value else {
-        return internal_err!("Expected Array");
+        return internal_err!(
+            "Expected Array when formatting list for field '{}', but got: {:?}",
+            field.name(),
+            new_columnar_value
+        );
     };
 
     Ok(GenericListArray::<OffsetSize>::new(
@@ -316,8 +324,13 @@ fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
         &ColumnarValue::Array(unwrapped_values_array),
         maybe_width_hint,
     )?;
+
     let ColumnarValue::Array(new_values_array) = new_columnar_value else {
-        return internal_err!("Expected Array");
+        return internal_err!(
+            "Expected Array during list view formatting for field '{}' of type '{}'",
+            field.name(),
+            field.data_type()
+        );
     };
 
     Ok(GenericListViewArray::<OffsetSize>::new(
