@@ -36,11 +36,19 @@ use crate::{
 /// The default number of rows per batch (the same as the DataFusion default)
 pub const ROWS_PER_BATCH: usize = 8192;
 
+/// The number of rows per batch to use for tiny size benchmarks
+pub const ROWS_PER_BATCH_TINY: usize = 1024;
+
 /// The default number of batches to use for small size benchmarks
 ///
 /// This was chosen to ensure that most benchmarks run nicely with criterion
 /// defaults (target 5s, 100 samples).
 pub const NUM_BATCHES_SMALL: usize = 16;
+
+/// The default number of batches to use for tiny size benchmarks
+///
+/// Just one batch for testing that benchmarks actually run.
+pub const NUM_BATCHES_TINY: usize = 1;
 
 #[cfg(feature = "criterion")]
 pub mod benchmark {
@@ -68,7 +76,13 @@ pub mod benchmark {
             .expect(&not_found_err)
             .clone()
             .into();
-        let data = config.into().build_data(NUM_BATCHES_SMALL).unwrap();
+        let data = config
+            .into()
+            .build_data(
+                Config::default().num_batches(),
+                Config::default().rows_per_batch(),
+            )
+            .unwrap();
         c.bench_function(&data.make_label(lib, name), |b| {
             b.iter(|| data.invoke_scalar(&udf).unwrap())
         });
@@ -95,10 +109,47 @@ pub mod benchmark {
             .expect(&not_found_err)
             .clone()
             .into();
-        let data = config.into().build_data(NUM_BATCHES_SMALL).unwrap();
+        let data = config
+            .into()
+            .build_data(
+                Config::default().num_batches(),
+                Config::default().rows_per_batch(),
+            )
+            .unwrap();
         c.bench_function(&data.make_label(lib, name), |b| {
             b.iter(|| data.invoke_aggregate(&udf).unwrap())
         });
+    }
+
+    pub enum Config {
+        Tiny,
+        Small,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            #[cfg(debug_assertions)]
+            return Self::Tiny;
+
+            #[cfg(not(debug_assertions))]
+            return Self::Small;
+        }
+    }
+
+    impl Config {
+        fn num_batches(&self) -> usize {
+            match self {
+                Config::Tiny => NUM_BATCHES_TINY,
+                Config::Small => NUM_BATCHES_SMALL,
+            }
+        }
+
+        fn rows_per_batch(&self) -> usize {
+            match self {
+                Config::Tiny => ROWS_PER_BATCH_TINY,
+                Config::Small => ROWS_PER_BATCH,
+            }
+        }
     }
 }
 
@@ -135,7 +186,7 @@ impl BenchmarkArgs {
     }
 
     /// Build [BenchmarkData] with the specified number of batches
-    pub fn build_data(&self, num_batches: usize) -> Result<BenchmarkData> {
+    pub fn build_data(&self, num_batches: usize, rows_per_batch: usize) -> Result<BenchmarkData> {
         let array_configs = match self {
             BenchmarkArgs::Array(_)
             | BenchmarkArgs::ArrayArray(_, _)
@@ -161,7 +212,7 @@ impl BenchmarkArgs {
         let arrays = array_configs
             .iter()
             .enumerate()
-            .map(|(i, col)| col.build_arrays(i, num_batches))
+            .map(|(i, col)| col.build_arrays(i, num_batches, rows_per_batch))
             .collect::<Result<Vec<_>>>()?;
 
         let scalars = scalar_configs
@@ -251,7 +302,7 @@ impl BenchmarkArgSpec {
     /// This currently builds the same non-null scalar for each unique value
     /// of i (the argument number).
     pub fn build_scalar(&self, i: usize) -> Result<ScalarValue> {
-        let array = self.build_arrays(i, 1)?;
+        let array = self.build_arrays(i, 1, 1)?;
         ScalarValue::try_from_array(&array[0], 0)
     }
 
@@ -259,31 +310,44 @@ impl BenchmarkArgSpec {
     ///
     /// This currently builds the same column for each unique value of i (the argument
     /// number). The batch size is currently fixed to 8192 (the DataFusion default).
-    pub fn build_arrays(&self, i: usize, num_batches: usize) -> Result<Vec<ArrayRef>> {
+    pub fn build_arrays(
+        &self,
+        i: usize,
+        num_batches: usize,
+        rows_per_batch: usize,
+    ) -> Result<Vec<ArrayRef>> {
         match self {
             BenchmarkArgSpec::Point => {
-                self.build_geometry(i, GeometryTypeId::Point, num_batches, 1)
+                self.build_geometry(i, GeometryTypeId::Point, num_batches, 1, rows_per_batch)
             }
-            BenchmarkArgSpec::LineString(vertex_count) => {
-                self.build_geometry(i, GeometryTypeId::LineString, num_batches, *vertex_count)
-            }
-            BenchmarkArgSpec::Polygon(vertex_count) => {
-                self.build_geometry(i, GeometryTypeId::Polygon, num_batches, *vertex_count)
-            }
+            BenchmarkArgSpec::LineString(vertex_count) => self.build_geometry(
+                i,
+                GeometryTypeId::LineString,
+                num_batches,
+                *vertex_count,
+                rows_per_batch,
+            ),
+            BenchmarkArgSpec::Polygon(vertex_count) => self.build_geometry(
+                i,
+                GeometryTypeId::Polygon,
+                num_batches,
+                *vertex_count,
+                rows_per_batch,
+            ),
             BenchmarkArgSpec::Float64(lo, hi) => {
                 let mut rng = self.rng(i);
                 let dist = Uniform::new(lo, hi);
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let float64_array: Float64Array =
-                            (0..ROWS_PER_BATCH).map(|_| rng.sample(dist)).collect();
+                            (0..rows_per_batch).map(|_| rng.sample(dist)).collect();
                         Ok(Arc::new(float64_array))
                     })
                     .collect()
             }
             BenchmarkArgSpec::Transformed(inner, t) => {
                 let inner_type = inner.sedona_type();
-                let inner_arrays = inner.build_arrays(i, num_batches)?;
+                let inner_arrays = inner.build_arrays(i, num_batches, rows_per_batch)?;
                 let tester = ScalarUdfTester::new(t.clone(), vec![inner_type]);
                 inner_arrays
                     .into_iter()
@@ -294,7 +358,7 @@ impl BenchmarkArgSpec {
                 let string_array = (0..num_batches)
                     .map(|_| {
                         let array = arrow_array::StringArray::from_iter_values(
-                            std::iter::repeat_n(s, ROWS_PER_BATCH),
+                            std::iter::repeat_n(s, rows_per_batch),
                         );
                         Ok(Arc::new(array) as ArrayRef)
                     })
@@ -310,10 +374,11 @@ impl BenchmarkArgSpec {
         geom_type: GeometryTypeId,
         num_batches: usize,
         vertex_count: usize,
+        rows_per_batch: usize,
     ) -> Result<Vec<ArrayRef>> {
         let builder = RandomPartitionedDataBuilder::new()
             .num_partitions(1)
-            .rows_per_batch(ROWS_PER_BATCH)
+            .rows_per_batch(rows_per_batch)
             .batches_per_partition(num_batches)
             // Use a random geometry range that is also not unrealistic for geography
             .bounds(Rect::new((-10.0, -10.0), (10.0, 10.0)))
@@ -469,14 +534,14 @@ mod test {
         let (spec, geometry_type, point_count) = config;
         assert_eq!(spec.sedona_type(), WKB_GEOMETRY);
 
-        let arrays = spec.build_arrays(0, 2).unwrap();
+        let arrays = spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap();
         assert_eq!(arrays.len(), 2);
 
         // Make sure this is deterministic
-        assert_eq!(spec.build_arrays(0, 2).unwrap(), arrays);
+        assert_eq!(spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         // Make sure we generate different arrays for different argument numbers
-        assert_ne!(spec.build_arrays(1, 2).unwrap(), arrays);
+        assert_ne!(spec.build_arrays(1, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         for array in arrays {
             assert_eq!(
@@ -506,14 +571,14 @@ mod test {
         let spec = BenchmarkArgSpec::Float64(1.0, 2.0);
         assert_eq!(spec.sedona_type(), DataType::Float64.try_into().unwrap());
 
-        let arrays = spec.build_arrays(0, 2).unwrap();
+        let arrays = spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap();
         assert_eq!(arrays.len(), 2);
 
         // Make sure this is deterministic
-        assert_eq!(spec.build_arrays(0, 2).unwrap(), arrays);
+        assert_eq!(spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         // Make sure we generate different arrays for different argument numbers
-        assert_ne!(spec.build_arrays(1, 2).unwrap(), arrays);
+        assert_ne!(spec.build_arrays(1, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         for array in arrays {
             assert_eq!(array.data_type(), &DataType::Float64);
@@ -537,14 +602,14 @@ mod test {
         assert_eq!(spec.sedona_type(), DataType::Float32.try_into().unwrap());
 
         assert_eq!(format!("{spec:?}"), "float32(Float64(1.0, 2.0))");
-        let arrays = spec.build_arrays(0, 2).unwrap();
+        let arrays = spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap();
         assert_eq!(arrays.len(), 2);
 
         // Make sure this is deterministic
-        assert_eq!(spec.build_arrays(0, 2).unwrap(), arrays);
+        assert_eq!(spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         // Make sure we generate different arrays for different argument numbers
-        assert_ne!(spec.build_arrays(1, 2).unwrap(), arrays);
+        assert_ne!(spec.build_arrays(1, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         for array in arrays {
             assert_eq!(array.data_type(), &DataType::Float32);
@@ -558,7 +623,7 @@ mod test {
         let spec = BenchmarkArgs::Array(BenchmarkArgSpec::Point);
         assert_eq!(spec.sedona_types(), [WKB_GEOMETRY]);
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
         assert_eq!(data.arrays.len(), 1);
         assert_eq!(data.scalars.len(), 0);
@@ -581,7 +646,7 @@ mod test {
             [WKB_GEOMETRY, DataType::Float64.try_into().unwrap()]
         );
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
 
         assert_eq!(data.arrays.len(), 1);
@@ -606,7 +671,7 @@ mod test {
             [WKB_GEOMETRY, DataType::Float64.try_into().unwrap()]
         );
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
 
         assert_eq!(data.scalars.len(), 1);
@@ -629,7 +694,7 @@ mod test {
             [WKB_GEOMETRY, DataType::Float64.try_into().unwrap()]
         );
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
         assert_eq!(data.arrays.len(), 2);
         assert_eq!(data.scalars.len(), 0);
@@ -660,7 +725,7 @@ mod test {
             ]
         );
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
         assert_eq!(data.arrays.len(), 1);
         assert_eq!(data.scalars.len(), 2);
@@ -689,7 +754,7 @@ mod test {
             ]
         );
 
-        let data = spec.build_data(2).unwrap();
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
         assert_eq!(data.num_batches, 2);
         assert_eq!(data.arrays.len(), 3);
         assert_eq!(data.scalars.len(), 1);
