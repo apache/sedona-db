@@ -1,5 +1,5 @@
 import pytest
-from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
+from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -130,6 +130,40 @@ def test_st_disjoint(eng, geom1, geom2, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Disjoint({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "distance", "expected"),
+    [
+        (None, "POINT (0 0)", 1.0, None),
+        ("POINT (1 1)", None, 1.0, None),
+        ("POINT (0 0)", "POINT (0 0)", None, None),
+        (None, None, None, None),
+        ("POINT (0 0)", "POINT (0 0)", 1.0, True),
+        ("POINT (0 0)", "POINT (5 0)", 2.0, False),
+        ("LINESTRING (0 0, 1 1)", "LINESTRING (2 2, 3 3)", 1.0, False),
+        ("LINESTRING (0 0, 1 1)", "LINESTRING (10 0, 11 1)", 2.0, False),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            6.0,
+            True,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            1.0,
+            True,
+        ),
+    ],
+)
+def test_st_dwithin(eng, geom1, geom2, distance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_DWithin({geom_or_null(geom1)}, {geom_or_null(geom2)}, {val_or_null(distance)})",
         expected,
     )
 
