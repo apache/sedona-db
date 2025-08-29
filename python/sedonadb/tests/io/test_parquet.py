@@ -103,11 +103,13 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         )
 
         eng.create_view_parquet("tab", tmp_parquet)
-        result = eng.execute_and_collect(f"""
+        result = eng.execute_and_collect(
+            f"""
             SELECT "OBJECTID", geometry FROM tab
             WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
-        """)
+        """
+        )
         eng.assert_result(result, gdf)
 
         # Write a dataset with one file per row group to check file pruning correctness
@@ -126,9 +128,11 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         # Check a query against the same dataset without the bbox column but with file-level
         # geoparquet metadata bounding boxes
         eng.create_view_parquet("tab_dataset", ds_paths)
-        result = eng.execute_and_collect(f"""
+        result = eng.execute_and_collect(
+            f"""
             SELECT * FROM tab_dataset
             WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
-        """)
+        """
+        )
         eng.assert_result(result, gdf)
