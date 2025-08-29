@@ -36,6 +36,32 @@ def test_st_area(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "dist", "expected_area"),
+    [
+        (None, None, None),
+        (None, 1.0, None),
+        ("POINT (1 1)", None, None),
+        ("POINT (1 1)", 0.0, 0),
+        ("POINT EMPTY", 1.0, 0),
+        ("LINESTRING EMPTY", 1.0, 0),
+        ("POLYGON EMPTY", 1.0, 0),
+        ("POINT (0 0)", 1.0, 3.121445152258052),
+        ("POINT (0 0)", 2.0, 12.485780609032208),
+        ("LINESTRING (0 0, 1 1)", 1.0, 5.949872277004242),
+        ("LINESTRING (0 0, 1 1)", 2.0, 18.14263485852459),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 2.0, 21.48578060903221),
+        ("MULTIPOINT ((0 0), (1 1))", 1.0, 5.682167728387077),
+        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))", 1.0, 8.121445152256216),
+    ]
+)
+def test_st_buffer(eng, geom, dist, expected_area):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(f"SELECT ST_Area(ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)}))", expected_area)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),

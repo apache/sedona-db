@@ -1,4 +1,5 @@
 import os
+import math
 import warnings
 from typing import TYPE_CHECKING, List, Tuple
 
@@ -222,7 +223,7 @@ class DBEngine:
             result_df = self.result_to_pandas(result)
             assert result_df.shape == (1, 1)
             result_value = result_df.iloc[0, 0]
-            assert result_value == expected, f"Expected {expected}, got {result_value}"
+            assert math.isclose(result_value, expected), f"Expected {expected}, got {result_value}"
         elif expected is None:
             self.assert_result(result, [(None,)], **kwargs)
         else:
