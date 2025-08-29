@@ -2,6 +2,7 @@
 *.json
 *.svg
 c/sedona-geoarrow-c/src/geoarrow/*
+c/sedona-geoarrow-c/src/geoarrow/ryu/*
 c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-s2geography/s2geography/*
 c/sedona-s2geography/s2geometry/*
