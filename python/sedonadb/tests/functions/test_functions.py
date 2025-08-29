@@ -288,6 +288,44 @@ def test_st_geomfromtext(eng, wkt, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT (1 1)", "POINT (1 1)"),
+        ("POINT EMPTY", "POINT (nan nan)"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", "POLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        ("MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))", "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))"),
+        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))", "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))"),
+    ]
+)
+def test_st_geogfromwkb(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeogFromWKB(ST_AsBinary({geom_or_null(geom)}))", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        ("POINT (1 1)", "POINT (1 1)"),
+        ("POINT EMPTY", "POINT (nan nan)"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", "POLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        ("MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))", "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))"),
+        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))", "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))"),
+    ]
+)
+def test_st_geomfromwkb(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeomFromWKB(ST_AsBinary({geom_or_null(geom)}))", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
         (None, None),
         ("POINT EMPTY", False),
         ("POINT Z EMPTY", True),
