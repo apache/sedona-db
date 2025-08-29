@@ -37,12 +37,23 @@ def load_licenses():
     return out
 
 
+def load_ignored_patterns():
+    with open(HERE / "license_ignore.txt") as f:
+        return [item.strip() for item in f.readlines()]
+
+
 def needs_license(path: Path, license):
     with open(path) as f:
         return f.read(len(license)) != license
 
 
-def apply_license(path: Path, licenses, verbose):
+def apply_license(path: Path, licenses, ignored, verbose):
+    for pattern in ignored:
+        if path.match(pattern):
+            if verbose:
+                print(f"Skipping '{path}' (matched license ignore '{pattern}')")
+            return
+
     for pattern, license in licenses.items():
         if not path.match(pattern):
             continue
@@ -77,10 +88,11 @@ def main():
     verbose = "--verbose" in sys.argv
     paths = [arg for arg in sys.argv[1:] if arg != "--verbose"]
     licenses = load_licenses()
+    ignored = load_ignored_patterns()
 
     for path in paths:
         path = Path(path).resolve(strict=True)
-        apply_license(path, licenses=licenses, verbose=verbose)
+        apply_license(path, licenses=licenses, ignored=ignored, verbose=verbose)
 
 
 if __name__ == "__main__":
