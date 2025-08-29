@@ -165,6 +165,11 @@ impl ArgMatcher {
         arg_iter.next().is_none()
     }
 
+    /// Matches any argument
+    pub fn is_any() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsAny {})
+    }
+
     /// Matches the given Arrow type using PartialEq
     pub fn is_arrow(data_type: DataType) -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsExact {
@@ -219,6 +224,15 @@ pub trait TypeMatcher: Debug {
     fn match_type(&self, arg: &SedonaType) -> bool;
     fn is_optional(&self) -> bool {
         false
+    }
+}
+
+#[derive(Debug)]
+struct IsAny;
+
+impl TypeMatcher for IsAny {
+    fn match_type(&self, _arg: &SedonaType) -> bool {
+        true
     }
 }
 
