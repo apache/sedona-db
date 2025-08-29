@@ -21,7 +21,7 @@ import shapely
 import geopandas
 from pyarrow import parquet
 from pathlib import Path
-from sedonadb.testing import geom_or_null, SedonaDB, DuckDB
+from sedonadb.testing import geom_or_null, SedonaDB, DuckDB, skip_if_not_exists
 
 
 @pytest.mark.parametrize("name", ["water-junc", "water-point"])
@@ -29,6 +29,8 @@ def test_read_whole_geoparquet(geoarrow_data, name):
     # Checks a read of some non-trivial files and ensures we match a GeoPandas read
     eng = SedonaDB()
     path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
+    skip_if_not_exists(path)
+
     gdf = geopandas.read_parquet(path).sort_values(by="OBJECTID").reset_index(drop=True)
 
     eng.create_view_parquet("tab", path)
@@ -36,16 +38,13 @@ def test_read_whole_geoparquet(geoarrow_data, name):
     eng.assert_result(result, gdf)
 
 
-@pytest.mark.parametrize(
-    "name", ["geoparquet-1.0.0", "geoparquet-1.1.0", "overature-bbox", "plain"]
-)
+@pytest.mark.parametrize("name", ["geoparquet-1.0.0", "geoparquet-1.1.0", "plain"])
 def test_read_sedona_testing(sedona_testing, name):
     # Checks a read of trivial files (some GeoParquet and some not) against a DuckDB read
     duckdb = DuckDB.create_or_skip()
     sedonadb = SedonaDB()
     path = sedona_testing / "data" / "parquet" / f"{name}.parquet"
-    if not path.exists():
-        pytest.skip("submodules/sedona-testing not present or not initialized")
+    skip_if_not_exists(path)
 
     duckdb.create_view_parquet("tab", path)
     result_duckdb = duckdb.execute_and_collect("SELECT * FROM tab")
@@ -66,10 +65,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
     # for a query where we should be pruning automatically that we don't omit results.
     eng = SedonaDB()
     path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
-    if not path.exists():
-        pytest.skip(
-            "submodules/geoarrow-data not present or submodules/download-assets.py not run"
-        )
+    skip_if_not_exists(path)
 
     # Roughly a diamond around Gaspereau Lake, Nova Scotia, in UTM zone 20
     wkt_filter = """

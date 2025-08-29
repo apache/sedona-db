@@ -1,5 +1,6 @@
 import os
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
 
 import geoarrow.pyarrow as ga
@@ -9,6 +10,29 @@ if TYPE_CHECKING:
     import pandas
 
     import sedonadb
+
+
+def skip_if_not_exists(path: Path):
+    """Skip a test using pytest.skip() if path does not exist
+
+    If SEDONADB_PYTHON_NO_SKIP_TESTS is set, this function will never skip to
+    avoid accidentally skipping tests on CI.
+    """
+    if _env_no_skip():
+        return
+
+    if not path.exists():
+        import pytest
+
+        pytest.skip(
+            f"Test asset '{path}' not found. "
+            "Run submodules/download-assets.py to test with submodule assets"
+        )
+
+
+def _env_no_skip():
+    env_no_skip = os.environ.get("SEDONADB_PYTHON_NO_SKIP_TESTS", "false")
+    return env_no_skip in ("true", "1")
 
 
 class DBEngine:
@@ -43,12 +67,14 @@ class DBEngine:
         This is the constructor that should be used in tests to ensure that integration
         style tests don't cause failure for contributors working on Python-only
         behaviour.
+
+        If SEDONADB_PYTHON_NO_SKIP_TESTS is set, this function will never skip to
+        avoid accidentally skipping tests on CI.
         """
         import pytest
 
         # Ensure we can force this to succeed (or fail in CI)
-        env_no_skip = os.environ.get("SEDONADB_PYTHON_ENSURE_ALL_ENGINES", "false")
-        if env_no_skip in ("true", "1"):
+        if _env_no_skip():
             return cls(*args, **kwargs)
 
         # By default, allow construction to fail (e.g., for contributors running

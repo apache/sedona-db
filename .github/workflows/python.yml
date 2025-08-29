@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 name: python
 
 on:
@@ -73,14 +74,18 @@ jobs:
         run: |
           pip install -e "python/sedonadb/[test]" -vv
 
+      - name: Download minimal geoarrow-data assets
+        run: |
+          python submodules/download-assets.py "*water-junc*" "*water-point*"
+
       - name: Start PostGIS
         run: |
           docker compose up --wait --detach postgis
 
       - name: Run tests
         env:
-          # Ensure that there are no skips for PostGIS or duckdb not available
-          SEDONADB_PYTHON_ENSURE_ALL_ENGINES: "true"
+          # Ensure that we don't skip tests that we didn't intend to
+          SEDONADB_PYTHON_NO_SKIP_TESTS: "true"
         run: |
           cd python
           python -m pytest -vv
