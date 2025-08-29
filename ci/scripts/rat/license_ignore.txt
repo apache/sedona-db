@@ -1,4 +1,8 @@
+*.ipynb
+*.json
 c/sedona-geoarrow-c/src/geoarrow/*
 c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-tg/src/tg/*
+Cargo.lock
+LICENSE
 submodules/geoarrow-data/*
