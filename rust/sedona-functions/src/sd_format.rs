@@ -447,7 +447,7 @@ mod tests {
             // Float64Array
             (
                 "Float64Array",
-                Arc::new(Float64Array::from(vec![Some(1.5), None, Some(3.14)])),
+                Arc::new(Float64Array::from(vec![Some(1.5), None, Some(3.16)])),
                 DataType::Float64,
             ),
             // StructArray with mixed types
