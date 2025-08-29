@@ -75,8 +75,10 @@ def apply_license(path: Path, licenses, ignored, verbose):
 
             path_tmp.unlink()
             return
-        elif verbose:
-            print(f"Skipping '{path}' (already licensed)")
+        else:
+            if verbose:
+                print(f"Skipping '{path}' (already licensed)")
+            return
 
     if verbose:
         print(f"Skipping '{path}' (no license pattern match)")
