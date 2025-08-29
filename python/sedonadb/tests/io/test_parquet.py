@@ -2,6 +2,7 @@ import pytest
 import tempfile
 import shapely
 import geopandas
+from pyarrow import parquet
 from pathlib import Path
 from sedonadb.testing import geom_or_null, SedonaDB, DuckDB
 
@@ -70,6 +71,9 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
     )
     gdf = gdf[["OBJECTID", "geometry"]]
 
+    # Make sure this isn't a bogus test
+    assert len(gdf) > 0
+
     with tempfile.TemporaryDirectory() as td:
         # Write using GeoPandas, which implements GeoParquet 1.1 bbox covering
         # Write tiny row groups so that many bounding boxes have to be checked
@@ -89,5 +93,25 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         """)
         eng.assert_result(result, gdf)
 
-        # Also check that this isn't a bogus test
-        assert len(gdf) > 0
+        # Write a dataset with one file per row group to check file pruning correctness
+        ds_dir = Path(td) / "ds"
+        ds_dir.mkdir()
+        ds_paths = []
+
+        with parquet.ParquetFile(tmp_parquet) as f:
+            for i in range(f.metadata.num_row_groups):
+                tab = f.read_row_group(i, ["OBJECTID", "geometry"])
+                df = geopandas.GeoDataFrame.from_arrow(tab)
+                ds_path = ds_dir / f"file{i}.parquet"
+                df.to_parquet(ds_path)
+                ds_paths.append(ds_path)
+
+        # Check a query against the same dataset without the bbox column but with file-level
+        # geoparquet metadata bounding boxes
+        eng.create_view_parquet("tab_dataset", ds_paths)
+        result = eng.execute_and_collect(f"""
+            SELECT * FROM tab_dataset
+            WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "OBJECTID";
+        """)
+        eng.assert_result(result, gdf)
