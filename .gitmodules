@@ -23,3 +23,6 @@
 [submodule "c/sedona-s2geography/s2geometry"]
 	path = c/sedona-s2geography/s2geometry
 	url = https://github.com/google/s2geometry.git
+[submodule "submodules/sedona-testing"]
+	path = submodules/sedona-testing
+	url = https://github.com/apache/sedona-testing.git
