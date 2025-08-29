@@ -61,9 +61,6 @@ impl SedonaScalarKernel for SDFormatDefault {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let sedona_type = &args[0];
         let formatted_type = sedona_type_to_formatted_type(sedona_type)?;
-        if formatted_type == *sedona_type {
-            return Ok(None);
-        }
         let matcher = ArgMatcher::new(
             vec![
                 ArgMatcher::is_any(),
@@ -97,6 +94,13 @@ impl SedonaScalarKernel for SDFormatDefault {
                     }
                 }
             }
+        }
+
+        let formatted_type = sedona_type_to_formatted_type(&arg_types[0])?;
+        if formatted_type == arg_types[0] {
+            // No change in type, the input data does not have geospatial columns that we can format,
+            // so just return the input value
+            return Ok(args[0].clone());
         }
 
         columnar_value_to_formatted_value(&arg_types[0], &args[0], maybe_width_hint)
@@ -237,9 +241,11 @@ fn struct_value_to_formatted_value(
     let mut new_fields = Vec::with_capacity(columns.len());
     for (column, field) in columns.iter().zip(fields) {
         let new_field = field_to_formatted_field(field)?;
+        let sedona_type = SedonaType::from_data_type(field.data_type())?;
+        let unwrapped_column = sedona_type.unwrap_array(column)?;
         let new_column = columnar_value_to_formatted_value(
-            &SedonaType::from_data_type(field.data_type())?,
-            &ColumnarValue::Array(Arc::clone(column)),
+            &sedona_type,
+            &ColumnarValue::Array(unwrapped_column),
             maybe_width_hint,
         )?;
 
@@ -263,9 +269,11 @@ fn list_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     let nulls = list_array.nulls();
 
     let new_field = field_to_formatted_field(field)?;
+    let sedona_type = SedonaType::from_data_type(field.data_type())?;
+    let unwrapped_values_array = sedona_type.unwrap_array(values_array)?;
     let new_columnar_value = columnar_value_to_formatted_value(
-        &SedonaType::from_data_type(field.data_type())?,
-        &ColumnarValue::Array(Arc::clone(values_array)),
+        &sedona_type,
+        &ColumnarValue::Array(unwrapped_values_array),
         maybe_width_hint,
     )?;
     let ColumnarValue::Array(new_values_array) = new_columnar_value else {
@@ -310,13 +318,16 @@ impl<'a, T: std::fmt::Write> std::fmt::Write for LimitedSizeOutput<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, StringArray};
+    use arrow_array::{create_array, ArrayRef, Int32Array, ListArray, StringArray, StructArray};
+    use arrow_schema::{DataType, Field};
+    use datafusion::arrow::buffer::OffsetBuffer;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
         WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+    use std::sync::Arc;
 
     use super::*;
 
@@ -381,5 +392,263 @@ mod tests {
                 .unwrap(),
             &expected_array
         );
+    }
+
+    #[test]
+    fn sd_format_does_not_format_non_spatial_columns() {
+        use arrow_array::{ArrayRef, BooleanArray, Float64Array, Int32Array, StructArray};
+        use arrow_schema::{DataType, Field};
+        use std::sync::Arc;
+
+        let udf = sd_format_udf();
+
+        // Define test cases as (description, array, expected_data_type)
+        let test_cases: Vec<(&str, ArrayRef, DataType)> = vec![
+            // Float64Array
+            (
+                "Float64Array",
+                Arc::new(Float64Array::from(vec![Some(1.5), None, Some(3.14)])),
+                DataType::Float64,
+            ),
+            // StructArray with mixed types
+            (
+                "StructArray",
+                {
+                    let struct_fields = vec![
+                        Arc::new(Field::new("float_field", DataType::Float64, true)),
+                        Arc::new(Field::new("int_field", DataType::Int32, false)),
+                    ];
+                    let float_col: ArrayRef =
+                        Arc::new(Float64Array::from(vec![Some(1.1), Some(2.2), None]));
+                    let int_col: ArrayRef = Arc::new(Int32Array::from(vec![10, 20, 30]));
+                    Arc::new(StructArray::new(
+                        struct_fields.clone().into(),
+                        vec![float_col, int_col],
+                        None,
+                    ))
+                },
+                DataType::Struct(
+                    vec![
+                        Arc::new(Field::new("float_field", DataType::Float64, true)),
+                        Arc::new(Field::new("int_field", DataType::Int32, false)),
+                    ]
+                    .into(),
+                ),
+            ),
+            // Boolean array
+            (
+                "BooleanArray",
+                Arc::new(BooleanArray::from(vec![Some(true), None, Some(false)])),
+                DataType::Boolean,
+            ),
+            // String array using create_array! macro
+            (
+                "String array",
+                create_array!(Utf8, [Some("hello"), None, Some("world")]),
+                DataType::Utf8,
+            ),
+            // Int32 array using create_array! macro
+            (
+                "Int32 array",
+                create_array!(Int32, [Some(42), None, Some(100)]),
+                DataType::Int32,
+            ),
+        ];
+
+        for (description, test_array, expected_data_type) in test_cases {
+            let tester = ScalarUdfTester::new(
+                udf.clone().into(),
+                vec![SedonaType::Arrow(expected_data_type)],
+            );
+            let result = tester.invoke_array(test_array.clone()).unwrap();
+            assert_eq!(
+                &result, &test_array,
+                "Failed for test case: {}",
+                description
+            );
+        }
+    }
+
+    #[rstest]
+    fn sd_format_should_format_spatial_columns(
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        sedona_type: SedonaType,
+    ) {
+        let udf = sd_format_udf();
+
+        // Create geometry storage array (without wrapping)
+        let geometry_values = vec![Some("POINT(1 2)"), None, Some("LINESTRING(0 0, 1 1)")];
+        let geometry_array = create_array(&geometry_values, &sedona_type);
+
+        // Create non-spatial array
+        let int_array: ArrayRef = Arc::new(Int32Array::from(vec![10, 20, 30]));
+        let struct_fields = vec![
+            Arc::new(Field::new("geom", sedona_type.data_type(), true)),
+            Arc::new(Field::new("id", DataType::Int32, false)),
+        ];
+        let struct_array = StructArray::new(
+            struct_fields.clone().into(),
+            vec![geometry_array, int_array],
+            None,
+        );
+
+        // Create tester
+        let input_sedona_type = SedonaType::Arrow(DataType::Struct(struct_fields.into()));
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![input_sedona_type]);
+
+        // Test the function
+        let result = tester.invoke_array(Arc::new(struct_array.clone())).unwrap();
+
+        // Verify the result structure
+        let result_struct = result.as_struct();
+        assert_eq!(result_struct.num_columns(), 2);
+
+        // First column should be formatted to UTF8 (geometry -> string)
+        let geometry_column = result_struct.column(0);
+        assert_eq!(geometry_column.data_type(), &DataType::Utf8);
+
+        // Check if it's actually formatted
+        if geometry_column.data_type() == &DataType::Utf8 {
+            // Verify the geometry was actually formatted to WKT strings
+            let string_array = geometry_column.as_string::<i32>();
+            assert_wkt_values_match(string_array, &geometry_values);
+        } else {
+            // If not UTF8, this test should fail but let's see what we got
+            panic!(
+                "Geometry column was not formatted to UTF8. Got: {:?}",
+                geometry_column.data_type()
+            );
+        }
+    }
+
+    #[rstest]
+    fn sd_format_should_handle_both_spatial_and_non_spatial_columns(
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        sedona_type: SedonaType,
+    ) {
+        let udf = sd_format_udf();
+
+        // Create geometry array
+        let geog_values = vec![Some("POLYGON((0 0,1 0,1 1,0 1,0 0))"), Some("POINT(1 2)")];
+        let geog_array = create_array(&geog_values, &sedona_type);
+
+        // Create string array
+        let name_array: ArrayRef =
+            Arc::new(StringArray::from(vec![Some("feature1"), Some("feature2")]));
+
+        // Create boolean array
+        let active_array: ArrayRef = Arc::new(arrow_array::BooleanArray::from(vec![
+            Some(true),
+            Some(false),
+        ]));
+
+        // Create struct array with proper extension metadata
+        let struct_fields = vec![
+            Arc::new(Field::new("geom", sedona_type.data_type(), true)),
+            Arc::new(Field::new("name", DataType::Utf8, true)),
+            Arc::new(Field::new("active", DataType::Boolean, false)),
+        ];
+        let struct_array = StructArray::new(
+            struct_fields.clone().into(),
+            vec![geog_array, name_array, active_array],
+            None,
+        );
+
+        // Create tester
+        let input_sedona_type = SedonaType::Arrow(DataType::Struct(struct_fields.into()));
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![input_sedona_type]);
+
+        // Test the function
+        let result = tester.invoke_array(Arc::new(struct_array)).unwrap();
+
+        // Verify the result structure
+        let result_struct = result.as_struct();
+        assert_eq!(result_struct.num_columns(), 3);
+
+        // Geography column should be formatted to UTF8
+        let geog_column = result_struct.column(0);
+        assert_eq!(geog_column.data_type(), &DataType::Utf8);
+
+        // Name column should remain UTF8 (unchanged)
+        let name_column = result_struct.column(1);
+        assert_eq!(name_column.data_type(), &DataType::Utf8);
+
+        // Active column should remain Boolean (unchanged)
+        let active_column = result_struct.column(2);
+        assert_eq!(active_column.data_type(), &DataType::Boolean);
+
+        // Verify the geography was actually formatted to WKT strings
+        let string_array = geog_column.as_string::<i32>();
+        assert_wkt_values_match(string_array, &geog_values);
+    }
+
+    #[rstest]
+    fn sd_format_should_format_spatial_lists(
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        sedona_type: SedonaType,
+    ) -> Result<()> {
+        use std::sync::Arc;
+
+        let udf = sd_format_udf();
+
+        // Create an array of WKB geometries using storage format
+        let geom_values = vec![
+            Some("POINT(1 2)"),
+            Some("LINESTRING(0 0,1 1)"),
+            None,
+            Some("POLYGON((0 0,1 1,1 0,0 0))"),
+        ];
+        let geom_array = create_array(&geom_values, &sedona_type);
+
+        // Create a simple list containing the geometry array
+        let field = Arc::new(Field::new("geom", sedona_type.data_type(), true));
+        let offsets = OffsetBuffer::new(vec![0, 2].into());
+        let list_array = ListArray::new(field, offsets, geom_array, None);
+
+        // Create tester
+        let input_sedona_type = SedonaType::Arrow(list_array.data_type().clone());
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![input_sedona_type]);
+
+        // Execute the UDF
+        let result = tester.invoke_array(Arc::new(list_array));
+        let output_array = result.unwrap();
+        let formatted_list = output_array.as_any().downcast_ref::<ListArray>().unwrap();
+
+        // Check that the list field type is now UTF8 (formatted from WKB)
+        let list_field = formatted_list.data_type();
+        if let DataType::List(inner_field) = list_field {
+            assert_eq!(inner_field.data_type(), &DataType::Utf8);
+        } else {
+            panic!("Expected List data type, got: {:?}", list_field);
+        }
+
+        // Check the actual formatted values in the list
+        let values_array = formatted_list.values();
+        if let Some(utf8_array) = values_array.as_any().downcast_ref::<StringArray>() {
+            assert_wkt_values_match(utf8_array, &geom_values);
+        } else {
+            panic!(
+                "Expected list elements to be formatted as UTF8 strings, got: {:?}",
+                values_array.data_type()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Helper function to verify that actual WKT values match expected values,
+    /// handling the normalization of comma spacing in WKT output
+    fn assert_wkt_values_match(actual_array: &StringArray, expected_values: &[Option<&str>]) {
+        for (i, expected) in expected_values.iter().enumerate() {
+            match expected {
+                Some(expected_value) => {
+                    let actual_value = actual_array.value(i);
+                    // Note: WKT output may not have spaces after commas
+                    let normalized_expected = expected_value.replace(", ", ",");
+                    assert_eq!(actual_value, normalized_expected);
+                }
+                None => assert!(actual_array.is_null(i)),
+            }
+        }
     }
 }
