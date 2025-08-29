@@ -267,7 +267,8 @@ class SedonaDB(DBEngine):
         return self
 
     def execute_and_collect(self, query) -> "sedonadb.dataframe.DataFrame":
-        return self.con.sql(query).collect()
+        # Use to_arrow_table() to maintain ordering of the input table
+        return self.con.sql(query).to_arrow_table()
 
 
 class DuckDB(DBEngine):

@@ -17,3 +17,8 @@ def con():
 @pytest.fixture()
 def geoarrow_data():
     return HERE.parent.parent.parent / "submodules" / "geoarrow-data"
+
+
+@pytest.fixture()
+def sedona_testing():
+    return HERE.parent.parent.parent / "submodules" / "sedona-testing"
