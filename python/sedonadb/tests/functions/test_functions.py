@@ -36,6 +36,53 @@ def test_st_area(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        ("POINT (1 1)", b"0101000000000000000000F03F000000000000F03F"),
+        ("POINT EMPTY", b"0101000000000000000000F87F000000000000F87F"),
+        ("LINESTRING (0 0, 1 2, 3 4)", b"01020000000300000000000000000000000000000000000000000000000000F03F000000000000004000000000000008400000000000001040"),
+        ("LINESTRING EMPTY", b"010200000000000000"),
+        ("POINT ZM (0 0 0 0)", b"01B90B00000000000000000000000000000000000000000000000000000000000000000000"),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))", b"0107000000020000000101000000000000000000000000000000000000000103000000010000000500000000000000000000000000000000000000000000000000F03F0000000000000000000000000000F03F000000000000F03F0000000000000000000000000000F03F00000000000000000000000000000000")
+    ]
+)
+def test_st_asbinary(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_AsBinary({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        # Arrow-rs returns POINT (nan nan) instead of POINT EMPTY
+        ("POINT EMPTY", "POINT (nan nan)"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", "POLYGON EMPTY"),
+        ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
+        ("MULTILINESTRING EMPTY", "MULTILINESTRING EMPTY"),
+        ("MULTIPOLYGON EMPTY", "MULTIPOLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+        ("POINT (1 1)", "POINT (1 1)"),
+        ("LINESTRING (0 0, 1 1)", "LINESTRING (0 0, 1 1)"),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        ("MULTIPOINT ((0 0), (1 1))", "MULTIPOINT (0 0, 1 1)"),
+        ("MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))", "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))"),
+        ("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))", "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))"),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1), GEOMETRYCOLLECTION (POLYGON ((0 0, -1 0, -1 -1, 0 -1, 0 0))))", "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1), GEOMETRYCOLLECTION (POLYGON ((0 0, -1 0, -1 -1, 0 -1, 0 0))))"),
+        ("POINT Z (0 0 0)", "POINT Z (0 0 0)"),
+        ("POINT ZM (0 0 0 0)", "POINT ZM (0 0 0 0)"),
+    ]
+)
+def test_st_astext(eng, geom, expected):
+    eng = eng.create_or_skip()
+    # Engines vary on where they place spaces in the text, so we convert back to geometry to compare
+    eng.assert_query_result(f"SELECT ST_GeomFromText(ST_AsText({geom_or_null(geom)}))", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "dist", "expected_area"),
     [
         (None, None, None),
