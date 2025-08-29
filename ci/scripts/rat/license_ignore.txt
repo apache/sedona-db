@@ -3,6 +3,8 @@
 *.svg
 c/sedona-geoarrow-c/src/geoarrow/*
 c/sedona-geoarrow-c/src/nanoarrow/*
+c/sedona-s2geography/s2geography/*
+c/sedona-s2geography/s2geometry/*
 c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/rat/license_*.txt
