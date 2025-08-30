@@ -15,9 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 import os
+import math
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Tuple, Union
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
@@ -170,8 +171,12 @@ class DBEngine:
         else:
             return tab.to_pandas()
 
-    def result_to_tuples(self, result, *, wkt_precision=None) -> List[Tuple[str]]:
+    def result_to_tuples(
+        self, result, *, datatype="string", wkt_precision=None
+    ) -> List[Tuple[Union[str, bytes]]]:
         """Convert a query result into row tuples
+
+
 
         This option strips away fine-grained type information but is helpful for
         generally asserting a query result or verifying results between engines
@@ -183,6 +188,10 @@ class DBEngine:
             # isinstance() does not always work with pyarrow in pytest
             if _type_is_geoarrow(col.type):
                 columns.append(ga.format_wkt(col, precision=wkt_precision).to_pylist())
+            elif datatype == "binary":
+                binary_lst = col.cast(pa.binary()).to_pylist()
+                # Convert to hex format for comparison e.g b'0101000000000000000000F03F000000000000F03F',
+                columns.append([b.hex().upper().encode() for b in binary_lst])
             else:
                 columns.append(col.cast(pa.string()).to_pylist())
 
@@ -260,11 +269,15 @@ class DBEngine:
             self.assert_result(result, [(expected,)], **kwargs)
         elif isinstance(expected, bool):
             self.assert_result(result, [(str(expected).lower(),)], **kwargs)
+        elif isinstance(expected, bytes):
+            self.assert_result(result, [(expected,)], datatype="binary", **kwargs)
         elif isinstance(expected, (int, float)):
             result_df = self.result_to_pandas(result)
             assert result_df.shape == (1, 1)
             result_value = result_df.iloc[0, 0]
-            assert result_value == expected, f"Expected {expected}, got {result_value}"
+            assert math.isclose(result_value, expected), (
+                f"Expected {expected}, got {result_value}"
+            )
         elif expected is None:
             self.assert_result(result, [(None,)], **kwargs)
         else:

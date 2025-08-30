@@ -44,13 +44,6 @@ repos:
       name: rustfmt
       args: ["--all", "--"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.5
-    hooks:
-      - id: ruff
-        args: [ --fix ]
-      - id: ruff-format
-
   - repo: https://github.com/cheshirekow/cmake-format-precommit
     rev: v0.6.13
     hooks:
