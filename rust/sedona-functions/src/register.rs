@@ -105,6 +105,7 @@ pub fn default_function_set() -> FunctionSet {
     register_aggregate_udfs!(
         function_set,
         crate::st_analyze_aggr::st_analyze_aggr_udf,
+        crate::st_collect::st_collect_udf,
         crate::st_envelope_aggr::st_envelope_aggr_udf,
         crate::st_intersection_aggr::st_intersection_aggr_udf,
         crate::st_union_aggr::st_union_aggr_udf,

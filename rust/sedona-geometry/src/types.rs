@@ -16,7 +16,7 @@
 // under the License.
 use std::{fmt::Display, str::FromStr};
 
-use geo_traits::Dimensions;
+use geo_traits::{Dimensions, GeometryTrait};
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
@@ -145,6 +145,27 @@ impl GeometryTypeAndDimensions {
             geometry_type,
             dimensions,
         }
+    }
+
+    /// Create from [GeometryTrait]
+    pub fn try_from_geom(geom: &impl GeometryTrait) -> Result<Self, SedonaGeometryError> {
+        let dimensions = geom.dim();
+        let geometry_type = match geom.as_type() {
+            geo_traits::GeometryType::Point(_) => GeometryTypeId::Point,
+            geo_traits::GeometryType::LineString(_) => GeometryTypeId::LineString,
+            geo_traits::GeometryType::Polygon(_) => GeometryTypeId::Polygon,
+            geo_traits::GeometryType::MultiPoint(_) => GeometryTypeId::MultiPoint,
+            geo_traits::GeometryType::MultiLineString(_) => GeometryTypeId::MultiLineString,
+            geo_traits::GeometryType::MultiPolygon(_) => GeometryTypeId::MultiPolygon,
+            geo_traits::GeometryType::GeometryCollection(_) => GeometryTypeId::GeometryCollection,
+            _ => {
+                return Err(SedonaGeometryError::Invalid(
+                    "Unsupported geometry type".to_string(),
+                ))
+            }
+        };
+
+        Ok(Self::new(geometry_type, dimensions))
     }
 
     /// The [GeometryTypeId]
