@@ -88,7 +88,7 @@ def test_st_asbinary(eng, geom, expected):
     ("geom"),
     [
         None,
-        # Arrow-rs returns POINT (nan nan) instead of POINT EMPTY
+        # geoarrow-c returns POINT (nan nan) instead of POINT EMPTY
         "POINT EMPTY",
         "LINESTRING EMPTY",
         "POLYGON EMPTY",
