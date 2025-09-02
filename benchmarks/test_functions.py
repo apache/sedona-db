@@ -5,17 +5,21 @@ from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 class TestBenchFunctions(TestBenchBase):
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_area(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "points_10_000",
+            "polygons_10_000",
+            "polygons_100_000",
+            "collections_10_000",
+            "collections_100_000",
+        ],
+    )
+    def test_st_area(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_Area(geom1) from {table}")
+            eng.execute_and_collect(f"SELECT ST_Area(geom1) from {table}")
 
         benchmark(queries)
 
