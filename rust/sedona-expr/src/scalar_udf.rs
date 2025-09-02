@@ -546,7 +546,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
         let arg_types = Self::physical_types(args)?;
         let scalars = vec![None; args.len()];
         let (_, out_type) = self.return_type_impl(&arg_types, &scalars)?;
-        Ok(out_type.data_type())
+        Ok(out_type.data_type_maybe_deprecated())
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
@@ -557,7 +557,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
             .collect();
         let arg_types = Self::physical_types(&arg_data_types)?;
         let (_, out_type) = self.return_type_impl(&arg_types, args.scalar_arguments)?;
-        Ok(Field::new("", out_type.data_type(), true).into())
+        Ok(Field::new("", out_type.data_type_maybe_deprecated(), true).into())
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(udf.name(), "simple_udf");
 
         // Calling with a geo type should return a Null type
-        let wkb_arrow = WKB_GEOMETRY.data_type();
+        let wkb_arrow = WKB_GEOMETRY.data_type_maybe_deprecated();
         let wkb_dummy_val = WKB_GEOMETRY
             .wrap_arg(&ColumnarValue::Scalar(ScalarValue::Binary(None)))
             .unwrap();
@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn crs_propagation() {
-        let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat()).data_type();
+        let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat()).data_type_maybe_deprecated();
 
         let predicate_stub = SedonaScalarUDF::new_stub(
             "stubby",
@@ -844,7 +844,7 @@ mod tests {
         // None CRS to None CRS is OK
         assert_eq!(
             predicate_stub
-                .return_type(&[WKB_GEOMETRY.data_type(), WKB_GEOMETRY.data_type()])
+                .return_type(&[WKB_GEOMETRY.data_type_maybe_deprecated(), WKB_GEOMETRY.data_type_maybe_deprecated()])
                 .unwrap(),
             DataType::Boolean
         );
@@ -859,7 +859,7 @@ mod tests {
 
         // Non-equal CRSes should error
         let err = predicate_stub
-            .return_type(&[WKB_GEOMETRY.data_type(), geom_lnglat.clone()])
+            .return_type(&[WKB_GEOMETRY.data_type_maybe_deprecated(), geom_lnglat.clone()])
             .unwrap_err();
         assert!(err.message().starts_with("Mismatched CRS arguments"));
 
@@ -934,7 +934,7 @@ mod tests {
             args: &[ColumnarValue],
         ) -> Result<ColumnarValue> {
             let out_type = Self::parse_type(&args[1])?;
-            args[0].cast_to(&out_type.data_type(), None)
+            args[0].cast_to(&out_type.data_type_maybe_deprecated(), None)
         }
     }
 }

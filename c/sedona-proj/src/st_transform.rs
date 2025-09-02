@@ -415,7 +415,7 @@ mod tests {
 
         let arg_fields: Vec<Arc<Field>> = arg_types
             .into_iter()
-            .map(|arg_type| Arc::new(Field::new("", arg_type.data_type(), true)))
+            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
             .collect();
         let row_count = wkb.len();
 

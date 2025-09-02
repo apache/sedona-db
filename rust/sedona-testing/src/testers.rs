@@ -61,7 +61,7 @@ impl AggregateUdfTester {
         let arg_data_types = self
             .arg_types
             .iter()
-            .map(|sedona_type| sedona_type.data_type())
+            .map(|sedona_type| sedona_type.data_type_maybe_deprecated())
             .collect::<Vec<_>>();
         let out_data_type = self.udf.return_type(&arg_data_types)?;
         SedonaType::from_data_type(&out_data_type)
@@ -143,7 +143,7 @@ impl AggregateUdfTester {
     fn arg_data_types(&self) -> Vec<DataType> {
         self.arg_types
             .iter()
-            .map(|sedona_type| sedona_type.data_type())
+            .map(|sedona_type| sedona_type.data_type_maybe_deprecated())
             .collect()
     }
 }
@@ -199,7 +199,7 @@ impl ScalarUdfTester {
         let arg_data_types = self
             .arg_types
             .iter()
-            .map(|sedona_type| sedona_type.data_type())
+            .map(|sedona_type| sedona_type.data_type_maybe_deprecated())
             .collect::<Vec<_>>();
         let out_data_type = self.udf.return_type(&arg_data_types)?;
         SedonaType::from_data_type(&out_data_type)
@@ -317,7 +317,7 @@ impl ScalarUdfTester {
     fn invoke_scalar_arrays(&self, arg: impl Literal, arrays: Vec<ArrayRef>) -> Result<ArrayRef> {
         let mut args = zip(arrays, &self.arg_types)
             .map(|(array, sedona_type)| {
-                ColumnarValue::Array(array).cast_to(&sedona_type.data_type(), None)
+                ColumnarValue::Array(array).cast_to(&sedona_type.data_type_maybe_deprecated(), None)
             })
             .collect::<Result<Vec<_>>>()?;
         let index = args.len();
@@ -333,7 +333,7 @@ impl ScalarUdfTester {
     fn invoke_arrays_scalar(&self, arrays: Vec<ArrayRef>, arg: impl Literal) -> Result<ArrayRef> {
         let mut args = zip(arrays, &self.arg_types)
             .map(|(array, sedona_type)| {
-                ColumnarValue::Array(array).cast_to(&sedona_type.data_type(), None)
+                ColumnarValue::Array(array).cast_to(&sedona_type.data_type_maybe_deprecated(), None)
             })
             .collect::<Result<Vec<_>>>()?;
         let index = args.len();
@@ -354,7 +354,7 @@ impl ScalarUdfTester {
     ) -> Result<ArrayRef> {
         let mut args = zip(arrays, &self.arg_types)
             .map(|(array, sedona_type)| {
-                ColumnarValue::Array(array).cast_to(&sedona_type.data_type(), None)
+                ColumnarValue::Array(array).cast_to(&sedona_type.data_type_maybe_deprecated(), None)
             })
             .collect::<Result<Vec<_>>>()?;
         let index = args.len();
@@ -371,7 +371,7 @@ impl ScalarUdfTester {
     fn invoke_arrays(&self, arrays: Vec<ArrayRef>) -> Result<ArrayRef> {
         let args = zip(arrays, &self.arg_types)
             .map(|(array, sedona_type)| {
-                ColumnarValue::Array(array).cast_to(&sedona_type.data_type(), None)
+                ColumnarValue::Array(array).cast_to(&sedona_type.data_type_maybe_deprecated(), None)
             })
             .collect::<Result<_>>()?;
 
@@ -418,7 +418,7 @@ impl ScalarUdfTester {
             ) {
                 if let ScalarValue::Utf8(expected_wkt) = scalar {
                     Ok(create_scalar(expected_wkt.as_deref(), sedona_type))
-                } else if scalar.data_type() == sedona_type.data_type() {
+                } else if scalar.data_type() == sedona_type.data_type_maybe_deprecated() {
                     Ok(scalar)
                 } else if scalar.is_null() {
                     Ok(create_scalar(None, sedona_type))
@@ -426,7 +426,7 @@ impl ScalarUdfTester {
                     sedona_internal_err!("Can't interpret scalar {scalar} as type {sedona_type}")
                 }
             } else {
-                scalar.cast_to(&sedona_type.data_type())
+                scalar.cast_to(&sedona_type.data_type_maybe_deprecated())
             }
         } else {
             sedona_internal_err!("Can't use test scalar invoke where .lit() returns non-literal")
@@ -443,7 +443,7 @@ impl ScalarUdfTester {
     fn arg_data_types(&self) -> Vec<DataType> {
         self.arg_types
             .iter()
-            .map(|sedona_type| sedona_type.data_type())
+            .map(|sedona_type| sedona_type.data_type_maybe_deprecated())
             .collect()
     }
 }

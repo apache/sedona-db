@@ -305,7 +305,7 @@ impl AggregateUDFImpl for ExportedSedonaAccumulator {
             .map(SedonaType::from_data_type)
             .collect::<Result<Vec<_>>>()?;
         match self.sedona_impl.return_type(&sedona_types)? {
-            Some(output_type) => Ok(output_type.data_type()),
+            Some(output_type) => Ok(output_type.storage_type().clone()),
             // Sedona kernels return None to indicate the kernel doesn't apply to the inputs,
             // but the ScalarUDFImpl doesn't have a way to natively indicate that. We use
             // NotImplemented with a special message and catch it on the other side.
@@ -364,8 +364,8 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let arg_fields = args
             .iter()
-            .map(|arg| Arc::new(Field::new("", arg.data_type(), true)))
-            .collect::<Vec<_>>();
+            .map(|arg| arg.to_storage_field("", true).map(Arc::new))
+            .collect::<Result<Vec<_>>>()?;
 
         match self.aggregate_impl.return_field(&arg_fields) {
             Ok(field) => Ok(Some(SedonaType::from_storage_field(&field)?)),
@@ -386,14 +386,14 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
     ) -> Result<Box<dyn Accumulator>> {
         let arg_fields = args
             .iter()
-            .map(|arg| Arc::new(Field::new("", arg.data_type(), true)))
+            .map(|arg| Arc::new(Field::new("", arg.data_type_maybe_deprecated(), true)))
             .collect::<Vec<_>>();
         let mock_schema = Schema::new(arg_fields);
         let exprs = (0..mock_schema.fields().len())
             .map(|i| -> Arc<dyn PhysicalExpr> { Arc::new(Column::new("col", i)) })
             .collect::<Vec<_>>();
 
-        let return_field = Field::new("", output_type.data_type(), true);
+        let return_field = Field::new("", output_type.data_type_maybe_deprecated(), true);
 
         let args = AccumulatorArgs {
             return_field: return_field.into(),
@@ -412,7 +412,7 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
     fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
         let arg_fields = args
             .iter()
-            .map(|arg| Arc::new(Field::new("", arg.data_type(), true)))
+            .map(|arg| Arc::new(Field::new("", arg.data_type_maybe_deprecated(), true)))
             .collect::<Vec<_>>();
 
         let state_field_args = StateFieldsArgs {

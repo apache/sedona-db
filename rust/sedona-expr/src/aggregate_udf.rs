@@ -134,7 +134,7 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
         let arg_physical_types = Self::sedona_types(arg_types)?;
         let (_, out_type) = self.dispatch_impl(&arg_physical_types)?;
-        Ok(out_type.data_type())
+        Ok(out_type.data_type_maybe_deprecated())
     }
 
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {

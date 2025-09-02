@@ -131,13 +131,13 @@ impl TryFrom<DataType> for SedonaType {
 
 impl From<&SedonaType> for DataType {
     fn from(value: &SedonaType) -> Self {
-        value.data_type()
+        value.data_type_maybe_deprecated()
     }
 }
 
 impl From<SedonaType> for DataType {
     fn from(value: SedonaType) -> Self {
-        value.data_type()
+        value.data_type_maybe_deprecated()
     }
 }
 
@@ -175,7 +175,7 @@ impl SedonaType {
     }
 
     /// Compute the Arrow data type used to represent this physical type in DataFusion
-    pub fn data_type(&self) -> DataType {
+    pub fn data_type_maybe_deprecated(&self) -> DataType {
         match &self {
             SedonaType::Arrow(data_type) => data_type.clone(),
             _ => self.extension_type().unwrap().to_data_type(),
@@ -262,7 +262,7 @@ impl SedonaType {
     /// Construct a [`Field`] as it would appear in an external `RecordBatch`
     pub fn to_storage_field(&self, name: &str, nullable: bool) -> Result<Field> {
         self.extension_type().map_or(
-            Ok(Field::new(name, self.data_type(), nullable)),
+            Ok(Field::new(name, self.data_type_maybe_deprecated(), nullable)),
             |extension| Ok(extension.to_field(name, nullable)),
         )
     }
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn sedona_type_arrow() {
         let sedona_type = SedonaType::from_data_type(&DataType::Int32).unwrap();
-        assert_eq!(sedona_type.data_type(), DataType::Int32);
+        assert_eq!(sedona_type.data_type_maybe_deprecated(), DataType::Int32);
         assert_eq!(sedona_type, SedonaType::Arrow(DataType::Int32));
         assert!(sedona_type.match_signature(&SedonaType::Arrow(DataType::Int32)));
         assert!(!sedona_type.match_signature(&SedonaType::Arrow(DataType::Utf8)));
@@ -411,9 +411,9 @@ mod tests {
     fn sedona_type_wkb() {
         assert_eq!(WKB_GEOMETRY, WKB_GEOMETRY);
 
-        assert!(WKB_GEOMETRY.data_type().is_nested());
+        assert!(WKB_GEOMETRY.data_type_maybe_deprecated().is_nested());
         assert_eq!(
-            SedonaType::from_data_type(&WKB_GEOMETRY.data_type()).unwrap(),
+            SedonaType::from_data_type(&WKB_GEOMETRY.data_type_maybe_deprecated()).unwrap(),
             WKB_GEOMETRY
         );
 
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(WKB_VIEW_GEOMETRY, WKB_VIEW_GEOMETRY);
         assert_eq!(WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOGRAPHY);
 
-        let data_type = WKB_VIEW_GEOMETRY.data_type();
+        let data_type = WKB_VIEW_GEOMETRY.data_type_maybe_deprecated();
         assert!(data_type.is_nested());
         assert_eq!(
             SedonaType::from_data_type(&data_type).unwrap(),
@@ -440,9 +440,9 @@ mod tests {
     fn sedona_type_wkb_geography() {
         assert_eq!(WKB_GEOGRAPHY, WKB_GEOGRAPHY);
 
-        assert!(WKB_GEOGRAPHY.data_type().is_nested());
+        assert!(WKB_GEOGRAPHY.data_type_maybe_deprecated().is_nested());
         assert_eq!(
-            SedonaType::from_data_type(&WKB_GEOGRAPHY.data_type()).unwrap(),
+            SedonaType::from_data_type(&WKB_GEOGRAPHY.data_type_maybe_deprecated()).unwrap(),
             WKB_GEOGRAPHY
         );
 

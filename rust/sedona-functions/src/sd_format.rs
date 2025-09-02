@@ -154,7 +154,7 @@ fn sedona_type_to_formatted_type(sedona_type: &SedonaType) -> Result<SedonaType>
 
 fn field_to_formatted_field(field: &Field) -> Result<Field> {
     let new_type = sedona_type_to_formatted_type(&SedonaType::from_data_type(field.data_type())?)?;
-    let new_field = field.clone().with_data_type(new_type.data_type());
+    let new_field = field.clone().with_data_type(new_type.data_type_maybe_deprecated());
     Ok(new_field)
 }
 
@@ -576,7 +576,7 @@ mod tests {
         // Create non-spatial array
         let int_array: ArrayRef = Arc::new(Int32Array::from(vec![10, 20, 30]));
         let struct_fields = vec![
-            Arc::new(Field::new("geom", sedona_type.data_type(), true)),
+            Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true)),
             Arc::new(Field::new("id", DataType::Int32, false)),
         ];
         let struct_array = StructArray::new(
@@ -642,7 +642,7 @@ mod tests {
 
         // Create struct array with proper extension metadata
         let struct_fields = vec![
-            Arc::new(Field::new("geom", sedona_type.data_type(), true)),
+            Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true)),
             Arc::new(Field::new("name", DataType::Utf8, true)),
             Arc::new(Field::new("active", DataType::Boolean, false)),
         ];
@@ -699,7 +699,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a simple list containing the geometry array
-        let field = Arc::new(Field::new("geom", sedona_type.data_type(), true));
+        let field = Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true));
         let offsets = OffsetBuffer::new(vec![0, 2, 4].into());
         let list_array = ListArray::new(field, offsets, geom_array, None);
 
@@ -751,7 +751,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a ListView containing the geometry array
-        let field = Arc::new(Field::new("geom", sedona_type.data_type(), true));
+        let field = Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true));
         let offsets = ScalarBuffer::from(vec![0i32, 2i32]); // Two list views: [0,2) and [2,4)
         let sizes = ScalarBuffer::from(vec![2i32, 2i32]); // Each list view has 2 elements
         let list_view_array = ListViewArray::new(field, offsets, sizes, geom_array, None);
@@ -807,7 +807,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a list containing the geometry array
-        let geom_list_field = Arc::new(Field::new("geom", sedona_type.data_type(), true));
+        let geom_list_field = Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true));
         let geom_offsets = OffsetBuffer::new(vec![0, 4].into()); // One list containing all 4 geometries
         let geom_list_array = ListArray::new(geom_list_field, geom_offsets, geom_array, None);
 
@@ -820,7 +820,7 @@ mod tests {
             Arc::new(Field::new("name", DataType::Utf8, true)),
             Arc::new(Field::new(
                 "geometries",
-                DataType::List(Arc::new(Field::new("geom", sedona_type.data_type(), true))),
+                DataType::List(Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true))),
                 true,
             )),
             Arc::new(Field::new("count", DataType::Int32, false)),
@@ -906,7 +906,7 @@ mod tests {
         // Create struct array containing geometry field
         let struct_fields = vec![
             Arc::new(Field::new("id", DataType::Int32, false)),
-            Arc::new(Field::new("geom", sedona_type.data_type(), true)),
+            Arc::new(Field::new("geom", sedona_type.data_type_maybe_deprecated(), true)),
             Arc::new(Field::new("name", DataType::Utf8, true)),
         ];
         let struct_array = StructArray::new(
