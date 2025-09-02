@@ -171,7 +171,9 @@ class DBEngine:
         else:
             return tab.to_pandas()
 
-    def result_to_tuples(self, result, *, wkt_precision=None) -> List[Tuple[str]]:
+    def result_to_tuples(
+        self, result, *, wkt_precision=None, **kwargs
+    ) -> List[Tuple[str]]:
         """Convert a query result into row tuples
 
         This option strips away fine-grained type information but is helpful for
@@ -203,7 +205,8 @@ class DBEngine:
         - A tuple of strings as the string output of a single row
         - A string as the string output of a single column of a single row
         - A bool for a single boolean value
-        - An int or float for single numeric values
+        - An int or float for single numeric values (optionally with a numeric_epsilon)
+        - bytes for single binary values
 
         Using Arrow table equality is the most strict (ensures exact type equality and
         byte-for-byte value equality); however, string output is most useful for checking
@@ -261,18 +264,22 @@ class DBEngine:
             self.assert_result(result, [(expected,)], **kwargs)
         elif isinstance(expected, bool):
             self.assert_result(result, [(str(expected).lower(),)], **kwargs)
-        elif isinstance(expected, bytes):
+        elif isinstance(expected, (int, float, bytes)):
             result_df = self.result_to_pandas(result)
             assert result_df.shape == (1, 1)
             result_value = result_df.iloc[0, 0]
-            assert result_value == expected, f"Expected {expected}, got {result_value}"
-        elif isinstance(expected, (int, float)):
-            result_df = self.result_to_pandas(result)
-            assert result_df.shape == (1, 1)
-            result_value = result_df.iloc[0, 0]
-            assert math.isclose(result_value, expected), (
-                f"Expected {expected}, got {result_value}"
-            )
+            eps = kwargs.get("numeric_epsilon", None)
+            if eps is not None:
+                assert isinstance(expected, (int, float)), (
+                    f"numeric_epsilon is only supported for int or float, not {type(expected).__name__}"
+                )
+                assert math.isclose(result_value, expected, rel_tol=eps), (
+                    f"Expected {expected}, got {result_value}"
+                )
+            else:
+                assert result_value == expected, (
+                    f"Expected {expected}, got {result_value}"
+                )
         elif expected is None:
             self.assert_result(result, [(None,)], **kwargs)
         else:
