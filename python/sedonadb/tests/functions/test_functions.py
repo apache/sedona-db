@@ -149,7 +149,7 @@ def test_st_buffer(eng, geom, dist, expected_area):
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)}))",
         expected_area,
-        numeric_epsilon=1e-1,
+        numeric_epsilon=1e-9,
     )
 
 
