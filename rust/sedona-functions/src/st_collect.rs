@@ -22,7 +22,7 @@ use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::{as_binary_array, as_int64_array, as_string_array},
     error::{DataFusionError, Result},
-    HashSet, ScalarValue,
+    exec_err, HashSet, ScalarValue,
 };
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, Volatility,
@@ -127,29 +127,35 @@ impl CollectionAccumulator {
         // Generate the correct header: collections of points become multipoint, ensure
         // dimensions are preserved if possible.
         let mut new_item = Vec::new();
-        if self.unique_geometry_types.len() == 1 && self.unique_dimensions.len() == 1 {
-            let dimensions = *self.unique_dimensions.iter().next().unwrap();
+        let count_usize = self.count.try_into().unwrap();
+
+        if self.unique_dimensions.len() != 1 {
+            return exec_err!("Can't ST_Collect() mixed dimension geometries");
+        }
+
+        let dimensions = *self.unique_dimensions.iter().next().unwrap();
+        if self.unique_geometry_types.len() == 1 {
             match self.unique_geometry_types.iter().next().unwrap() {
                 GeometryTypeId::Point => {
-                    write_wkb_multipoint_header(&mut new_item, dimensions, 0)
+                    write_wkb_multipoint_header(&mut new_item, dimensions, count_usize)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 }
                 GeometryTypeId::LineString => {
-                    write_wkb_multilinestring_header(&mut new_item, dimensions, 0)
+                    write_wkb_multilinestring_header(&mut new_item, dimensions, count_usize)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 }
                 GeometryTypeId::Polygon => {
-                    write_wkb_multipolygon_header(&mut new_item, dimensions, 0)
+                    write_wkb_multipolygon_header(&mut new_item, dimensions, count_usize)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 }
                 _ => {
-                    write_wkb_geometrycollection_header(&mut new_item, dimensions, 0)
+                    write_wkb_geometrycollection_header(&mut new_item, dimensions, count_usize)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 }
             }
         } else {
             // TODO: what happens when we try to collect mixed dimensions?
-            write_wkb_geometrycollection_header(&mut new_item, Dimensions::Xy, 0)
+            write_wkb_geometrycollection_header(&mut new_item, Dimensions::Xy, count_usize)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
         }
 
