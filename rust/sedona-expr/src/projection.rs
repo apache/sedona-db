@@ -34,7 +34,7 @@ use sedona_schema::{extension_type::ExtensionType, projection::unwrap_schema_may
 /// Returns None if there is no need to wrap the input, or a list of expressions that
 /// either pass along the existing column or a UDF call that applies the wrap.
 pub fn wrap_expressions(schema: &DFSchema) -> Result<Option<Vec<Expr>>> {
-    let wrap_udf = WrapExtensionUdf::udf();
+    let wrap_udf = WrapExtensionUdfMaybeDeprecated::udf();
     let mut wrap_count = 0;
 
     let mut exprs = Vec::with_capacity(schema.fields().len());
@@ -114,7 +114,7 @@ pub fn unwrap_expressions(schema: &DFSchema) -> Result<Option<(DFSchema, Vec<Exp
 pub fn wrap_physical_expressions(
     projected_storage_fields: &[FieldRef],
 ) -> Result<Option<Vec<(Arc<dyn PhysicalExpr>, String)>>> {
-    let wrap_udf = Arc::new(WrapExtensionUdf::udf());
+    let wrap_udf = Arc::new(WrapExtensionUdfMaybeDeprecated::udf());
     let wrap_udf_name = wrap_udf.name().to_string();
     let mut wrap_count = 0;
     let exprs: Result<Vec<_>> = projected_storage_fields
@@ -154,7 +154,7 @@ pub fn wrap_physical_expressions(
 /// The resulting batch will wrap columns with extension types as struct arrays
 /// that can be passed to APIs that operate purely on ArrayRefs (e.g., UDFs).
 /// This is the projection that should be applied when wrapping an input stream.
-pub fn wrap_batch(batch: RecordBatch) -> RecordBatch {
+pub fn wrap_batch_maybe_deprecated(batch: RecordBatch) -> RecordBatch {
     let columns = batch
         .columns()
         .iter()
@@ -177,7 +177,7 @@ pub fn wrap_batch(batch: RecordBatch) -> RecordBatch {
 /// The resulting output will have extension types represented with field metadata
 /// instead of as wrapped structs. This is the projection that should be applied
 /// when writing to output.
-pub fn unwrap_batch(batch: RecordBatch) -> RecordBatch {
+pub fn unwrap_batch_maybe_deprecated(batch: RecordBatch) -> RecordBatch {
     let columns: Vec<_> = batch
         .columns()
         .iter()
@@ -203,18 +203,18 @@ fn dummy_scalar_value(data_type: &DataType) -> Result<ScalarValue> {
 }
 
 #[derive(Debug)]
-pub struct WrapExtensionUdf {
+pub struct WrapExtensionUdfMaybeDeprecated {
     signature: Signature,
 }
 
-impl WrapExtensionUdf {
+impl WrapExtensionUdfMaybeDeprecated {
     pub fn udf() -> ScalarUDF {
         let signature = Signature::any(2, datafusion_expr::Volatility::Immutable);
         ScalarUDF::new_from_impl(Self { signature })
     }
 }
 
-impl ScalarUDFImpl for WrapExtensionUdf {
+impl ScalarUDFImpl for WrapExtensionUdfMaybeDeprecated {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -307,11 +307,11 @@ mod tests {
         let col2 = col1.clone();
 
         let batch = RecordBatch::try_new(schema.into(), vec![col1, col2]).unwrap();
-        let batch_wrapped = wrap_batch(batch.clone());
+        let batch_wrapped = wrap_batch_maybe_deprecated(batch.clone());
         assert_eq!(batch_wrapped.column(0).data_type(), &DataType::Utf8);
         assert!(batch_wrapped.column(1).data_type().is_nested());
 
-        let batch_unwrapped = unwrap_batch(batch_wrapped);
+        let batch_unwrapped = unwrap_batch_maybe_deprecated(batch_wrapped);
         assert_eq!(batch_unwrapped, batch);
     }
 }

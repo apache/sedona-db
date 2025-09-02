@@ -38,7 +38,7 @@ use sedona_common::option::add_sedona_option_extension;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::{
     function_set::FunctionSet,
-    projection::wrap_batch,
+    projection::wrap_batch_maybe_deprecated,
     scalar_udf::{ArgMatcher, ScalarKernelRef},
 };
 use sedona_geoparquet::{
@@ -254,12 +254,12 @@ impl SedonaContext {
         table_name: &str,
         batch: RecordBatch,
     ) -> Result<Option<Arc<dyn TableProvider>>> {
-        self.ctx.register_batch(table_name, wrap_batch(batch))
+        self.ctx.register_batch(table_name, wrap_batch_maybe_deprecated(batch))
     }
 
     /// Creates a [`DataFrame`] for reading a [`RecordBatch`]
     pub fn read_batch(&self, batch: RecordBatch) -> Result<DataFrame> {
-        self.ctx.read_batch(wrap_batch(batch))
+        self.ctx.read_batch(wrap_batch_maybe_deprecated(batch))
     }
 
     /// Create a [`DataFrame`] for reading a [`Vec[`RecordBatch`]`]

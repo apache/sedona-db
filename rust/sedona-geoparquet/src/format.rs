@@ -556,7 +556,7 @@ mod test {
     use datafusion_expr::{lit, Operator, ScalarUDF, Signature, SimpleScalarUDF, Volatility};
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
-    use sedona_expr::projection::unwrap_batch;
+    use sedona_expr::projection::unwrap_batch_maybe_deprecated;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_testing::create::create_scalar;
@@ -620,7 +620,7 @@ mod test {
         // Check that the content is the same as if it were read by the normal reader
         let unwrapped_batches: Vec<_> = batches
             .into_iter()
-            .map(unwrap_batch)
+            .map(unwrap_batch_maybe_deprecated)
             .map(|batch| {
                 let fields_without_metadata: Vec<_> = batch
                     .schema()

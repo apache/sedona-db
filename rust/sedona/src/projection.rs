@@ -17,7 +17,7 @@
 use arrow_schema::SchemaRef;
 use futures::Stream;
 use futures::TryStreamExt;
-use sedona_expr::projection::unwrap_batch;
+use sedona_expr::projection::unwrap_batch_maybe_deprecated;
 use sedona_expr::projection::unwrap_expressions;
 use sedona_expr::projection::wrap_expressions;
 use std::pin::Pin;
@@ -79,7 +79,7 @@ impl Stream for UnwrapRecordBatchStream {
     ) -> Poll<Option<Result<RecordBatch>>> {
         match self.parent.try_poll_next_unpin(cx) {
             Poll::Ready(maybe_parent) => {
-                Poll::Ready(maybe_parent.map(|parent| parent.map(unwrap_batch)))
+                Poll::Ready(maybe_parent.map(|parent| parent.map(unwrap_batch_maybe_deprecated)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -91,7 +91,7 @@ mod tests {
     use arrow_array::{create_array, record_batch, RecordBatch};
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::prelude::SessionContext;
-    use sedona_expr::projection::wrap_batch;
+    use sedona_expr::projection::wrap_batch_maybe_deprecated;
     use sedona_schema::extension_type::ExtensionType;
 
     use super::*;
@@ -134,7 +134,7 @@ mod tests {
         let df = wrap_df(ctx.read_batch(batch.clone())?)?;
         let results = df.clone().collect().await?;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0], wrap_batch(batch.clone()));
+        assert_eq!(results[0], wrap_batch_maybe_deprecated(batch.clone()));
 
         // unwrap_df() will result in a batch with no extensions in the results
         // (but with the extension information communicated in the returned schema)
