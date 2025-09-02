@@ -323,42 +323,10 @@ mod test {
         ];
         assert_scalar_equal_wkb_geometry(
             &tester.aggregate_wkt(batches).unwrap(),
-            Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"),
+            Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"),
         );
 
         // Empty input
         assert_scalar_equal_wkb_geometry(&tester.aggregate_wkt(vec![]).unwrap(), None);
-
-        // All coordinates empty
-        assert_scalar_equal_wkb_geometry(
-            &tester
-                .aggregate_wkt(vec![vec![Some("POINT EMPTY")]])
-                .unwrap(),
-            None,
-        );
-
-        // Degenerate output: point
-        assert_scalar_equal_wkb_geometry(
-            &tester
-                .aggregate_wkt(vec![vec![Some("POINT (0 1)")]])
-                .unwrap(),
-            Some("POINT (0 1)"),
-        );
-
-        // Degenerate output: vertical line
-        assert_scalar_equal_wkb_geometry(
-            &tester
-                .aggregate_wkt(vec![vec![Some("MULTIPOINT (0 2, 0 1)")]])
-                .unwrap(),
-            Some("LINESTRING (0 1, 0 2)"),
-        );
-
-        // Degenerate output: horizontal line
-        assert_scalar_equal_wkb_geometry(
-            &tester
-                .aggregate_wkt(vec![vec![Some("MULTIPOINT (1 1, 0 1)")]])
-                .unwrap(),
-            Some("LINESTRING (0 1, 1 1)"),
-        );
     }
 }
