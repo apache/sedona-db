@@ -489,7 +489,7 @@ impl DisplayColumn {
             )));
             let format_proxy_value = format.invoke_batch(
                 &[
-                    ColumnarValue::Array(self.sedona_type.wrap_array(array)?),
+                    ColumnarValue::Array(self.sedona_type.wrap_array_maybe_deprecated(array)?),
                     options_scalar.into(),
                 ],
                 array.len(),

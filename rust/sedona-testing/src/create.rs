@@ -58,7 +58,7 @@ pub fn create_scalar(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarV
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ArrayRef {
     data_type
-        .wrap_array(&create_array_storage(wkt_values, data_type))
+        .wrap_array_maybe_deprecated(&create_array_storage(wkt_values, data_type))
         .unwrap()
 }
 

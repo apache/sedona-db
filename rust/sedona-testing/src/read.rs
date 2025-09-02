@@ -87,7 +87,7 @@ pub fn read_geoarrow_data_geometry(
             // We may need something more sophisticated to support non-wkb geometry types
             // This covers WKB and WKB_VIEW
             let array_casted = arrow_cast::cast(&array, options.sedona_type.storage_type())?;
-            options.sedona_type.wrap_array(&array_casted)
+            options.sedona_type.wrap_array_maybe_deprecated(&array_casted)
         })
         .collect::<Result<Vec<_>>>()?;
 
