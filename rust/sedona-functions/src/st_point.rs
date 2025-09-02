@@ -479,6 +479,20 @@ mod tests {
             .unwrap(),
             &create_scalar_value(None, &WKB_GEOMETRY),
         );
+
+        // Even if xy are valid, result is null if z is null
+        assert_value_equal(
+            &udf.invoke_batch(
+                &[
+                    ScalarValue::Float64(Some(1.0)).into(),
+                    ScalarValue::Float64(Some(2.0)).into(),
+                    ScalarValue::Float64(None).into(),
+                ],
+                1,
+            )
+            .unwrap(),
+            &create_scalar_value(None, &WKB_GEOMETRY),
+        );
     }
 
     #[test]
@@ -497,6 +511,20 @@ mod tests {
             )
             .unwrap(),
             &create_scalar_value(Some("POINT M (1 2 4)"), &WKB_GEOMETRY),
+        );
+
+        // Even if xy are valid, result is null if m is null
+        assert_value_equal(
+            &udf.invoke_batch(
+                &[
+                    ScalarValue::Float64(Some(1.0)).into(),
+                    ScalarValue::Float64(Some(2.0)).into(),
+                    ScalarValue::Float64(None).into(),
+                ],
+                1,
+            )
+            .unwrap(),
+            &create_scalar_value(None, &WKB_GEOMETRY),
         );
     }
 
@@ -517,6 +545,35 @@ mod tests {
             )
             .unwrap(),
             &create_scalar_value(Some("POINT ZM (1 2 3 4)"), &WKB_GEOMETRY),
+        );
+
+        // Even if xy are valid, result is null if z or m is null
+        assert_value_equal(
+            &udf.invoke_batch(
+                &[
+                    ScalarValue::Float64(Some(1.0)).into(),
+                    ScalarValue::Float64(Some(2.0)).into(),
+                    ScalarValue::Float64(None).into(),
+                    ScalarValue::Float64(Some(4.0)).into(),
+                ],
+                1,
+            )
+            .unwrap(),
+            &create_scalar_value(None, &WKB_GEOMETRY),
+        );
+
+        assert_value_equal(
+            &udf.invoke_batch(
+                &[
+                    ScalarValue::Float64(Some(1.0)).into(),
+                    ScalarValue::Float64(Some(2.0)).into(),
+                    ScalarValue::Float64(Some(3.0)).into(),
+                    ScalarValue::Float64(None).into(),
+                ],
+                1,
+            )
+            .unwrap(),
+            &create_scalar_value(None, &WKB_GEOMETRY),
         );
     }
 }
