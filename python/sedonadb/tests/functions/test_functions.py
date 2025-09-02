@@ -189,6 +189,24 @@ def test_st_centroid(eng, geom, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_makeline(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3))", "LINESTRING (0 1, 2 3)"
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_GeomFromText('LINESTRING (0 1, 2 3)'))",
+        "LINESTRING (0 1, 2 3)",
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_GeomFromText('LINESTRING (2 3, 4 5)'))",
+        "LINESTRING (0 1, 2 3, 4 5)",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
