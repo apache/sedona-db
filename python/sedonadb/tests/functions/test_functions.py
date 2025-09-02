@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import pytest
+import shapely
 from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
 
 
@@ -331,56 +332,74 @@ def test_st_geomfromtext(eng, wkt, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "expected"),
+    ("geom"),
     [
-        ("POINT (1 1)", "POINT (1 1)"),
-        ("POINT EMPTY", "POINT (nan nan)"),
-        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
-        ("POLYGON EMPTY", "POLYGON EMPTY"),
-        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
-        (
-            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
-            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
-        ),
-        (
-            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
-            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
-        ),
+        "POINT (1 1)",
+        "POINT EMPTY",
+        "LINESTRING EMPTY",
+        "POLYGON EMPTY",
+        "GEOMETRYCOLLECTION EMPTY",
+        "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+        "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
     ],
 )
-def test_st_geogfromwkb(eng, geom, expected):
+def test_st_geogfromwkb(eng, geom):
     eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_GeogFromWKB(ST_AsBinary({geom_or_null(geom)}))", expected
-    )
+
+    expected = geom
+    if geom == "POINT EMPTY":
+        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
+        expected = "POINT (nan nan)"
+
+    if geom is None:
+        wkb = val_or_null(None)
+    else:
+        wkb = shapely.from_wkt(geom).wkb
+        if isinstance(eng, SedonaDB):
+            wkb = "0x" + wkb.hex()
+        elif isinstance(eng, PostGIS):
+            wkb = r"\x" + wkb.hex()
+            wkb = f"'{wkb}'::bytea"
+        else:
+            raise
+    eng.assert_query_result(f"SELECT ST_GeogFromWKB({wkb})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "expected"),
+    ("geom"),
     [
-        ("POINT (1 1)", "POINT (1 1)"),
-        ("POINT EMPTY", "POINT (nan nan)"),
-        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
-        ("POLYGON EMPTY", "POLYGON EMPTY"),
-        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
-        (
-            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
-            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
-        ),
-        (
-            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
-            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
-        ),
+        "POINT (1 1)",
+        "POINT EMPTY",
+        "LINESTRING EMPTY",
+        "POLYGON EMPTY",
+        "GEOMETRYCOLLECTION EMPTY",
+        "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+        "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
     ],
 )
-def test_st_geomfromwkb(eng, geom, expected):
+def test_st_geomfromwkb(eng, geom):
     eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_GeomFromWKB(ST_AsBinary({geom_or_null(geom)}))", expected
-    )
+
+    expected = geom
+    if geom == "POINT EMPTY":
+        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
+        expected = "POINT (nan nan)"
+
+    if geom is None:
+        wkb = val_or_null(None)
+    else:
+        wkb = shapely.from_wkt(geom).wkb
+        if isinstance(eng, SedonaDB):
+            wkb = "0x" + wkb.hex()
+        elif isinstance(eng, PostGIS):
+            wkb = r"\x" + wkb.hex()
+            wkb = f"'{wkb}'::bytea"
+        else:
+            raise
+    eng.assert_query_result(f"SELECT ST_GeomFromWKB({wkb})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
