@@ -27,7 +27,7 @@ use wkt::Wkt;
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array_value(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ColumnarValue {
     data_type
-        .wrap_arg(&ColumnarValue::Array(create_array_storage(
+        .wrap_arg_maybe_deprecated(&ColumnarValue::Array(create_array_storage(
             wkt_values, data_type,
         )))
         .unwrap()
@@ -38,7 +38,7 @@ pub fn create_array_value(wkt_values: &[Option<&str>], data_type: &SedonaType) -
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar_value(wkt_value: Option<&str>, data_type: &SedonaType) -> ColumnarValue {
     data_type
-        .wrap_arg(&ColumnarValue::Scalar(create_scalar_storage(
+        .wrap_arg_maybe_deprecated(&ColumnarValue::Scalar(create_scalar_storage(
             wkt_value, data_type,
         )))
         .unwrap()

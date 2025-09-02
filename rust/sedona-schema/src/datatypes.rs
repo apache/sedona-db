@@ -204,7 +204,7 @@ impl SedonaType {
     /// This operation occurs when reading Arrow data from a datasource where
     /// field metadata was used to construct the SedonaType or after
     /// a compute kernel has returned a value.
-    pub fn wrap_arg(&self, arg: &ColumnarValue) -> Result<ColumnarValue> {
+    pub fn wrap_arg_maybe_deprecated(&self, arg: &ColumnarValue) -> Result<ColumnarValue> {
         self.extension_type()
             .map_or(Ok(arg.clone()), |extension| extension.wrap_arg(arg))
     }

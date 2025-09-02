@@ -583,7 +583,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
             .map(|(a, b)| a.unwrap_arg(b))
             .collect();
         let result = kernel.invoke_batch(&arg_physical_types, &args_unwrapped?)?;
-        out_type.wrap_arg(&result)
+        out_type.wrap_arg_maybe_deprecated(&result)
     }
 
     fn aliases(&self) -> &[String] {
@@ -749,7 +749,7 @@ mod tests {
         // Calling with a geo type should return a Null type
         let wkb_arrow = WKB_GEOMETRY.data_type_maybe_deprecated();
         let wkb_dummy_val = WKB_GEOMETRY
-            .wrap_arg(&ColumnarValue::Scalar(ScalarValue::Binary(None)))
+            .wrap_arg_maybe_deprecated(&ColumnarValue::Scalar(ScalarValue::Binary(None)))
             .unwrap();
 
         assert_eq!(
