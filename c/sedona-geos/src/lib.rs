@@ -23,7 +23,7 @@ pub mod register;
 mod st_area;
 mod st_buffer;
 mod st_centroid;
+mod st_convexhull;
 mod st_dwithin;
 mod st_length;
 mod st_perimeter;
-mod st_convexhull;
