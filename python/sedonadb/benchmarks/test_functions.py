@@ -1,6 +1,6 @@
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import DuckDB, geom_or_null, PostGIS, SedonaDB, val_or_null
+from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 
 class TestBenchFunctions(TestBenchBase):
@@ -9,15 +9,13 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom in [
-                "POINT EMPTY",
-                "POINT(1 1)",
-                "LINESTRING(0 0, 1 1)",
-                "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(f"SELECT ST_Area({geom_or_null(geom)})")
+                eng.execute_and_collect(f"SELECT ST_Area(geom1) from {table}")
 
         benchmark(queries)
 
@@ -26,23 +24,13 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom, dist in [
-                ("POINT EMPTY", 2.0),
-                ("POINT(1 1)", 1.0),
-                ("LINESTRING(0 0, 1 1)", 100.0),
-                ("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))", 5.0),
-                (
-                    "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                    1.0,
-                ),
-                (
-                    "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
-                    1.0,
-                ),
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(
-                    f"SELECT ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)})"
-                )
+                eng.execute_and_collect(f"SELECT ST_Buffer(geom1, 2.0) from {table}")
 
         benchmark(queries)
 
@@ -51,15 +39,13 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom in [
-                "POINT EMPTY",
-                "POINT(1 1)",
-                "LINESTRING(0 0, 1 1)",
-                "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(f"SELECT ST_Centroid({geom_or_null(geom)})")
+                eng.execute_and_collect(f"SELECT ST_Centroid(geom1) from {table}")
 
         benchmark(queries)
 
@@ -68,15 +54,13 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom in [
-                "POINT EMPTY",
-                "POINT(1 1)",
-                "LINESTRING(0 0, 1 1)",
-                "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(f"SELECT ST_Dimension({geom_or_null(geom)})")
+                eng.execute_and_collect(f"SELECT ST_Dimension(geom1) from {table}")
 
         benchmark(queries)
 
@@ -85,15 +69,13 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom in [
-                "POINT EMPTY",
-                "POINT(1 1)",
-                "LINESTRING(0 0, 1 1)",
-                "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(f"SELECT ST_Envelope({geom_or_null(geom)})")
+                eng.execute_and_collect(f"SELECT ST_Envelope(geom1) from {table}")
 
         benchmark(queries)
 
@@ -102,14 +84,12 @@ class TestBenchFunctions(TestBenchBase):
         eng = self._get_eng(eng)
 
         def queries():
-            for geom in [
-                "POINT EMPTY",
-                "POINT(1 1)",
-                "LINESTRING(0 0, 1 1)",
-                "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0), (0.5 0.5, 0.6 0.6, 0.5 0.7, 0.4 0.6, 0.5 0.5)))",
-                "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1), POLYGON((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            for table in [
+                "polygons_10_000",
+                "polygons_100_000",
+                "collections_10_000",
+                "collections_100_000",
             ]:
-                eng.execute_and_collect(f"SELECT ST_GeometryType({geom_or_null(geom)})")
+                eng.execute_and_collect(f"SELECT ST_GeometryType(geom1) from {table}")
 
         benchmark(queries)
