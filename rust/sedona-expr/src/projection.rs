@@ -17,7 +17,7 @@
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_physical_expr::expressions::{Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
-use sedona_schema::projection::wrap_schema;
+use sedona_schema::projection::wrap_schema_maybe_deprecated;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -168,7 +168,7 @@ pub fn wrap_batch(batch: RecordBatch) -> RecordBatch {
         })
         .collect();
 
-    let schema = wrap_schema(&batch.schema());
+    let schema = wrap_schema_maybe_deprecated(&batch.schema());
     RecordBatch::try_new(Arc::new(schema), columns).unwrap()
 }
 

@@ -35,7 +35,7 @@ use datafusion::{
 use datafusion_common::DataFusionError;
 use sedona_common::sedona_internal_err;
 use sedona_expr::projection::wrap_batch;
-use sedona_schema::projection::wrap_schema;
+use sedona_schema::projection::wrap_schema_maybe_deprecated;
 
 /// A [TableProvider] wrapping a [RecordBatchReader]
 ///
@@ -52,7 +52,7 @@ unsafe impl Sync for RecordBatchReaderProvider {}
 
 impl RecordBatchReaderProvider {
     pub fn new(reader: Box<dyn RecordBatchReader + Send>) -> Self {
-        let schema = wrap_schema(&reader.schema());
+        let schema = wrap_schema_maybe_deprecated(&reader.schema());
         Self {
             reader: RwLock::new(Some(reader)),
             schema: Arc::new(schema),
@@ -242,7 +242,7 @@ mod test {
 
         // Ensure we get wrapped output
         let df = ctx.read_table(Arc::new(provider)).unwrap();
-        assert_eq!(df.schema().as_arrow(), &wrap_schema(&schema));
+        assert_eq!(df.schema().as_arrow(), &wrap_schema_maybe_deprecated(&schema));
         let results = df.collect().await.unwrap();
         assert_eq!(results, vec![wrap_batch(batch)])
     }

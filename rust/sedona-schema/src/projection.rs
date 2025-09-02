@@ -24,7 +24,7 @@ use crate::extension_type::ExtensionType;
 /// are propagated through operations that only supply a data type (e.g., UDF
 /// execution). This is the projection that should be applied to input that
 /// might contain extension types.
-pub fn wrap_schema(schema: &Schema) -> Schema {
+pub fn wrap_schema_maybe_deprecated(schema: &Schema) -> Schema {
     let fields: Vec<_> = schema
         .fields()
         .iter()
@@ -75,7 +75,7 @@ mod tests {
             geoarrow_wkt().to_field("field2", true),
         ]);
 
-        let schema_wrapped = wrap_schema(&schema_normal);
+        let schema_wrapped = wrap_schema_maybe_deprecated(&schema_normal);
         assert_eq!(schema_wrapped.field(0).name(), "field1");
         assert_eq!(*schema_wrapped.field(0).data_type(), DataType::Boolean);
         assert_eq!(schema_wrapped.field(1).name(), "field2");

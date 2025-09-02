@@ -46,7 +46,7 @@ use sedona_expr::projection::wrap_physical_expressions;
 
 use sedona_schema::{
     extension_type::ExtensionType,
-    projection::{unwrap_schema, wrap_schema},
+    projection::{unwrap_schema, wrap_schema_maybe_deprecated},
 };
 
 use crate::{
@@ -242,7 +242,7 @@ impl FileFormat for GeoParquetFormat {
                 })
                 .collect();
 
-            Ok(Arc::new(wrap_schema(&Schema::new(new_fields?))))
+            Ok(Arc::new(wrap_schema_maybe_deprecated(&Schema::new(new_fields?))))
         } else {
             Ok(inner_schema_without_metadata)
         }
