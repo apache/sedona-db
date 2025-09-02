@@ -49,7 +49,7 @@ pub fn create_scalar_value(wkt_value: Option<&str>, data_type: &SedonaType) -> C
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarValue {
     data_type
-        .wrap_scalar(&create_scalar_storage(wkt_value, data_type))
+        .wrap_scalar_maybe_deprecated(&create_scalar_storage(wkt_value, data_type))
         .unwrap()
 }
 

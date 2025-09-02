@@ -163,7 +163,7 @@ impl Accumulator for BoundsAccumulator2D {
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let wkb = self.make_wkb_result()?;
         let scalar = ScalarValue::Binary(wkb);
-        self.output_type.wrap_scalar(&scalar)
+        self.output_type.wrap_scalar_maybe_deprecated(&scalar)
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {

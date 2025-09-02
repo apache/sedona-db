@@ -448,7 +448,7 @@ mod tests {
         let m_tester = ScalarUdfTester::new(st_m_udf().into(), vec![WKB_GEOMETRY]);
 
         let scalar = WKB_GEOMETRY
-            .wrap_scalar(&ScalarValue::Binary(Some(
+            .wrap_scalar_maybe_deprecated(&ScalarValue::Binary(Some(
                 MULTIPOINT_WITH_EMPTY_CHILD_WKB.to_vec(),
             )))
             .unwrap();
