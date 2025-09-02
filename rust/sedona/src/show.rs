@@ -26,7 +26,7 @@ use datafusion_expr::ColumnarValue;
 use sedona_expr::projection::unwrap_batch;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
-use sedona_schema::projection::unwrap_schema;
+use sedona_schema::projection::unwrap_schema_maybe_deprecated;
 use std::iter::zip;
 use std::sync::Arc;
 
@@ -148,7 +148,7 @@ impl<'a> DisplayTable<'a> {
 
         // It's helpful to be able to work with wrapped or unwrapped batches, so we
         // unwrap here (which has no effect on something that was already unwrapped)
-        let schema = unwrap_schema(schema);
+        let schema = unwrap_schema_maybe_deprecated(schema);
         let batches = batches.into_iter().map(unwrap_batch).collect::<Vec<_>>();
 
         let columns = schema

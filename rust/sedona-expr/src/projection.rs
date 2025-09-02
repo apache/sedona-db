@@ -27,7 +27,7 @@ use datafusion_common::{DFSchema, Result};
 use datafusion_expr::{
     ColumnarValue, Expr, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature,
 };
-use sedona_schema::{extension_type::ExtensionType, projection::unwrap_schema};
+use sedona_schema::{extension_type::ExtensionType, projection::unwrap_schema_maybe_deprecated};
 
 /// Implementation underlying wrap_df
 ///
@@ -92,7 +92,7 @@ pub fn unwrap_expressions(schema: &DFSchema) -> Result<Option<(DFSchema, Vec<Exp
     }
 
     if unwrap_count > 0 {
-        let schema_unwrapped = unwrap_schema(schema.as_arrow());
+        let schema_unwrapped = unwrap_schema_maybe_deprecated(schema.as_arrow());
         let dfschema_unwrapped = DFSchema::from_field_specific_qualified_schema(
             qualifiers,
             &Arc::new(schema_unwrapped),
@@ -191,7 +191,7 @@ pub fn unwrap_batch(batch: RecordBatch) -> RecordBatch {
         })
         .collect();
 
-    let schema = unwrap_schema(&batch.schema());
+    let schema = unwrap_schema_maybe_deprecated(&batch.schema());
     RecordBatch::try_new(Arc::new(schema), columns).unwrap()
 }
 

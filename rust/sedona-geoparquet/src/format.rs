@@ -46,7 +46,7 @@ use sedona_expr::projection::wrap_physical_expressions;
 
 use sedona_schema::{
     extension_type::ExtensionType,
-    projection::{unwrap_schema, wrap_schema_maybe_deprecated},
+    projection::{unwrap_schema_maybe_deprecated, wrap_schema_maybe_deprecated},
 };
 
 use crate::{
@@ -258,7 +258,7 @@ impl FileFormat for GeoParquetFormat {
         // We don't do anything special here to insert GeoStatistics because pruning
         // happens elsewhere. These might be useful for a future optimizer or analyzer
         // pass that can insert optimizations based on geometry type.
-        let unwrapped_table_schema = Arc::new(unwrap_schema(&table_schema));
+        let unwrapped_table_schema = Arc::new(unwrap_schema_maybe_deprecated(&table_schema));
         let inner_stats = self
             .inner
             .infer_stats(state, store, unwrapped_table_schema.clone(), object)
@@ -292,7 +292,7 @@ impl FileFormat for GeoParquetFormat {
 
         // Build the inner plan
         let mut inner_config = conf.clone();
-        inner_config.file_schema = Arc::new(unwrap_schema(&conf.file_schema));
+        inner_config.file_schema = Arc::new(unwrap_schema_maybe_deprecated(&conf.file_schema));
         let inner_plan = DataSourceExec::from_data_source(inner_config);
 
         // Calculate a list of expressions that are either a column reference to the original
@@ -448,7 +448,7 @@ impl FileSource for GeoParquetFileSource {
         partition: usize,
     ) -> Arc<dyn FileOpener> {
         let mut inner_config = base_config.clone();
-        inner_config.file_schema = Arc::new(unwrap_schema(&inner_config.file_schema));
+        inner_config.file_schema = Arc::new(unwrap_schema_maybe_deprecated(&inner_config.file_schema));
         let inner_opener =
             self.inner
                 .create_file_opener(object_store.clone(), &inner_config, partition);
@@ -501,7 +501,7 @@ impl FileSource for GeoParquetFileSource {
     fn with_schema(&self, schema: SchemaRef) -> Arc<dyn FileSource> {
         Arc::new(Self::from_file_source(
             self.inner
-                .with_schema(Arc::new(unwrap_schema(schema.as_ref()))),
+                .with_schema(Arc::new(unwrap_schema_maybe_deprecated(schema.as_ref()))),
             self.metadata_size_hint,
             self.predicate.clone(),
         ))

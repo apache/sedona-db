@@ -30,7 +30,7 @@ use datafusion::error::Result;
 use datafusion::execution::RecordBatchStream;
 use datafusion::prelude::DataFrame;
 use datafusion::{common::DFSchema, execution::SendableRecordBatchStream};
-use sedona_schema::projection::unwrap_schema;
+use sedona_schema::projection::unwrap_schema_maybe_deprecated;
 
 /// Possibly project a DataFrame such that the output expresses extension types as data types
 ///
@@ -67,7 +67,7 @@ struct UnwrapRecordBatchStream {
 
 impl RecordBatchStream for UnwrapRecordBatchStream {
     fn schema(&self) -> SchemaRef {
-        Arc::new(unwrap_schema(&self.parent.schema()))
+        Arc::new(unwrap_schema_maybe_deprecated(&self.parent.schema()))
     }
 }
 

@@ -42,7 +42,7 @@ pub fn wrap_schema_maybe_deprecated(schema: &Schema) -> Schema {
 /// The resulting schema will have extension types represented with field metadata
 /// instead of as wrapped structs. This is the projection that should be applied
 /// when writing to output.
-pub fn unwrap_schema(schema: &Schema) -> Schema {
+pub fn unwrap_schema_maybe_deprecated(schema: &Schema) -> Schema {
     let fields: Vec<_> = schema
         .fields()
         .iter()
@@ -81,7 +81,7 @@ mod tests {
         assert_eq!(schema_wrapped.field(1).name(), "field2");
         assert!(schema_wrapped.field(1).data_type().is_nested());
 
-        let schema_unwrapped = unwrap_schema(&schema_wrapped);
+        let schema_unwrapped = unwrap_schema_maybe_deprecated(&schema_wrapped);
         assert_eq!(schema_unwrapped, schema_normal);
     }
 }
