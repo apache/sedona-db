@@ -161,7 +161,7 @@ fn doc(name: &str, out_type_name: &str, params: &[&str], example: &str) -> Docum
             "Construct a Point {} from X, Y, Z and M",
             out_type_name.to_lowercase()
         ),
-        _ => sedona_internal_err!("Invalid number of parameters for {name}"),
+        _ => unreachable!(),
     };
 
     let signature = format!(
