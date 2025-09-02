@@ -24,6 +24,7 @@ use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
@@ -34,6 +35,7 @@ const WKB_POINT: u32 = 1;
 const WKB_POINT_Z: u32 = 1001;
 const WKB_POINT_M: u32 = 2001;
 const WKB_POINT_ZM: u32 = 3001;
+const WKB_HEADER_SIZE: usize = 5;
 
 /// ST_Point() scalar UDF implementation
 ///
@@ -159,10 +161,7 @@ fn doc(name: &str, out_type_name: &str, params: &[&str], example: &str) -> Docum
             "Construct a Point {} from X, Y, Z and M",
             out_type_name.to_lowercase()
         ),
-        _ => format!(
-            "Construct a Point {} from coordinates",
-            out_type_name.to_lowercase()
-        ),
+        _ => sedona_internal_err!("Invalid number of parameters for {name}"),
     };
 
     let signature = format!(
@@ -224,10 +223,12 @@ impl SedonaScalarKernel for STGeoFromPoint {
         let coord_values = coord_values?;
 
         // Calculate WKB item size based on coordinates: endian(1) + type(4) + coords(8 each)
-        let wkb_size = 5 + (self.num_coords * 8);
+        let wkb_size = WKB_HEADER_SIZE + (self.num_coords * 8);
         let mut item = vec![0u8; wkb_size];
-        item[0] = 0x01; // Little endian
-        item[1..5].copy_from_slice(&self.wkb_type.to_le_bytes());
+        // Little endian
+        item[0] = 0x01;
+        // Geometry type
+        item[1..WKB_HEADER_SIZE].copy_from_slice(&self.wkb_type.to_le_bytes());
 
         // Check if all arguments are scalars
         let all_scalars = coord_values
@@ -303,7 +304,7 @@ impl SedonaScalarKernel for STGeoFromPoint {
 
 fn populate_wkb_item(item: &mut [u8], coords: &[f64]) {
     for (i, coord) in coords.iter().enumerate() {
-        let start_idx = 5 + (i * 8);
+        let start_idx = WKB_HEADER_SIZE + (i * 8);
         let end_idx = start_idx + 8;
         item[start_idx..end_idx].copy_from_slice(&coord.to_le_bytes());
     }
