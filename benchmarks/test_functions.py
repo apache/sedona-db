@@ -21,66 +21,81 @@ class TestBenchFunctions(TestBenchBase):
         benchmark(queries)
 
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_buffer(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_buffer(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "collections_simple",
-                "collections_complex",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_Buffer(geom1, 2.0) from {table}")
+            eng.execute_and_collect(f"SELECT ST_Buffer(geom1, 2.0) from {table}")
 
         benchmark(queries)
 
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_centroid(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "polygons_simple",
+            "polygons_complex",
+        ],
+    )
+    def test_st_centroid(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "polygons_simple",
-                "polygons_complex",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_Centroid(geom1) from {table}")
+            eng.execute_and_collect(f"SELECT ST_Centroid(geom1) from {table}")
 
         benchmark(queries)
 
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_dimension(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_dimension(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "collections_simple",
-                "collections_complex",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_Dimension(geom1) from {table}")
+            eng.execute_and_collect(f"SELECT ST_Dimension(geom1) from {table}")
 
         benchmark(queries)
 
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_envelope(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_envelope(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "collections_simple",
-                "collections_complex",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_Envelope(geom1) from {table}")
+            eng.execute_and_collect(f"SELECT ST_Envelope(geom1) from {table}")
 
         benchmark(queries)
 
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_geometrytype(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_geometrytype(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "collections_simple",
-                "collections_complex",
-            ]:
-                eng.execute_and_collect(f"SELECT ST_GeometryType(geom1) from {table}")
+            eng.execute_and_collect(f"SELECT ST_GeometryType(geom1) from {table}")
 
         benchmark(queries)

@@ -5,16 +5,17 @@ from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 class TestBenchPredicates(TestBenchBase):
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    def test_st_difference(self, benchmark, eng):
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "polygons_simple",
+            "polygons_complex",
+        ],
+    )
+    def test_st_difference(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 
         def queries():
-            for table in [
-                "polygons_simple",
-                "polygons_complex",
-            ]:
-                eng.execute_and_collect(
-                    f"SELECT ST_Difference(geom1, geom2) from {table}"
-                )
+            eng.execute_and_collect(f"SELECT ST_Difference(geom1, geom2) from {table}")
 
         benchmark(queries)
