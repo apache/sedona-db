@@ -549,7 +549,7 @@ mod tests {
             );
             let result = tester.invoke_array(test_array.clone()).unwrap();
             if !matches!(expected_data_type, DataType::ListView(_)) {
-                assert_eq!(&result, &test_array, "Failed for test case: {description}",);
+                assert_eq!(&result, &test_array, "Failed for test case: {description}");
             }
         }
     }
