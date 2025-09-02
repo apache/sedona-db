@@ -8,34 +8,49 @@ class TestBenchBase:
         self.postgis = PostGIS.create_or_skip()
         self.duckdb = DuckDB.create_or_skip()
 
+        num_geoms = 100_000
+
         # Setup tables
         for name, options in [
-            ("points_10_000", {"geom_type": "Point", "target_rows": 10000}),
-            ("polygons_10_000", {"geom_type": "Polygon", "target_rows": 10000}),
             (
-                "segments_10_000",
+                "segments_large",
                 {
                     "geom_type": "LineString",
-                    "target_rows": 10000,
+                    "target_rows": num_geoms,
                     "vertices_per_linestring_range": [2, 2],
                 },
             ),
             (
-                "segments_100_000",
+                "polygons_simple",
                 {
-                    "geom_type": "LineString",
-                    "target_rows": 100000,
-                    "vertices_per_linestring_range": [2, 2],
+                    "geom_type": "Polygon",
+                    "target_rows": num_geoms,
+                    "vertices_per_linestring_range": [10, 10],
                 },
             ),
-            ("polygons_100_000", {"geom_type": "Polygon", "target_rows": 100000}),
             (
-                "collections_10_000",
-                {"geom_type": "GeometryCollection", "target_rows": 10000},
+                "polygons_complex",
+                {
+                    "geom_type": "Polygon",
+                    "target_rows": num_geoms,
+                    "vertices_per_linestring_range": [500, 500],
+                },
             ),
             (
-                "collections_100_000",
-                {"geom_type": "GeometryCollection", "target_rows": 100000},
+                "collections_simple",
+                {
+                    "geom_type": "GeometryCollection",
+                    "target_rows": num_geoms,
+                    "vertices_per_linestring_range": [10, 10],
+                },
+            ),
+            (
+                "collections_complex",
+                {
+                    "geom_type": "GeometryCollection",
+                    "target_rows": num_geoms,
+                    "vertices_per_linestring_range": [500, 500],
+                },
             ),
         ]:
             # Generate synthetic data

@@ -8,11 +8,8 @@ class TestBenchFunctions(TestBenchBase):
     @pytest.mark.parametrize(
         "table",
         [
-            "points_10_000",
-            "polygons_10_000",
-            "polygons_100_000",
-            "collections_10_000",
-            "collections_100_000",
+            "polygons_simple",
+            "polygons_complex",
         ],
     )
     def test_st_area(self, benchmark, eng, table):
@@ -29,10 +26,8 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "collections_simple",
+                "collections_complex",
             ]:
                 eng.execute_and_collect(f"SELECT ST_Buffer(geom1, 2.0) from {table}")
 
@@ -44,10 +39,8 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "polygons_simple",
+                "polygons_complex",
             ]:
                 eng.execute_and_collect(f"SELECT ST_Centroid(geom1) from {table}")
 
@@ -59,10 +52,8 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "collections_simple",
+                "collections_complex",
             ]:
                 eng.execute_and_collect(f"SELECT ST_Dimension(geom1) from {table}")
 
@@ -74,10 +65,8 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "collections_simple",
+                "collections_complex",
             ]:
                 eng.execute_and_collect(f"SELECT ST_Envelope(geom1) from {table}")
 
@@ -89,10 +78,8 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "collections_simple",
+                "collections_complex",
             ]:
                 eng.execute_and_collect(f"SELECT ST_GeometryType(geom1) from {table}")
 

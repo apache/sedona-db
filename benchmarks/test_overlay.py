@@ -10,10 +10,8 @@ class TestBenchPredicates(TestBenchBase):
 
         def queries():
             for table in [
-                "polygons_10_000",
-                "polygons_100_000",
-                "collections_10_000",
-                "collections_100_000",
+                "polygons_simple",
+                "polygons_complex",
             ]:
                 eng.execute_and_collect(
                     f"SELECT ST_Difference(geom1, geom2) from {table}"
