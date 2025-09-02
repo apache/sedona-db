@@ -466,32 +466,29 @@ mod tests {
             &create_scalar_value(Some("POINT Z (1 2 3)"), &WKB_GEOMETRY),
         );
 
-        // Test null case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(None).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
-
+        // Test array and null cases
         // Even if xy are valid, result is null if z is null
+        let x_array =
+            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
+                .cast_to(&DataType::Float64, None)
+                .unwrap();
+
+        let y_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(5.0), Some(1.0), Some(7.0), None]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
+
+        let z_array =
+            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
+                .cast_to(&DataType::Float64, None)
+                .unwrap();
+
         assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(None).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
+            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), z_array.clone()], 1)
+                .unwrap(),
+            &create_array_value(&[Some("POINT Z (1 5 10)"), None, None, None], &WKB_GEOMETRY),
         );
     }
 
@@ -513,18 +510,29 @@ mod tests {
             &create_scalar_value(Some("POINT M (1 2 4)"), &WKB_GEOMETRY),
         );
 
-        // Even if xy are valid, result is null if m is null
+        // Test array and null cases
+        // Even if xy are valid, result is null if z is null
+        let x_array =
+            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
+                .cast_to(&DataType::Float64, None)
+                .unwrap();
+
+        let y_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(5.0), Some(1.0), Some(7.0), None]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
+
+        let m_array =
+            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
+                .cast_to(&DataType::Float64, None)
+                .unwrap();
+
         assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(None).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
+            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), m_array.clone()], 1)
+                .unwrap(),
+            &create_array_value(&[Some("POINT M (1 5 10)"), None, None, None], &WKB_GEOMETRY),
         );
     }
 
@@ -548,32 +556,51 @@ mod tests {
         );
 
         // Even if xy are valid, result is null if z or m is null
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(None).into(),
-                    ScalarValue::Float64(Some(4.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        // Test array and null cases
+        // Even if xy are valid, result is null if z is null
+        let x_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(1.0), Some(2.0), None, Some(1.0)]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
+
+        let y_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(5.0), Some(1.0), Some(7.0), Some(2.0)]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
+
+        let z_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(20.0), Some(1.0), Some(7.0), None]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
+
+        let m_array = ColumnarValue::Array(create_array!(
+            Float64,
+            [Some(10.0), None, Some(12.0), Some(4.0)]
+        ))
+        .cast_to(&DataType::Float64, None)
+        .unwrap();
 
         assert_value_equal(
             &udf.invoke_batch(
                 &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                    ScalarValue::Float64(None).into(),
+                    x_array.clone(),
+                    y_array.clone(),
+                    z_array.clone(),
+                    m_array.clone(),
                 ],
                 1,
             )
             .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
+            &create_array_value(
+                &[Some("POINT ZM (1 5 20 10)"), None, None, None],
+                &WKB_GEOMETRY,
+            ),
         );
     }
 }
