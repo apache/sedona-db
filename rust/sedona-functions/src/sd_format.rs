@@ -268,7 +268,7 @@ fn struct_value_to_formatted_value(
     for (column, field) in columns.iter().zip(fields) {
         let new_field = field_to_formatted_field(field)?;
         let sedona_type = SedonaType::from_data_type(field.data_type())?;
-        let unwrapped_column = sedona_type.unwrap_array(column)?;
+        let unwrapped_column = sedona_type.unwrap_array_maybe_deprecated(column)?;
         let new_column = columnar_value_to_formatted_value(
             &sedona_type,
             &ColumnarValue::Array(unwrapped_column),
@@ -299,7 +299,7 @@ fn list_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
 
     let new_field = field_to_formatted_field(field)?;
     let sedona_type = SedonaType::from_data_type(field.data_type())?;
-    let unwrapped_values_array = sedona_type.unwrap_array(values_array)?;
+    let unwrapped_values_array = sedona_type.unwrap_array_maybe_deprecated(values_array)?;
     let new_columnar_value = columnar_value_to_formatted_value(
         &sedona_type,
         &ColumnarValue::Array(unwrapped_values_array),
@@ -334,7 +334,7 @@ fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
 
     let new_field = field_to_formatted_field(field)?;
     let sedona_type = SedonaType::from_data_type(field.data_type())?;
-    let unwrapped_values_array = sedona_type.unwrap_array(values_array)?;
+    let unwrapped_values_array = sedona_type.unwrap_array_maybe_deprecated(values_array)?;
     let new_columnar_value = columnar_value_to_formatted_value(
         &sedona_type,
         &ColumnarValue::Array(unwrapped_values_array),

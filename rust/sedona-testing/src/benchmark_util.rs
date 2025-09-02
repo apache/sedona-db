@@ -550,7 +550,7 @@ mod test {
             );
             assert_eq!(array.len(), ROWS_PER_BATCH);
 
-            let unwrapped = WKB_GEOMETRY.unwrap_array(&array).unwrap();
+            let unwrapped = WKB_GEOMETRY.unwrap_array_maybe_deprecated(&array).unwrap();
             let binary_array = as_binary_array(&unwrapped).unwrap();
             assert_eq!(binary_array.null_count(), 0);
 

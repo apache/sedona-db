@@ -388,7 +388,7 @@ impl Accumulator for AnalyzeAccumulator {
         }
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(
-            self.input_type.unwrap_array(&values[0])?,
+            self.input_type.unwrap_array_maybe_deprecated(&values[0])?,
         )];
         let executor = WkbExecutor::new(&arg_types, &args);
         self.execute_update(executor)?;

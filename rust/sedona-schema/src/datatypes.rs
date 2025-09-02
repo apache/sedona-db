@@ -243,7 +243,7 @@ impl SedonaType {
     ///
     /// This operation occurs when exporting Arrow data into an external datasource
     /// or before passing to a compute kernel.
-    pub fn unwrap_array(&self, array: &ArrayRef) -> Result<ArrayRef> {
+    pub fn unwrap_array_maybe_deprecated(&self, array: &ArrayRef) -> Result<ArrayRef> {
         self.extension_type()
             .map_or(Ok(array.clone()), |extension| extension.unwrap_array(array))
     }

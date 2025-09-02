@@ -115,7 +115,7 @@ impl EvaluatedGeometryArray {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
         let sedona_type: SedonaType = geometry_array.data_type().try_into()?;
-        let wkb_array = sedona_type.unwrap_array(&geometry_array)?;
+        let wkb_array = sedona_type.unwrap_array_maybe_deprecated(&geometry_array)?;
         let mut wkbs = Vec::with_capacity(num_rows);
         let mut idx = 0;
         wkb_array.iter_as_wkb(&sedona_type, num_rows, |wkb_opt| {

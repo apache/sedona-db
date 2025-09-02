@@ -83,14 +83,14 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
 
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _)) => {
             assert_wkb_sequences_equal(
-                as_binary_array(&actual_sedona.unwrap_array(actual).unwrap()).unwrap(),
-                as_binary_array(&expected_sedona.unwrap_array(expected).unwrap()).unwrap(),
+                as_binary_array(&actual_sedona.unwrap_array_maybe_deprecated(actual).unwrap()).unwrap(),
+                as_binary_array(&expected_sedona.unwrap_array_maybe_deprecated(expected).unwrap()).unwrap(),
             );
         }
         (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_sequences_equal(
-                as_binary_view_array(&actual_sedona.unwrap_array(actual).unwrap()).unwrap(),
-                as_binary_view_array(&expected_sedona.unwrap_array(expected).unwrap()).unwrap(),
+                as_binary_view_array(&actual_sedona.unwrap_array_maybe_deprecated(actual).unwrap()).unwrap(),
+                as_binary_view_array(&expected_sedona.unwrap_array_maybe_deprecated(expected).unwrap()).unwrap(),
             );
         }
         (_, _) => {
