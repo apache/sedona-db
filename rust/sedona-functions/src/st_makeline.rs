@@ -1,0 +1,204 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+use std::{io::Write, sync::Arc, vec};
+
+use arrow_array::builder::BinaryBuilder;
+use datafusion_common::error::Result;
+use datafusion_common::exec_err;
+use datafusion_common::DataFusionError;
+use datafusion_expr::{
+    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
+};
+use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
+use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::wkb_factory::write_wkb_linestring_header;
+use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+
+use crate::executor::WkbExecutor;
+
+/// ST_MakeLine() scalar UDF implementation
+///
+/// Native implementation to create geometries from coordinates.
+/// See [`st_geogline_udf`] for the corresponding geography constructor.
+pub fn st_makeline_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_makeline",
+        vec![Arc::new(STMakeLineGeom {
+            out_type: WKB_GEOMETRY,
+        })],
+        Volatility::Immutable,
+        Some(doc()),
+    )
+}
+
+fn doc() -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Construct a line".to_string(),
+        "ST_MakeLine (g1: Geometry or Geography, g2: Geometry or Geography)".to_string(),
+    )
+    .with_argument("x", "double: X value")
+    .with_argument("y", "double: Y value")
+    .with_sql_example("SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2 3)) as geom")
+    .build()
+}
+
+#[derive(Debug)]
+struct STMakeLineGeom {
+    out_type: SedonaType,
+}
+
+impl SedonaScalarKernel for STMakeLineGeom {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
+            self.out_type.clone(),
+        );
+
+        // TODO: we need another kernel for geography + geography
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+
+        let min_segment_bytes = 1 + 4 + 4 + 16 + 16;
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            min_segment_bytes * executor.num_iterations(),
+        );
+
+        let mut coords = Vec::new();
+
+        executor.execute_wkb_wkb_void(|lhs, rhs| {
+            match (lhs, rhs) {
+                (Some(lhs), Some(rhs)) => {
+                    invoke_scalar(lhs, rhs, &mut coords, &mut builder)?;
+                    builder.append_value([]);
+                }
+                _ => builder.append_null(),
+            };
+            Ok(())
+        })?;
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+fn invoke_scalar(
+    g1: &impl GeometryTrait<T = f64>,
+    g2: &impl GeometryTrait<T = f64>,
+    coords: &mut Vec<f64>,
+    out: &mut impl Write,
+) -> Result<()> {
+    if g1.dim() != g2.dim() {
+        return exec_err!("Can't ST_MakeLine() with mismatched dimensions");
+    }
+
+    coords.clear();
+    let coord_size = g1.dim().size();
+
+    // Add the first item
+    add_coords(g1, coords, coord_size, None)?;
+
+    // If there were any coordinates in the second item, pull the last few items and
+    // pass to add_coords() so it can deduplicate
+    if coords.len() >= coord_size {
+        let mut last_coord = [0.0; 4];
+        last_coord[0..coord_size]
+            .copy_from_slice(&coords[(coords.len() - coord_size)..coords.len()]);
+        add_coords(g2, coords, coord_size, Some(&last_coord[0..coord_size]))?;
+    } else {
+        add_coords(g2, coords, coord_size, None)?;
+    }
+
+    let n_coords = coords.len() / coord_size;
+    write_wkb_linestring_header(out, g1.dim(), n_coords)
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    for ord in coords {
+        out.write_all(&ord.to_le_bytes())?;
+    }
+
+    Ok(())
+}
+
+fn add_coords(
+    geom: &impl GeometryTrait<T = f64>,
+    coords: &mut Vec<f64>,
+    coord_size: usize,
+    last_coord: Option<&[f64]>,
+) -> Result<()> {
+    match geom.as_type() {
+        geo_traits::GeometryType::Point(pt) => {
+            if let Some(coord) = pt.coord() {
+                for j in 0..coord_size {
+                    coords.push(unsafe { coord.nth_unchecked(j) });
+                }
+            }
+        }
+        geo_traits::GeometryType::LineString(ls) => {
+            for (i, coord) in ls.coords().enumerate() {
+                // Deduplicate the first point of any appended linestring
+                if i == 0 {
+                    let mut tmp = Vec::new();
+                    for j in 0..coord_size {
+                        tmp.push(unsafe { coord.nth_unchecked(j) });
+                    }
+
+                    if last_coord != Some(tmp.as_slice()) {
+                        for item in tmp {
+                            coords.push(item);
+                        }
+                    }
+                } else {
+                    for j in 0..coord_size {
+                        coords.push(unsafe { coord.nth_unchecked(j) });
+                    }
+                }
+            }
+        }
+        geo_traits::GeometryType::MultiPoint(mp) => {
+            for pt in mp.points() {
+                add_coords(&pt, coords, coord_size, None)?;
+            }
+        }
+        _ => {
+            return exec_err!(
+                "ST_MakeLine() only supports Point, LineString, and MultiPoint as input"
+            )
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion_expr::ScalarUDF;
+
+    #[test]
+    fn udf_metadata() {
+        let geom_from_point: ScalarUDF = st_makeline_udf().into();
+        assert_eq!(geom_from_point.name(), "st_makeline");
+        assert!(geom_from_point.documentation().is_some());
+    }
+}
