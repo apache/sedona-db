@@ -242,7 +242,9 @@ impl FileFormat for GeoParquetFormat {
                 })
                 .collect();
 
-            Ok(Arc::new(wrap_schema_maybe_deprecated(&Schema::new(new_fields?))))
+            Ok(Arc::new(wrap_schema_maybe_deprecated(&Schema::new(
+                new_fields?,
+            ))))
         } else {
             Ok(inner_schema_without_metadata)
         }
@@ -448,7 +450,8 @@ impl FileSource for GeoParquetFileSource {
         partition: usize,
     ) -> Arc<dyn FileOpener> {
         let mut inner_config = base_config.clone();
-        inner_config.file_schema = Arc::new(unwrap_schema_maybe_deprecated(&inner_config.file_schema));
+        inner_config.file_schema =
+            Arc::new(unwrap_schema_maybe_deprecated(&inner_config.file_schema));
         let inner_opener =
             self.inner
                 .create_file_opener(object_store.clone(), &inner_config, partition);

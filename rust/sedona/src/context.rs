@@ -254,7 +254,8 @@ impl SedonaContext {
         table_name: &str,
         batch: RecordBatch,
     ) -> Result<Option<Arc<dyn TableProvider>>> {
-        self.ctx.register_batch(table_name, wrap_batch_maybe_deprecated(batch))
+        self.ctx
+            .register_batch(table_name, wrap_batch_maybe_deprecated(batch))
     }
 
     /// Creates a [`DataFrame`] for reading a [`RecordBatch`]

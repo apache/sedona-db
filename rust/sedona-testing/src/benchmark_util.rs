@@ -509,7 +509,10 @@ mod test {
         // Make sure we generate different scalars for different columns
         assert_ne!(spec.build_scalar(1).unwrap(), scalar);
 
-        if let ScalarValue::Binary(Some(wkb_bytes)) = WKB_GEOMETRY.unwrap_scalar_maybe_deprecated(&scalar).unwrap() {
+        if let ScalarValue::Binary(Some(wkb_bytes)) = WKB_GEOMETRY
+            .unwrap_scalar_maybe_deprecated(&scalar)
+            .unwrap()
+        {
             let wkb = wkb::reader::read_wkb(&wkb_bytes).unwrap();
             let analysis = analyze_geometry(&wkb).unwrap();
             assert_eq!(analysis.point_count, 1);

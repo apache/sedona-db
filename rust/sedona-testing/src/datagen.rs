@@ -421,7 +421,9 @@ fn create_wkb_array(wkb_values: Vec<Option<Vec<u8>>>, sedona_type: &SedonaType) 
         SedonaType::WkbView(_, _) => Arc::new(BinaryViewArray::from_iter(wkb_values)),
         _ => panic!("create_wkb_array not implemented for {sedona_type:?}"),
     };
-    sedona_type.wrap_array_maybe_deprecated(&storage_array).unwrap()
+    sedona_type
+        .wrap_array_maybe_deprecated(&storage_array)
+        .unwrap()
 }
 
 struct RandomPartitionedDataReader<R> {

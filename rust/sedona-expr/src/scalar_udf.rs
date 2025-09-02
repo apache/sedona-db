@@ -844,7 +844,10 @@ mod tests {
         // None CRS to None CRS is OK
         assert_eq!(
             predicate_stub
-                .return_type(&[WKB_GEOMETRY.data_type_maybe_deprecated(), WKB_GEOMETRY.data_type_maybe_deprecated()])
+                .return_type(&[
+                    WKB_GEOMETRY.data_type_maybe_deprecated(),
+                    WKB_GEOMETRY.data_type_maybe_deprecated()
+                ])
                 .unwrap(),
             DataType::Boolean
         );
@@ -859,7 +862,10 @@ mod tests {
 
         // Non-equal CRSes should error
         let err = predicate_stub
-            .return_type(&[WKB_GEOMETRY.data_type_maybe_deprecated(), geom_lnglat.clone()])
+            .return_type(&[
+                WKB_GEOMETRY.data_type_maybe_deprecated(),
+                geom_lnglat.clone(),
+            ])
             .unwrap_err();
         assert!(err.message().starts_with("Mismatched CRS arguments"));
 

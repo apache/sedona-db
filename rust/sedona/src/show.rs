@@ -149,7 +149,10 @@ impl<'a> DisplayTable<'a> {
         // It's helpful to be able to work with wrapped or unwrapped batches, so we
         // unwrap here (which has no effect on something that was already unwrapped)
         let schema = unwrap_schema_maybe_deprecated(schema);
-        let batches = batches.into_iter().map(unwrap_batch_maybe_deprecated).collect::<Vec<_>>();
+        let batches = batches
+            .into_iter()
+            .map(unwrap_batch_maybe_deprecated)
+            .collect::<Vec<_>>();
 
         let columns = schema
             .fields()

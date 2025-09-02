@@ -262,7 +262,11 @@ impl SedonaType {
     /// Construct a [`Field`] as it would appear in an external `RecordBatch`
     pub fn to_storage_field(&self, name: &str, nullable: bool) -> Result<Field> {
         self.extension_type().map_or(
-            Ok(Field::new(name, self.data_type_maybe_deprecated(), nullable)),
+            Ok(Field::new(
+                name,
+                self.data_type_maybe_deprecated(),
+                nullable,
+            )),
             |extension| Ok(extension.to_field(name, nullable)),
         )
     }

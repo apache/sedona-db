@@ -242,7 +242,10 @@ mod test {
 
         // Ensure we get wrapped output
         let df = ctx.read_table(Arc::new(provider)).unwrap();
-        assert_eq!(df.schema().as_arrow(), &wrap_schema_maybe_deprecated(&schema));
+        assert_eq!(
+            df.schema().as_arrow(),
+            &wrap_schema_maybe_deprecated(&schema)
+        );
         let results = df.collect().await.unwrap();
         assert_eq!(results, vec![wrap_batch_maybe_deprecated(batch)])
     }
