@@ -252,7 +252,7 @@ impl SedonaType {
     ///
     /// This operation occurs when exporting Arrow data into an external datasource
     /// or before passing to a compute kernel.
-    pub fn unwrap_scalar(&self, scalar: &ScalarValue) -> Result<ScalarValue> {
+    pub fn unwrap_scalar_maybe_deprecated(&self, scalar: &ScalarValue) -> Result<ScalarValue> {
         self.extension_type()
             .map_or(Ok(scalar.clone()), |extension| {
                 extension.unwrap_scalar(scalar)

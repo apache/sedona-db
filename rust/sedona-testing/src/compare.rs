@@ -124,8 +124,8 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _))
         | (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_scalar_equal(
-                &actual_sedona.unwrap_scalar(actual).unwrap(),
-                &expected_sedona.unwrap_scalar(expected).unwrap(),
+                &actual_sedona.unwrap_scalar_maybe_deprecated(actual).unwrap(),
+                &expected_sedona.unwrap_scalar_maybe_deprecated(expected).unwrap(),
             );
         }
         (_, _) => unreachable!(),

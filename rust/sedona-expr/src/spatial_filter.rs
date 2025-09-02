@@ -199,7 +199,7 @@ fn literal_bounds(literal: &Literal) -> Result<BoundingBox> {
     let sedona_type = SedonaType::from_data_type(&literal.value().data_type())?;
     match &sedona_type {
         SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {
-            match sedona_type.unwrap_scalar(literal.value())? {
+            match sedona_type.unwrap_scalar_maybe_deprecated(literal.value())? {
                 ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
                     if let Some(vec) = maybe_vec {
                         return wkb_bounds_xy(&vec)
