@@ -24,17 +24,19 @@ use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_common::sedona_internal_err;
+use geo_traits::Dimensions;
+// use sedona_geometry::types::GeometryTypeAndDimensions;
+use sedona_geometry::wkb_factory::{write_wkb_coord, write_wkb_point_header, WKB_POINT_TYPE};
+// use sedona_geometry::wkb_factory::wkb_dim_code;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
 use crate::executor::WkbExecutor;
 
 // WKB geometry type constants following ISO standards
-const WKB_POINT: u32 = 1;
-const WKB_POINT_Z: u32 = 1001;
-const WKB_POINT_M: u32 = 2001;
-const WKB_POINT_ZM: u32 = 3001;
+// const WKB_POINT_Z: u32 = 1001;
+// const WKB_POINT_M: u32 = 2001;
+// const WKB_POINT_ZM: u32 = 3001;
 const WKB_HEADER_SIZE: usize = 5;
 
 /// ST_Point() scalar UDF implementation
@@ -46,7 +48,7 @@ pub fn st_point_udf() -> SedonaScalarUDF {
         "st_point",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
-            wkb_type: WKB_POINT,
+            dim: Dimensions::Xy,
         })],
         Volatility::Immutable,
         Some(xy_point_doc("ST_Point", "Geometry")),
@@ -61,7 +63,7 @@ pub fn st_geogpoint_udf() -> SedonaScalarUDF {
         "st_geogpoint",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOGRAPHY,
-            wkb_type: WKB_POINT,
+            dim: Dimensions::Xy,
         })],
         Volatility::Immutable,
         Some(xy_point_doc("st_geogpoint", "Geography")),
@@ -76,7 +78,7 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
         "st_pointz",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
-            wkb_type: WKB_POINT_Z,
+            dim: Dimensions::Xyz,
         })],
         Volatility::Immutable,
         Some(three_coord_point_doc("ST_PointZ", "Geometry", "Z")),
@@ -91,7 +93,7 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
         "st_pointm",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
-            wkb_type: WKB_POINT_M,
+            dim: Dimensions::Xym,
         })],
         Volatility::Immutable,
         Some(three_coord_point_doc("ST_PointM", "Geometry", "M")),
@@ -106,7 +108,7 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
         "st_pointzm",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
-            wkb_type: WKB_POINT_ZM,
+            dim: Dimensions::Xyzm,
         })],
         Volatility::Immutable,
         Some(xyzm_point_doc("ST_PointZM", "Geometry")),
@@ -168,18 +170,12 @@ fn xyzm_point_doc(name: &str, out_type_name: &str) -> Documentation {
 #[derive(Debug)]
 struct STGeoFromPoint {
     out_type: SedonaType,
-    wkb_type: u32,
+    dim: Dimensions,
 }
 
 impl SedonaScalarKernel for STGeoFromPoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let num_coords: usize = match self.wkb_type {
-            WKB_POINT => 2,
-            WKB_POINT_Z => 3,
-            WKB_POINT_M => 3,
-            WKB_POINT_ZM => 4,
-            _ => sedona_internal_err!("Invalid WKB type")?,
-        };
+        let num_coords = self.dim.size();
         let expected_args = vec![ArgMatcher::is_numeric(); num_coords];
         let matcher = ArgMatcher::new(expected_args, self.out_type.clone());
         matcher.match_args(args)
@@ -190,13 +186,7 @@ impl SedonaScalarKernel for STGeoFromPoint {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let num_coords: usize = match self.wkb_type {
-            WKB_POINT => 2,
-            WKB_POINT_Z => 3,
-            WKB_POINT_M => 3,
-            WKB_POINT_ZM => 4,
-            _ => sedona_internal_err!("Invalid WKB type")?,
-        };
+        let num_coords = self.dim.size();
         let executor = WkbExecutor::new(arg_types, args);
 
         // Cast all arguments to Float64
@@ -212,7 +202,18 @@ impl SedonaScalarKernel for STGeoFromPoint {
         // Little endian
         item[0] = 0x01;
         // Geometry type
-        item[1..WKB_HEADER_SIZE].copy_from_slice(&self.wkb_type.to_le_bytes());
+        use sedona_geometry::wkb_factory::wkb_dim_code; // TODO
+        let geom_type = WKB_POINT_TYPE
+            + wkb_dim_code(self.dim).map_err(|_| {
+                datafusion_common::DataFusionError::Internal(
+                    "Failed to calculate WKB dimension code".to_string(),
+                )
+            })?;
+        item[1..WKB_HEADER_SIZE].copy_from_slice(&geom_type.to_le_bytes());
+
+        // write_wkb_point_header(&mut item, self.dim).map_err(|_| datafusion_common::DataFusionError::Internal(
+        //     "Failed to write WKB point header".to_string(),
+        // ))?;
 
         // Check if all arguments are scalars
         let all_scalars = coord_values
@@ -261,24 +262,77 @@ impl SedonaScalarKernel for STGeoFromPoint {
         );
 
         for i in 0..executor.num_iterations() {
-            let mut coords = Vec::with_capacity(num_coords);
-            let mut has_null = false;
-
-            for array in &coord_f64_arrays {
-                if array.is_null(i) {
-                    has_null = true;
-                    break;
-                } else {
-                    coords.push(array.value(i));
-                }
-            }
-
-            if has_null {
-                builder.append_null();
+            let num_dimensions = self.dim.size();
+            let arrays = (0..num_dimensions)
+                .map(|j| coord_f64_arrays[j])
+                .collect::<Vec<_>>();
+            let num_non_null = arrays.iter().filter(|&v| !v.is_null(i)).count();
+            let values = arrays.iter().map(|v| v.value(i)).collect::<Vec<_>>();
+            if num_non_null == num_dimensions {
+                write_wkb_point_header(&mut builder, self.dim).map_err(|_| {
+                    datafusion_common::DataFusionError::Internal(
+                        "Failed to write WKB point header".to_string(),
+                    )
+                })?;
+                let coord = (values[0], values[1]);
+                write_wkb_coord(&mut builder, coord).map_err(|_| {
+                    datafusion_common::DataFusionError::Internal(
+                        "Failed to write WKB coordinate".to_string(),
+                    )
+                })?;
+                // match num_dimensions {
+                //     2 => {
+                //         let coord = (values[0], values[1]);
+                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
+                //             datafusion_common::DataFusionError::Internal(
+                //                 "Failed to write WKB coordinate".to_string(),
+                //             )
+                //         })?;
+                //     }
+                //     3 => {
+                //         let coord = (values[0], values[1], values[2]);
+                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
+                //             datafusion_common::DataFusionError::Internal(
+                //                 "Failed to write WKB coordinate".to_string(),
+                //             )
+                //         })?;
+                //     }
+                //     4 => {
+                //         let coord = (values[0], values[1], values[2], values[3]);
+                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
+                //             datafusion_common::DataFusionError::Internal(
+                //                 "Failed to write WKB coordinate".to_string(),
+                //             )
+                //         })?;
+                //     }
+                //     _ => {
+                //         return Err(datafusion_common::DataFusionError::Internal(
+                //             "Unsupported number of dimensions".to_string(),
+                //         ))
+                //     }
+                // }
+                builder.append_value([]);
             } else {
-                populate_wkb_item(&mut item, &coords);
-                builder.append_value(&item);
+                builder.append_null();
             }
+            // let mut coords = Vec::with_capacity(num_coords);
+            // let mut has_null = false;
+
+            // for array in &coord_f64_arrays {
+            //     if array.is_null(i) {
+            //         has_null = true;
+            //         break;
+            //     } else {
+            //         coords.push(array.value(i));
+            //     }
+            // }
+
+            // if has_null {
+            //     builder.append_null();
+            // } else {
+            //     populate_wkb_item(&mut item, &coords);
+            //     builder.append_value(&item);
+            // }
         }
 
         let new_array = builder.finish();

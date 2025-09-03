@@ -444,7 +444,7 @@ impl WritableCoord for (f64, f64, f64, f64) {
     }
 }
 
-fn wkb_dim_code(dimension: Dimensions) -> Result<u32, SedonaGeometryError> {
+pub fn wkb_dim_code(dimension: Dimensions) -> Result<u32, SedonaGeometryError> {
     match dimension {
         Dimensions::Xy => Ok(0),
         Dimensions::Xyz => Ok(1000),
