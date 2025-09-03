@@ -30,7 +30,6 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::Dimensions;
-use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
@@ -213,32 +212,11 @@ impl SedonaScalarKernel for STGeoFromPointZm {
             let any_null = arrays.iter().any(|&v| v.is_null(i));
             let values = arrays.iter().map(|v| v.value(i)).collect::<Vec<_>>();
             if !any_null {
-                write_wkb_point_header(&mut builder, self.dim).map_err(|_| {
+                write_wkb_pointzm(&mut builder, &values, self.dim).map_err(|_| {
                     datafusion_common::DataFusionError::Internal(
                         "Failed to write WKB point header".to_string(),
                     )
                 })?;
-                match num_dimensions {
-                    3 => {
-                        let coord = (values[0], values[1], values[2]);
-                        write_wkb_coord(&mut builder, coord).map_err(|_| {
-                            datafusion_common::DataFusionError::Internal(
-                                "Failed to write WKB coordinate".to_string(),
-                            )
-                        })?;
-                    }
-                    4 => {
-                        let coord = (values[0], values[1], values[2], values[3]);
-                        write_wkb_coord(&mut builder, coord).map_err(|_| {
-                            datafusion_common::DataFusionError::Internal(
-                                "Failed to write WKB coordinate".to_string(),
-                            )
-                        })?;
-                    }
-                    _ => {
-                        sedona_internal_err!("Unsupported number of dimensions")?;
-                    }
-                }
                 builder.append_value([]);
             } else {
                 builder.append_null();
