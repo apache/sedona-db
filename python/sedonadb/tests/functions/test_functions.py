@@ -590,6 +590,70 @@ def test_st_point(eng, x, y, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("x", "y", "z", "expected"),
+    [
+        (None, None, None, None),
+        (1, None, None, None),
+        (None, 1, None, None),
+        (None, None, 1, None),
+        (1, 1, 1, "POINT Z (1 1, 1)"),
+        (1.0, 1.0, 1.0, "POINT Z (1 1, 1)"),
+        (10, -1.5, 1.0, "POINT Z (10 -1.5, 1)"),
+    ],
+)
+def test_st_pointz(eng, x, y, z, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_PointZ({val_or_null(x)}, {val_or_null(y)}, {val_or_null(z)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("x", "y", "m", "expected"),
+    [
+        (None, None, None, None),
+        (1, None, None, None),
+        (None, 1, None, None),
+        (None, None, 1, None),
+        (1, 1, 1, "POINT Z (1 1, 1)"),
+        (1.0, 1.0, 1.0, "POINT Z (1 1, 1)"),
+        (10, -1.5, 1.0, "POINT Z (10 -1.5, 1)"),
+    ],
+)
+def test_st_pointm(eng, x, y, m, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_PointM({val_or_null(x)}, {val_or_null(y)}, {val_or_null(m)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("x", "y", "z", "m", "expected"),
+    [
+        (None, None, None, None, None),
+        (1, None, None, None, None),
+        (None, 1, None, None, None),
+        (None, None, 1, None, None),
+        (None, None, None, 1, None),
+        (1, 1, 1, 1, "POINT ZM (1 1, 1, 1)"),
+        (1.0, 1.0, 1.0, 1.0, "POINT ZM (1 1, 1, 1)"),
+        (10, -1.5, 1.0, 1.0, "POINT ZM (10 -1.5, 1, 1)"),
+    ],
+)
+def test_st_pointzm(eng, x, y, z, m, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_PointZM({val_or_null(x)}, {val_or_null(y)}, {val_or_null(z)}, {val_or_null(m)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
