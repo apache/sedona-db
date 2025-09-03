@@ -447,11 +447,7 @@ mod tests {
         let z_tester = ScalarUdfTester::new(st_z_udf().into(), vec![WKB_GEOMETRY]);
         let m_tester = ScalarUdfTester::new(st_m_udf().into(), vec![WKB_GEOMETRY]);
 
-        let scalar = WKB_GEOMETRY
-            .wrap_scalar_maybe_deprecated(&ScalarValue::Binary(Some(
-                MULTIPOINT_WITH_EMPTY_CHILD_WKB.to_vec(),
-            )))
-            .unwrap();
+        let scalar = ScalarValue::Binary(Some(MULTIPOINT_WITH_EMPTY_CHILD_WKB.to_vec()));
         assert_eq!(
             x_tester.invoke_scalar(scalar.clone()).unwrap(),
             ScalarValue::Float64(None)
