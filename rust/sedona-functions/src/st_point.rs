@@ -14,9 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{sync::Arc, vec};
+use std::{iter::zip, sync::Arc, vec};
 
-use arrow_array::{builder::BinaryBuilder, Array};
+use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
@@ -24,20 +24,10 @@ use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::Dimensions;
-// use sedona_geometry::types::GeometryTypeAndDimensions;
-use sedona_geometry::wkb_factory::{write_wkb_coord, write_wkb_point_header, WKB_POINT_TYPE};
-// use sedona_geometry::wkb_factory::wkb_dim_code;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
 use crate::executor::WkbExecutor;
-
-// WKB geometry type constants following ISO standards
-// const WKB_POINT_Z: u32 = 1001;
-// const WKB_POINT_M: u32 = 2001;
-// const WKB_POINT_ZM: u32 = 3001;
-const WKB_HEADER_SIZE: usize = 5;
 
 /// ST_Point() scalar UDF implementation
 ///
@@ -48,74 +38,28 @@ pub fn st_point_udf() -> SedonaScalarUDF {
         "st_point",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
-            dim: Dimensions::Xy,
         })],
         Volatility::Immutable,
-        Some(xy_point_doc("ST_Point", "Geometry")),
+        Some(doc("ST_Point", "Geometry")),
     )
 }
 
 /// ST_GeogPoint() scalar UDF implementation
 ///
-/// Native implementation to create geographies from coordinates.
+/// Native implementation to create geometries from coordinates.
+/// See [`st_geogpoint_udf`] for the corresponding geography constructor.
 pub fn st_geogpoint_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geogpoint",
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOGRAPHY,
-            dim: Dimensions::Xy,
         })],
         Volatility::Immutable,
-        Some(xy_point_doc("st_geogpoint", "Geography")),
+        Some(doc("st_geogpoint", "Geography")),
     )
 }
 
-/// ST_PointZ() scalar UDF implementation
-///
-/// Native implementation to create Z geometries from coordinates.
-pub fn st_pointz_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "st_pointz",
-        vec![Arc::new(STGeoFromPoint {
-            out_type: WKB_GEOMETRY,
-            dim: Dimensions::Xyz,
-        })],
-        Volatility::Immutable,
-        Some(three_coord_point_doc("ST_PointZ", "Geometry", "Z")),
-    )
-}
-
-/// ST_PointM() scalar UDF implementation
-///
-/// Native implementation to create M geometries from coordinates.
-pub fn st_pointm_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "st_pointm",
-        vec![Arc::new(STGeoFromPoint {
-            out_type: WKB_GEOMETRY,
-            dim: Dimensions::Xym,
-        })],
-        Volatility::Immutable,
-        Some(three_coord_point_doc("ST_PointM", "Geometry", "M")),
-    )
-}
-
-/// ST_PointZM() scalar UDF implementation
-///
-/// Native implementation to create ZM geometries from coordinates.
-pub fn st_pointzm_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "st_pointzm",
-        vec![Arc::new(STGeoFromPoint {
-            out_type: WKB_GEOMETRY,
-            dim: Dimensions::Xyzm,
-        })],
-        Volatility::Immutable,
-        Some(xyzm_point_doc("ST_PointZM", "Geometry")),
-    )
-}
-
-fn xy_point_doc(name: &str, out_type_name: &str) -> Documentation {
+fn doc(name: &str, out_type_name: &str) -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         format!(
@@ -130,54 +74,17 @@ fn xy_point_doc(name: &str, out_type_name: &str) -> Documentation {
     .build()
 }
 
-fn three_coord_point_doc(name: &str, out_type_name: &str, third_dim: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a Point {} from X, Y and {}",
-            out_type_name.to_lowercase(),
-            third_dim
-        ),
-        format!("{name} (x: Double, y: Double, z: Double)"),
-    )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
-    .with_argument(
-        third_dim.to_lowercase(),
-        format!("double: {} value", third_dim),
-    )
-    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0)"))
-    .build()
-}
-
-fn xyzm_point_doc(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a Point {} from X, Y, Z and M",
-            out_type_name.to_lowercase()
-        ),
-        format!("{name} (x: Double, y: Double, z: Double)"),
-    )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
-    .with_argument("z", "double: Z value")
-    .with_argument("m", "double: M value")
-    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0, 50.0)"))
-    .build()
-}
-
 #[derive(Debug)]
 struct STGeoFromPoint {
     out_type: SedonaType,
-    dim: Dimensions,
 }
 
 impl SedonaScalarKernel for STGeoFromPoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let num_coords = self.dim.size();
-        let expected_args = vec![ArgMatcher::is_numeric(); num_coords];
-        let matcher = ArgMatcher::new(expected_args, self.out_type.clone());
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_numeric(), ArgMatcher::is_numeric()],
+            self.out_type.clone(),
+        );
         matcher.match_args(args)
     }
 
@@ -186,153 +93,50 @@ impl SedonaScalarKernel for STGeoFromPoint {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let num_coords = self.dim.size();
         let executor = WkbExecutor::new(arg_types, args);
 
-        // Cast all arguments to Float64
-        let coord_values: Result<Vec<_>> = args
-            .iter()
-            .map(|arg| arg.cast_to(&DataType::Float64, None))
-            .collect();
-        let coord_values = coord_values?;
+        let x = &args[0].cast_to(&DataType::Float64, None)?;
+        let y = &args[1].cast_to(&DataType::Float64, None)?;
 
-        // Calculate WKB item size based on coordinates: endian(1) + type(4) + coords(8 each)
-        let wkb_size = WKB_HEADER_SIZE + (num_coords * 8);
-        let mut item = vec![0u8; wkb_size];
-        // Little endian
+        let mut item: [u8; 21] = [0x00; 21];
         item[0] = 0x01;
-        // Geometry type
-        use sedona_geometry::wkb_factory::wkb_dim_code; // TODO
-        let geom_type = WKB_POINT_TYPE
-            + wkb_dim_code(self.dim).map_err(|_| {
-                datafusion_common::DataFusionError::Internal(
-                    "Failed to calculate WKB dimension code".to_string(),
-                )
-            })?;
-        item[1..WKB_HEADER_SIZE].copy_from_slice(&geom_type.to_le_bytes());
+        item[1] = 0x01;
 
-        // write_wkb_point_header(&mut item, self.dim).map_err(|_| datafusion_common::DataFusionError::Internal(
-        //     "Failed to write WKB point header".to_string(),
-        // ))?;
-
-        // Check if all arguments are scalars
-        let all_scalars = coord_values
-            .iter()
-            .all(|v| matches!(v, ColumnarValue::Scalar(_)));
-
-        if all_scalars {
-            let scalar_coords: Result<Vec<_>> = coord_values
-                .iter()
-                .map(|v| match v {
-                    ColumnarValue::Scalar(ScalarValue::Float64(val)) => Ok(*val),
-                    _ => Err(datafusion_common::DataFusionError::Internal(
-                        "Expected Float64 scalar".to_string(),
-                    )),
-                })
-                .collect();
-            let scalar_coords = scalar_coords?;
-
-            // Check if any coordinate is null
-            if scalar_coords.iter().any(|coord| coord.is_none()) {
+        // Handle the Scalar case to ensure that Scalar + Scalar -> Scalar
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Float64(x_float)),
+            ColumnarValue::Scalar(ScalarValue::Float64(y_float)),
+        ) = (x, y)
+        {
+            if let (Some(x), Some(y)) = (x_float, y_float) {
+                populate_wkb_item(&mut item, x, y);
+                return Ok(ScalarValue::Binary(Some(item.to_vec())).into());
+            } else {
                 return Ok(ScalarValue::Binary(None).into());
             }
-
-            // Populate WKB with coordinates
-            let coord_values: Vec<f64> = scalar_coords.into_iter().map(|c| c.unwrap()).collect();
-            populate_wkb_item(&mut item, &coord_values);
-            return Ok(ScalarValue::Binary(Some(item)).into());
         }
 
-        // Handle array case
-        let coord_arrays: Result<Vec<_>> = coord_values
-            .iter()
-            .map(|v| v.to_array(executor.num_iterations()))
-            .collect();
-        let coord_arrays = coord_arrays?;
-
-        let coord_f64_arrays: Result<Vec<_>> = coord_arrays
-            .iter()
-            .map(|array| as_float64_array(array))
-            .collect();
-        let coord_f64_arrays = coord_f64_arrays?;
+        // Ensure both sides are arrays before iterating
+        let x_array = x.to_array(executor.num_iterations())?;
+        let y_array = y.to_array(executor.num_iterations())?;
+        let x_f64 = as_float64_array(&x_array)?;
+        let y_f64 = as_float64_array(&y_array)?;
 
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            wkb_size * executor.num_iterations(),
+            item.len() * executor.num_iterations(),
         );
 
-        for i in 0..executor.num_iterations() {
-            let num_dimensions = self.dim.size();
-            let arrays = (0..num_dimensions)
-                .map(|j| coord_f64_arrays[j])
-                .collect::<Vec<_>>();
-            let num_non_null = arrays.iter().filter(|&v| !v.is_null(i)).count();
-            let values = arrays.iter().map(|v| v.value(i)).collect::<Vec<_>>();
-            if num_non_null == num_dimensions {
-                write_wkb_point_header(&mut builder, self.dim).map_err(|_| {
-                    datafusion_common::DataFusionError::Internal(
-                        "Failed to write WKB point header".to_string(),
-                    )
-                })?;
-                let coord = (values[0], values[1]);
-                write_wkb_coord(&mut builder, coord).map_err(|_| {
-                    datafusion_common::DataFusionError::Internal(
-                        "Failed to write WKB coordinate".to_string(),
-                    )
-                })?;
-                // match num_dimensions {
-                //     2 => {
-                //         let coord = (values[0], values[1]);
-                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
-                //             datafusion_common::DataFusionError::Internal(
-                //                 "Failed to write WKB coordinate".to_string(),
-                //             )
-                //         })?;
-                //     }
-                //     3 => {
-                //         let coord = (values[0], values[1], values[2]);
-                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
-                //             datafusion_common::DataFusionError::Internal(
-                //                 "Failed to write WKB coordinate".to_string(),
-                //             )
-                //         })?;
-                //     }
-                //     4 => {
-                //         let coord = (values[0], values[1], values[2], values[3]);
-                //         write_wkb_coord(&mut builder, coord).map_err(|_| {
-                //             datafusion_common::DataFusionError::Internal(
-                //                 "Failed to write WKB coordinate".to_string(),
-                //             )
-                //         })?;
-                //     }
-                //     _ => {
-                //         return Err(datafusion_common::DataFusionError::Internal(
-                //             "Unsupported number of dimensions".to_string(),
-                //         ))
-                //     }
-                // }
-                builder.append_value([]);
-            } else {
-                builder.append_null();
+        for (x_elem, y_elem) in zip(x_f64, y_f64) {
+            match (x_elem, y_elem) {
+                (Some(x), Some(y)) => {
+                    populate_wkb_item(&mut item, &x, &y);
+                    builder.append_value(item);
+                }
+                _ => {
+                    builder.append_null();
+                }
             }
-            // let mut coords = Vec::with_capacity(num_coords);
-            // let mut has_null = false;
-
-            // for array in &coord_f64_arrays {
-            //     if array.is_null(i) {
-            //         has_null = true;
-            //         break;
-            //     } else {
-            //         coords.push(array.value(i));
-            //     }
-            // }
-
-            // if has_null {
-            //     builder.append_null();
-            // } else {
-            //     populate_wkb_item(&mut item, &coords);
-            //     builder.append_value(&item);
-            // }
         }
 
         let new_array = builder.finish();
@@ -340,12 +144,9 @@ impl SedonaScalarKernel for STGeoFromPoint {
     }
 }
 
-fn populate_wkb_item(item: &mut [u8], coords: &[f64]) {
-    for (i, coord) in coords.iter().enumerate() {
-        let start_idx = WKB_HEADER_SIZE + (i * 8);
-        let end_idx = start_idx + 8;
-        item[start_idx..end_idx].copy_from_slice(&coord.to_le_bytes());
-    }
+fn populate_wkb_item(item: &mut [u8], x: &f64, y: &f64) {
+    item[5..13].copy_from_slice(&x.to_le_bytes());
+    item[13..21].copy_from_slice(&y.to_le_bytes());
 }
 
 #[cfg(test)]
@@ -366,18 +167,6 @@ mod tests {
         let geom_from_point: ScalarUDF = st_point_udf().into();
         assert_eq!(geom_from_point.name(), "st_point");
         assert!(geom_from_point.documentation().is_some());
-
-        let pointz: ScalarUDF = st_pointz_udf().into();
-        assert_eq!(pointz.name(), "st_pointz");
-        assert!(pointz.documentation().is_some());
-
-        let pointm: ScalarUDF = st_pointm_udf().into();
-        assert_eq!(pointm.name(), "st_pointm");
-        assert!(pointm.documentation().is_some());
-
-        let pointzm: ScalarUDF = st_pointzm_udf().into();
-        assert_eq!(pointzm.name(), "st_pointzm");
-        assert!(pointzm.documentation().is_some());
 
         let geog_from_point: ScalarUDF = st_geogpoint_udf().into();
         assert_eq!(geog_from_point.name(), "st_geogpoint");
@@ -484,162 +273,6 @@ mod tests {
             )
             .unwrap(),
             &create_scalar_value(Some("POINT (1 2)"), &WKB_GEOGRAPHY),
-        );
-    }
-
-    #[test]
-    fn test_pointz() {
-        let udf = st_pointz_udf();
-
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT Z (1 2 3)"), &WKB_GEOMETRY),
-        );
-
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
-
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let z_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
-
-        assert_value_equal(
-            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), z_array.clone()], 1)
-                .unwrap(),
-            &create_array_value(&[Some("POINT Z (1 5 10)"), None, None, None], &WKB_GEOMETRY),
-        );
-    }
-
-    #[test]
-    fn test_pointm() {
-        let udf = st_pointm_udf();
-
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(4.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT M (1 2 4)"), &WKB_GEOMETRY),
-        );
-
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
-
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let m_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
-
-        assert_value_equal(
-            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), m_array.clone()], 1)
-                .unwrap(),
-            &create_array_value(&[Some("POINT M (1 5 10)"), None, None, None], &WKB_GEOMETRY),
-        );
-    }
-
-    #[test]
-    fn test_pointzm() {
-        let udf = st_pointzm_udf();
-
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                    ScalarValue::Float64(Some(4.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT ZM (1 2 3 4)"), &WKB_GEOMETRY),
-        );
-
-        // Even if xy are valid, result is null if z or m is null
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(1.0), Some(2.0), None, Some(1.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), Some(2.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let z_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(20.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let m_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(10.0), None, Some(12.0), Some(4.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    x_array.clone(),
-                    y_array.clone(),
-                    z_array.clone(),
-                    m_array.clone(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_array_value(
-                &[Some("POINT ZM (1 5 20 10)"), None, None, None],
-                &WKB_GEOMETRY,
-            ),
         );
     }
 }
