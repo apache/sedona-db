@@ -171,6 +171,15 @@ pub enum BenchmarkArgs {
     ArrayScalarScalar(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
     /// Invoke a ternary function with two arrays and a scalar
     ArrayArrayScalar(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
+    /// Invoke a ternary function with three arrays
+    ArrayArrayArray(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
+    /// Invoke a quaternary function with four arrays
+    ArrayArrayArrayArray(
+        BenchmarkArgSpec,
+        BenchmarkArgSpec,
+        BenchmarkArgSpec,
+        BenchmarkArgSpec,
+    ),
 }
 
 impl From<BenchmarkArgSpec> for BenchmarkArgs {
@@ -190,7 +199,9 @@ impl BenchmarkArgs {
         let array_configs = match self {
             BenchmarkArgs::Array(_)
             | BenchmarkArgs::ArrayArray(_, _)
-            | BenchmarkArgs::ArrayArrayScalar(_, _, _) => self.specs(),
+            | BenchmarkArgs::ArrayArrayScalar(_, _, _)
+            | BenchmarkArgs::ArrayArrayArray(_, _, _)
+            | BenchmarkArgs::ArrayArrayArrayArray(_, _, _, _) => self.specs(),
             BenchmarkArgs::ScalarArray(_, col)
             | BenchmarkArgs::ArrayScalar(col, _)
             | BenchmarkArgs::ArrayScalarScalar(col, _, _) => {
@@ -238,8 +249,12 @@ impl BenchmarkArgs {
                 vec![col0.clone(), col1.clone()]
             }
             BenchmarkArgs::ArrayScalarScalar(col0, col1, col2)
-            | BenchmarkArgs::ArrayArrayScalar(col0, col1, col2) => {
+            | BenchmarkArgs::ArrayArrayScalar(col0, col1, col2)
+            | BenchmarkArgs::ArrayArrayArray(col0, col1, col2) => {
                 vec![col0.clone(), col1.clone(), col2.clone()]
+            }
+            BenchmarkArgs::ArrayArrayArrayArray(col0, col1, col2, col3) => {
+                vec![col0.clone(), col1.clone(), col2.clone(), col3.clone()]
             }
         }
     }
@@ -464,6 +479,25 @@ impl BenchmarkData {
                         self.arrays[1][i].clone(),
                         self.scalars[0].clone(),
                     )?;
+                }
+            }
+            BenchmarkArgs::ArrayArrayArray(_, _, _) => {
+                for i in 0..self.num_batches {
+                    tester.invoke_arrays(vec![
+                        self.arrays[0][i].clone(),
+                        self.arrays[1][i].clone(),
+                        self.arrays[2][i].clone(),
+                    ])?;
+                }
+            }
+            BenchmarkArgs::ArrayArrayArrayArray(_, _, _, _) => {
+                for i in 0..self.num_batches {
+                    tester.invoke_arrays(vec![
+                        self.arrays[0][i].clone(),
+                        self.arrays[1][i].clone(),
+                        self.arrays[2][i].clone(),
+                        self.arrays[3][i].clone(),
+                    ])?;
                 }
             }
         }
@@ -770,5 +804,71 @@ mod test {
         );
 
         assert_eq!(data.scalars[0].data_type(), DataType::Float64);
+    }
+
+    #[test]
+    fn args_array_array_array() {
+        let spec = BenchmarkArgs::ArrayArrayArray(
+            BenchmarkArgSpec::Point,
+            BenchmarkArgSpec::Point,
+            BenchmarkArgSpec::Float64(1.0, 2.0),
+        );
+        assert_eq!(
+            spec.sedona_types(),
+            [
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                DataType::Float64.try_into().unwrap()
+            ]
+        );
+
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
+        assert_eq!(data.num_batches, 2);
+        assert_eq!(data.arrays.len(), 3);
+        assert_eq!(data.scalars.len(), 0);
+        assert_eq!(data.arrays[0].len(), 2);
+        assert_eq!(
+            WKB_GEOMETRY,
+            data.arrays[0][0].data_type().try_into().unwrap()
+        );
+        assert_eq!(data.arrays[1].len(), 2);
+        assert_eq!(
+            WKB_GEOMETRY,
+            data.arrays[1][0].data_type().try_into().unwrap()
+        );
+        assert_eq!(data.arrays[2].len(), 2);
+        assert_eq!(data.arrays[2][0].data_type(), &DataType::Float64);
+    }
+
+    #[test]
+    fn args_array_array_array_array() {
+        let spec = BenchmarkArgs::ArrayArrayArrayArray(
+            BenchmarkArgSpec::Float64(1.0, 2.0),
+            BenchmarkArgSpec::Float64(3.0, 4.0),
+            BenchmarkArgSpec::Float64(5.0, 6.0),
+            BenchmarkArgSpec::Float64(7.0, 8.0),
+        );
+        assert_eq!(
+            spec.sedona_types(),
+            [
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap()
+            ]
+        );
+
+        let data = spec.build_data(2, ROWS_PER_BATCH).unwrap();
+        assert_eq!(data.num_batches, 2);
+        assert_eq!(data.arrays.len(), 4);
+        assert_eq!(data.scalars.len(), 0);
+        assert_eq!(data.arrays[0].len(), 2);
+        assert_eq!(data.arrays[0][0].data_type(), &DataType::Float64);
+        assert_eq!(data.arrays[1].len(), 2);
+        assert_eq!(data.arrays[1][0].data_type(), &DataType::Float64);
+        assert_eq!(data.arrays[2].len(), 2);
+        assert_eq!(data.arrays[2][0].data_type(), &DataType::Float64);
+        assert_eq!(data.arrays[3].len(), 2);
+        assert_eq!(data.arrays[3][0].data_type(), &DataType::Float64);
     }
 }
