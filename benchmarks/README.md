@@ -19,6 +19,8 @@ under the License. -->
 
 ## pytest-benchmark
 
+These benchmarks provide a convenient way to compare the results of running queries on sedona-db to other engines like DuckDB and postgis.
+
 ### Setup
 
 Install pytest-benchmark:
@@ -40,7 +42,7 @@ To run a benchmark, simply run the corresponding test function. For example, to 
 pytest test_functions.py::TestBenchFunctions::test_st_buffer
 ```
 
-Most of the time, you'll also want to group by `param:table` or `func` (function) by using the `--benchmark-group-by=param:table` flag.
+Most of the time, you'll also want to group by `param:table` or `func` (function) by using the `--benchmark-group-by=param:table` flag. pytest-benchmark will highlight the "best" value in green (e.g fastest for median, lowest for stddev) and "worse" value in red for each column per each group.
 
 ```bash
 pytest --benchmark-group-by=param:table test_functions.py::TestBenchFunctions::test_st_buffer
