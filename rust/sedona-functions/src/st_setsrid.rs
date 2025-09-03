@@ -176,20 +176,35 @@ mod test {
         let questionable_crs_scalar = ScalarValue::Utf8(Some("gazornenplat".to_string()));
 
         // Call with a string scalar destination
-        let (return_type, result) =
-            call_udf(&udf, geom_arg.clone(), good_crs_scalar.clone()).unwrap();
+        let (return_type, result) = call_udf(
+            &udf,
+            geom_arg.clone(),
+            WKB_GEOMETRY,
+            good_crs_scalar.clone(),
+        )
+        .unwrap();
         assert_eq!(return_type, wkb_lnglat);
         assert_value_equal(&result, &geom_lnglat);
 
         // Call with a null scalar destination (should *not* set the output crs)
-        let (return_type, result) =
-            call_udf(&udf, geom_arg.clone(), null_crs_scalar.clone()).unwrap();
+        let (return_type, result) = call_udf(
+            &udf,
+            geom_arg.clone(),
+            WKB_GEOMETRY,
+            null_crs_scalar.clone(),
+        )
+        .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
         assert_value_equal(&result, &geom_arg);
 
         // Call with an integer code destination (should result in a lnglat crs)
-        let (return_type, result) =
-            call_udf(&udf, geom_arg.clone(), epsg_code_scalar.clone()).unwrap();
+        let (return_type, result) = call_udf(
+            &udf,
+            geom_arg.clone(),
+            WKB_GEOMETRY,
+            epsg_code_scalar.clone(),
+        )
+        .unwrap();
         assert_eq!(return_type, wkb_lnglat);
         assert_value_equal(&result, &geom_lnglat);
 
@@ -199,6 +214,7 @@ mod test {
         let err = call_udf(
             &udf_with_validation,
             geom_arg.clone(),
+            WKB_GEOMETRY,
             questionable_crs_scalar.clone(),
         )
         .unwrap_err();
@@ -208,10 +224,11 @@ mod test {
     fn call_udf(
         udf: &ScalarUDF,
         arg: ColumnarValue,
+        arg_type: SedonaType,
         to: ScalarValue,
     ) -> Result<(SedonaType, ColumnarValue)> {
         let arg_fields = vec![
-            Field::new("", arg.data_type(), true).into(),
+            Arc::new(arg_type.to_storage_field("", true)?),
             Field::new("", DataType::Utf8, true).into(),
         ];
         let return_field_args = ReturnFieldArgs {
@@ -220,7 +237,7 @@ mod test {
         };
 
         let return_field = udf.return_field_from_args(return_field_args)?;
-        let return_type = SedonaType::from_data_type(return_field.data_type())?;
+        let return_type = SedonaType::from_storage_field(&return_field)?;
 
         let args = ScalarFunctionArgs {
             args: vec![arg, to.into()],
