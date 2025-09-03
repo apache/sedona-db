@@ -95,7 +95,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native",
         "st_pointzm",
-        BenchmarkArgs::ArrayArrayArray(
+        BenchmarkArgs::ArrayArrayArrayArray(
             Float64(0.0, 100.0),
             Float64(0.0, 100.0),
             Float64(0.0, 100.0),
