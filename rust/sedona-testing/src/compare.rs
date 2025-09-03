@@ -83,26 +83,14 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
 
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _)) => {
             assert_wkb_sequences_equal(
-                as_binary_array(&actual_sedona.unwrap_array_maybe_deprecated(actual).unwrap())
-                    .unwrap(),
-                as_binary_array(
-                    &expected_sedona
-                        .unwrap_array_maybe_deprecated(expected)
-                        .unwrap(),
-                )
-                .unwrap(),
+                as_binary_array(&actual).unwrap(),
+                as_binary_array(&expected).unwrap(),
             );
         }
         (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_sequences_equal(
-                as_binary_view_array(&actual_sedona.unwrap_array_maybe_deprecated(actual).unwrap())
-                    .unwrap(),
-                as_binary_view_array(
-                    &expected_sedona
-                        .unwrap_array_maybe_deprecated(expected)
-                        .unwrap(),
-                )
-                .unwrap(),
+                as_binary_view_array(&actual).unwrap(),
+                as_binary_view_array(&expected).unwrap(),
             );
         }
         (_, _) => {
@@ -135,14 +123,7 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
         (SedonaType::Arrow(_), SedonaType::Arrow(_)) => assert_arrow_scalar_equal(actual, expected),
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _))
         | (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
-            assert_wkb_scalar_equal(
-                &actual_sedona
-                    .unwrap_scalar_maybe_deprecated(actual)
-                    .unwrap(),
-                &expected_sedona
-                    .unwrap_scalar_maybe_deprecated(expected)
-                    .unwrap(),
-            );
+            assert_wkb_scalar_equal(actual, expected);
         }
         (_, _) => unreachable!(),
     }
@@ -245,7 +226,7 @@ fn format_wkb(value: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use arrow_array::create_array;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
 
     use crate::create::{create_array, create_array_value, create_scalar, create_scalar_value};
 
@@ -288,26 +269,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "actual ScalarValue != expected ScalarValue:
-actual ScalarValue has type Wkb(Spherical, None), expected ScalarValue has type Wkb(Planar, None)")]
-    fn value_scalar_not_equal() {
-        assert_value_equal(
-            &create_scalar_value(None, &WKB_GEOGRAPHY),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "actual Array != expected Array:
-actual Array has type Wkb(Spherical, None), expected Array has type Wkb(Planar, None)")]
-    fn value_array_not_equal() {
-        assert_value_equal(
-            &create_array_value(&[], &WKB_GEOGRAPHY),
-            &create_array_value(&[], &WKB_GEOMETRY),
-        );
-    }
-
-    #[test]
     fn arrays_equal() {
         let arrow: ArrayRef = create_array!(Utf8, [Some("foofy"), None, Some("foofy2")]);
         let wkbs = [Some("POINT (0 1)"), None, Some("POINT (1 2)")];
@@ -321,16 +282,6 @@ actual Array has type Wkb(Spherical, None), expected Array has type Wkb(Planar, 
         assert_array_equal(
             &create_array(&wkbs, &WKB_VIEW_GEOMETRY),
             &create_array(&wkbs, &WKB_VIEW_GEOMETRY),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "actual Array != expected Array:
-actual Array has type Wkb(Planar, None), expected Array has type Wkb(Spherical, None)")]
-    fn arrays_different_type() {
-        assert_array_equal(
-            &create_array(&[], &WKB_GEOMETRY),
-            &create_array(&[], &WKB_GEOGRAPHY),
         );
     }
 
@@ -364,16 +315,6 @@ actual Array has type Wkb(Planar, None), expected Array has type Wkb(Spherical, 
     }
 
     #[test]
-    #[should_panic(expected = "actual Array element #0 != expected Array element #0:
-actual Array element #0 is POINT(0 1), expected Array element #0 is null")]
-    fn arrays_wkb_elements_not_equal() {
-        assert_array_equal(
-            &create_array(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY),
-            &create_array(&[None, Some("POINT (0 1)")], &WKB_GEOMETRY),
-        );
-    }
-
-    #[test]
     fn scalars_equal() {
         assert_scalar_equal(
             &ScalarValue::Utf8(Some("foofy".to_string())),
@@ -390,35 +331,12 @@ actual Array element #0 is POINT(0 1), expected Array element #0 is null")]
     }
 
     #[test]
-    #[should_panic(expected = "actual ScalarValue != expected ScalarValue:
-actual ScalarValue has type Arrow(Utf8), expected ScalarValue has type Wkb(Planar, None)")]
-    fn scalars_different_type() {
-        assert_scalar_equal(
-            &ScalarValue::Utf8(Some("foofy".to_string())),
-            &create_scalar(Some("POINT (0 1)"), &WKB_GEOMETRY),
-        )
-    }
-
-    #[test]
     #[should_panic(expected = "Arrow ScalarValues not equal:
 actual is Utf8(\"foofy\"), expected Utf8(\"not foofy\")")]
     fn scalars_unequal_arrow() {
         assert_scalar_equal(
             &ScalarValue::Utf8(Some("foofy".to_string())),
             &ScalarValue::Utf8(Some("not foofy".to_string())),
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "actual WKB scalar != expected WKB scalar
-actual WKB scalar:
-  POINT(0 1)
-expected WKB scalar:
-  POINT(1 2)")]
-    fn scalars_unequal_wkb() {
-        assert_scalar_equal(
-            &create_scalar(Some("POINT (0 1)"), &WKB_GEOMETRY),
-            &create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
         );
     }
 

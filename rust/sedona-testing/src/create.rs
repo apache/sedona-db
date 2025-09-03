@@ -26,40 +26,28 @@ use wkt::Wkt;
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array_value(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ColumnarValue {
-    data_type
-        .wrap_arg_maybe_deprecated(&ColumnarValue::Array(create_array_storage(
-            wkt_values, data_type,
-        )))
-        .unwrap()
+    ColumnarValue::Array(create_array_storage(wkt_values, data_type))
 }
 
 /// Create a [`ColumnarValue`] scalar from a WKT literal
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar_value(wkt_value: Option<&str>, data_type: &SedonaType) -> ColumnarValue {
-    data_type
-        .wrap_arg_maybe_deprecated(&ColumnarValue::Scalar(create_scalar_storage(
-            wkt_value, data_type,
-        )))
-        .unwrap()
+    ColumnarValue::Scalar(create_scalar_storage(wkt_value, data_type))
 }
 
 /// Create a [`ScalarValue`] from a WKT literal
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarValue {
-    data_type
-        .wrap_scalar_maybe_deprecated(&create_scalar_storage(wkt_value, data_type))
-        .unwrap()
+    create_scalar_storage(wkt_value, data_type)
 }
 
 /// Create an [`ArrayRef`] from a sequence of WKT literals
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ArrayRef {
-    data_type
-        .wrap_array_maybe_deprecated(&create_array_storage(wkt_values, data_type))
-        .unwrap()
+    create_array_storage(wkt_values, data_type)
 }
 
 /// Create the storage [`ArrayRef`] from a sequence of WKT literals
