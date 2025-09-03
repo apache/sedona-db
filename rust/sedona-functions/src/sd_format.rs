@@ -153,11 +153,8 @@ fn sedona_type_to_formatted_type(sedona_type: &SedonaType) -> Result<SedonaType>
 }
 
 fn field_to_formatted_field(field: &Field) -> Result<Field> {
-    let new_type = sedona_type_to_formatted_type(&SedonaType::from_data_type(field.data_type())?)?;
-    let new_field = field
-        .clone()
-        .with_data_type(new_type.data_type_maybe_deprecated());
-    Ok(new_field)
+    let new_type = sedona_type_to_formatted_type(&SedonaType::from_storage_field(field)?)?;
+    new_type.to_storage_field(field.name(), field.is_nullable())
 }
 
 fn columnar_value_to_formatted_value(
@@ -269,11 +266,10 @@ fn struct_value_to_formatted_value(
     let mut new_fields = Vec::with_capacity(columns.len());
     for (column, field) in columns.iter().zip(fields) {
         let new_field = field_to_formatted_field(field)?;
-        let sedona_type = SedonaType::from_data_type(field.data_type())?;
-        let unwrapped_column = sedona_type.unwrap_array_maybe_deprecated(column)?;
+        let sedona_type = SedonaType::from_storage_field(field)?;
         let new_column = columnar_value_to_formatted_value(
             &sedona_type,
-            &ColumnarValue::Array(unwrapped_column),
+            &ColumnarValue::Array(column.clone()),
             maybe_width_hint,
         )?;
 
@@ -300,11 +296,10 @@ fn list_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     let nulls = list_array.nulls();
 
     let new_field = field_to_formatted_field(field)?;
-    let sedona_type = SedonaType::from_data_type(field.data_type())?;
-    let unwrapped_values_array = sedona_type.unwrap_array_maybe_deprecated(values_array)?;
+    let sedona_type = SedonaType::from_storage_field(field)?;
     let new_columnar_value = columnar_value_to_formatted_value(
         &sedona_type,
-        &ColumnarValue::Array(unwrapped_values_array),
+        &ColumnarValue::Array(values_array.clone()),
         maybe_width_hint,
     )?;
 
@@ -335,11 +330,10 @@ fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     let nulls = list_view_array.nulls();
 
     let new_field = field_to_formatted_field(field)?;
-    let sedona_type = SedonaType::from_data_type(field.data_type())?;
-    let unwrapped_values_array = sedona_type.unwrap_array_maybe_deprecated(values_array)?;
+    let sedona_type = SedonaType::from_storage_field(field)?;
     let new_columnar_value = columnar_value_to_formatted_value(
         &sedona_type,
-        &ColumnarValue::Array(unwrapped_values_array),
+        &ColumnarValue::Array(values_array.clone()),
         maybe_width_hint,
     )?;
 
@@ -555,11 +549,7 @@ mod tests {
             );
             let result = tester.invoke_array(test_array.clone()).unwrap();
             if !matches!(expected_data_type, DataType::ListView(_)) {
-                assert_eq!(
-                    &result, &test_array,
-                    "Failed for test case: {}",
-                    description
-                );
+                assert_eq!(&result, &test_array, "Failed for test case: {description}",);
             }
         }
     }
@@ -578,11 +568,7 @@ mod tests {
         // Create non-spatial array
         let int_array: ArrayRef = Arc::new(Int32Array::from(vec![10, 20, 30]));
         let struct_fields = vec![
-            Arc::new(Field::new(
-                "geom",
-                sedona_type.data_type_maybe_deprecated(),
-                true,
-            )),
+            Arc::new(sedona_type.to_storage_field("geom", true).unwrap()),
             Arc::new(Field::new("id", DataType::Int32, false)),
         ];
         let struct_array = StructArray::new(
@@ -648,11 +634,7 @@ mod tests {
 
         // Create struct array with proper extension metadata
         let struct_fields = vec![
-            Arc::new(Field::new(
-                "geom",
-                sedona_type.data_type_maybe_deprecated(),
-                true,
-            )),
+            Arc::new(sedona_type.to_storage_field("geom", true).unwrap()),
             Arc::new(Field::new("name", DataType::Utf8, true)),
             Arc::new(Field::new("active", DataType::Boolean, false)),
         ];
@@ -709,11 +691,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a simple list containing the geometry array
-        let field = Arc::new(Field::new(
-            "geom",
-            sedona_type.data_type_maybe_deprecated(),
-            true,
-        ));
+        let field = Arc::new(sedona_type.to_storage_field("geom", true).unwrap());
         let offsets = OffsetBuffer::new(vec![0, 2, 4].into());
         let list_array = ListArray::new(field, offsets, geom_array, None);
 
@@ -731,7 +709,7 @@ mod tests {
         if let DataType::List(inner_field) = list_field {
             assert_eq!(inner_field.data_type(), &DataType::Utf8);
         } else {
-            panic!("Expected List data type, got: {:?}", list_field);
+            panic!("Expected List data type, got: {list_field:?}");
         }
 
         // Check the actual formatted values in the list
@@ -765,11 +743,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a ListView containing the geometry array
-        let field = Arc::new(Field::new(
-            "geom",
-            sedona_type.data_type_maybe_deprecated(),
-            true,
-        ));
+        let field = Arc::new(sedona_type.to_storage_field("geom", true).unwrap());
         let offsets = ScalarBuffer::from(vec![0i32, 2i32]); // Two list views: [0,2) and [2,4)
         let sizes = ScalarBuffer::from(vec![2i32, 2i32]); // Each list view has 2 elements
         let list_view_array = ListViewArray::new(field, offsets, sizes, geom_array, None);
@@ -791,7 +765,7 @@ mod tests {
         if let DataType::ListView(inner_field) = list_field {
             assert_eq!(inner_field.data_type(), &DataType::Utf8);
         } else {
-            panic!("Expected ListView data type, got: {:?}", list_field);
+            panic!("Expected ListView data type, got: {list_field:?}");
         }
 
         // Check the actual formatted values in the list view
@@ -825,11 +799,7 @@ mod tests {
         let geom_array = create_array(&geom_values, &sedona_type);
 
         // Create a list containing the geometry array
-        let geom_list_field = Arc::new(Field::new(
-            "geom",
-            sedona_type.data_type_maybe_deprecated(),
-            true,
-        ));
+        let geom_list_field = Arc::new(sedona_type.to_storage_field("geom", true).unwrap());
         let geom_offsets = OffsetBuffer::new(vec![0, 4].into()); // One list containing all 4 geometries
         let geom_list_array = ListArray::new(geom_list_field, geom_offsets, geom_array, None);
 
@@ -842,11 +812,9 @@ mod tests {
             Arc::new(Field::new("name", DataType::Utf8, true)),
             Arc::new(Field::new(
                 "geometries",
-                DataType::List(Arc::new(Field::new(
-                    "geom",
-                    sedona_type.data_type_maybe_deprecated(),
-                    true,
-                ))),
+                DataType::List(Arc::new(
+                    sedona_type.to_storage_field("geom", true).unwrap(),
+                )),
                 true,
             )),
             Arc::new(Field::new("count", DataType::Int32, false)),
@@ -932,11 +900,7 @@ mod tests {
         // Create struct array containing geometry field
         let struct_fields = vec![
             Arc::new(Field::new("id", DataType::Int32, false)),
-            Arc::new(Field::new(
-                "geom",
-                sedona_type.data_type_maybe_deprecated(),
-                true,
-            )),
+            Arc::new(sedona_type.to_storage_field("geom", true).unwrap()),
             Arc::new(Field::new("name", DataType::Utf8, true)),
         ];
         let struct_array = StructArray::new(
@@ -978,7 +942,7 @@ mod tests {
                 );
             }
         } else {
-            panic!("Expected List data type, got: {:?}", list_field);
+            panic!("Expected List data type, got: {list_field:?}");
         }
 
         // Verify the actual struct values and their geometry formatting
