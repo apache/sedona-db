@@ -73,12 +73,9 @@ impl SedonaAccumulator for STEnvelopeAggr {
     fn accumulator(
         &self,
         args: &[SedonaType],
-        output_type: &SedonaType,
+        _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(BoundsAccumulator2D::new(
-            args[0].clone(),
-            output_type.clone(),
-        )))
+        Ok(Box::new(BoundsAccumulator2D::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -91,16 +88,14 @@ impl SedonaAccumulator for STEnvelopeAggr {
 #[derive(Debug)]
 struct BoundsAccumulator2D {
     input_type: SedonaType,
-    output_type: SedonaType,
     x: Interval,
     y: Interval,
 }
 
 impl BoundsAccumulator2D {
-    pub fn new(input_type: SedonaType, output_type: SedonaType) -> Self {
+    pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            output_type,
             x: Interval::empty(),
             y: Interval::empty(),
         }
@@ -152,9 +147,7 @@ impl Accumulator for BoundsAccumulator2D {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
-        let args = [ColumnarValue::Array(
-            self.input_type.unwrap_array_maybe_deprecated(&values[0])?,
-        )];
+        let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
         self.execute_update(executor)?;
         Ok(())
@@ -162,8 +155,7 @@ impl Accumulator for BoundsAccumulator2D {
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let wkb = self.make_wkb_result()?;
-        let scalar = ScalarValue::Binary(wkb);
-        self.output_type.wrap_scalar_maybe_deprecated(&scalar)
+        Ok(ScalarValue::Binary(wkb))
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
