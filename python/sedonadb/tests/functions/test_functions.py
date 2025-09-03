@@ -596,9 +596,9 @@ def test_st_point(eng, x, y, expected):
         (1, None, None, None),
         (None, 1, None, None),
         (None, None, 1, None),
-        (1, 1, 1, "POINT Z (1 1, 1)"),
-        (1.0, 1.0, 1.0, "POINT Z (1 1, 1)"),
-        (10, -1.5, 1.0, "POINT Z (10 -1.5, 1)"),
+        (1, 1, 1, "POINT Z (1 1 1)"),
+        (1.0, 1.0, 1.0, "POINT Z (1 1 1)"),
+        (10, -1.5, 1.0, "POINT Z (10 -1.5 1)"),
     ],
 )
 def test_st_pointz(eng, x, y, z, expected):
@@ -617,9 +617,9 @@ def test_st_pointz(eng, x, y, z, expected):
         (1, None, None, None),
         (None, 1, None, None),
         (None, None, 1, None),
-        (1, 1, 1, "POINT Z (1 1, 1)"),
-        (1.0, 1.0, 1.0, "POINT Z (1 1, 1)"),
-        (10, -1.5, 1.0, "POINT Z (10 -1.5, 1)"),
+        (1, 1, 1, "POINT M (1 1 1)"),
+        (1.0, 1.0, 1.0, "POINT M (1 1 1)"),
+        (10, -1.5, 1.0, "POINT M (10 -1.5 1)"),
     ],
 )
 def test_st_pointm(eng, x, y, m, expected):
@@ -639,9 +639,9 @@ def test_st_pointm(eng, x, y, m, expected):
         (None, 1, None, None, None),
         (None, None, 1, None, None),
         (None, None, None, 1, None),
-        (1, 1, 1, 1, "POINT ZM (1 1, 1, 1)"),
-        (1.0, 1.0, 1.0, 1.0, "POINT ZM (1 1, 1, 1)"),
-        (10, -1.5, 1.0, 1.0, "POINT ZM (10 -1.5, 1, 1)"),
+        (1, 1, 1, 1, "POINT ZM (1 1 1 1)"),
+        (1.0, 1.0, 1.0, 1.0, "POINT ZM (1 1 1 1)"),
+        (10, -1.5, 1.0, 1.0, "POINT ZM (10 -1.5 1 1)"),
     ],
 )
 def test_st_pointzm(eng, x, y, z, m, expected):
