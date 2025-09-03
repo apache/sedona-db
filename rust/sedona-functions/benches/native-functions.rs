@@ -66,42 +66,42 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayArray(Float64(0.0, 100.0), Float64(0.0, 100.0)),
     );
 
-    benchmark::scalar(
-        c,
-        &f,
-        "native",
-        "st_pointz",
-        BenchmarkArgs::ArrayArrayArray(
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-        ),
-    );
+    // benchmark::scalar(
+    //     c,
+    //     &f,
+    //     "native",
+    //     "st_pointz",
+    //     BenchmarkArgs::ArrayArrayArray(
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //     ),
+    // );
 
-    benchmark::scalar(
-        c,
-        &f,
-        "native",
-        "st_pointm",
-        BenchmarkArgs::ArrayArrayArray(
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-        ),
-    );
+    // benchmark::scalar(
+    //     c,
+    //     &f,
+    //     "native",
+    //     "st_pointm",
+    //     BenchmarkArgs::ArrayArrayArray(
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //     ),
+    // );
 
-    benchmark::scalar(
-        c,
-        &f,
-        "native",
-        "st_pointzm",
-        BenchmarkArgs::ArrayArrayArrayArray(
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-            Float64(0.0, 100.0),
-        ),
-    );
+    // benchmark::scalar(
+    //     c,
+    //     &f,
+    //     "native",
+    //     "st_pointzm",
+    //     BenchmarkArgs::ArrayArrayArrayArray(
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //         Float64(0.0, 100.0),
+    //     ),
+    // );
 
     benchmark::scalar(c, &f, "native", "st_hasz", Point);
     benchmark::scalar(c, &f, "native", "st_hasz", LineString(10));
