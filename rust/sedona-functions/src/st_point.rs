@@ -24,6 +24,7 @@ use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
@@ -46,7 +47,6 @@ pub fn st_point_udf() -> SedonaScalarUDF {
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
             wkb_type: WKB_POINT,
-            num_coords: 2,
         })],
         Volatility::Immutable,
         Some(doc(
@@ -67,7 +67,6 @@ pub fn st_geogpoint_udf() -> SedonaScalarUDF {
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOGRAPHY,
             wkb_type: WKB_POINT,
-            num_coords: 2,
         })],
         Volatility::Immutable,
         Some(doc(
@@ -88,7 +87,6 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
             wkb_type: WKB_POINT_Z,
-            num_coords: 3,
         })],
         Volatility::Immutable,
         Some(doc(
@@ -109,7 +107,6 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
             wkb_type: WKB_POINT_M,
-            num_coords: 3,
         })],
         Volatility::Immutable,
         Some(doc(
@@ -130,7 +127,6 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
         vec![Arc::new(STGeoFromPoint {
             out_type: WKB_GEOMETRY,
             wkb_type: WKB_POINT_ZM,
-            num_coords: 4,
         })],
         Volatility::Immutable,
         Some(doc(
@@ -197,12 +193,18 @@ fn doc(name: &str, out_type_name: &str, params: &[&str], example: &str) -> Docum
 struct STGeoFromPoint {
     out_type: SedonaType,
     wkb_type: u32,
-    num_coords: usize,
 }
 
 impl SedonaScalarKernel for STGeoFromPoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let expected_args = vec![ArgMatcher::is_numeric(); self.num_coords];
+        let num_coords: usize = match self.wkb_type {
+            WKB_POINT => 2,
+            WKB_POINT_Z => 3,
+            WKB_POINT_M => 3,
+            WKB_POINT_ZM => 4,
+            _ => sedona_internal_err!("Invalid WKB type")?,
+        };
+        let expected_args = vec![ArgMatcher::is_numeric(); num_coords];
         let matcher = ArgMatcher::new(expected_args, self.out_type.clone());
         matcher.match_args(args)
     }
@@ -212,6 +214,13 @@ impl SedonaScalarKernel for STGeoFromPoint {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        let num_coords: usize = match self.wkb_type {
+            WKB_POINT => 2,
+            WKB_POINT_Z => 3,
+            WKB_POINT_M => 3,
+            WKB_POINT_ZM => 4,
+            _ => sedona_internal_err!("Invalid WKB type")?,
+        };
         let executor = WkbExecutor::new(arg_types, args);
 
         // Cast all arguments to Float64
@@ -222,7 +231,7 @@ impl SedonaScalarKernel for STGeoFromPoint {
         let coord_values = coord_values?;
 
         // Calculate WKB item size based on coordinates: endian(1) + type(4) + coords(8 each)
-        let wkb_size = WKB_HEADER_SIZE + (self.num_coords * 8);
+        let wkb_size = WKB_HEADER_SIZE + (num_coords * 8);
         let mut item = vec![0u8; wkb_size];
         // Little endian
         item[0] = 0x01;
@@ -276,7 +285,7 @@ impl SedonaScalarKernel for STGeoFromPoint {
         );
 
         for i in 0..executor.num_iterations() {
-            let mut coords = Vec::with_capacity(self.num_coords);
+            let mut coords = Vec::with_capacity(num_coords);
             let mut has_null = false;
 
             for array in &coord_f64_arrays {
