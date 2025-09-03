@@ -49,12 +49,7 @@ pub fn st_point_udf() -> SedonaScalarUDF {
             wkb_type: WKB_POINT,
         })],
         Volatility::Immutable,
-        Some(doc(
-            "ST_Point",
-            "Geometry",
-            &["x", "y"],
-            "ST_Point(-64.36, 45.09)",
-        )),
+        Some(xy_point_doc("ST_Point", "Geometry")),
     )
 }
 
@@ -69,12 +64,7 @@ pub fn st_geogpoint_udf() -> SedonaScalarUDF {
             wkb_type: WKB_POINT,
         })],
         Volatility::Immutable,
-        Some(doc(
-            "st_geogpoint",
-            "Geography",
-            &["x", "y"],
-            "st_geogpoint(-64.36, 45.09)",
-        )),
+        Some(xy_point_doc("st_geogpoint", "Geography")),
     )
 }
 
@@ -89,12 +79,7 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
             wkb_type: WKB_POINT_Z,
         })],
         Volatility::Immutable,
-        Some(doc(
-            "ST_PointZ",
-            "Geometry",
-            &["x", "y", "z"],
-            "ST_PointZ(-64.36, 45.09, 100.0)",
-        )),
+        Some(three_coord_point_doc("ST_PointZ", "Geometry", "Z")),
     )
 }
 
@@ -109,12 +94,7 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
             wkb_type: WKB_POINT_M,
         })],
         Volatility::Immutable,
-        Some(doc(
-            "ST_PointM",
-            "Geometry",
-            &["x", "y", "m"],
-            "ST_PointM(-64.36, 45.09, 50.0)",
-        )),
+        Some(three_coord_point_doc("ST_PointM", "Geometry", "M")),
     )
 }
 
@@ -129,64 +109,60 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
             wkb_type: WKB_POINT_ZM,
         })],
         Volatility::Immutable,
-        Some(doc(
-            "ST_PointZM",
-            "Geometry",
-            &["x", "y", "z", "m"],
-            "ST_PointZM(-64.36, 45.09, 100.0, 50.0)",
-        )),
+        Some(xyzm_point_doc("ST_PointZM", "Geometry")),
     )
 }
 
-fn doc(name: &str, out_type_name: &str, params: &[&str], example: &str) -> Documentation {
-    let description = match params.len() {
-        2 => format!(
+fn xy_point_doc(name: &str, out_type_name: &str) -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        format!(
             "Construct a Point {} from X and Y",
             out_type_name.to_lowercase()
         ),
-        3 if params[2] == "z" => format!(
-            "Construct a Point {} from X, Y and Z",
-            out_type_name.to_lowercase()
+        format!("{name} (x: Double, y: Double)"),
+    )
+    .with_argument("x", "double: X value")
+    .with_argument("y", "double: Y value")
+    .with_sql_example(format!("{name}(-64.36, 45.09)"))
+    .build()
+}
+
+fn three_coord_point_doc(name: &str, out_type_name: &str, third_dim: &str) -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        format!(
+            "Construct a Point {} from X, Y and {}",
+            out_type_name.to_lowercase(),
+            third_dim
         ),
-        3 if params[2] == "m" => format!(
-            "Construct a Point {} from X, Y and M",
-            out_type_name.to_lowercase()
-        ),
-        4 => format!(
+        format!("{name} (x: Double, y: Double, z: Double)"),
+    )
+    .with_argument("x", "double: X value")
+    .with_argument("y", "double: Y value")
+    .with_argument(
+        third_dim.to_lowercase(),
+        format!("double: {} value", third_dim),
+    )
+    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0)"))
+    .build()
+}
+
+fn xyzm_point_doc(name: &str, out_type_name: &str) -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        format!(
             "Construct a Point {} from X, Y, Z and M",
             out_type_name.to_lowercase()
         ),
-        _ => unreachable!(),
-    };
-
-    let signature = format!(
-        "{name} ({})",
-        params
-            .iter()
-            .map(|p| format!("{}: Double", p))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-
-    let mut builder = Documentation::builder(DOC_SECTION_OTHER, description, signature)
-        .with_argument("x", "double: X coordinate")
-        .with_argument("y", "double: Y coordinate");
-
-    if params.len() >= 3 {
-        if params[2] == "z" {
-            builder = builder.with_argument("z", "double: Z coordinate");
-        } else if params[2] == "m" {
-            builder = builder.with_argument("m", "double: M coordinate");
-        }
-    }
-
-    if params.len() == 4 {
-        builder = builder
-            .with_argument("z", "double: Z coordinate")
-            .with_argument("m", "double: M coordinate");
-    }
-
-    builder.with_sql_example(example).build()
+        format!("{name} (x: Double, y: Double, z: Double)"),
+    )
+    .with_argument("x", "double: X value")
+    .with_argument("y", "double: Y value")
+    .with_argument("z", "double: Z value")
+    .with_argument("m", "double: M value")
+    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0, 50.0)"))
+    .build()
 }
 
 #[derive(Debug)]
