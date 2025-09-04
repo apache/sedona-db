@@ -28,7 +28,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona::context::SedonaDataFrame;
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_schema::projection::unwrap_schema_maybe_deprecated;
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
@@ -52,8 +51,8 @@ impl InternalDataFrame {
 #[pymethods]
 impl InternalDataFrame {
     fn schema(&self) -> PySedonaSchema {
-        let arrow_schema = unwrap_schema_maybe_deprecated(self.inner.schema().as_arrow());
-        PySedonaSchema::new(arrow_schema)
+        let arrow_schema = self.inner.schema().as_arrow();
+        PySedonaSchema::new(arrow_schema.clone())
     }
 
     fn primary_geometry_column(&self) -> Result<Option<String>, PySedonaError> {
@@ -163,7 +162,7 @@ impl InternalDataFrame {
             let ffi_schema = unsafe { FFI_ArrowSchema::from_raw(contents as _) };
             let requested_schema = Schema::try_from(&ffi_schema)?;
             let actual_schema = self.inner.schema().as_arrow();
-            if requested_schema != unwrap_schema_maybe_deprecated(actual_schema) {
+            if &requested_schema != actual_schema {
                 // Eventually we can support this by inserting a cast
                 return Err(PySedonaError::SedonaPython(
                     "Requested schema != DataFrame schema not yet supported".to_string(),
