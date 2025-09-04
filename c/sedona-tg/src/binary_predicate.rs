@@ -102,107 +102,100 @@ impl<Op: tg::BinaryPredicate> SedonaScalarKernel for TgPredicate<Op> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::create_array;
+    use arrow_array::{create_array, ArrayRef};
     use datafusion_common::scalar::ScalarValue;
-    use sedona_functions::register::stubs::st_intersects_udf;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::{
-        compare::assert_value_equal, create::create_array_value, create::create_scalar_value,
+        create::{create_array, create_scalar},
+        testers::ScalarUdfTester,
     };
 
     use super::*;
 
     #[test]
     fn scalar_scalar() {
-        let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        tester.assert_return_type(DataType::Boolean);
 
-        let point_scalar = create_scalar_value(Some("POINT (0.25 0.25)"), &WKB_GEOMETRY);
-        let point2_scalar = create_scalar_value(Some("POINT (10 10)"), &WKB_GEOMETRY);
-        let polygon_scalar =
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
-        let null_scalar = create_scalar_value(None, &WKB_GEOMETRY);
+        let polygon_scalar = create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
 
         // Check something that intersects with both argument orders
-        assert_value_equal(
-            &udf.invoke_batch(&[point_scalar.clone(), polygon_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(Some(true)).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar("POINT (0.25 0.25)", polygon_scalar.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, true);
 
-        assert_value_equal(
-            &udf.invoke_batch(&[polygon_scalar.clone(), point_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(Some(true)).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar(polygon_scalar.clone(), "POINT (0.25 0.25)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, true);
 
         // Check something that doesn't intersect with both argument orders
-        assert_value_equal(
-            &udf.invoke_batch(&[point2_scalar.clone(), polygon_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(Some(false)).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar("POINT (10 10)", polygon_scalar.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, false);
 
-        assert_value_equal(
-            &udf.invoke_batch(&[polygon_scalar.clone(), point2_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(Some(false)).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar(polygon_scalar.clone(), "POINT (10 10)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, false);
 
         // Check a null in both argument orders
-        assert_value_equal(
-            &udf.invoke_batch(&[null_scalar.clone(), polygon_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(None).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar(polygon_scalar.clone(), ScalarValue::Null)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        assert_value_equal(
-            &udf.invoke_batch(&[polygon_scalar.clone(), null_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(None).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, polygon_scalar.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
         // ...and check a null as both arguments
-        assert_value_equal(
-            &udf.invoke_batch(&[null_scalar.clone(), null_scalar.clone()], 1)
-                .unwrap(),
-            &ScalarValue::Boolean(None).into(),
-        );
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
     }
 
     #[test]
     fn scalar_array() {
-        let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        tester.assert_return_type(DataType::Boolean);
 
-        let point_array = create_array_value(
+        let point_array = create_array(
             &[Some("POINT (0.25 0.25)"), Some("POINT (10 10)"), None],
             &WKB_GEOMETRY,
         );
-        let polygon_scalar =
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
+        let polygon_scalar = create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
 
         // Array, Scalar -> Array
-        assert_value_equal(
-            &udf.invoke_batch(&[point_array.clone(), polygon_scalar.clone()], 1)
+        let expected: ArrayRef = create_array!(Boolean, [Some(true), Some(false), None]);
+        assert_eq!(
+            &tester
+                .invoke_array_scalar(point_array.clone(), polygon_scalar.clone())
                 .unwrap(),
-            &ColumnarValue::Array(create_array!(Boolean, [Some(true), Some(false), None])),
+            &expected
         );
-
-        // Scalar, Array -> Array
-        assert_value_equal(
-            &udf.invoke_batch(&[polygon_scalar.clone(), point_array.clone()], 1)
+        assert_eq!(
+            &tester
+                .invoke_scalar_array(polygon_scalar.clone(), point_array.clone())
                 .unwrap(),
-            &ColumnarValue::Array(create_array!(Boolean, [Some(true), Some(false), None])),
+            &expected
         );
     }
 
     #[test]
     fn array_array() {
-        let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        tester.assert_return_type(DataType::Boolean);
 
-        let point_array = create_array_value(
+        let point_array = create_array(
             &[
                 Some("POINT (0.25 0.25)"),
                 Some("POINT (10 10)"),
@@ -211,7 +204,7 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
-        let polygon_array = create_array_value(
+        let polygon_array = create_array(
             &[
                 Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"),
                 Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"),
@@ -222,12 +215,12 @@ mod tests {
         );
 
         // Array, Array -> Array
-        assert_value_equal(
-            &udf.invoke_batch(&[point_array, polygon_array], 1).unwrap(),
-            &ColumnarValue::Array(create_array!(
-                Boolean,
-                [Some(true), Some(false), None, None]
-            )),
+        let expected: ArrayRef = create_array!(Boolean, [Some(true), Some(false), None, None]);
+        assert_eq!(
+            &tester
+                .invoke_array_array(point_array, polygon_array)
+                .unwrap(),
+            &expected
         );
     }
 }
