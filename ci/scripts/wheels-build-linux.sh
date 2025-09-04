@@ -40,7 +40,7 @@ fi
 # manylinux is AlmaLinux/Fedora-based, musllinux is Alpine-based
 # If we want musllinux support there will be some workshopping required (vcpkg
 # needs some newer components than are provided by the default musllinux image)
-BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang"
+BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang kernel-headers"
 
 # This approach downloads and builds native dependencies with vcpkg once for every image.
 # Compared to the Rust build time, the native dependency build time is not too bad. We could
@@ -53,4 +53,3 @@ export CIBW_BEFORE_ALL="$BEFORE_ALL_MANYLINUX && git clone https://github.com/mi
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --platform linux --archs ${ARCH} --output-dir python/$2/dist python/$2
-popd

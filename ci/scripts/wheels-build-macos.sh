@@ -47,4 +47,3 @@ export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS MACOSX_DEPLOYMENT_TARGET=
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --output-dir python/$1/dist python/$1
-popd
