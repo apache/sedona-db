@@ -223,12 +223,17 @@ def test_dataframe_to_arrow(con):
     )
 
     assert pa.schema(df) == expected_schema
-    assert df.to_arrow_table().columns == pa.table(
-        {"one": [1], "geom": ga.as_wkb(["POINT (0 1)"])}, schema=expected_schema
-    ).columns
+    assert (
+        df.to_arrow_table().columns
+        == pa.table(
+            {"one": [1], "geom": ga.as_wkb(["POINT (0 1)"])}, schema=expected_schema
+        ).columns
+    )
 
     # Make sure we can request a schema if the schema is identical
-    assert df.to_arrow_table(schema=expected_schema).columns == df.to_arrow_table().columns
+    assert (
+        df.to_arrow_table(schema=expected_schema).columns == df.to_arrow_table().columns
+    )
 
     # ...but not otherwise (yet)
     with pytest.raises(

@@ -97,7 +97,7 @@ def test_assert_result_spatial(eng):
         ).set_geometry("geom"),
     )
 
-    # SedonaDB aggresively returns non-nullable literals
+    # SedonaDB aggressively returns non-nullable literals
     eng.assert_query_result(
         q,
         pa.table(
