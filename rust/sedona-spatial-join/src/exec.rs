@@ -739,7 +739,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("dist", DataType::Float64, false),
-            Field::new("geometry", WKB_GEOMETRY.into(), true),
+            WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
         ]));
 
         let test_data_vec = vec![vec![vec![]], vec![vec![], vec![]]];

@@ -111,14 +111,13 @@ pub(crate) struct EvaluatedGeometryArray {
 }
 
 impl EvaluatedGeometryArray {
-    pub fn try_new(geometry_array: ArrayRef) -> Result<Self> {
+    pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
-        let sedona_type: SedonaType = geometry_array.data_type().try_into()?;
-        let wkb_array = sedona_type.unwrap_array_maybe_deprecated(&geometry_array)?;
+        let wkb_array = geometry_array.clone();
         let mut wkbs = Vec::with_capacity(num_rows);
         let mut idx = 0;
-        wkb_array.iter_as_wkb(&sedona_type, num_rows, |wkb_opt| {
+        wkb_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
             if let Some(wkb) = &wkb_opt {
                 if let Some(rect) = wkb.bounding_rect() {
                     let min = rect.min();
@@ -215,7 +214,9 @@ fn evaluate_with_rects(
     let geometry_columnar_value = geom_expr.evaluate(batch)?;
     let num_rows = batch.num_rows();
     let geometry_array = geometry_columnar_value.to_array(num_rows)?;
-    EvaluatedGeometryArray::try_new(geometry_array)
+    let sedona_type =
+        SedonaType::from_storage_field(geom_expr.return_field(&batch.schema())?.as_ref())?;
+    EvaluatedGeometryArray::try_new(geometry_array, &sedona_type)
 }
 
 impl DistanceOperandEvaluator {

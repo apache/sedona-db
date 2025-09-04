@@ -987,7 +987,7 @@ mod tests {
         );
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
         assert_eq!(builder.indexed_batches.len(), 1);
@@ -1050,7 +1050,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1058,7 +1058,7 @@ mod tests {
 
         // Create a query geometry at origin (0, 0)
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test KNN query with k=3
@@ -1150,7 +1150,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1158,7 +1158,7 @@ mod tests {
 
         // Query point at origin
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test different k values
@@ -1235,7 +1235,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1243,7 +1243,7 @@ mod tests {
 
         // Query point at NYC
         let query_geom = create_array(&[Some("POINT (-74.0 40.7)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test with planar distance (spheroid distance is not supported)
@@ -1330,14 +1330,14 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
         let index = builder.finish(schema).unwrap();
 
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test k=0 (should return no results)
@@ -1404,7 +1404,7 @@ mod tests {
 
         // Try to query empty index
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         let mut build_positions = Vec::new();
@@ -1472,7 +1472,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1480,7 +1480,7 @@ mod tests {
 
         // Query point at the origin (0.0, 0.0)
         let query_geom = create_array(&[Some("POINT (0.0 0.0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test without tie-breakers: should return exactly k=2 results
@@ -1585,7 +1585,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1593,7 +1593,7 @@ mod tests {
 
         // Create a query geometry at origin (0, 0)
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test the geometry-based query_knn method with k=3
@@ -1669,7 +1669,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1677,7 +1677,7 @@ mod tests {
 
         // Query point close to the linestring
         let query_geom = create_array(&[Some("POINT (2.1 1.0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test the geometry-based KNN method with mixed geometry types
@@ -1754,7 +1754,7 @@ mod tests {
 
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
@@ -1762,7 +1762,7 @@ mod tests {
 
         // Query point at the origin (0.0, 0.0)
         let query_geom = create_array(&[Some("POINT (0.0 0.0)")], &WKB_GEOMETRY);
-        let query_array = EvaluatedGeometryArray::try_new(query_geom).unwrap();
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         // Test without tie-breakers: should return exactly k=2 results
@@ -1846,7 +1846,7 @@ mod tests {
         );
         let indexed_batch = IndexedBatch {
             batch,
-            geom_array: EvaluatedGeometryArray::try_new(geom_batch).unwrap(),
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
         builder.add_batch(indexed_batch);
 
