@@ -219,7 +219,12 @@ class DBEngine:
 
         if isinstance(expected, pa.Table):
             result_arrow = self.result_to_table(result)
-            if result_arrow != expected:
+            if result_arrow.schema != expected.schema:
+                raise AssertionError(
+                    f"Expected schema:\n  {expected.schema}\nGot:\n  {result_arrow.schema}"
+                )
+
+            if result_arrow.columns != expected.columns:
                 raise AssertionError(f"Expected:\n  {expected}\nGot:\n  {result_arrow}")
 
             # It is probably a bug in geoarrow.types.type_parrow that CRS mismatches

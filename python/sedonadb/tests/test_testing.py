@@ -96,7 +96,17 @@ def test_assert_result_spatial(eng):
             {"geom": geopandas.GeoSeries.from_wkt(["POINT (0 1)"])}
         ).set_geometry("geom"),
     )
-    eng.assert_query_result(q, pa.table({"geom": ga.as_wkb(["POINT (0 1)"])}))
+
+    # SedonaDB aggresively returns non-nullable literals
+    eng.assert_query_result(
+        q,
+        pa.table(
+            [ga.as_wkb(["POINT (0 1)"])],
+            schema=pa.schema(
+                [pa.field("geom", ga.wkb(), nullable=not isinstance(eng, SedonaDB))]
+            ),
+        ),
+    )
 
     with pytest.raises(AssertionError):
         eng.assert_query_result(q, "POINT (0 2)")
@@ -111,6 +121,12 @@ def test_assert_result_spatial(eng):
 
     with pytest.raises(AssertionError):
         eng.assert_query_result(q, pa.table({"geom": ga.as_wkb(["POINT (0 2)"])}))
+
+    with pytest.raises(AssertionError):
+        eng.assert_query_result(
+            q,
+            pa.table({"not_geom": [1]}),
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
