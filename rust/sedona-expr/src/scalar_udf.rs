@@ -876,7 +876,7 @@ mod tests {
             args: &[ColumnarValue],
         ) -> Result<ColumnarValue> {
             let out_type = Self::parse_type(&args[1])?;
-            args[0].cast_to(&out_type.data_type_maybe_deprecated(), None)
+            args[0].cast_to(out_type.storage_type(), None)
         }
     }
 }
