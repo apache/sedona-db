@@ -101,7 +101,7 @@ fn three_coord_point_doc(name: &str, out_type_name: &str, third_dim: &str) -> Do
     .with_argument("y", "double: Y value")
     .with_argument(
         third_dim.to_lowercase(),
-        format!("double: {} value", third_dim),
+        format!("double: {third_dim} value"),
     )
     .with_sql_example(format!("{name}(-64.36, 45.09, 100.0)"))
     .build()
