@@ -139,8 +139,7 @@ jobs:
       matrix:
         config:
           - {os: "ubuntu-latest", label: "linux-x86_64", arch: "x86_64"}
-          # We can't include this in our CI config until the repository is public
-          # - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
+          - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
 
     steps:
       - uses: actions/checkout@v4

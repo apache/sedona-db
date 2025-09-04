@@ -39,7 +39,7 @@ datafusion-common = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }
 pyo3 = "0.25.1"
-sedona = { path = "../../rust/sedona" }
+sedona = { path = "../../rust/sedona", features = ["s2geography"] }
 sedona-adbc = { path = "../../rust/sedona-adbc" }
 sedona-schema = { path = "../../rust/sedona-schema" }
 sedona-proj = { path = "../../c/sedona-proj", default-features = false }
