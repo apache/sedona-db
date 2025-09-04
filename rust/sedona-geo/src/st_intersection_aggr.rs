@@ -50,12 +50,9 @@ impl SedonaAccumulator for STIntersectionAggr {
     fn accumulator(
         &self,
         args: &[SedonaType],
-        output_type: &SedonaType,
+        _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(IntersectionAccumulator::new(
-            args[0].clone(),
-            output_type.clone(),
-        )))
+        Ok(Box::new(IntersectionAccumulator::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -68,15 +65,13 @@ impl SedonaAccumulator for STIntersectionAggr {
 #[derive(Debug)]
 struct IntersectionAccumulator {
     input_type: SedonaType,
-    output_type: SedonaType,
     current_intersection: Option<geo::Geometry>,
 }
 
 impl IntersectionAccumulator {
-    pub fn new(input_type: SedonaType, output_type: SedonaType) -> Self {
+    pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            output_type,
             current_intersection: None,
         }
     }
@@ -169,9 +164,7 @@ impl Accumulator for IntersectionAccumulator {
             ));
         }
         let arg_types = [self.input_type.clone()];
-        let args = [ColumnarValue::Array(
-            self.input_type.unwrap_array_maybe_deprecated(&values[0])?,
-        )];
+        let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
         self.execute_update(executor)?;
         Ok(())
@@ -179,8 +172,7 @@ impl Accumulator for IntersectionAccumulator {
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let wkb = self.make_wkb_result()?;
-        let scalar = ScalarValue::Binary(wkb);
-        self.output_type.wrap_scalar_maybe_deprecated(&scalar)
+        Ok(ScalarValue::Binary(wkb))
     }
 
     fn size(&self) -> usize {
