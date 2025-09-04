@@ -23,7 +23,7 @@ use datafusion_expr::{
     Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
 pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel + Send + Sync>;
 
@@ -180,6 +180,25 @@ impl ArgMatcher {
         arg_iter.next().is_none()
     }
 
+    pub fn types_if_null(&self, args: &[SedonaType]) -> Result<Vec<SedonaType>> {
+        let mut out = Vec::new();
+        for (arg, matcher) in zip(args, &self.matchers) {
+            if let SedonaType::Arrow(DataType::Null) = arg {
+                if let Some(type_if_null) = matcher.type_if_null() {
+                    out.push(type_if_null);
+                } else {
+                    return sedona_internal_err!(
+                        "Matcher {matcher:?} does not provide type_if_null()"
+                    );
+                }
+            } else {
+                out.push(arg.clone());
+            }
+        }
+
+        Ok(out)
+    }
+
     /// Matches any argument
     pub fn is_any() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsAny {})
@@ -245,6 +264,9 @@ pub trait TypeMatcher: Debug {
     fn is_optional(&self) -> bool {
         false
     }
+    fn type_if_null(&self) -> Option<SedonaType> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -265,6 +287,10 @@ impl TypeMatcher for IsExact {
     fn match_type(&self, arg: &SedonaType) -> bool {
         self.exact_type.match_signature(arg)
     }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(self.exact_type.clone())
+    }
 }
 
 #[derive(Debug)]
@@ -279,6 +305,10 @@ impl TypeMatcher for OptionalMatcher {
 
     fn is_optional(&self) -> bool {
         true
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        self.inner.type_if_null()
     }
 }
 
@@ -303,6 +333,10 @@ impl TypeMatcher for IsGeometry {
             _ => false,
         }
     }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(WKB_GEOMETRY)
+    }
 }
 
 #[derive(Debug)]
@@ -317,6 +351,10 @@ impl TypeMatcher for IsGeography {
             _ => false,
         }
     }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(WKB_GEOGRAPHY)
+    }
 }
 
 #[derive(Debug)]
@@ -328,6 +366,10 @@ impl TypeMatcher for IsNumeric {
             SedonaType::Arrow(data_type) => data_type.is_numeric(),
             _ => false,
         }
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Float64))
     }
 }
 
@@ -346,6 +388,10 @@ impl TypeMatcher for IsString {
             _ => false,
         }
     }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Utf8))
+    }
 }
 
 #[derive(Debug)]
@@ -360,6 +406,10 @@ impl TypeMatcher for IsBinary {
             _ => false,
         }
     }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Binary))
+    }
 }
 
 #[derive(Debug)]
@@ -373,6 +423,10 @@ impl TypeMatcher for IsBoolean {
             }
             _ => false,
         }
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Boolean))
     }
 }
 

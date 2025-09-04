@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::Arc;
+use std::{iter::zip, sync::Arc};
 
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
@@ -218,8 +218,13 @@ impl SedonaScalarKernel for S2ScalarKernel {
     ) -> Result<ColumnarValue> {
         let mut inner = (self.inner_factory)();
 
+        let arg_types_if_null = self.matcher.types_if_null(arg_types)?;
+        let args_casted_null = zip(args, &arg_types_if_null)
+            .map(|(arg, type_if_null)| arg.cast_to(type_if_null.storage_type(), None))
+            .collect::<Result<Vec<_>>>()?;
+
         // S2's scalar UDFs operate on fields with extension metadata
-        let arg_fields = arg_types
+        let arg_fields = arg_types_if_null
             .iter()
             .map(|arg_type| arg_type.to_storage_field("", true))
             .collect::<Result<Vec<_>>>()?;
@@ -228,7 +233,7 @@ impl SedonaScalarKernel for S2ScalarKernel {
         let out_ffi_schema = inner.init(arg_fields.into(), None)?;
 
         // Create arrays from each argument (scalars become arrays of size 1)
-        let arg_arrays = args
+        let arg_arrays = args_casted_null
             .iter()
             .map(|arg| match arg {
                 ColumnarValue::Array(array) => Ok(array.clone()),
