@@ -35,24 +35,18 @@ use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{not_impl_err, plan_err, GetExt, Result, Statistics};
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
-    filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet,
-    projection::ProjectionExec, ExecutionPlan,
+    filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
 };
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
 use sedona_common::sedona_internal_err;
-use sedona_expr::projection::wrap_physical_expressions;
 
-use sedona_schema::{
-    extension_type::ExtensionType,
-    projection::{unwrap_schema_maybe_deprecated, wrap_schema_maybe_deprecated},
-};
+use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
-    wrap::WrapExec,
 };
 use datafusion::datasource::physical_plan::ParquetSource;
 use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
@@ -242,9 +236,7 @@ impl FileFormat for GeoParquetFormat {
                 })
                 .collect();
 
-            Ok(Arc::new(wrap_schema_maybe_deprecated(&Schema::new(
-                new_fields?,
-            ))))
+            Ok(Arc::new(Schema::new(new_fields?)))
         } else {
             Ok(inner_schema_without_metadata)
         }
@@ -260,13 +252,9 @@ impl FileFormat for GeoParquetFormat {
         // We don't do anything special here to insert GeoStatistics because pruning
         // happens elsewhere. These might be useful for a future optimizer or analyzer
         // pass that can insert optimizations based on geometry type.
-        let unwrapped_table_schema = Arc::new(unwrap_schema_maybe_deprecated(&table_schema));
-        let inner_stats = self
-            .inner
-            .infer_stats(state, store, unwrapped_table_schema.clone(), object)
-            .await?;
-
-        Ok(inner_stats)
+        self.inner
+            .infer_stats(state, store, table_schema, object)
+            .await
     }
 
     async fn create_physical_plan(
@@ -293,22 +281,8 @@ impl FileFormat for GeoParquetFormat {
             .build();
 
         // Build the inner plan
-        let mut inner_config = conf.clone();
-        inner_config.file_schema = Arc::new(unwrap_schema_maybe_deprecated(&conf.file_schema));
-        let inner_plan = DataSourceExec::from_data_source(inner_config);
-
-        // Calculate a list of expressions that are either a column reference to the original
-        // or a user-defined function call to the function that performs the wrap operation.
-        // wrap_physical_expressions() returns None if no columns needed wrapping so that
-        // we can omit the new node completely.
-        if let Some(column_exprs) = wrap_physical_expressions(inner_plan.schema().fields())? {
-            let exec = WrapExec {
-                inner: ProjectionExec::try_new(column_exprs, inner_plan)?,
-            };
-            Ok(Arc::new(exec))
-        } else {
-            Ok(inner_plan)
-        }
+        let inner_plan = DataSourceExec::from_data_source(conf);
+        Ok(inner_plan)
     }
 
     async fn create_writer_physical_plan(
@@ -449,12 +423,9 @@ impl FileSource for GeoParquetFileSource {
         base_config: &FileScanConfig,
         partition: usize,
     ) -> Arc<dyn FileOpener> {
-        let mut inner_config = base_config.clone();
-        inner_config.file_schema =
-            Arc::new(unwrap_schema_maybe_deprecated(&inner_config.file_schema));
         let inner_opener =
             self.inner
-                .create_file_opener(object_store.clone(), &inner_config, partition);
+                .create_file_opener(object_store.clone(), base_config, partition);
 
         // If there are no geo columns or no pruning predicate, just return the inner opener
         if self.predicate.is_none() || !storage_schema_contains_geo(&base_config.file_schema) {
@@ -503,8 +474,7 @@ impl FileSource for GeoParquetFileSource {
 
     fn with_schema(&self, schema: SchemaRef) -> Arc<dyn FileSource> {
         Arc::new(Self::from_file_source(
-            self.inner
-                .with_schema(Arc::new(unwrap_schema_maybe_deprecated(schema.as_ref()))),
+            self.inner.with_schema(schema),
             self.metadata_size_hint,
             self.predicate.clone(),
         ))
@@ -556,7 +526,7 @@ mod test {
         prelude::{col, ParquetReadOptions, SessionContext},
     };
     use datafusion_common::ScalarValue;
-    use datafusion_expr::{lit, Operator, ScalarUDF, Signature, SimpleScalarUDF, Volatility};
+    use datafusion_expr::{lit, Expr, Operator, ScalarUDF, Signature, SimpleScalarUDF, Volatility};
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
     use sedona_expr::projection::unwrap_batch_maybe_deprecated;
@@ -592,7 +562,7 @@ mod test {
             .as_arrow()
             .fields()
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect();
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);
@@ -610,7 +580,7 @@ mod test {
             .schema()
             .fields()
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect();
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);
@@ -623,7 +593,6 @@ mod test {
         // Check that the content is the same as if it were read by the normal reader
         let unwrapped_batches: Vec<_> = batches
             .into_iter()
-            .map(unwrap_batch_maybe_deprecated)
             .map(|batch| {
                 let fields_without_metadata: Vec<_> = batch
                     .schema()
@@ -687,7 +656,7 @@ mod test {
             .as_arrow()
             .fields()
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect();
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);
@@ -721,6 +690,7 @@ mod test {
 
         let definitely_non_intersecting_scalar =
             create_scalar(Some("POINT (100 200)"), &WKB_GEOMETRY);
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
 
         let df = ctx
             .table(format!("{data_dir}/example/files/*_geo.parquet"))
@@ -728,7 +698,10 @@ mod test {
             .unwrap()
             .filter(udf.call(vec![
                 col("geometry"),
-                lit(definitely_non_intersecting_scalar),
+                Expr::Literal(
+                    definitely_non_intersecting_scalar,
+                    Some(storage_field.metadata().into()),
+                ),
             ]))
             .unwrap();
 
@@ -740,7 +713,13 @@ mod test {
             .table(format!("{data_dir}/example/files/*_geo.parquet"))
             .await
             .unwrap()
-            .filter(udf.call(vec![col("geometry"), lit(definitely_intersecting_scalar)]))
+            .filter(udf.call(vec![
+                col("geometry"),
+                Expr::Literal(
+                    definitely_intersecting_scalar,
+                    Some(storage_field.metadata().into()),
+                ),
+            ]))
             .unwrap();
 
         let batches_out = df.collect().await.unwrap();
