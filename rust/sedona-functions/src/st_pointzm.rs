@@ -288,9 +288,9 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                lhs_type.clone().try_into().unwrap(),
-                rhs_type.clone().try_into().unwrap(),
-                lhs_type.clone().try_into().unwrap(),
+                SedonaType::Arrow(lhs_type.clone()),
+                SedonaType::Arrow(rhs_type.clone()),
+                SedonaType::Arrow(lhs_type.clone()),
             ],
         );
 
@@ -352,9 +352,9 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
 
@@ -383,9 +383,9 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
 
@@ -415,10 +415,10 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
 

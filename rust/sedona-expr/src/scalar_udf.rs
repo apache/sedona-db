@@ -727,7 +727,7 @@ mod tests {
         // Calling with a Boolean should result in a Boolean
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
-            vec![DataType::Boolean.try_into().unwrap()],
+            vec![SedonaType::Arrow(DataType::Boolean)],
         );
         tester.assert_return_type(DataType::Boolean);
         assert_eq!(
@@ -748,7 +748,7 @@ mod tests {
         // Now, calling with a Boolean should result in a Utf8
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
-            vec![DataType::Boolean.try_into().unwrap()],
+            vec![SedonaType::Arrow(DataType::Boolean)],
         );
         tester.assert_return_type(DataType::Utf8);
     }
@@ -843,8 +843,8 @@ mod tests {
         fn parse_type(val: &ColumnarValue) -> Result<SedonaType> {
             if let ColumnarValue::Scalar(ScalarValue::Utf8(Some(scalar_arg1))) = val {
                 match scalar_arg1.as_str() {
-                    "float32" => return Ok(DataType::Float32.try_into().unwrap()),
-                    "float64" => return Ok(DataType::Float64.try_into().unwrap()),
+                    "float32" => return Ok(SedonaType::Arrow(DataType::Float32)),
+                    "float64" => return Ok(SedonaType::Arrow(DataType::Float64)),
                     _ => {}
                 }
             }

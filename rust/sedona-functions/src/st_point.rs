@@ -190,7 +190,7 @@ mod tests {
 
         let tester = ScalarUdfTester::new(
             udf.into(),
-            vec![lhs_type.try_into().unwrap(), rhs_type.try_into().unwrap()],
+            vec![SedonaType::Arrow(lhs_type), SedonaType::Arrow(rhs_type)],
         );
 
         // Check scalars
@@ -251,8 +251,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                DataType::Float64.try_into().unwrap(),
-                DataType::Float64.try_into().unwrap(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
 

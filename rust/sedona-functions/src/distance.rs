@@ -17,6 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
+use sedona_schema::datatypes::SedonaType;
 
 /// ST_Distance() scalar UDF stub
 pub fn st_distance_udf() -> SedonaScalarUDF {
@@ -56,7 +57,7 @@ pub fn distance_stub_udf(name: &str, label: &str) -> SedonaScalarUDF {
                 ArgMatcher::is_geometry_or_geography(),
                 ArgMatcher::is_geometry_or_geography(),
             ],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
         Some(distance_doc(name, label)),

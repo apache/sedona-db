@@ -17,6 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
+use sedona_schema::datatypes::SedonaType;
 
 /// ST_Perimeter() scalar UDF implementation
 ///
@@ -30,7 +31,7 @@ pub fn st_perimeter_udf() -> SedonaScalarUDF {
                 ArgMatcher::is_optional(ArgMatcher::is_boolean()),
                 ArgMatcher::is_optional(ArgMatcher::is_boolean()),
             ],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
         Some(st_perimeter_doc()),

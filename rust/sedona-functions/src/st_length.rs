@@ -17,6 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
+use sedona_schema::datatypes::SedonaType;
 
 /// ST_Length() scalar UDF implementation
 ///
@@ -26,7 +27,7 @@ pub fn st_length_udf() -> SedonaScalarUDF {
         "st_length",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
         Some(st_length_doc()),

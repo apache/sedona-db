@@ -17,7 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
-use sedona_schema::datatypes::WKB_GEOMETRY;
+use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 
 /// ST_LineLocatePoint() scalar UDF implementation
 pub fn st_line_locate_point_udf() -> SedonaScalarUDF {
@@ -25,7 +25,7 @@ pub fn st_line_locate_point_udf() -> SedonaScalarUDF {
         "st_line_locate_point",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
         Some(st_line_locate_point_doc()),

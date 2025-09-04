@@ -255,7 +255,7 @@ mod test {
         let tester = AggregateUdfTester::new(stub.clone().into(), vec![]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Boolean.try_into().unwrap()
+            SedonaType::Arrow(DataType::Boolean)
         );
 
         let err = tester.aggregate(&vec![]).unwrap_err();
@@ -267,7 +267,7 @@ mod test {
         // If we call with anything else, we shouldn't be able to do anything
         let tester = AggregateUdfTester::new(
             stub.clone().into(),
-            vec![DataType::Binary.try_into().unwrap()],
+            vec![SedonaType::Arrow(DataType::Binary)],
         );
         let err = tester.return_type().unwrap_err();
         assert_eq!(

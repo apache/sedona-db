@@ -54,7 +54,10 @@ struct STGeometryType {}
 
 impl SedonaScalarKernel for STGeometryType {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], DataType::Utf8.try_into()?);
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry()],
+            SedonaType::Arrow(DataType::Utf8),
+        );
 
         matcher.match_args(args)
     }

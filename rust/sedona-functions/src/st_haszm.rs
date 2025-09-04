@@ -73,7 +73,7 @@ impl SedonaScalarKernel for STHasZm {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Boolean.try_into()?,
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)

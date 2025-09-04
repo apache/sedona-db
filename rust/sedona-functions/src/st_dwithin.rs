@@ -17,6 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
+use sedona_schema::datatypes::SedonaType;
 
 /// ST_DWithin() scalar UDF stub
 pub fn st_dwithin_udf() -> SedonaScalarUDF {
@@ -28,7 +29,7 @@ pub fn st_dwithin_udf() -> SedonaScalarUDF {
                 ArgMatcher::is_geometry_or_geography(),
                 ArgMatcher::is_numeric(),
             ],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
         Some(dwithin_doc()),

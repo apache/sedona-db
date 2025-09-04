@@ -110,33 +110,7 @@ pub const WKB_VIEW_GEOGRAPHY: SedonaType = SedonaType::WkbView(Edges::Spherical,
 
 // Implementation details
 
-impl TryFrom<&DataType> for SedonaType {
-    type Error = DataFusionError;
-
-    fn try_from(value: &DataType) -> Result<Self> {
-        SedonaType::from_data_type(value)
-    }
-}
-
-impl TryFrom<DataType> for SedonaType {
-    type Error = DataFusionError;
-
-    fn try_from(value: DataType) -> Result<Self> {
-        SedonaType::from_data_type(&value)
-    }
-}
-
 impl SedonaType {
-    /// Given a data type, return the appropriate SedonaType
-    ///
-    /// This is expected to be the "wrapped" version of an extension type.
-    pub fn from_data_type(data_type: &DataType) -> Result<SedonaType> {
-        match ExtensionType::from_data_type(data_type) {
-            Some(ext) => Self::from_extension_type(ext),
-            None => Ok(Self::Arrow(data_type.clone())),
-        }
-    }
-
     /// Given a field as it would appear in an external Schema return the appropriate SedonaType
     pub fn from_storage_field(field: &Field) -> Result<SedonaType> {
         match ExtensionType::from_field(field) {
@@ -424,17 +398,15 @@ mod tests {
     #[test]
     fn geoarrow_deserialize_invalid() {
         let bad_json =
-            ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"{"#.to_string()))
-                .to_data_type();
-        assert!(SedonaType::from_data_type(&bad_json)
+            ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"{"#.to_string()));
+        assert!(SedonaType::from_extension_type(bad_json)
             .unwrap_err()
             .message()
             .contains("Error deserializing GeoArrow metadata"));
 
         let bad_type =
-            ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"[]"#.to_string()))
-                .to_data_type();
-        assert!(SedonaType::from_data_type(&bad_type)
+            ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"[]"#.to_string()));
+        assert!(SedonaType::from_extension_type(bad_type)
             .unwrap_err()
             .message()
             .contains("Expected GeoArrow metadata as JSON object"));
@@ -443,9 +415,8 @@ mod tests {
             "geoarrow.wkb",
             DataType::Binary,
             Some(r#"{"edges": []}"#.to_string()),
-        )
-        .to_data_type();
-        assert!(SedonaType::from_data_type(&bad_edges_type)
+        );
+        assert!(SedonaType::from_extension_type(bad_edges_type)
             .unwrap_err()
             .message()
             .contains("Unsupported edges JSON type"));
@@ -454,9 +425,8 @@ mod tests {
             "geoarrow.wkb",
             DataType::Binary,
             Some(r#"{"edges": "gazornenplat"}"#.to_string()),
-        )
-        .to_data_type();
-        assert!(SedonaType::from_data_type(&bad_edges_value)
+        );
+        assert!(SedonaType::from_extension_type(bad_edges_value)
             .unwrap_err()
             .message()
             .contains("Unsupported edges value"));

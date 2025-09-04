@@ -62,7 +62,7 @@ impl SedonaScalarKernel for STAsBinary {
 
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Binary.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Binary),
         );
 
         matcher.match_args(args)

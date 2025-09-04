@@ -135,8 +135,8 @@ fn assert_type_equal(
     actual_label: &str,
     expected_label: &str,
 ) -> (SedonaType, SedonaType) {
-    let actual_sedona = SedonaType::from_data_type(actual).unwrap();
-    let expected_sedona = SedonaType::from_data_type(expected).unwrap();
+    let actual_sedona = SedonaType::Arrow(actual.clone());
+    let expected_sedona = SedonaType::Arrow(expected.clone());
     if actual_sedona != expected_sedona {
         panic!(
             "{actual_label} != {expected_label}:\n{actual_label} has type {actual_sedona:?}, {expected_label} has type {expected_sedona:?}"

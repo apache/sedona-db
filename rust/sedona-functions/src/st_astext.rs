@@ -58,7 +58,7 @@ impl SedonaScalarKernel for STAsText {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Utf8.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Utf8),
         );
 
         matcher.match_args(args)

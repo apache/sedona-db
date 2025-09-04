@@ -17,6 +17,7 @@
 use arrow_schema::DataType;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
+use sedona_schema::datatypes::SedonaType;
 
 /// ST_Equals() scalar UDF stub
 pub fn st_equals_udf() -> SedonaScalarUDF {
@@ -73,7 +74,7 @@ pub fn st_knn_udf() -> SedonaScalarUDF {
                 ArgMatcher::is_numeric(),
                 ArgMatcher::is_boolean(),
             ],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
         Some(knn_doc("ST_KNN", "finds k nearest neighbors")),
@@ -88,7 +89,7 @@ pub fn predicate_stub_udf(name: &str, action: &str) -> SedonaScalarUDF {
                 ArgMatcher::is_geometry_or_geography(),
                 ArgMatcher::is_geometry_or_geography(),
             ],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
         Some(predicate_doc(name, action)),

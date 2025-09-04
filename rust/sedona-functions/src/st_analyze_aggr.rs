@@ -79,7 +79,7 @@ impl SedonaAccumulator for STAnalyzeAggr {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let output_fields = Self::output_fields();
 
-        let r_type = SedonaType::from_data_type(&DataType::Struct(output_fields.into()))?;
+        let r_type = SedonaType::Arrow(DataType::Struct(output_fields.into()));
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], r_type);
         matcher.match_args(args)
     }
