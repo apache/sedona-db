@@ -160,7 +160,7 @@ mod tests {
         use sedona_testing::create::create_array;
 
         let udf = SedonaScalarUDF::from_kernel("st_geomfromwkt", st_geomfromwkt_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![data_type.try_into().unwrap()]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type)]);
         tester.assert_return_type(WKB_GEOMETRY);
 
         let result = tester.invoke_scalar("POINT (1 2)").unwrap();
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn errors() {
         let udf = SedonaScalarUDF::from_kernel("st_geomfromwkt", st_geomfromwkt_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![DataType::Utf8.try_into().unwrap()]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
         let err = tester.invoke_scalar("This is not valid wkt").unwrap_err();
 
         assert_eq!(
@@ -219,14 +219,14 @@ mod tests {
     #[test]
     fn geog() {
         let udf = SedonaScalarUDF::from_kernel("st_geogfromwkt", st_geogfromwkt_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![DataType::Utf8.try_into().unwrap()]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
         tester.assert_return_type(WKB_GEOGRAPHY);
 
         let result = tester.invoke_scalar("POINT (1 2)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 2)");
 
         let udf = SedonaScalarUDF::from_kernel("st_geogfromwkb", st_geogfromwkb_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![DataType::Binary.try_into().unwrap()]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Binary)]);
         tester.assert_return_type(WKB_GEOGRAPHY);
 
         let result = tester

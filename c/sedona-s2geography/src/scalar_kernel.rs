@@ -274,7 +274,7 @@ mod test {
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Float64.try_into().unwrap()
+            SedonaType::Arrow(DataType::Float64)
         );
 
         // Array -> Array
@@ -308,7 +308,7 @@ mod test {
             ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Boolean.try_into().unwrap()
+            SedonaType::Arrow(DataType::Boolean)
         );
 
         let point_array = create_array(
@@ -463,7 +463,7 @@ mod test {
         );
         let tester = ScalarUdfTester::new(
             udf.into(),
-            vec![WKB_GEOGRAPHY, DataType::Float64.try_into().unwrap()],
+            vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Float64)],
         );
         tester.assert_return_type(WKB_GEOGRAPHY);
         let result = tester
