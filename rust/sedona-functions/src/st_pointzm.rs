@@ -252,15 +252,12 @@ fn write_wkb_pointzm(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::create_array;
+    use arrow_array::{create_array, ArrayRef};
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
 
-    use sedona_testing::{
-        compare::assert_value_equal,
-        create::{create_array_value, create_scalar_value},
-    };
+    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
 
@@ -288,19 +285,26 @@ mod tests {
         // Just test one of the UDFs
         // We have other functions to ensure the logic works for all Z, M, and ZM
         let udf = st_pointz_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                lhs_type.clone().try_into().unwrap(),
+                rhs_type.clone().try_into().unwrap(),
+                lhs_type.clone().try_into().unwrap(),
+            ],
+        );
 
-        let scalar_null_1 = ScalarValue::Float64(None).cast_to(&lhs_type).unwrap();
-        let scalar_1 = ScalarValue::Float64(Some(1.0)).cast_to(&lhs_type).unwrap();
-        let scalar_null_2 = ScalarValue::Float64(None).cast_to(&rhs_type).unwrap();
-        let scalar_2 = ScalarValue::Float64(Some(2.0)).cast_to(&rhs_type).unwrap();
-        let scalar_3 = ScalarValue::Float64(Some(3.0)).cast_to(&lhs_type).unwrap();
         let array_1 =
             ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
                 .cast_to(&lhs_type, None)
+                .unwrap()
+                .to_array(4)
                 .unwrap();
         let array_2 =
             ColumnarValue::Array(create_array!(Float64, [Some(5.0), None, Some(7.0), None]))
                 .cast_to(&rhs_type, None)
+                .unwrap()
+                .to_array(4)
                 .unwrap();
 
         let array_3 = ColumnarValue::Array(create_array!(
@@ -308,181 +312,99 @@ mod tests {
             [Some(3.0), Some(3.0), Some(3.0), None]
         ))
         .cast_to(&lhs_type, None)
+        .unwrap()
+        .to_array(4)
         .unwrap();
 
         // Check scalar
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    scalar_1.clone().into(),
-                    scalar_2.clone().into(),
-                    scalar_3.clone().into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT Z (1 2 3)"), &WKB_GEOMETRY),
-        );
+        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 3.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT Z (1 2 3)");
 
-        // Check scalar null combinations
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    scalar_1.clone().into(),
-                    scalar_null_2.clone().into(),
-                    scalar_3.clone().into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        // Check scalar nulls
+        let result = tester
+            .invoke_scalar_scalar_scalar(ScalarValue::Null, 2.0, 3.0)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    scalar_null_1.clone().into(),
-                    scalar_2.clone().into(),
-                    scalar_3.clone().into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(1.0, ScalarValue::Null, 3.0)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    scalar_null_1.clone().into(),
-                    scalar_null_2.clone().into(),
-                    scalar_3.clone().into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(1.0, 2.0, ScalarValue::Null)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        // Check array
-        assert_value_equal(
-            &udf.invoke_batch(&[array_1.clone(), array_2.clone(), array_3.clone()], 4)
-                .unwrap(),
-            &create_array_value(&[Some("POINT Z (1 5 3)"), None, None, None], &WKB_GEOMETRY),
-        );
-
-        // Check array/scalar combinations
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    array_1.clone(),
-                    scalar_2.clone().into(),
-                    scalar_3.clone().into(),
-                ],
-                4,
-            )
-            .unwrap(),
-            &create_array_value(
-                &[Some("POINT Z (1 2 3)"), Some("POINT Z (2 2 3)"), None, None],
-                &WKB_GEOMETRY,
-            ),
-        );
-
-        assert_value_equal(
-            &udf.invoke_batch(&[scalar_1.clone().into(), array_2, array_3.clone()], 4)
-                .unwrap(),
-            &create_array_value(
-                &[Some("POINT Z (1 5 3)"), None, Some("POINT Z (1 7 3)"), None],
-                &WKB_GEOMETRY,
-            ),
+        // Check arrays
+        let result = tester
+            .invoke_arrays(vec![array_1.clone(), array_2.clone(), array_3.clone()])
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array(&[Some("POINT Z (1 5 3)"), None, None, None], &WKB_GEOMETRY)
         );
     }
 
     #[test]
     fn test_pointz() {
         let udf = st_pointz_udf();
-
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT Z (1 2 3)"), &WKB_GEOMETRY),
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+            ],
         );
 
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
+        tester.assert_return_type(WKB_GEOMETRY);
 
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
+        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 3.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT Z (1 2 3)");
 
-        let z_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
+        // Test array case
+        let array_1: ArrayRef = create_array!(Float64, [Some(1.0), Some(2.0), None, None]);
+        let array_2: ArrayRef = create_array!(Float64, [Some(5.0), None, Some(7.0), None]);
+        let array_3: ArrayRef = create_array!(Float64, [Some(3.0), Some(3.0), Some(3.0), None]);
 
-        assert_value_equal(
-            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), z_array.clone()], 1)
-                .unwrap(),
-            &create_array_value(&[Some("POINT Z (1 5 10)"), None, None, None], &WKB_GEOMETRY),
+        let result = tester
+            .invoke_arrays(vec![array_1.clone(), array_2.clone(), array_3.clone()])
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array(&[Some("POINT Z (1 5 3)"), None, None, None], &WKB_GEOMETRY)
         );
     }
 
     #[test]
     fn test_pointm() {
         let udf = st_pointm_udf();
-
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(4.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT M (1 2 4)"), &WKB_GEOMETRY),
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+            ],
         );
 
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
+        tester.assert_return_type(WKB_GEOMETRY);
 
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
+        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 3.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT M (1 2 3)");
 
-        let m_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(10.0), None, Some(12.0), None]))
-                .cast_to(&DataType::Float64, None)
-                .unwrap();
+        // Test array case
+        let array_1: ArrayRef = create_array!(Float64, [Some(1.0), Some(2.0), None, None]);
+        let array_2: ArrayRef = create_array!(Float64, [Some(5.0), None, Some(7.0), None]);
+        let array_3: ArrayRef = create_array!(Float64, [Some(3.0), Some(3.0), Some(3.0), None]);
 
-        assert_value_equal(
-            &udf.invoke_batch(&[x_array.clone(), y_array.clone(), m_array.clone()], 1)
-                .unwrap(),
-            &create_array_value(&[Some("POINT M (1 5 10)"), None, None, None], &WKB_GEOMETRY),
+        let result = tester
+            .invoke_arrays(vec![array_1.clone(), array_2.clone(), array_3.clone()])
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array(&[Some("POINT M (1 5 3)"), None, None, None], &WKB_GEOMETRY)
         );
     }
 
@@ -490,67 +412,38 @@ mod tests {
     fn test_pointzm() {
         let udf = st_pointzm_udf();
 
-        // Test scalar case
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                    ScalarValue::Float64(Some(3.0)).into(),
-                    ScalarValue::Float64(Some(4.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT ZM (1 2 3 4)"), &WKB_GEOMETRY),
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+                DataType::Float64.try_into().unwrap(),
+            ],
         );
 
-        // Even if xy are valid, result is null if z or m is null
-        // Test array and null cases
-        // Even if xy are valid, result is null if z is null
-        let x_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(1.0), Some(2.0), None, Some(1.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
+        tester.assert_return_type(WKB_GEOMETRY);
 
-        let y_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(5.0), Some(1.0), Some(7.0), Some(2.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
+        // Test array case (hard to test the scalar case compactly and it reuses code paths above)
+        let array_1: ArrayRef = create_array!(Float64, [Some(1.0), Some(2.0), None, None]);
+        let array_2: ArrayRef = create_array!(Float64, [Some(5.0), None, Some(7.0), None]);
+        let array_3: ArrayRef = create_array!(Float64, [Some(3.0), Some(3.0), Some(3.0), None]);
+        let array_4: ArrayRef = create_array!(Float64, [Some(9.0), Some(4.0), Some(4.0), None]);
 
-        let z_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(20.0), Some(1.0), Some(7.0), None]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        let m_array = ColumnarValue::Array(create_array!(
-            Float64,
-            [Some(10.0), None, Some(12.0), Some(4.0)]
-        ))
-        .cast_to(&DataType::Float64, None)
-        .unwrap();
-
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    x_array.clone(),
-                    y_array.clone(),
-                    z_array.clone(),
-                    m_array.clone(),
-                ],
-                1,
+        let result = tester
+            .invoke_arrays(vec![
+                array_1.clone(),
+                array_2.clone(),
+                array_3.clone(),
+                array_4.clone(),
+            ])
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array(
+                &[Some("POINT ZM (1 5 3 9)"), None, None, None],
+                &WKB_GEOMETRY
             )
-            .unwrap(),
-            &create_array_value(
-                &[Some("POINT ZM (1 5 20 10)"), None, None, None],
-                &WKB_GEOMETRY,
-            ),
         );
     }
 }
