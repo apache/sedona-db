@@ -802,15 +802,9 @@ mod test {
         assert_eq!(data.arrays.len(), 3);
         assert_eq!(data.scalars.len(), 0);
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
         assert_eq!(data.arrays[1].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[1][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[1][0].data_type());
         assert_eq!(data.arrays[2].len(), 2);
         assert_eq!(data.arrays[2][0].data_type(), &DataType::Float64);
     }
