@@ -34,6 +34,7 @@ use geo_types::{
 use rand::distributions::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 use std::f64::consts::PI;
@@ -305,7 +306,7 @@ impl RandomPartitionedDataBuilder {
         Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("dist", DataType::Float64, false),
-            Field::new("geometry", self.sedona_type.clone().into(), true),
+            self.sedona_type.to_storage_field("geometry", true).unwrap(),
         ]))
     }
 
@@ -404,7 +405,7 @@ impl RandomPartitionedDataBuilder {
         // Create Arrow arrays
         let id_array = Arc::new(Int32Array::from(ids));
         let dist_array = Arc::new(Float64Array::from(distances));
-        let geometry_array = create_wkb_array(wkb_geometries, &self.sedona_type);
+        let geometry_array = create_wkb_array(wkb_geometries, &self.sedona_type)?;
 
         // Create RecordBatch
         Ok(RecordBatch::try_new(
@@ -415,15 +416,15 @@ impl RandomPartitionedDataBuilder {
 }
 
 /// Create an ArrayRef from a vector of WKB bytes based on the sedona type
-fn create_wkb_array(wkb_values: Vec<Option<Vec<u8>>>, sedona_type: &SedonaType) -> ArrayRef {
-    let storage_array: ArrayRef = match sedona_type {
-        SedonaType::Wkb(_, _) => Arc::new(BinaryArray::from_iter(wkb_values)),
-        SedonaType::WkbView(_, _) => Arc::new(BinaryViewArray::from_iter(wkb_values)),
-        _ => panic!("create_wkb_array not implemented for {sedona_type:?}"),
-    };
-    sedona_type
-        .wrap_array_maybe_deprecated(&storage_array)
-        .unwrap()
+fn create_wkb_array(
+    wkb_values: Vec<Option<Vec<u8>>>,
+    sedona_type: &SedonaType,
+) -> Result<ArrayRef> {
+    match sedona_type {
+        SedonaType::Wkb(_, _) => Ok(Arc::new(BinaryArray::from_iter(wkb_values))),
+        SedonaType::WkbView(_, _) => Ok(Arc::new(BinaryViewArray::from_iter(wkb_values))),
+        _ => sedona_internal_err!("create_wkb_array not implemented for {sedona_type:?}"),
+    }
 }
 
 struct RandomPartitionedDataReader<R> {

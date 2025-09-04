@@ -509,10 +509,7 @@ mod test {
         // Make sure we generate different scalars for different columns
         assert_ne!(spec.build_scalar(1).unwrap(), scalar);
 
-        if let ScalarValue::Binary(Some(wkb_bytes)) = WKB_GEOMETRY
-            .unwrap_scalar_maybe_deprecated(&scalar)
-            .unwrap()
-        {
+        if let ScalarValue::Binary(Some(wkb_bytes)) = scalar {
             let wkb = wkb::reader::read_wkb(&wkb_bytes).unwrap();
             let analysis = analyze_geometry(&wkb).unwrap();
             assert_eq!(analysis.point_count, 1);
@@ -547,14 +544,10 @@ mod test {
         assert_ne!(spec.build_arrays(1, 2, ROWS_PER_BATCH).unwrap(), arrays);
 
         for array in arrays {
-            assert_eq!(
-                SedonaType::from_data_type(array.data_type()).unwrap(),
-                WKB_GEOMETRY
-            );
+            assert_eq!(array.data_type(), WKB_GEOMETRY.storage_type());
             assert_eq!(array.len(), ROWS_PER_BATCH);
 
-            let unwrapped = WKB_GEOMETRY.unwrap_array_maybe_deprecated(&array).unwrap();
-            let binary_array = as_binary_array(&unwrapped).unwrap();
+            let binary_array = as_binary_array(&array).unwrap();
             assert_eq!(binary_array.null_count(), 0);
 
             for wkb_bytes in binary_array {
@@ -632,10 +625,7 @@ mod test {
         assert_eq!(data.scalars.len(), 0);
 
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
     }
 
     #[test]
@@ -654,10 +644,7 @@ mod test {
 
         assert_eq!(data.arrays.len(), 1);
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
 
         assert_eq!(data.scalars.len(), 1);
         assert_eq!(data.scalars[0].data_type(), DataType::Float64);
@@ -678,10 +665,7 @@ mod test {
         assert_eq!(data.num_batches, 2);
 
         assert_eq!(data.scalars.len(), 1);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.scalars[0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), &data.scalars[0].data_type());
 
         assert_eq!(data.arrays.len(), 1);
         assert_eq!(data.arrays[0].len(), 2);
@@ -703,10 +687,7 @@ mod test {
         assert_eq!(data.scalars.len(), 0);
 
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
 
         assert_eq!(data.arrays[1].len(), 2);
         assert_eq!(data.arrays[1][0].data_type(), &DataType::Float64);
@@ -733,10 +714,7 @@ mod test {
         assert_eq!(data.arrays.len(), 1);
         assert_eq!(data.scalars.len(), 2);
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
         assert_eq!(data.scalars[0].data_type(), DataType::Float64);
         assert_eq!(data.scalars[1].data_type(), DataType::Utf8);
     }
@@ -762,15 +740,9 @@ mod test {
         assert_eq!(data.arrays.len(), 3);
         assert_eq!(data.scalars.len(), 1);
         assert_eq!(data.arrays[0].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[0][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[0][0].data_type());
         assert_eq!(data.arrays[1].len(), 2);
-        assert_eq!(
-            WKB_GEOMETRY,
-            data.arrays[1][0].data_type().try_into().unwrap()
-        );
+        assert_eq!(WKB_GEOMETRY.storage_type(), data.arrays[1][0].data_type());
 
         assert_eq!(data.scalars[0].data_type(), DataType::Float64);
     }

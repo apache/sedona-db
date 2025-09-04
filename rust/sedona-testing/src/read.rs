@@ -86,10 +86,10 @@ pub fn read_geoarrow_data_geometry(
             let array = batch?.column(geometry_index).clone();
             // We may need something more sophisticated to support non-wkb geometry types
             // This covers WKB and WKB_VIEW
-            let array_casted = arrow_cast::cast(&array, options.sedona_type.storage_type())?;
-            options
-                .sedona_type
-                .wrap_array_maybe_deprecated(&array_casted)
+            Ok(arrow_cast::cast(
+                &array,
+                options.sedona_type.storage_type(),
+            )?)
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -127,7 +127,7 @@ mod test {
                 .unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].len(), 9);
-        assert!(batches[0].data_type().is_nested());
+        assert_eq!(batches[0].data_type(), WKB_GEOMETRY.storage_type());
 
         let options = TestReadOptions::new(WKB_GEOMETRY).with_output_size(100);
         let batches = read_geoarrow_data_geometry("example", "geometry", &options).unwrap();
