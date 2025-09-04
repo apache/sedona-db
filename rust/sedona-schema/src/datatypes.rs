@@ -129,18 +129,6 @@ impl TryFrom<DataType> for SedonaType {
     }
 }
 
-impl From<&SedonaType> for DataType {
-    fn from(value: &SedonaType) -> Self {
-        value.data_type_maybe_deprecated()
-    }
-}
-
-impl From<SedonaType> for DataType {
-    fn from(value: SedonaType) -> Self {
-        value.data_type_maybe_deprecated()
-    }
-}
-
 impl SedonaType {
     /// Given a data type, return the appropriate SedonaType
     ///
