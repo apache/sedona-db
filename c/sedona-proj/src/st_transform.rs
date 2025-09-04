@@ -433,7 +433,7 @@ mod tests {
         };
 
         let return_field = udf.return_field_from_args(return_field_args)?;
-        let return_type = SedonaType::from_data_type(return_field.data_type())?;
+        let return_type = SedonaType::from_storage_field(&return_field)?;
 
         let args = ScalarFunctionArgs {
             args: arg_vals,
