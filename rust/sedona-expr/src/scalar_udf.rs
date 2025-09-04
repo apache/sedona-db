@@ -16,7 +16,7 @@
 // under the License.
 use std::{any::Any, fmt::Debug, sync::Arc};
 
-use arrow_schema::{DataType, Field, FieldRef};
+use arrow_schema::{DataType, FieldRef};
 use datafusion_common::{not_impl_err, plan_err, Result, ScalarValue};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
@@ -471,28 +471,6 @@ impl SedonaScalarUDF {
     /// consisting of only the implementation provided.
     pub fn from_kernel(name: &str, kernel: ScalarKernelRef) -> SedonaScalarUDF {
         Self::new(name, vec![kernel], Volatility::Immutable, None)
-    }
-
-    pub fn invoke_batch(
-        &self,
-        args: &[ColumnarValue],
-        number_rows: usize,
-    ) -> Result<ColumnarValue> {
-        let arg_types: Vec<_> = args.iter().map(|arg| arg.data_type()).collect();
-        let return_type = self.return_type(&arg_types)?;
-        let arg_fields: Vec<_> = arg_types
-            .into_iter()
-            .map(|data_type| Arc::new(Field::new("", data_type, true)))
-            .collect();
-
-        let args = ScalarFunctionArgs {
-            args: args.to_vec(),
-            arg_fields,
-            number_rows,
-            return_field: Arc::new(Field::new("", return_type, true)),
-        };
-
-        self.invoke_with_args(args)
     }
 
     /// Add a new kernel to a Scalar UDF

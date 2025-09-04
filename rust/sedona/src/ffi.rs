@@ -437,9 +437,9 @@ mod test {
     use sedona_functions::st_envelope_aggr::st_envelope_aggr_udf;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::{
-        compare::{assert_scalar_equal, assert_value_equal},
-        create::{create_array, create_array_value, create_scalar, create_scalar_value},
-        testers::AggregateUdfTester,
+        compare::assert_scalar_equal,
+        create::{create_array, create_scalar},
+        testers::{AggregateUdfTester, ScalarUdfTester},
     };
 
     use super::*;
@@ -451,8 +451,7 @@ mod test {
             Arc::new(|_, args| Ok(args[0].clone())),
         );
 
-        let scalar_value = create_scalar_value(Some("POINT (0 1)"), &WKB_GEOMETRY);
-        let array_value = create_array_value(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
+        let array_value = create_array(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
 
         let udf_native = SedonaScalarUDF::new(
             "simple_udf",
@@ -461,18 +460,15 @@ mod test {
             None,
         );
 
-        assert_value_equal(
-            &udf_native
-                .invoke_batch(std::slice::from_ref(&scalar_value), 1)
-                .unwrap(),
-            &scalar_value,
-        );
+        let tester = ScalarUdfTester::new(udf_native.into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(WKB_GEOMETRY);
 
-        assert_value_equal(
-            &udf_native
-                .invoke_batch(std::slice::from_ref(&array_value), 1)
-                .unwrap(),
-            &array_value,
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (0 1)");
+
+        assert_eq!(
+            &tester.invoke_array(array_value.clone()).unwrap(),
+            &array_value
         );
 
         let ffi_kernel = FFI_SedonaScalarKernel::from(kernel.clone());
@@ -483,18 +479,15 @@ mod test {
             None,
         );
 
-        assert_value_equal(
-            &udf_from_ffi
-                .invoke_batch(std::slice::from_ref(&scalar_value), 1)
-                .unwrap(),
-            &scalar_value,
-        );
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.into(), vec![WKB_GEOMETRY]);
+        ffi_tester.assert_return_type(WKB_GEOMETRY);
 
-        assert_value_equal(
-            &udf_from_ffi
-                .invoke_batch(std::slice::from_ref(&array_value), 1)
-                .unwrap(),
-            &array_value,
+        let result = ffi_tester.invoke_scalar("POINT (0 1)").unwrap();
+        ffi_tester.assert_scalar_result_equals(result, "POINT (0 1)");
+
+        assert_eq!(
+            &ffi_tester.invoke_array(array_value.clone()).unwrap(),
+            &array_value
         );
     }
 

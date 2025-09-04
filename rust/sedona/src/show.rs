@@ -22,11 +22,9 @@ use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
 use datafusion_common::{DataFusionError, ScalarValue};
-use datafusion_expr::ColumnarValue;
-use sedona_expr::projection::unwrap_batch_maybe_deprecated;
+use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
-use sedona_schema::projection::unwrap_schema_maybe_deprecated;
 use std::iter::zip;
 use std::sync::Arc;
 
@@ -145,14 +143,6 @@ impl<'a> DisplayTable<'a> {
         options: DisplayTableOptions<'a>,
     ) -> Result<Self> {
         let num_rows = batches.iter().map(|batch| batch.num_rows()).sum();
-
-        // It's helpful to be able to work with wrapped or unwrapped batches, so we
-        // unwrap here (which has no effect on something that was already unwrapped)
-        let schema = unwrap_schema_maybe_deprecated(schema);
-        let batches = batches
-            .into_iter()
-            .map(unwrap_batch_maybe_deprecated)
-            .collect::<Vec<_>>();
 
         let columns = schema
             .fields()
@@ -486,17 +476,32 @@ impl DisplayColumn {
     /// their raw storage bytes.
     fn format_proxy(&self, array: &ArrayRef, options: &DisplayTableOptions) -> Result<ArrayRef> {
         if let Some(format) = &self.format_fn {
+            let format_udf: ScalarUDF = format.clone().into();
+
             let options_scalar = ScalarValue::Utf8(Some(format!(
                 r#"{{"width_hint": {}}}"#,
                 (options.table_width as usize).saturating_mul(options.max_row_height)
             )));
-            let format_proxy_value = format.invoke_batch(
-                &[
-                    ColumnarValue::Array(self.sedona_type.wrap_array_maybe_deprecated(array)?),
-                    options_scalar.into(),
-                ],
-                array.len(),
-            )?;
+
+            let arg_fields = vec![
+                Arc::new(self.sedona_type.to_storage_field("", true)?),
+                Arc::new(Field::new("", DataType::Utf8, true)),
+            ];
+
+            let args = ReturnFieldArgs {
+                arg_fields: &arg_fields,
+                scalar_arguments: &[None, None],
+            };
+            let return_field = format_udf.return_field_from_args(args)?;
+
+            let args = ScalarFunctionArgs {
+                args: vec![ColumnarValue::Array(array.clone()), options_scalar.into()],
+                arg_fields,
+                number_rows: array.len(),
+                return_field,
+            };
+
+            let format_proxy_value = format_udf.invoke_with_args(args)?;
             format_proxy_value.to_array(array.len())
         } else {
             Ok(array.clone())
@@ -524,7 +529,7 @@ mod test {
 
     use super::*;
 
-    fn test_cols() -> Vec<(&'static str, ArrayRef)> {
+    fn test_cols() -> Vec<(&'static str, (SedonaType, ArrayRef))> {
         let short_chars: ArrayRef =
             arrow_array::create_array!(Utf8, [Some("abcd"), Some("efgh"), None]);
         let long_chars: ArrayRef = arrow_array::create_array!(
@@ -549,18 +554,25 @@ mod test {
         );
 
         vec![
-            ("shrt", short_chars),
-            ("long", long_chars),
-            ("numeric", numeric),
-            ("geometry", geometry),
+            ("shrt", (SedonaType::Arrow(DataType::Utf8), short_chars)),
+            ("long", (SedonaType::Arrow(DataType::Utf8), long_chars)),
+            ("numeric", (SedonaType::Arrow(DataType::Int32), numeric)),
+            ("geometry", (WKB_GEOMETRY, geometry)),
         ]
     }
 
     fn render_cols<'a>(
-        cols: Vec<(&'static str, ArrayRef)>,
+        cols: Vec<(&'static str, (SedonaType, ArrayRef))>,
         options: DisplayTableOptions<'a>,
     ) -> Vec<String> {
-        let batch = RecordBatch::try_from_iter(cols).unwrap();
+        let fields = cols
+            .iter()
+            .map(|(name, (sedona_type, _))| sedona_type.to_storage_field(name, true).unwrap())
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(fields));
+        let batch =
+            RecordBatch::try_new(schema, cols.into_iter().map(|(_, (_, col))| col).collect())
+                .unwrap();
         let ctx = SedonaContext::new();
 
         let mut out = Vec::new();
@@ -597,7 +609,10 @@ mod test {
     fn render_multiline() {
         let cols = vec![(
             "multiline",
-            arrow_array::create_array!(Utf8, [Some("one\ntwo\nthree")]) as ArrayRef,
+            (
+                SedonaType::Arrow(DataType::Utf8),
+                arrow_array::create_array!(Utf8, [Some("one\ntwo\nthree")]) as ArrayRef,
+            ),
         )];
 
         // By default, multiple lines are truncated
@@ -633,7 +648,10 @@ mod test {
     fn numeric_truncate_header_but_not_content() {
         let cols = vec![(
             "a very long column name",
-            arrow_array::create_array!(Int32, [123456789]) as ArrayRef,
+            (
+                SedonaType::Arrow(DataType::Int32),
+                arrow_array::create_array!(Int32, [123456789]) as ArrayRef,
+            ),
         )];
 
         // The content should never be truncated but the header can be
