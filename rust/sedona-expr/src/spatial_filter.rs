@@ -274,7 +274,11 @@ mod test {
 
     #[test]
     fn predicate_intersects() {
-        let literal = Literal::new(create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal = Literal::new_with_metadata(
+            create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        );
         let bounds = literal_bounds(&literal).unwrap();
 
         let stats_no_info = [GeoStatistics::unspecified()];
@@ -404,10 +408,11 @@ mod test {
     #[test]
     fn predicate_from_expr_intersects() {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
-        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new(create_scalar(
-            Some("POINT (1 2)"),
-            &WKB_GEOMETRY,
-        )));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
         let st_intersects = dummy_st_intersects();
 
         let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
