@@ -22,7 +22,6 @@ use std::{
 use arrow_array::RecordBatch;
 use async_trait::async_trait;
 use datafusion::{
-    catalog::TableProvider,
     common::{plan_datafusion_err, plan_err},
     error::{DataFusionError, Result},
     execution::{
@@ -38,7 +37,6 @@ use sedona_common::option::add_sedona_option_extension;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::{
     function_set::FunctionSet,
-    projection::wrap_batch_maybe_deprecated,
     scalar_udf::{ArgMatcher, ScalarKernelRef},
 };
 use sedona_geoparquet::{
@@ -47,14 +45,13 @@ use sedona_geoparquet::{
 };
 use sedona_schema::datatypes::SedonaType;
 
+use crate::exec::create_plan_from_sql;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     object_storage::ensure_object_store_registered,
-    projection::{unwrap_df, wrap_df},
     random_geometry_provider::RandomGeometryFunction,
     show::{show_batches, DisplayTableOptions},
 };
-use crate::{exec::create_plan_from_sql, projection::unwrap_stream};
 
 /// Sedona SessionContext wrapper
 ///
@@ -247,29 +244,6 @@ impl SedonaContext {
 
         self.ctx.read_table(Arc::new(provider))
     }
-
-    /// Registers the [`RecordBatch`] as the specified table name
-    pub fn register_batch(
-        &self,
-        table_name: &str,
-        batch: RecordBatch,
-    ) -> Result<Option<Arc<dyn TableProvider>>> {
-        self.ctx
-            .register_batch(table_name, wrap_batch_maybe_deprecated(batch))
-    }
-
-    /// Creates a [`DataFrame`] for reading a [`RecordBatch`]
-    pub fn read_batch(&self, batch: RecordBatch) -> Result<DataFrame> {
-        self.ctx.read_batch(wrap_batch_maybe_deprecated(batch))
-    }
-
-    /// Create a [`DataFrame`] for reading a [`Vec[`RecordBatch`]`]
-    pub fn read_batches(
-        &self,
-        batches: impl IntoIterator<Item = RecordBatch>,
-    ) -> Result<DataFrame> {
-        wrap_df(self.ctx.read_batches(batches)?)
-    }
 }
 
 impl Default for SedonaContext {
@@ -326,35 +300,19 @@ pub trait SedonaDataFrame {
 #[async_trait]
 impl SedonaDataFrame for DataFrame {
     async fn collect_sedona(self) -> Result<Vec<RecordBatch>> {
-        let (schema, df) = unwrap_df(self)?;
-        let schema_ref = Arc::new(schema.as_arrow().clone());
-        let batches = df.collect().await?;
-
-        let unwrapped_batches: Result<Vec<_>> = batches
-            .iter()
-            .map(|batch| {
-                batch
-                    .clone()
-                    .with_schema(schema_ref.clone())
-                    .map_err(|err| {
-                        DataFusionError::Internal(format!("batch.with_schema() failed {err}"))
-                    })
-            })
-            .collect();
-
-        unwrapped_batches
+        self.collect().await
     }
 
     /// Executes this DataFrame and returns a stream over a single partition
     async fn execute_stream_sedona(self) -> Result<SendableRecordBatchStream> {
-        Ok(unwrap_stream(self.execute_stream().await?))
+        self.execute_stream().await
     }
 
     fn geometry_column_indices(&self) -> Result<Vec<usize>> {
         let mut indices = Vec::new();
         let matcher = ArgMatcher::is_geometry_or_geography();
         for (i, field) in self.schema().fields().iter().enumerate() {
-            if matcher.match_type(&SedonaType::from_data_type(field.data_type())?) {
+            if matcher.match_type(&SedonaType::from_storage_field(field)?) {
                 indices.push(i);
             }
         }
@@ -428,34 +386,15 @@ impl ThreadSafeDialect {
 #[cfg(test)]
 mod tests {
 
-    use arrow_array::create_array;
-    use arrow_schema::{DataType, Field, Schema};
+    use arrow_schema::DataType;
     use datafusion::assert_batches_eq;
-    use futures::TryStreamExt;
     use sedona_schema::{
         crs::lnglat,
-        datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+        datatypes::{Edges, SedonaType},
     };
-    use sedona_testing::{create::create_array_storage, data::test_geoparquet};
+    use sedona_testing::data::test_geoparquet;
 
     use super::*;
-
-    fn test_batch() -> Result<RecordBatch> {
-        let schema = Schema::new(vec![
-            Field::new("idx", DataType::Int32, true),
-            WKB_GEOMETRY.to_storage_field("geometry", true)?,
-        ]);
-        let idx = create_array!(Int32, [1, 2, 3]);
-        let wkb_array = create_array_storage(
-            &[
-                Some("POINT (1 2)"),
-                Some("POINT (3 4)"),
-                Some("POINT (5 6)"),
-            ],
-            &WKB_GEOMETRY,
-        );
-        Ok(RecordBatch::try_new(Arc::new(schema), vec![idx, wkb_array]).unwrap())
-    }
 
     #[tokio::test]
     async fn basic_sql() -> Result<()> {
@@ -476,81 +415,6 @@ mod tests {
             ],
             &batches
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn register_batch() -> Result<()> {
-        let ctx = SedonaContext::new();
-        ctx.register_batch("test_batch", test_batch()?)?;
-        let batches = ctx
-            .sql("SELECT idx, ST_AsText(geometry) AS geometry FROM test_batch")
-            .await?
-            .collect()
-            .await?;
-        assert_batches_eq!(
-            [
-                "+-----+------------+",
-                "| idx | geometry   |",
-                "+-----+------------+",
-                "| 1   | POINT(1 2) |",
-                "| 2   | POINT(3 4) |",
-                "| 3   | POINT(5 6) |",
-                "+-----+------------+",
-            ],
-            &batches
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn read_batch() -> Result<()> {
-        let ctx = SedonaContext::new();
-        let batch_in = test_batch()?;
-
-        let df = ctx.read_batch(batch_in.clone())?;
-        let geometry_physical_type: SedonaType = df.schema().field(1).data_type().try_into()?;
-        assert_eq!(geometry_physical_type, WKB_GEOMETRY);
-
-        let batches_out = df.collect_sedona().await?;
-        assert_eq!(batches_out.len(), 1);
-        assert_eq!(batches_out[0], batch_in);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn read_batches() -> Result<()> {
-        let ctx = SedonaContext::new();
-        let batch_in = test_batch()?;
-
-        let df = ctx.read_batches(vec![batch_in.clone(), batch_in.clone()])?;
-        let geometry_physical_type: SedonaType = df.schema().field(1).data_type().try_into()?;
-        assert_eq!(geometry_physical_type, WKB_GEOMETRY);
-
-        let batches_out = df.collect_sedona().await?;
-        assert_eq!(batches_out.len(), 2);
-        assert_eq!(batches_out[0], batch_in);
-        assert_eq!(batches_out[1], batch_in);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn execute_stream() -> Result<()> {
-        let ctx = SedonaContext::new();
-        let batch_in = test_batch()?;
-
-        let df = ctx.read_batches(vec![batch_in.clone(), batch_in.clone()])?;
-        let stream = df.execute_stream_sedona().await?;
-        let geometry_physical_type = SedonaType::from_storage_field(stream.schema().field(1))?;
-        assert_eq!(geometry_physical_type, WKB_GEOMETRY);
-
-        let batches_out: Vec<_> = stream.try_collect().await?;
-        assert_eq!(batches_out.len(), 2);
-        assert_eq!(batches_out[0], batch_in);
-        assert_eq!(batches_out[1], batch_in);
 
         Ok(())
     }
@@ -617,7 +481,7 @@ mod tests {
             .as_arrow()
             .fields()
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect();
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);

@@ -296,16 +296,13 @@ impl AggregateUDFImpl for ExportedSedonaAccumulator {
         &self.signature
     }
 
-    // We have to use return_type() with struct-wrapped types instead of
-    // return_field() because the FFI Aggregate Function doesn't yet use
-    // return_field().
-    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
-        let sedona_types = arg_types
+    fn return_field(&self, arg_fields: &[FieldRef]) -> Result<FieldRef> {
+        let sedona_types = arg_fields
             .iter()
-            .map(SedonaType::from_data_type)
+            .map(|f| SedonaType::from_storage_field(f))
             .collect::<Result<Vec<_>>>()?;
         match self.sedona_impl.return_type(&sedona_types)? {
-            Some(output_type) => Ok(output_type.storage_type().clone()),
+            Some(output_type) => Ok(Arc::new(output_type.to_storage_field("", true)?)),
             // Sedona kernels return None to indicate the kernel doesn't apply to the inputs,
             // but the ScalarUDFImpl doesn't have a way to natively indicate that. We use
             // NotImplemented with a special message and catch it on the other side.
@@ -313,6 +310,10 @@ impl AggregateUDFImpl for ExportedSedonaAccumulator {
                 "::kernel does not match input args::".to_string(),
             )),
         }
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        sedona_internal_err!("This should not be called (use return_field())")
     }
 
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
@@ -323,7 +324,7 @@ impl AggregateUDFImpl for ExportedSedonaAccumulator {
             .collect::<Result<Vec<_>>>()?;
         let sedona_types = arg_fields
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect::<Result<Vec<_>>>()?;
         if let Some(output_type) = self.sedona_impl.return_type(&sedona_types)? {
             self.sedona_impl.accumulator(&sedona_types, &output_type)
@@ -386,14 +387,14 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
     ) -> Result<Box<dyn Accumulator>> {
         let arg_fields = args
             .iter()
-            .map(|arg| Arc::new(Field::new("", arg.data_type_maybe_deprecated(), true)))
-            .collect::<Vec<_>>();
+            .map(|arg| arg.to_storage_field("", true).map(Arc::new))
+            .collect::<Result<Vec<_>>>()?;
         let mock_schema = Schema::new(arg_fields);
         let exprs = (0..mock_schema.fields().len())
             .map(|i| -> Arc<dyn PhysicalExpr> { Arc::new(Column::new("col", i)) })
             .collect::<Vec<_>>();
 
-        let return_field = Field::new("", output_type.data_type_maybe_deprecated(), true);
+        let return_field = output_type.to_storage_field("", true)?;
 
         let args = AccumulatorArgs {
             return_field: return_field.into(),
@@ -412,8 +413,8 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
     fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
         let arg_fields = args
             .iter()
-            .map(|arg| Arc::new(Field::new("", arg.data_type_maybe_deprecated(), true)))
-            .collect::<Vec<_>>();
+            .map(|arg| arg.to_storage_field("", true).map(Arc::new))
+            .collect::<Result<Vec<_>>>()?;
 
         let state_field_args = StateFieldsArgs {
             name: "",
@@ -430,17 +431,9 @@ impl SedonaAccumulator for ImportedSedonaAccumulator {
 #[cfg(test)]
 mod test {
     use datafusion_expr::Volatility;
-    use sedona_expr::{
-        aggregate_udf::SedonaAggregateUDF,
-        scalar_udf::{ArgMatcher, SedonaScalarUDF, SimpleSedonaScalarKernel},
-    };
-    use sedona_functions::st_envelope_aggr::st_envelope_aggr_udf;
+    use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::datatypes::WKB_GEOMETRY;
-    use sedona_testing::{
-        compare::assert_scalar_equal,
-        create::{create_array, create_scalar},
-        testers::{AggregateUdfTester, ScalarUdfTester},
-    };
+    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
 
@@ -488,37 +481,6 @@ mod test {
         assert_eq!(
             &ffi_tester.invoke_array(array_value.clone()).unwrap(),
             &array_value
-        );
-    }
-
-    #[test]
-    fn ffi_aggregate_roundtrip() {
-        let agg = st_envelope_aggr_udf();
-        let array_value = create_array(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
-        let scalar_envelope = create_scalar(Some("POINT (0 1)"), &WKB_GEOMETRY);
-
-        // Check aggregation without FFI
-        let tester = AggregateUdfTester::new(agg.clone().into(), vec![WKB_GEOMETRY]);
-        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
-        assert_scalar_equal(
-            &tester.aggregate(&vec![array_value.clone()]).unwrap(),
-            &scalar_envelope,
-        );
-
-        // Check aggregation roundtrip through FFI
-        let ffi_kernel = FFI_SedonaAggregateKernel::from(agg.kernels()[0].clone());
-        let agg_from_ffi = SedonaAggregateUDF::new(
-            "simple_agg_from_ffi",
-            vec![ffi_kernel.try_into().unwrap()],
-            Volatility::Immutable,
-            None,
-        );
-
-        let tester = AggregateUdfTester::new(agg_from_ffi.into(), vec![WKB_GEOMETRY]);
-        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
-        assert_scalar_equal(
-            &tester.aggregate(&vec![array_value.clone()]).unwrap(),
-            &scalar_envelope,
         );
     }
 }

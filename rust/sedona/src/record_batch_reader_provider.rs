@@ -34,8 +34,6 @@ use datafusion::{
 };
 use datafusion_common::DataFusionError;
 use sedona_common::sedona_internal_err;
-use sedona_expr::projection::wrap_batch_maybe_deprecated;
-use sedona_schema::projection::wrap_schema_maybe_deprecated;
 
 /// A [TableProvider] wrapping a [RecordBatchReader]
 ///
@@ -52,10 +50,10 @@ unsafe impl Sync for RecordBatchReaderProvider {}
 
 impl RecordBatchReaderProvider {
     pub fn new(reader: Box<dyn RecordBatchReader + Send>) -> Self {
-        let schema = wrap_schema_maybe_deprecated(&reader.schema());
+        let schema = reader.schema();
         Self {
             reader: RwLock::new(Some(reader)),
-            schema: Arc::new(schema),
+            schema,
         }
     }
 }
@@ -194,7 +192,7 @@ impl ExecutionPlan for RecordBatchReaderExec {
         // Create a stream from the RecordBatchReader iterator
         let iter = reader
             .map(|item| match item {
-                Ok(batch) => Ok(wrap_batch_maybe_deprecated(batch)),
+                Ok(batch) => Ok(batch),
                 Err(e) => Err(DataFusionError::from(e)),
             })
             .take(limit.unwrap_or(usize::MAX));
@@ -240,13 +238,10 @@ mod test {
             RecordBatchIterator::new(vec![batch.clone()].into_iter().map(Ok), schema.clone());
         let provider = RecordBatchReaderProvider::new(Box::new(reader));
 
-        // Ensure we get wrapped output
+        // Ensure we get the expected output
         let df = ctx.read_table(Arc::new(provider)).unwrap();
-        assert_eq!(
-            df.schema().as_arrow(),
-            &wrap_schema_maybe_deprecated(&schema)
-        );
+        assert_eq!(Arc::new(df.schema().as_arrow().clone()), schema);
         let results = df.collect().await.unwrap();
-        assert_eq!(results, vec![wrap_batch_maybe_deprecated(batch)])
+        assert_eq!(results, vec![batch])
     }
 }
