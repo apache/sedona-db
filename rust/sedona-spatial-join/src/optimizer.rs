@@ -907,8 +907,8 @@ mod tests {
     fn create_test_schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
             Field::new("left_id", DataType::Int32, false), // index 0
-            Field::new("left_geom", WKB_GEOMETRY.into(), false), // index 1
-            Field::new("right_geom", WKB_GEOMETRY.into(), false), // index 2
+            WKB_GEOMETRY.to_storage_field("left_geom", false).unwrap(), // index 1
+            WKB_GEOMETRY.to_storage_field("right_geom", false).unwrap(), // index 2
             Field::new("right_distance", DataType::Float64, false), // index 3
         ]))
     }
@@ -939,7 +939,10 @@ mod tests {
     fn create_dummy_st_intersects_udf() -> Arc<ScalarUDF> {
         Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
             "st_intersects",
-            vec![WKB_GEOMETRY.into(), WKB_GEOMETRY.into()],
+            vec![
+                WKB_GEOMETRY.storage_type().clone(),
+                WKB_GEOMETRY.storage_type().clone(),
+            ],
             DataType::Boolean,
             datafusion_expr::Volatility::Immutable,
             Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))),
@@ -949,7 +952,11 @@ mod tests {
     fn create_dummy_st_dwithin_udf() -> Arc<ScalarUDF> {
         Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
             "st_dwithin",
-            vec![WKB_GEOMETRY.into(), WKB_GEOMETRY.into(), DataType::Float64],
+            vec![
+                WKB_GEOMETRY.storage_type().clone(),
+                WKB_GEOMETRY.storage_type().clone(),
+                DataType::Float64,
+            ],
             DataType::Boolean,
             datafusion_expr::Volatility::Immutable,
             Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))),
@@ -959,7 +966,10 @@ mod tests {
     fn create_dummy_st_distance_udf() -> Arc<ScalarUDF> {
         Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
             "st_distance",
-            vec![WKB_GEOMETRY.into(), WKB_GEOMETRY.into()],
+            vec![
+                WKB_GEOMETRY.storage_type().clone(),
+                WKB_GEOMETRY.storage_type().clone(),
+            ],
             DataType::Float64,
             datafusion_expr::Volatility::Immutable,
             Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Float64(Some(100.0))))),
@@ -969,7 +979,10 @@ mod tests {
     fn create_dummy_st_within_udf() -> Arc<ScalarUDF> {
         Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
             "st_within",
-            vec![WKB_GEOMETRY.into(), WKB_GEOMETRY.into()],
+            vec![
+                WKB_GEOMETRY.storage_type().clone(),
+                WKB_GEOMETRY.storage_type().clone(),
+            ],
             DataType::Boolean,
             datafusion_expr::Volatility::Immutable,
             Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))),
@@ -1875,8 +1888,8 @@ mod tests {
         Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
             "st_knn",
             vec![
-                WKB_GEOMETRY.into(),
-                WKB_GEOMETRY.into(),
+                WKB_GEOMETRY.storage_type().clone(),
+                WKB_GEOMETRY.storage_type().clone(),
                 DataType::Int32,
                 DataType::Boolean,
             ],
