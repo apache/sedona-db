@@ -28,35 +28,41 @@ def test_st_transform(eng):
         wkt_precision=9,
     )
 
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "srid", "expected_srid"),
     [
         ("POINT (1 1)", None, None),
         ("POINT (1 1)", 3857, 3857),
-        ("POINT (1 1)",  0, None),
+        ("POINT (1 1)", 0, None),
     ],
 )
 def test_st_setsrid(eng, geom, srid, expected_srid):
     eng = eng.create_or_skip()
-    result = eng.execute_and_collect(f"SELECT ST_SetSrid({geom_or_null(geom)}, {val_or_null(srid)})")
+    result = eng.execute_and_collect(
+        f"SELECT ST_SetSrid({geom_or_null(geom)}, {val_or_null(srid)})"
+    )
     df = eng.result_to_pandas(result)
     if expected_srid is None:
         assert df.crs is None
     else:
         assert df.crs == pyproj.CRS(expected_srid)
 
+
 # PostGIS does not handle String CRS input to ST_SetSrid
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom", "srid", "expected_srid"),
     [
-        ("POINT (1 1)",  "EPSG:26920", 26920),
-        ("POINT (1 1)",  pyproj.CRS("EPSG:26920").to_json(), 26920),
+        ("POINT (1 1)", "EPSG:26920", 26920),
+        ("POINT (1 1)", pyproj.CRS("EPSG:26920").to_json(), 26920),
     ],
 )
 def test_st_setsrid_sedonadb(eng, geom, srid, expected_srid):
     eng = eng.create_or_skip()
-    result = eng.execute_and_collect(f"SELECT ST_SetSrid({geom_or_null(geom)}, '{srid}')")
+    result = eng.execute_and_collect(
+        f"SELECT ST_SetSrid({geom_or_null(geom)}, '{srid}')"
+    )
     df = eng.result_to_pandas(result)
     assert df.crs.to_epsg() == expected_srid
