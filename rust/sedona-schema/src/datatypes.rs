@@ -31,6 +31,12 @@ pub enum SedonaType {
     WkbView(Edges, Crs),
 }
 
+impl From<DataType> for SedonaType {
+    fn from(value: DataType) -> Self {
+        Self::Arrow(value)
+    }
+}
+
 impl Display for SedonaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

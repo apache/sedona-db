@@ -40,7 +40,7 @@ impl SedonaScalarKernel for STPerimeter {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Float64.try_into()?,
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)

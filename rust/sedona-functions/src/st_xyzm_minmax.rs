@@ -138,12 +138,11 @@ fn st_xyzm_minmax_doc(dim: &str, is_max: bool) -> Documentation {
             min_or_max.to_lowercase(),
             dim.to_uppercase()
         ),
-        format!("{} (A: Geometry)", func_name),
+        format!("{func_name} (A: Geometry)"),
     )
     .with_argument("geom", "geometry: Input geometry")
     .with_sql_example(format!(
-        "SELECT {}(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))",
-        func_name
+        "SELECT {func_name}(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))",
     ))
     .build()
 }
@@ -158,7 +157,7 @@ impl SedonaScalarKernel for STXyzmMinMax {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Float64.try_into()?,
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)
@@ -194,24 +193,24 @@ fn invoke_scalar(
     let interval: Interval = match dim {
         "x" => {
             let xy_bounds = geo_traits_bounds_xy(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {}", e)))?;
+                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
             Interval::try_from(*xy_bounds.x()).map_err(|e| {
-                DataFusionError::Internal(format!("Error converting to interval: {}", e))
+                DataFusionError::Internal(format!("Error converting to interval: {e}"))
             })?
         }
         "y" => {
             let xy_bounds = geo_traits_bounds_xy(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {}", e)))?;
+                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
             *xy_bounds.y()
         }
         "z" => {
             let z_bounds = geo_traits_bounds_z(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {}", e)))?;
+                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
             z_bounds
         }
         "m" => {
             let m_bounds = geo_traits_bounds_m(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {}", e)))?;
+                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
             m_bounds
         }
         _ => sedona_internal_err!("unexpected dim index")?,

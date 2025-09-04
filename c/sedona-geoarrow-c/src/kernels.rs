@@ -74,9 +74,12 @@ pub fn st_geogfromwkb_impl() -> ScalarKernelRef {
 /// An implementation of WKT writing using geoarrow-c's WKT writer
 pub fn st_astext_impl() -> ScalarKernelRef {
     Arc::new(GeoArrowCCast::new(
-        ArgMatcher::new(vec![ArgMatcher::is_geometry_or_geography()], STRING),
-        Some(STRING),
-        STRING,
+        ArgMatcher::new(
+            vec![ArgMatcher::is_geometry_or_geography()],
+            SedonaType::Arrow(DataType::Utf8),
+        ),
+        Some(SedonaType::Arrow(DataType::Utf8)),
+        SedonaType::Arrow(DataType::Utf8),
     ))
 }
 
@@ -138,8 +141,6 @@ impl SedonaScalarKernel for GeoArrowCCast {
         }
     }
 }
-
-const STRING: SedonaType = SedonaType::Arrow(DataType::Utf8);
 
 #[cfg(test)]
 mod tests {

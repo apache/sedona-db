@@ -65,7 +65,7 @@ impl<Op: BinaryPredicate> SedonaScalarKernel for GeosPredicate<Op> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher: ArgMatcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)

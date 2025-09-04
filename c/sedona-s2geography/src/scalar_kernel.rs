@@ -29,7 +29,7 @@ pub fn st_area_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Area,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -56,7 +56,7 @@ pub fn st_contains_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Contains,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -83,7 +83,7 @@ pub fn st_distance_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Distance,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -92,7 +92,7 @@ pub fn st_equals_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Equals,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -110,7 +110,7 @@ pub fn st_intersects_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Intersects,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -119,7 +119,7 @@ pub fn st_length_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Length,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -137,7 +137,7 @@ pub fn st_line_locate_point_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::LineLocatePoint,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -146,7 +146,7 @@ pub fn st_max_distance_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::MaxDistance,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -155,7 +155,7 @@ pub fn st_perimeter_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Perimeter,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 

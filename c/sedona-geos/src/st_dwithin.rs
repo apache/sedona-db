@@ -42,7 +42,7 @@ impl SedonaScalarKernel for STDWithin {
                 ArgMatcher::is_geometry(),
                 ArgMatcher::is_numeric(),
             ],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)
