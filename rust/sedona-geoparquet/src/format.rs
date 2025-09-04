@@ -526,10 +526,10 @@ mod test {
         prelude::{col, ParquetReadOptions, SessionContext},
     };
     use datafusion_common::ScalarValue;
-    use datafusion_expr::{lit, Expr, Operator, ScalarUDF, Signature, SimpleScalarUDF, Volatility};
+    use datafusion_expr::{Expr, Operator, ScalarUDF, Signature, SimpleScalarUDF, Volatility};
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
-    use sedona_expr::projection::unwrap_batch_maybe_deprecated;
+
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_testing::create::create_scalar;

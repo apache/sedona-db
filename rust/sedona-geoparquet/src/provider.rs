@@ -147,7 +147,7 @@ mod test {
             .as_arrow()
             .fields()
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect();
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);
