@@ -41,6 +41,7 @@ mod st_isempty;
 mod st_length;
 mod st_perimeter;
 mod st_point;
+mod st_pointzm;
 mod st_setsrid;
 mod st_transform;
 pub mod st_union_aggr;

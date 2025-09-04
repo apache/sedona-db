@@ -370,6 +370,7 @@ impl ScalarUdfTester {
         }
     }
 
+    // Invoke a function with a set of arrays
     pub fn invoke_arrays(&self, arrays: Vec<ArrayRef>) -> Result<ArrayRef> {
         let args = zip(arrays, &self.arg_types)
             .map(|(array, sedona_type)| {
