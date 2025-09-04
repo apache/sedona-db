@@ -339,7 +339,7 @@ impl AggregateUDFImpl for ExportedSedonaAccumulator {
         let sedona_types = args
             .input_fields
             .iter()
-            .map(|f| SedonaType::from_data_type(f.data_type()))
+            .map(|f| SedonaType::from_storage_field(f))
             .collect::<Result<Vec<_>>>()?;
         self.sedona_impl.state_fields(&sedona_types)
     }

@@ -38,7 +38,7 @@ impl SedonaScalarKernel for STArea {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)
