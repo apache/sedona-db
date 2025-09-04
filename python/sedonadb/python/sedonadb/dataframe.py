@@ -214,7 +214,7 @@ class DataFrame:
             >>> con = sedonadb.connect()
             >>> con.sql("SELECT ST_Point(0, 1) as geometry").to_arrow_table()
             pyarrow.Table
-            geometry: extension<geoarrow.wkb<WkbType>>
+            geometry: extension<geoarrow.wkb<WkbType>> not null
             ----
             geometry: [[01010000000000000000000000000000000000F03F]]
 
