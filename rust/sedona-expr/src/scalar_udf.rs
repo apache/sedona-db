@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::Any, fmt::Debug, iter::zip, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::{not_impl_err, plan_err, Result, ScalarValue};
