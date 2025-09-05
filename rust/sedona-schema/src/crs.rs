@@ -88,6 +88,7 @@ pub trait CoordinateReferenceSystem: Debug {
     fn to_json(&self) -> String;
     fn to_authority_code(&self) -> Result<Option<String>>;
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
+    fn srid(&self) -> Option<u32>;
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system
@@ -207,6 +208,11 @@ impl CoordinateReferenceSystem for AuthorityCode {
             (_, _) => false,
         }
     }
+
+    /// Get the SRID if the authority is EPSG
+    fn srid(&self) -> Option<u32> {
+        self.code.parse::<u32>().ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -271,6 +277,23 @@ impl CoordinateReferenceSystem for ProjJSON {
         } else {
             false
         }
+    }
+
+    fn srid(&self) -> Option<u32> {
+        if let Some(identifier) = self.value.get("id") {
+            let maybe_code = identifier.get("code").map(|v| {
+                if let Some(string) = v.as_str() {
+                    Some(string.to_string())
+                } else {
+                    v.as_number().map(|number| number.to_string())
+                }
+            });
+            if let Some(Some(code)) = maybe_code {
+                return code.parse::<u32>().ok();
+            }
+        }
+
+        None
     }
 }
 
@@ -345,11 +368,12 @@ mod test {
         assert!(AuthorityCode::is_authority_code(&auth_code_parsed.unwrap()));
 
         let value: Value = serde_json::from_str("\"EPSG:4269\"").unwrap();
-        let new_crs = deserialize_crs(&value).unwrap();
+        let new_crs = deserialize_crs(&value).unwrap().unwrap();
         assert_eq!(
-            new_crs.unwrap().to_authority_code().unwrap(),
+            new_crs.to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
+        assert_eq!(new_crs.srid(), Some(4269));
 
         // Ensure we can also just pass a code here
         let value: Value = serde_json::from_str("\"4269\"").unwrap();
