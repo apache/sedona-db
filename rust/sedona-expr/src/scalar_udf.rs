@@ -180,6 +180,12 @@ impl ArgMatcher {
         arg_iter.next().is_none()
     }
 
+    /// Calls each [TypeMatcher]'s `type_if_null()`
+    ///
+    /// This method errors if one or more matchers does not have an
+    /// unambiguous castable-from-null storage type. It is provided
+    /// as a utility for generic kernel implementations that rely on
+    /// the matcher to sanitize input that may contain literal nulls.
     pub fn types_if_null(&self, args: &[SedonaType]) -> Result<Vec<SedonaType>> {
         let mut out = Vec::new();
         for (arg, matcher) in zip(args, &self.matchers) {
@@ -259,11 +265,25 @@ impl ArgMatcher {
     }
 }
 
+/// A TypeMatcher is a predicate on a [SedonaType]
+///
+/// TypeMatchers are the building blocks of an [ArgMatcher] that
+/// represent a single argument. This is a generalization of the
+/// DataFusion [Signature] which does not currently consider
+/// extension types and/or how extension arrays might be casted
+/// to conform to a function with a given signature.
 pub trait TypeMatcher: Debug {
+    /// Returns true if this matcher matches a type
     fn match_type(&self, arg: &SedonaType) -> bool;
+
+    /// If this argument is optional, return true
     fn is_optional(&self) -> bool {
         false
     }
+
+    /// Return the type to which an argument should be casted,
+    /// if applicable. This can be used to generalize null handling
+    /// or casting.
     fn type_if_null(&self) -> Option<SedonaType> {
         None
     }
@@ -648,30 +668,52 @@ mod tests {
         assert!(ArgMatcher::is_geometry_or_geography().match_type(&WKB_GEOGRAPHY));
         assert!(!ArgMatcher::is_geometry_or_geography()
             .match_type(&SedonaType::Arrow(DataType::Binary)));
+        assert_eq!(ArgMatcher::is_geometry_or_geography().type_if_null(), None);
 
         assert!(ArgMatcher::is_geometry().match_type(&WKB_GEOMETRY));
         assert!(!ArgMatcher::is_geometry().match_type(&WKB_GEOGRAPHY));
+        assert_eq!(ArgMatcher::is_geometry().type_if_null(), Some(WKB_GEOMETRY));
 
         assert!(ArgMatcher::is_geography().match_type(&WKB_GEOGRAPHY));
         assert!(!ArgMatcher::is_geography().match_type(&WKB_GEOMETRY));
+        assert_eq!(
+            ArgMatcher::is_geography().type_if_null(),
+            Some(WKB_GEOGRAPHY)
+        );
 
         assert!(ArgMatcher::is_numeric().match_type(&SedonaType::Arrow(DataType::Int32)));
         assert!(ArgMatcher::is_numeric().match_type(&SedonaType::Arrow(DataType::Float64)));
+        assert_eq!(
+            ArgMatcher::is_numeric().type_if_null(),
+            Some(SedonaType::Arrow(DataType::Float64))
+        );
 
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8View)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::LargeUtf8)));
         assert!(!ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Binary)));
+        assert_eq!(
+            ArgMatcher::is_string().type_if_null(),
+            Some(SedonaType::Arrow(DataType::Utf8))
+        );
 
         assert!(ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::Binary)));
         assert!(ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::BinaryView)));
         assert!(!ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::Utf8)));
+        assert_eq!(
+            ArgMatcher::is_binary().type_if_null(),
+            Some(SedonaType::Arrow(DataType::Binary))
+        );
 
         assert!(ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Boolean)));
         assert!(!ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Int32)));
 
         assert!(ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Null)));
         assert!(!ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Int32)));
+        assert_eq!(
+            ArgMatcher::is_boolean().type_if_null(),
+            Some(SedonaType::Arrow(DataType::Boolean))
+        );
     }
 
     #[test]
