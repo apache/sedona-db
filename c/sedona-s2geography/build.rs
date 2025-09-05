@@ -68,7 +68,8 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
     let re_linker_dir = Regex::new("^-L(.*)").unwrap();
     // e.g., -lstdc++
     let re_linker_lib = Regex::new("^-l(.*)").unwrap();
-    let path = binary_dir.join("lib").join("linker_flags.txt");
+
+    let path = find_cmake_linker_flags(binary_dir);
     let values = std::fs::read_to_string(path).expect("Read linker_flags.txt");
 
     // Print out the whole thing for debugging failures
@@ -118,4 +119,20 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
             }
         }
     }
+}
+
+fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {
+    // Usually lib but could be lib64 (e.g., the Linux used for wheel builds)
+    let possible_lib_dirs = ["lib", "lib64", "build/Release"];
+    for possible_lib in possible_lib_dirs {
+        let path = binary_dir.join(possible_lib).join("linker_flags.txt");
+        if path.exists() {
+            return path;
+        }
+    }
+
+    panic!(
+        "Can't find linker_flags.txt output at {}",
+        binary_dir.to_string_lossy()
+    )
 }
