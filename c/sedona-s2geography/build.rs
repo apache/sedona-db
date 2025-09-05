@@ -32,10 +32,7 @@ fn main() {
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt.
     let lib_dir = find_lib_dir(&dst);
-    println!(
-        "cargo:rustc-link-search=native={}",
-        dst.join(lib_dir).display()
-    );
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=static=geography_glue");
     println!("cargo:rustc-link-lib=static=s2geography");
     println!("cargo:rustc-link-lib=static=s2");
@@ -149,7 +146,7 @@ fn find_lib_dir(binary_dir: &Path) -> PathBuf {
     }
 
     panic!(
-        "Can't find linker_flags.txt output at {}",
+        "Can't find library dir output at {}",
         binary_dir.to_string_lossy()
     )
 }
