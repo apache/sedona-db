@@ -53,7 +53,7 @@ config_namespace! {
         pub enable: bool, default = true
 
         /// Spatial library to use for spatial join
-        pub spatial_library: SpatialLibrary, default = SpatialLibrary::Geo
+        pub spatial_library: SpatialLibrary, default = SpatialLibrary::Tg
 
         /// Options for configuring the GEOS spatial library
         pub geos: GeosOptions, default = GeosOptions::default()

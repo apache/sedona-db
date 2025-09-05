@@ -138,6 +138,9 @@ impl SedonaContext {
         #[cfg(feature = "geo")]
         out.register_scalar_kernels(sedona_geo::register::scalar_kernels().into_iter())?;
 
+        #[cfg(feature = "tg")]
+        out.register_scalar_kernels(sedona_tg::register::scalar_kernels().into_iter())?;
+
         // Register geo aggregate kernels if built with geo support
         #[cfg(feature = "geo")]
         out.register_aggregate_kernels(sedona_geo::register::aggregate_kernels().into_iter())?;
