@@ -330,7 +330,7 @@ def test_st_within(eng, geom1, geom2, expected):
     )
 
 
-@pytest.mark.skip("Skipping test for ST_Within with GeometryCollection")
+@pytest.mark.xfail(reason="https://github.com/tidwall/tg/issues/20")
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
