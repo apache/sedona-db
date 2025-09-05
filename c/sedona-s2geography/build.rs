@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::{
+    collections::HashSet,
     env,
     path::{Path, PathBuf},
 };
@@ -31,8 +32,24 @@ fn main() {
 
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt.
-    let lib_dir = find_lib_dir(&dst);
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    let mut lib_dirs = [
+        "geography_glue",
+        "s2geography",
+        "s2",
+        "geoarrow",
+        "nanoarrow_static",
+    ]
+    .map(|lib| find_lib_dir(&dst, lib))
+    .into_iter()
+    .collect::<HashSet<_>>()
+    .into_iter()
+    .collect::<Vec<_>>();
+
+    lib_dirs.sort();
+    for lib_dir in lib_dirs {
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    }
+
     println!("cargo:rustc-link-lib=static=geography_glue");
     println!("cargo:rustc-link-lib=static=s2geography");
     println!("cargo:rustc-link-lib=static=s2");
@@ -135,18 +152,20 @@ fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {
     )
 }
 
-fn find_lib_dir(binary_dir: &Path) -> PathBuf {
+fn find_lib_dir(binary_dir: &Path, lib_file: &str) -> PathBuf {
     // Usually lib but could be lib64 (e.g., the Linux used for wheel builds)
     let possible_lib_dirs = ["lib", "lib64", "build/Release"];
     for possible_lib in possible_lib_dirs {
         let path = binary_dir.join(possible_lib);
-        if path.exists() {
+        let static_lib_posix = path.join(format!("lib{lib_file}.a"));
+        let static_lib_windows = path.join(format!("{lib_file}.lib"));
+        if static_lib_posix.exists() || static_lib_windows.exists() {
             return path;
         }
     }
 
     panic!(
-        "Can't find library dir output at {}",
+        "Can't find library dir for static library '{lib_file}' output at {}",
         binary_dir.to_string_lossy()
     )
 }
