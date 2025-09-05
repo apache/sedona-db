@@ -32,7 +32,7 @@ use sedona_schema::datatypes::SedonaType;
 pub fn st_srid_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_srid",
-        vec![Arc::new(STSRID {})],
+        vec![Arc::new(StSrid {})],
         Volatility::Immutable,
         Some(st_srid_doc()),
     )
@@ -50,13 +50,13 @@ fn st_srid_doc() -> Documentation {
 }
 
 #[derive(Debug)]
-struct STSRID {}
+struct StSrid {}
 
-impl SedonaScalarKernel for STSRID {
+impl SedonaScalarKernel for StSrid {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Utf8.try_into()?,
+            SedonaType::Arrow(DataType::UInt32),
         );
 
         matcher.match_args(args)
@@ -94,11 +94,11 @@ impl SedonaScalarKernel for STSRID {
 
 #[cfg(test)]
 mod test {
-    use arrow_array::create_array;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
-    use sedona_schema::crs::{deserialize_crs, OGC_CRS84_PROJJSON};
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
-    use sedona_testing::{compare::assert_value_equal, create::create_array_value};
+    use sedona_testing::testers::ScalarUdfTester;
     use std::str::FromStr;
 
     use super::*;
@@ -112,34 +112,41 @@ mod test {
 
     #[test]
     fn udf() {
-        let udf = st_srid_udf();
+        let udf: ScalarUDF = st_srid_udf().into();
 
-        // Call with a geometry with no CRS set
-        let geom_none = create_array_value(
-            &[None, Some("POINT (0 1)")],
-            &SedonaType::Wkb(Edges::Planar, None),
-        );
-        let expected = ColumnarValue::Array(create_array!(UInt32, [None, Some(0)]));
-        assert_value_equal(&udf.invoke_batch(&[geom_none], 1).unwrap(), &expected);
+        // Test that when no CRS is set, SRID is 0
+        let sedona_type = SedonaType::Wkb(Edges::Planar, None);
+        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
+        tester.assert_return_type(DataType::UInt32);
+        let result = tester
+            .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 0_u32);
 
-        // Call with a geometry with a CRS set
+        // Test that NULL input returns NULL output
+        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
+
+        // Test with a CRS with an EPSG code
         let crs_value = serde_json::Value::String("EPSG:4837".to_string());
         let crs = deserialize_crs(&crs_value).unwrap();
-        let geom_4326 = create_array_value(
-            &[None, Some("POINT (0 1)")],
-            &SedonaType::Wkb(Edges::Planar, Some(crs.unwrap())),
-        );
-        let expected = ColumnarValue::Array(create_array!(UInt32, [None, Some(4837)]));
-        assert_value_equal(&udf.invoke_batch(&[geom_4326], 1).unwrap(), &expected);
+        let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
+        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
+        let result = tester
+            .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 4837_u32);
+
+        // Test with a CRS but null geom
+        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
         // Call with a CRS with no SRID (should error)
-        let crs_value = serde_json::Value::from_str(OGC_CRS84_PROJJSON);
+        let crs_value = serde_json::Value::from_str("{}");
         let crs = deserialize_crs(&crs_value.unwrap()).unwrap();
-        let geom_no_srid = create_array_value(
-            &[None, Some("POINT (0 1)")],
-            &SedonaType::Wkb(Edges::Planar, Some(crs.unwrap())),
-        );
-        let result = udf.invoke_batch(&[geom_no_srid], 1);
+        let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
+        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
+        let result = tester.invoke_scalar("POINT (0 1)");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("CRS has no SRID"));
     }

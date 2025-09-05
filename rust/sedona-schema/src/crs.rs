@@ -280,15 +280,12 @@ impl CoordinateReferenceSystem for ProjJSON {
     }
 
     fn srid(&self) -> Option<u32> {
-        if let Some(identifier) = self.value.get("id") {
-            let maybe_code = identifier.get("code").map(|v| {
-                if let Some(string) = v.as_str() {
-                    Some(string.to_string())
-                } else {
-                    v.as_number().map(|number| number.to_string())
-                }
-            });
-            if let Some(Some(code)) = maybe_code {
+        let authority_code_opt = self.to_authority_code().unwrap();
+        if let Some(authority_code) = authority_code_opt {
+            if LngLat::is_authority_code_lnglat(&authority_code) {
+                return Some(4326);
+            }
+            if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
                 return code.parse::<u32>().ok();
             }
         }
@@ -302,6 +299,7 @@ pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.
 #[cfg(test)]
 mod test {
     use super::*;
+    const EPSG_6318_PROJJSON: &str = r#"{"$schema": "https://proj.org/schemas/v0.4/projjson.schema.json","type": "GeographicCRS","name": "NAD83(2011)","datum": {"type": "GeodeticReferenceFrame","name": "NAD83 (National Spatial Reference System 2011)","ellipsoid": {"name": "GRS 1980","semi_major_axis": 6378137,"inverse_flattening": 298.257222101}},"coordinate_system": {"subtype": "ellipsoidal","axis": [{"name": "Geodetic latitude","abbreviation": "Lat","direction": "north","unit": "degree"},{"name": "Geodetic longitude","abbreviation": "Lon","direction": "east","unit": "degree"}]},"scope": "Horizontal component of 3D system.","area": "Puerto Rico - onshore and offshore. United States (USA) onshore and offshore - Alabama; Alaska; Arizona; Arkansas; California; Colorado; Connecticut; Delaware; Florida; Georgia; Idaho; Illinois; Indiana; Iowa; Kansas; Kentucky; Louisiana; Maine; Maryland; Massachusetts; Michigan; Minnesota; Mississippi; Missouri; Montana; Nebraska; Nevada; New Hampshire; New Jersey; New Mexico; New York; North Carolina; North Dakota; Ohio; Oklahoma; Oregon; Pennsylvania; Rhode Island; South Carolina; South Dakota; Tennessee; Texas; Utah; Vermont; Virginia; Washington; West Virginia; Wisconsin; Wyoming. US Virgin Islands - onshore and offshore.", "bbox": {"south_latitude": 14.92,"west_longitude": 167.65,"north_latitude": 74.71,"east_longitude": -63.88},"id": {"authority": "EPSG","code": 6318}}"#;
 
     #[test]
     fn deserialize() {
@@ -327,6 +325,7 @@ mod test {
     fn crs_projjson() {
         let projjson = OGC_CRS84_PROJJSON.parse::<ProjJSON>().unwrap();
         assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "OGC:CRS84");
+        assert_eq!(projjson.srid(), Some(4326));
 
         let json_value: Value = serde_json::from_str(OGC_CRS84_PROJJSON).unwrap();
         let json_value_roundtrip: Value = serde_json::from_str(&projjson.to_json()).unwrap();
@@ -340,7 +339,11 @@ mod test {
             .to_authority_code()
             .unwrap()
             .is_none());
-        assert!(!projjson.crs_equals(&projjson_without_identifier))
+        assert!(!projjson.crs_equals(&projjson_without_identifier));
+
+        let projjson = EPSG_6318_PROJJSON.parse::<ProjJSON>().unwrap();
+        assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "EPSG:6318");
+        assert_eq!(projjson.srid(), Some(6318));
     }
 
     #[test]
@@ -351,6 +354,7 @@ mod test {
         };
         assert!(auth_code.crs_equals(&auth_code));
         assert!(!auth_code.crs_equals(LngLat::crs().unwrap().as_ref()));
+        assert_eq!(auth_code.srid(), Some(4269));
 
         assert_eq!(
             auth_code.to_authority_code().unwrap(),
@@ -379,8 +383,9 @@ mod test {
         let value: Value = serde_json::from_str("\"4269\"").unwrap();
         let new_crs = deserialize_crs(&value).unwrap();
         assert_eq!(
-            new_crs.unwrap().to_authority_code().unwrap(),
+            new_crs.clone().unwrap().to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
+        assert_eq!(new_crs.unwrap().srid(), Some(4269));
     }
 }
