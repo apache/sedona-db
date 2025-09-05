@@ -21,6 +21,7 @@
 # $env:CIBW_BUILD="cp311-win_amd64"
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$vcpkgInstalledDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET"
 $vcpkgBinDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\bin"
 $vcpkgLibDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\lib"
 
@@ -31,6 +32,8 @@ $env:PATH += ";$scriptDirectory\windows"
 # (well, specifically our dummy geos-config) the information it needs to build bindings
 $env:GEOS_LIB_DIR = "$vcpkgLibDirectory"
 $env:GEOS_VERSION = "3.13.0"
+$env:OPENSSL_ROOT_DIR = "$vcpkgInstalledDirectory"
+$env:CMAKE_PREFIX_PATH = "$vcpkgInstalledDirectory"
 $originalDirectory = Get-Location
 
 # Use delvewheel to copy any required dependencies from vcpkg into the wheel
