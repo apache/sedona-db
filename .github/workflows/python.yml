@@ -21,6 +21,13 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/python.yml'
+      - 'rust/**'
+      - 'c/**'
+      - 'python/**'
   push:
     branches:
       - main
