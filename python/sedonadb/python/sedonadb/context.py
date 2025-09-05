@@ -35,6 +35,34 @@ class SedonaContext:
         self._impl = InternalContext()
 
     def create_data_frame(self, obj, schema=None) -> DataFrame:
+        """Create a DataFrame from an in-memory or protocol-enabled object.
+
+        Converts supported Python objects into a SedonaDB DataFrame so you
+        can run SQL and spatial operations on them.
+
+        Args:
+            obj: A supported object:
+                - pandas DataFrame
+                - GeoPandas DataFrame
+                - Polars DataFrame
+                - pyarrow Table
+            schema: Optional object implementing ``__arrow_schema__`` for providing an Arrow schema.
+
+        Returns:
+            DataFrame: A SedonaDB DataFrame.
+
+        Examples:
+
+            >>> import sedonadb, pandas as pd
+            >>> con = sedonadb.connect()
+            >>> con.create_data_frame(pd.DataFrame({"x": [1, 2]})).head(1).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            └───────┘
+        """
         return _create_data_frame(self._impl, obj, schema)
 
     def view(self, name: str) -> DataFrame:

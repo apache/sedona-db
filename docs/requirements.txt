@@ -8,3 +8,4 @@ mkdocstrings[python]
 ruff
 ipykernel
 notebook
+sedonadb[geopandas]
