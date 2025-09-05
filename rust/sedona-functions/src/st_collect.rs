@@ -98,7 +98,6 @@ impl SedonaAccumulator for STCollectAggr {
 #[derive(Debug)]
 struct CollectionAccumulator {
     input_type: SedonaType,
-    output_type: SedonaType,
     unique_geometry_types: HashSet<GeometryTypeId>,
     unique_dimensions: HashSet<Dimensions>,
     count: i64,
@@ -106,10 +105,9 @@ struct CollectionAccumulator {
 }
 
 impl CollectionAccumulator {
-    pub fn try_new(input_type: SedonaType, output_type: SedonaType) -> Result<Self> {
+    pub fn try_new(input_type: SedonaType, _output_type: SedonaType) -> Result<Self> {
         Ok(Self {
             input_type,
-            output_type,
             unique_geometry_types: HashSet::new(),
             unique_dimensions: HashSet::new(),
             count: 0,
@@ -120,7 +118,6 @@ impl CollectionAccumulator {
     // Create a WKB result based on the current state of the accumulator.
     fn make_wkb_result(&mut self) -> Result<Option<Vec<u8>>> {
         if self.count == 0 {
-            // TODO: Does this return NULL or GEOMETRYCOLLECTION EMPTY?
             return Ok(None);
         }
 
@@ -187,9 +184,7 @@ impl Accumulator for CollectionAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
-        let args = [ColumnarValue::Array(
-            self.input_type.unwrap_array(&values[0])?,
-        )];
+        let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
@@ -208,8 +203,7 @@ impl Accumulator for CollectionAccumulator {
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let wkb = self.make_wkb_result()?;
-        let scalar = ScalarValue::Binary(wkb);
-        self.output_type.wrap_scalar(&scalar)
+        Ok(ScalarValue::Binary(wkb))
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
