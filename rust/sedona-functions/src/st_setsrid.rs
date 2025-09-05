@@ -214,8 +214,13 @@ mod test {
         assert_value_equal(&result, &geom_lnglat);
 
         // Call with an integer code of 0 (should unset the output crs)
-        let (return_type, result) =
-            call_udf(&udf, geom_lnglat.clone(), unset_scalar.clone()).unwrap();
+        let (return_type, result) = call_udf(
+            &udf,
+            geom_lnglat.clone(),
+            WKB_GEOMETRY,
+            unset_scalar.clone(),
+        )
+        .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
         assert_value_equal(&result, &geom_arg);
 
