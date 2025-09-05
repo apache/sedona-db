@@ -35,3 +35,21 @@ class TestBenchPredicates(TestBenchBase):
             eng.execute_and_collect(f"SELECT ST_Difference(geom1, geom2) from {table}")
 
         benchmark(queries)
+
+    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "polygons_simple",
+            "polygons_complex",
+        ],
+    )
+    def test_st_intersection(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(
+                f"SELECT ST_Intersection(geom1, geom2) from {table}"
+            )
+
+        benchmark(queries)

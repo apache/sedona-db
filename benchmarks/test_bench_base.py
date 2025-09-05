@@ -14,7 +14,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import json
 from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 
@@ -29,11 +28,26 @@ class TestBenchBase:
         # Setup tables
         for name, options in [
             (
-                "segments_large",
+                "points_simple",
+                {
+                    "geom_type": "Point",
+                    "target_rows": num_geoms,
+                },
+            ),
+            (
+                "linestrings_simple",
                 {
                     "geom_type": "LineString",
                     "target_rows": num_geoms,
                     "vertices_per_linestring_range": [2, 2],
+                },
+            ),
+            (
+                "linestrings_complex",
+                {
+                    "geom_type": "LineString",
+                    "target_rows": num_geoms,
+                    "vertices_per_linestring_range": [500, 500],
                 },
             ),
             (
@@ -70,18 +84,28 @@ class TestBenchBase:
             ),
         ]:
             # Generate synthetic data
-            query = f"""
-                SELECT
-                    geometry as geom1,
-                    geometry as geom2,
-                    round(random() * 100) as integer
-                FROM sd_random_geometry('{json.dumps(options)}')
-            """
-            tab = self.sedonadb.execute_and_collect(query)
+            # query = f"""
+            #     SELECT
+            #         geometry as geom1,
+            #         geometry as geom2,
+            #         round(random() * 100) as integer
+            #     FROM sd_random_geometry('{json.dumps(options)}')
+            # """
 
-            self.sedonadb.create_table_arrow(name, tab)
-            self.postgis.create_table_arrow(name, tab)
-            self.duckdb.create_table_arrow(name, tab)
+            data_path = f"data/{name}.parquet"
+
+            # pd_df = self.sedonadb.con.sql(query).to_pandas(geometry="geom1")
+            # pd_df.to_parquet(data_path)
+
+            # read the parquet data into tables
+            self.sedonadb.create_table_parquet(name, data_path)
+            self.postgis.create_table_parquet(name, data_path)
+            self.duckdb.create_table_parquet(name, data_path)
+
+            # tab = self.sedonadb.execute_and_collect(query)
+            # self.sedonadb.create_table_arrow(name, tab)
+            # self.postgis.create_table_arrow(name, tab)
+            # self.duckdb.create_table_arrow(name, tab)
 
     def _get_eng(self, eng):
         if eng == SedonaDB:

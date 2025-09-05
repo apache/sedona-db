@@ -28,6 +28,12 @@ Install pytest-benchmark:
 pip install pytest-benchmark
 ```
 
+Please also remember to install sedonadb in release mode and not debug mode (avoid using the `-e` mentioned in the development docs). Currently we also need to include the test dependencies.
+
+```bash
+pip install "python/sedonadb[test]"
+```
+
 ### Running benchmarks
 
 The below commands assume your working directory is in `benchmarks`.
