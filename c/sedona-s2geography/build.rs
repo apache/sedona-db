@@ -31,9 +31,10 @@ fn main() {
 
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt.
+    let lib_dir = find_lib_dir(&dst);
     println!(
         "cargo:rustc-link-search=native={}",
-        dst.join("lib").display()
+        dst.join(lib_dir).display()
     );
     println!("cargo:rustc-link-lib=static=geography_glue");
     println!("cargo:rustc-link-lib=static=s2geography");
@@ -126,6 +127,22 @@ fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {
     let possible_lib_dirs = ["lib", "lib64", "build/Release"];
     for possible_lib in possible_lib_dirs {
         let path = binary_dir.join(possible_lib).join("linker_flags.txt");
+        if path.exists() {
+            return path;
+        }
+    }
+
+    panic!(
+        "Can't find linker_flags.txt output at {}",
+        binary_dir.to_string_lossy()
+    )
+}
+
+fn find_lib_dir(binary_dir: &Path) -> PathBuf {
+    // Usually lib but could be lib64 (e.g., the Linux used for wheel builds)
+    let possible_lib_dirs = ["lib", "lib64", "build/Release"];
+    for possible_lib in possible_lib_dirs {
+        let path = binary_dir.join(possible_lib);
         if path.exists() {
             return path;
         }
