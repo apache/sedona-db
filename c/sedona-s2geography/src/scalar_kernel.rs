@@ -304,6 +304,10 @@ mod test {
             .invoke_wkb_scalar(Some("LINESTRING (0 0, 0 1)"))
             .unwrap();
         assert_eq!(result, ScalarValue::Float64(Some(111195.10117748393)));
+
+        // Null scalar -> Null
+        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
+        assert_eq!(result, ScalarValue::Float64(None));
     }
 
     #[rstest]
@@ -343,6 +347,12 @@ mod test {
             .invoke_scalar_scalar(polygon_scalar, point_scalar)
             .unwrap();
         assert_eq!(result, ScalarValue::Boolean(Some(true)));
+
+        // Null scalars -> Null
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(None));
     }
 
     #[test]
