@@ -306,13 +306,11 @@ int main(int argc, const char** args) {
 
   add_custom_command(TARGET linker_flags
                      POST_BUILD
-                     COMMAND ${CMAKE_COMMAND} -E make_directory
-                             "${CMAKE_BINARY_DIR}/linker_flags"
                      COMMAND ${CMAKE_COMMAND} -E copy
-                             "${CMAKE_BINARY_DIR}/sedona-s2geography/linker_flags.dir/$<CONFIG>/linker_flags.tlog/link.command.1.tlog"
-                             "${CMAKE_BINARY_DIR}/sedona-s2geography/$<CONFIG>/linker_flags.txt"
+                             "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.dir/$<CONFIG>/linker_flags.tlog/link.command.1.tlog"
+                             "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/linker_flags.txt"
                      COMMENT "Copying linker command file for configuration $<CONFIG>")
 
-  install(FILES "${CMAKE_BINARY_DIR}/sedona-s2geography/$<CONFIG>/linker_flags.txt"
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/linker_flags.txt"
           DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 endif()
