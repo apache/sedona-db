@@ -23,10 +23,10 @@ from sedonadb.testing import PostGIS, SedonaDB
 def test_st_collect_points(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) FROM (
+        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
             VALUES
-                (ST_GeomFromText('POINT (1 2)')),
-                (ST_GeomFromText('POINT (3 4)')),
+                ('POINT (1 2)'),
+                ('POINT (3 4)'),
                 (NULL)
         ) AS t(geom)""",
         "MULTIPOINT (1 2, 3 4)",
@@ -37,10 +37,10 @@ def test_st_collect_points(eng):
 def test_st_collect_linestrings(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) FROM (
+        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
             VALUES
-                (ST_GeomFromText('LINESTRING (1 2, 3 4)')),
-                (ST_GeomFromText('LINESTRING (5 6, 7 8)')),
+                ('LINESTRING (1 2, 3 4)'),
+                ('LINESTRING (5 6, 7 8)'),
                 (NULL)
         ) AS t(geom)""",
         "MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))",
@@ -51,10 +51,10 @@ def test_st_collect_linestrings(eng):
 def test_st_collect_polygons(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) FROM (
+        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
             VALUES
-                (ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')),
-                (ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))')),
+                ('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+                ('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
                 (NULL)
         ) AS t(geom)""",
         "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
@@ -65,10 +65,10 @@ def test_st_collect_polygons(eng):
 def test_st_collect_mixed_types(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) FROM (
+        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
             VALUES
-                (ST_GeomFromText('POINT (1 2)')),
-                (ST_GeomFromText('LINESTRING (3 4, 5 6)')),
+                ('POINT (1 2)'),
+                ('LINESTRING (3 4, 5 6)'),
                 (NULL)
         ) AS t(geom)""",
         "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))",
@@ -81,10 +81,10 @@ def test_st_collect_mixed_dimensions(eng):
 
     with pytest.raises(Exception, match="mixed dimension geometries"):
         eng.assert_query_result(
-            """SELECT ST_Collect(geom) FROM (
+            """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
                 VALUES
-                    (ST_GeomFromText('POINT (1 2)')),
-                    (ST_GeomFromText('POINT Z (3 4 5)')),
+                    ('POINT (1 2)'),
+                    ('POINT Z (3 4 5)'),
                     (NULL)
             ) AS t(geom)""",
             "MULTIPOINT (1 2, 3 4)",
@@ -95,13 +95,13 @@ def test_st_collect_mixed_dimensions(eng):
 def test_st_collect_all_null(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) IS NULL FROM (
+        """SELECT ST_Collect(geom) FROM (
             VALUES
                 (NULL),
                 (NULL),
                 (NULL)
         ) AS t(geom)""",
-        "true",
+        None,
     )
 
 
@@ -109,9 +109,9 @@ def test_st_collect_all_null(eng):
 def test_st_collect_zero_input(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) IS NULL FROM (
+        """SELECT ST_Collect(ST_GeomFromText(geom)) AS empty FROM (
             VALUES
-                (ST_GeomFromText('POINT (1 2)'))
+                ('POINT (1 2)')
         ) AS t(geom) WHERE false""",
-        "true",
+        None,
     )
