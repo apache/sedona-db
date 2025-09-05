@@ -45,7 +45,7 @@ fn st_srid_doc() -> Documentation {
         "ST_SRID (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_SRID(polygon))".to_string())
+    .with_sql_example("SELECT ST_SRID(polygon)".to_string())
     .build()
 }
 
@@ -70,10 +70,12 @@ impl SedonaScalarKernel for StSrid {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = UInt32Builder::with_capacity(executor.num_iterations());
         let srid_opt = match &arg_types[0] {
-            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => match crs.srid() {
-                Some(srid) => Some(srid),
-                None => return Err(DataFusionError::Execution("CRS has no SRID".to_string())),
-            },
+            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
+                match crs.srid()? {
+                    Some(srid) => Some(srid),
+                    None => return Err(DataFusionError::Execution("CRS has no SRID".to_string())),
+                }
+            }
             _ => Some(0),
         };
 

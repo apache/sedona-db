@@ -88,7 +88,7 @@ pub trait CoordinateReferenceSystem: Debug {
     fn to_json(&self) -> String;
     fn to_authority_code(&self) -> Result<Option<String>>;
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
-    fn srid(&self) -> Option<u32>;
+    fn srid(&self) -> Result<Option<u32>>;
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system
@@ -209,9 +209,13 @@ impl CoordinateReferenceSystem for AuthorityCode {
         }
     }
 
-    /// Get the SRID if the authority is EPSG
-    fn srid(&self) -> Option<u32> {
-        self.code.parse::<u32>().ok()
+    /// Get the SRID if authority is EPSG
+    fn srid(&self) -> Result<Option<u32>> {
+        if self.authority.eq_ignore_ascii_case("EPSG") {
+            Ok(self.code.parse::<u32>().ok())
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -279,18 +283,18 @@ impl CoordinateReferenceSystem for ProjJSON {
         }
     }
 
-    fn srid(&self) -> Option<u32> {
-        let authority_code_opt = self.to_authority_code().unwrap();
+    fn srid(&self) -> Result<Option<u32>> {
+        let authority_code_opt = self.to_authority_code()?;
         if let Some(authority_code) = authority_code_opt {
             if LngLat::is_authority_code_lnglat(&authority_code) {
-                return Some(4326);
+                return Ok(Some(4326));
             }
             if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
-                return code.parse::<u32>().ok();
+                return Ok(code.parse::<u32>().ok());
             }
         }
 
-        None
+        Ok(None)
     }
 }
 
@@ -325,7 +329,7 @@ mod test {
     fn crs_projjson() {
         let projjson = OGC_CRS84_PROJJSON.parse::<ProjJSON>().unwrap();
         assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "OGC:CRS84");
-        assert_eq!(projjson.srid(), Some(4326));
+        assert_eq!(projjson.srid().unwrap(), Some(4326));
 
         let json_value: Value = serde_json::from_str(OGC_CRS84_PROJJSON).unwrap();
         let json_value_roundtrip: Value = serde_json::from_str(&projjson.to_json()).unwrap();
@@ -343,7 +347,7 @@ mod test {
 
         let projjson = EPSG_6318_PROJJSON.parse::<ProjJSON>().unwrap();
         assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "EPSG:6318");
-        assert_eq!(projjson.srid(), Some(6318));
+        assert_eq!(projjson.srid().unwrap(), Some(6318));
     }
 
     #[test]
@@ -354,7 +358,7 @@ mod test {
         };
         assert!(auth_code.crs_equals(&auth_code));
         assert!(!auth_code.crs_equals(LngLat::crs().unwrap().as_ref()));
-        assert_eq!(auth_code.srid(), Some(4269));
+        assert_eq!(auth_code.srid().unwrap(), Some(4269));
 
         assert_eq!(
             auth_code.to_authority_code().unwrap(),
@@ -377,7 +381,7 @@ mod test {
             new_crs.to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
-        assert_eq!(new_crs.srid(), Some(4269));
+        assert_eq!(new_crs.srid().unwrap(), Some(4269));
 
         // Ensure we can also just pass a code here
         let value: Value = serde_json::from_str("\"4269\"").unwrap();
@@ -386,6 +390,6 @@ mod test {
             new_crs.clone().unwrap().to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
-        assert_eq!(new_crs.unwrap().srid(), Some(4269));
+        assert_eq!(new_crs.unwrap().srid().unwrap(), Some(4269));
     }
 }
