@@ -272,6 +272,8 @@ pub enum BenchmarkArgSpec {
     LineString(usize),
     /// Randomly generated polygon input with a specified number of vertices
     Polygon(usize),
+    /// Randomly generated linestring input with a specified number of vertices
+    MultiPoint(usize),
     /// Randomly generated floating point input with a given range of values
     Float64(f64, f64),
     /// A transformation of any of the above based on a [ScalarUDF] accepting
@@ -289,6 +291,7 @@ impl Debug for BenchmarkArgSpec {
             Self::Point => write!(f, "Point"),
             Self::LineString(arg0) => f.debug_tuple("LineString").field(arg0).finish(),
             Self::Polygon(arg0) => f.debug_tuple("Polygon").field(arg0).finish(),
+            Self::MultiPoint(arg0) => f.debug_tuple("MultiPoint").field(arg0).finish(),
             Self::Float64(arg0, arg1) => f.debug_tuple("Float64").field(arg0).field(arg1).finish(),
             Self::Transformed(inner, t) => write!(f, "{}({:?})", t.name(), inner),
             Self::String(s) => write!(f, "String({s})"),
@@ -302,7 +305,8 @@ impl BenchmarkArgSpec {
         match self {
             BenchmarkArgSpec::Point
             | BenchmarkArgSpec::Polygon(_)
-            | BenchmarkArgSpec::LineString(_) => WKB_GEOMETRY,
+            | BenchmarkArgSpec::LineString(_)
+            | BenchmarkArgSpec::MultiPoint(_) => WKB_GEOMETRY,
             BenchmarkArgSpec::Float64(_, _) => SedonaType::Arrow(DataType::Float64),
             BenchmarkArgSpec::Transformed(inner, t) => {
                 let tester = ScalarUdfTester::new(t.clone(), vec![inner.sedona_type()]);
@@ -333,13 +337,14 @@ impl BenchmarkArgSpec {
     ) -> Result<Vec<ArrayRef>> {
         match self {
             BenchmarkArgSpec::Point => {
-                self.build_geometry(i, GeometryTypeId::Point, num_batches, 1, rows_per_batch)
+                self.build_geometry(i, GeometryTypeId::Point, num_batches, 1, 1, rows_per_batch)
             }
             BenchmarkArgSpec::LineString(vertex_count) => self.build_geometry(
                 i,
                 GeometryTypeId::LineString,
                 num_batches,
                 *vertex_count,
+                1,
                 rows_per_batch,
             ),
             BenchmarkArgSpec::Polygon(vertex_count) => self.build_geometry(
@@ -347,6 +352,15 @@ impl BenchmarkArgSpec {
                 GeometryTypeId::Polygon,
                 num_batches,
                 *vertex_count,
+                1,
+                rows_per_batch,
+            ),
+            BenchmarkArgSpec::MultiPoint(part_count) => self.build_geometry(
+                i,
+                GeometryTypeId::MultiPoint,
+                num_batches,
+                1,
+                *part_count,
                 rows_per_batch,
             ),
             BenchmarkArgSpec::Float64(lo, hi) => {
@@ -389,6 +403,7 @@ impl BenchmarkArgSpec {
         geom_type: GeometryTypeId,
         num_batches: usize,
         vertex_count: usize,
+        num_parts_count: usize,
         rows_per_batch: usize,
     ) -> Result<Vec<ArrayRef>> {
         let builder = RandomPartitionedDataBuilder::new()
@@ -399,6 +414,7 @@ impl BenchmarkArgSpec {
             .bounds(Rect::new((-10.0, -10.0), (10.0, 10.0)))
             .size_range((0.1, 2.0))
             .vertices_per_linestring_range((vertex_count, vertex_count))
+            .num_parts_range((num_parts_count, num_parts_count))
             .geometry_type(geom_type)
             // Currently just use WKB_GEOMETRY (we can generate a view type with
             // Transformed)

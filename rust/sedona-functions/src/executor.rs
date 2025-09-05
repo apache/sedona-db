@@ -17,6 +17,7 @@
 use std::iter::zip;
 
 use arrow_array::ArrayRef;
+use arrow_schema::DataType;
 use datafusion_common::cast::{as_binary_array, as_binary_view_array};
 use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
@@ -314,7 +315,7 @@ impl IterGeo for ArrayRef {
         &'a self,
         sedona_type: &SedonaType,
         num_iterations: usize,
-        func: F,
+        mut func: F,
     ) -> Result<()> {
         if num_iterations != self.len() {
             return sedona_internal_err!(
@@ -324,6 +325,13 @@ impl IterGeo for ArrayRef {
         }
 
         match sedona_type {
+            SedonaType::Arrow(DataType::Null) => {
+                for _ in 0..num_iterations {
+                    func(None)?;
+                }
+
+                Ok(())
+            }
             SedonaType::Wkb(_, _) => iter_wkb_binary(as_binary_array(self)?, func),
             SedonaType::WkbView(_, _) => iter_wkb_binary(as_binary_view_array(self)?, func),
             _ => {
