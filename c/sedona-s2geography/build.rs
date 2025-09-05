@@ -77,7 +77,7 @@ fn main() {
 
 fn parse_cmake_linker_flags(binary_dir: &Path) {
     // e.g., libabsl_base.a
-    let re_lib = Regex::new("^(lib|)([^.]+).*?(lib|a|dylib|so|dll)$").unwrap();
+    let re_lib = Regex::new("^(lib|)([^.]+).*?(LIB|lib|a|dylib|so|dll)$").unwrap();
     // e.g., -L/path/to/lib (CMake doesn't usually output this, preferrig instead
     // to pass the full path to the library)
     let re_linker_dir = Regex::new("^-L(.*)").unwrap();
@@ -85,16 +85,20 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
     let re_linker_lib = Regex::new("^-l(.*)").unwrap();
 
     let path = find_cmake_linker_flags(binary_dir);
-    let values = std::fs::read_to_string(path).expect("Read linker_flags.txt");
+    let linker_flags_string = read_file_maybe_utf16(&path);
 
     // Print out the whole thing for debugging failures
-    println!("Parsing CMake linker flags: {values}");
+    println!("Parsing CMake linker flags: {linker_flags_string}");
 
     let mut last_lib_dir = "".to_string();
 
     // Split flags on whitespace. This probably won't work if library paths
     // contain spaces.
-    for item in values.split_whitespace() {
+    for item in linker_flags_string.split_whitespace() {
+        if item.is_empty() {
+            continue;
+        }
+
         if let Some(dir_match) = re_linker_dir.captures(item) {
             let (_, [dir]) = dir_match.extract();
             println!("cargo:rustc-link-search=native={dir}");
@@ -105,8 +109,12 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
             continue;
         }
 
-        // Try to interpret as a path to a library. CMake loves to do this.
-        let mut path = PathBuf::from(item);
+        // Try to interpret as a path to a library. CMake loves to do this. It might be quoted (Windows)
+        let mut path = if item.starts_with('"') && item.ends_with('"') {
+            PathBuf::from(item[1..(item.len() - 1)].to_string())
+        } else {
+            PathBuf::from(item)
+        };
 
         // If it's a relative path, it's relative to the binary directory
         if path.is_relative() {
@@ -124,7 +132,8 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
                     }
 
                     match suffix {
-                        "a" | "lib" => println!("cargo:rustc-link-lib=static={lib}"),
+                        "lib" | "LIB" => println!("cargo:rustc-link-lib={lib}"),
+                        "a" => println!("cargo:rustc-link-lib=static={lib}"),
                         _ => println!("cargo:rustc-link-lib=dylib={lib}"),
                     }
                 }
@@ -168,4 +177,38 @@ fn find_lib_dir(binary_dir: &Path, lib_file: &str) -> PathBuf {
         "Can't find library dir for static library '{lib_file}' output at {}",
         binary_dir.to_string_lossy()
     )
+}
+
+// Linker flags scraped from MSBuild are UTF-16 with a byte order mark; linker flags scraped otherwise
+// are system encoding (likely UTF-8 or compatible).
+fn read_file_maybe_utf16(path: &PathBuf) -> String {
+    let linker_flags_bytes = std::fs::read(path).expect("Read linker_flags.txt");
+
+    // Check if the first two bytes are UTF-16 BOM (0xFF 0xFE or 0xFE 0xFF)
+    if linker_flags_bytes.len() >= 2
+        && ((linker_flags_bytes[0] == 0xFF && linker_flags_bytes[1] == 0xFE)
+            || (linker_flags_bytes[0] == 0xFE && linker_flags_bytes[1] == 0xFF))
+    {
+        // Determine endianness from BOM
+        let is_le = linker_flags_bytes[0] == 0xFF;
+
+        // Skip the BOM and convert the rest
+        let u16_bytes = &linker_flags_bytes[2..];
+        let u16_slice = unsafe {
+            std::slice::from_raw_parts(u16_bytes.as_ptr() as *const u16, u16_bytes.len() / 2)
+        };
+
+        if is_le {
+            String::from_utf16_lossy(u16_slice).to_string()
+        } else {
+            // Convert from big endian to host endian
+            let mut swapped = Vec::with_capacity(u16_slice.len());
+            for &value in u16_slice {
+                swapped.push(u16::from_be(value));
+            }
+            String::from_utf16_lossy(&swapped).to_string()
+        }
+    } else {
+        String::from_utf8_lossy(&linker_flags_bytes).to_string()
+    }
 }

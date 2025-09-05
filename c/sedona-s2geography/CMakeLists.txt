@@ -292,12 +292,12 @@ if(NOT WIN32)
 
 else()
 
-  file(WRITE "${CMAKE_BINARY_DIR}/linker_flags.cc"
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc"
        "
 int main(int argc, const char** args) {
   return 0;
 }")
-  add_executable(linker_flags "${CMAKE_BINARY_DIR}/linker_flags.cc")
+  add_executable(linker_flags "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc")
   target_link_libraries(linker_flags
                         OpenSSL::SSL
                         OpenSSL::Crypto
