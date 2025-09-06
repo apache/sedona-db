@@ -268,16 +268,9 @@ if(NOT WIN32)
   set(CMAKE_ECHO_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS})
   set(CMAKE_ECHO_IMPLICIT_LINK_DIRECTORIES ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
 
-  # Select the appropriate command based on the platform
-  if(WIN32)
-    set(CMAKE_ECHO_LINK_EXECUTABLE
-        "cmake -E echo \"<FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB}\" > <TARGET>"
-    )
-  else()
-    set(CMAKE_ECHO_LINK_EXECUTABLE
-        "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
-    )
-  endif()
+  set(CMAKE_ECHO_LINK_EXECUTABLE
+      "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
+  )
 
   add_executable(linker_flags "CMakeLists.txt")
   target_link_libraries(linker_flags
@@ -291,7 +284,8 @@ if(NOT WIN32)
   install(TARGETS linker_flags DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
 else()
-
+  # On Windows, MSBuild will write this file for us, but we have to look in a very specific place
+  # to find it. This is possibly brittle but makes it possible to build this on Windows at all.
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc"
        "
 int main(int argc, const char** args) {
