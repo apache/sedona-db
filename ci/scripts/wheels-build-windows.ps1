@@ -16,7 +16,7 @@
 # under the License.
 
 # If running locally:
-# $env:VCPKG_ROOT="C:\Users\dewey\Documents\rscratch\vcpkg"
+# $env:VCPKG_ROOT="C:\Users\dewey\Documents\gh\vcpkg"
 # $env:VCPKG_DEFAULT_TRIPLET="x64-windows-dynamic-release"
 # $env:CIBW_BUILD="cp311-win_amd64"
 
