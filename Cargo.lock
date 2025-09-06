@@ -4728,6 +4728,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "savvy"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b0b77a8477c7edc3166bdebc6f8fc449967942aa3d25f22b13a336df29da3e2"
+dependencies = [
+ "cc",
+ "rustversion",
+ "savvy-ffi",
+ "savvy-macro",
+]
+
+[[package]]
+name = "savvy-bindgen"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a29c423a6e85d4d7c4172db33ace022acea97b2c6fded04d28da50a14591c87d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
+name = "savvy-ffi"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e06cec12411cc3a0cc7eaa13601c431f770cbc89825576fea8aebc369b3ed41c"
+
+[[package]]
+name = "savvy-macro"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df4c38f496dd2a8f5aac0bdff321e88f59d241fc4cdf1b75f4859a69134c020f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "savvy-bindgen",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5168,6 +5209,25 @@ dependencies = [
  "sedona-proj",
  "sedona-schema",
  "sedona-tg",
+ "thiserror 2.0.16",
+ "tokio",
+]
+
+[[package]]
+name = "sedonadbr"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion",
+ "datafusion-common",
+ "savvy",
+ "savvy-ffi",
+ "sedona",
+ "sedona-adbc",
+ "sedona-expr",
+ "sedona-geoparquet",
+ "sedona-schema",
  "thiserror 2.0.16",
  "tokio",
 ]
