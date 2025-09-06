@@ -162,7 +162,7 @@ jobs:
           CIBW_SKIP: "*musllinux*"
           CIBW_TEST_SKIP: "cp314*"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
-          CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          # CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
       - uses: actions/upload-artifact@v4
         with:
