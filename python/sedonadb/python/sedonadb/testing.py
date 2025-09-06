@@ -302,6 +302,7 @@ class SedonaDB(DBEngine):
         import sedonadb
 
         self.con = sedonadb.connect()
+        self.con.sql("SET datafusion.execution.target_partitions TO 1")
 
     @classmethod
     def name(cls):
@@ -343,6 +344,7 @@ class DuckDB(DBEngine):
         self.con.install_extension("spatial")
         self.con.load_extension("spatial")
         self.con.sql("CALL register_geoarrow_extensions()")
+        self.con.sql("SET threads TO 1")
 
     @classmethod
     def name(cls):
