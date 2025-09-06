@@ -251,32 +251,60 @@ install(FILES "${CMAKE_BINARY_DIR}/openssl_libraries.txt"
 # .a file (but this might not work if the absl libraries weren't static,
 # as they aren't on Homebrew and linux distributions).
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(LINK_CXX_STANDARD_LIB "-lc++")
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  set(LINK_CXX_STANDARD_LIB "-lstdc++")
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  # set MSVC-specific flags if we need them
+if(NOT WIN32)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(LINK_CXX_STANDARD_LIB "-lc++")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(LINK_CXX_STANDARD_LIB "-lstdc++")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    # set MSVC-specific flags if we need them
+    set(LINK_CXX_STANDARD_LIB "")
+  else()
+    set(LINK_CXX_STANDARD_LIB "")
+  endif()
+
+  set(CMAKE_ECHO_STANDARD_LIBRARIES ${CMAKE_CXX_STANDARD_LIBRARIES})
+  set(CMAKE_ECHO_FLAGS ${CMAKE_CXX_FLAGS})
+  set(CMAKE_ECHO_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS})
+  set(CMAKE_ECHO_IMPLICIT_LINK_DIRECTORIES ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
+
+  set(CMAKE_ECHO_LINK_EXECUTABLE
+      "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
+  )
+
+  add_executable(linker_flags "CMakeLists.txt")
+  target_link_libraries(linker_flags
+                        OpenSSL::SSL
+                        OpenSSL::Crypto
+                        ${S2_EXTRA_OPENSSL_LIBS}
+                        ${ABSL_LIBRARIES})
+
+  set_target_properties(linker_flags PROPERTIES LINKER_LANGUAGE ECHO SUFFIX ".txt")
+
+  install(TARGETS linker_flags DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+
 else()
-  set(LINK_CXX_STANDARD_LIB "")
+  # On Windows, MSBuild will write this file for us, but we have to look in a very specific place
+  # to find it. This is possibly brittle but makes it possible to build this on Windows at all.
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc"
+       "
+int main(int argc, const char** args) {
+  return 0;
+}")
+  add_executable(linker_flags "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc")
+  target_link_libraries(linker_flags
+                        OpenSSL::SSL
+                        OpenSSL::Crypto
+                        ${S2_EXTRA_OPENSSL_LIBS}
+                        ${ABSL_LIBRARIES})
+
+  add_custom_command(TARGET linker_flags
+                     POST_BUILD
+                     COMMAND ${CMAKE_COMMAND} -E copy
+                             "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.dir/$<CONFIG>/linker_flags.tlog/link.command.1.tlog"
+                             "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/linker_flags.txt"
+                     COMMENT "Copying linker command file for configuration $<CONFIG>")
+
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/linker_flags.txt"
+          DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 endif()
-
-set(CMAKE_ECHO_STANDARD_LIBRARIES ${CMAKE_CXX_STANDARD_LIBRARIES})
-set(CMAKE_ECHO_FLAGS ${CMAKE_CXX_FLAGS})
-set(CMAKE_ECHO_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS})
-set(CMAKE_ECHO_IMPLICIT_LINK_DIRECTORIES ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
-# TODO: This won't work on Windows
-set(CMAKE_ECHO_LINK_EXECUTABLE
-    "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
-)
-
-add_executable(linker_flags "CMakeLists.txt")
-target_link_libraries(linker_flags
-                      OpenSSL::SSL
-                      OpenSSL::Crypto
-                      ${S2_EXTRA_OPENSSL_LIBS}
-                      ${ABSL_LIBRARIES})
-
-set_target_properties(linker_flags PROPERTIES LINKER_LANGUAGE ECHO SUFFIX ".txt")
-
-install(TARGETS linker_flags DESTINATION "${CMAKE_INSTALL_LIBDIR}")
