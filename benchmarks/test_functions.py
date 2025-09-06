@@ -115,3 +115,20 @@ class TestBenchFunctions(TestBenchBase):
             eng.execute_and_collect(f"SELECT ST_GeometryType(geom1) from {table}")
 
         benchmark(queries)
+
+    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "segments_large",
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_length(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_Length(geom1) from {table}")
+
+        benchmark(queries)

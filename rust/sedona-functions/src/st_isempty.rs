@@ -87,6 +87,10 @@ impl SedonaScalarKernel for STIsEmpty {
     }
 }
 
+pub fn is_wkb_empty(item: &Wkb) -> Result<bool> {
+    invoke_scalar(item)
+}
+
 fn invoke_scalar(item: &Wkb) -> Result<bool> {
     match item.as_type() {
         geo_traits::GeometryType::Point(point) => Ok(point.coord().is_none()),

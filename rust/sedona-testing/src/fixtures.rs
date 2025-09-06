@@ -14,6 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+/// A well-known binary blob of POINT EMPTY
+///
+/// Represents an empty point with NaN coordinates (0xf8, 0x7f = NaN in little-endian)
+pub const POINT_EMPTY_WKB: [u8; 21] = [
+    0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x7f, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xf8, 0x7f,
+];
+
 /// A well-known binary blob of MULTIPOINT (EMPTY)
 ///
 /// The wkt crate's parser rejects this; however, it's a corner case that may show
