@@ -85,6 +85,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_pointzm::st_pointm_udf,
         crate::st_pointzm::st_pointzm_udf,
         crate::st_transform::st_transform_udf,
+        crate::st_setsrid::st_set_crs_udf,
         crate::st_setsrid::st_set_srid_udf,
         crate::st_xyzm::st_m_udf,
         crate::st_xyzm::st_x_udf,
@@ -123,6 +124,7 @@ pub mod stubs {
     pub use crate::st_area::st_area_udf;
     pub use crate::st_length::st_length_udf;
     pub use crate::st_perimeter::st_perimeter_udf;
+    pub use crate::st_setsrid::st_set_crs_with_engine_udf;
     pub use crate::st_setsrid::st_set_srid_with_engine_udf;
     pub use crate::st_transform::st_transform_udf;
 }
