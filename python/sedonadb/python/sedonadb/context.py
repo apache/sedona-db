@@ -149,6 +149,10 @@ class SedonaContext:
 
 def connect() -> SedonaContext:
     """Create a new [SedonaContext][sedonadb.context.SedonaContext]"""
+    # Make Scarf call for usage analytics
+    from ._scarf import make_scarf_call
+
+    make_scarf_call("python")
     return SedonaContext()
 
 

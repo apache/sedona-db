@@ -21,6 +21,11 @@ import sedonadb.adbc
 
 def connect(**kwargs) -> "Connection":
     """Connect to Sedona via ADBC."""
+    # Make Scarf call for usage analytics
+    from ._scarf import make_scarf_call
+
+    make_scarf_call("dbapi")
+
     db = None
     conn = None
 
