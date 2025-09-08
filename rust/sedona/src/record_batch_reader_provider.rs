@@ -266,11 +266,39 @@ mod test {
 
     use arrow_array::{RecordBatch, RecordBatchIterator};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::prelude::SessionContext;
+    use datafusion::prelude::{DataFrame, SessionContext};
+    use rstest::rstest;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array_storage;
 
     use super::*;
+
+    fn create_test_batch(size: usize, start_id: i32) -> RecordBatch {
+        let schema = Schema::new(vec![Field::new("id", DataType::Int32, false)]);
+        let ids: Vec<i32> = (start_id..start_id + size as i32).collect();
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(arrow_array::Int32Array::from(ids))],
+        )
+        .unwrap()
+    }
+
+    fn create_test_reader(batch_sizes: Vec<usize>) -> Box<dyn RecordBatchReader + Send> {
+        let mut start_id = 0i32;
+        let batches: Vec<RecordBatch> = batch_sizes
+            .into_iter()
+            .map(|size| {
+                let batch = create_test_batch(size, start_id);
+                start_id += size as i32;
+                batch
+            })
+            .collect();
+        let schema = batches[0].schema();
+        Box::new(RecordBatchIterator::new(
+            batches.into_iter().map(Ok),
+            schema,
+        ))
+    }
 
     #[tokio::test]
     async fn provider() {
@@ -301,5 +329,87 @@ mod test {
         assert_eq!(Arc::new(df.schema().as_arrow().clone()), schema);
         let results = df.collect().await.unwrap();
         assert_eq!(results, vec![batch])
+    }
+
+    #[rstest]
+    #[case(vec![10, 20, 30], None, 60)] // No limit
+    #[case(vec![10, 20, 30], Some(5), 5)] // Limit within first batch
+    #[case(vec![10, 20, 30], Some(10), 10)] // Limit exactly at first batch boundary
+    #[case(vec![10, 20, 30], Some(15), 15)] // Limit within second batch
+    #[case(vec![10, 20, 30], Some(30), 30)] // Limit at second batch boundary
+    #[case(vec![10, 20, 30], Some(45), 45)] // Limit within third batch
+    #[case(vec![10, 20, 30], Some(60), 60)] // Limit at total rows
+    #[case(vec![10, 20, 30], Some(100), 60)] // Limit exceeds total rows
+    #[case(vec![0, 5, 0, 3], Some(6), 6)] // Empty batches mixed in, limit within data
+    #[case(vec![0, 5, 0, 3], Some(8), 8)] // Empty batches mixed in, limit equals total
+    #[case(vec![0, 5, 0, 3], None, 8)] // Empty batches mixed in, no limit
+    #[tokio::test]
+    async fn test_scan_with_row_limit(
+        #[case] batch_sizes: Vec<usize>,
+        #[case] limit: Option<usize>,
+        #[case] expected_rows: usize,
+    ) {
+        let ctx = SessionContext::new();
+
+        // Verify that the RecordBatchReaderExec node in the execution plan should contain the correct limit
+        let physical_plan = read_test_table_with_limit(&ctx, batch_sizes.clone(), limit)
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap();
+        let reader_exec = find_record_batch_reader_exec(physical_plan.as_ref())
+            .expect("The plan should contain RecordBatchReaderExec");
+        assert_eq!(reader_exec.limit, limit);
+
+        let df = read_test_table_with_limit(&ctx, batch_sizes, limit).unwrap();
+        let results = df.collect().await.unwrap();
+        let total_rows: usize = results.iter().map(|batch| batch.num_rows()).sum();
+        assert_eq!(total_rows, expected_rows);
+
+        // Verify row values are correct (sequential IDs starting from 0)
+        if expected_rows > 0 {
+            let mut expected_id = 0i32;
+            for batch in results.iter() {
+                let id_array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow_array::Int32Array>()
+                    .unwrap();
+                for i in 0..id_array.len() {
+                    assert_eq!(id_array.value(i), expected_id);
+                    expected_id += 1;
+                }
+            }
+        }
+    }
+
+    fn read_test_table_with_limit(
+        ctx: &SessionContext,
+        batch_sizes: Vec<usize>,
+        limit: Option<usize>,
+    ) -> Result<DataFrame> {
+        let reader = create_test_reader(batch_sizes);
+        let provider = Arc::new(RecordBatchReaderProvider::new(reader));
+        let df = ctx.read_table(provider)?;
+        if let Some(limit) = limit {
+            df.limit(0, Some(limit))
+        } else {
+            Ok(df)
+        }
+    }
+
+    // Navigate through the plan structure to find our RecordBatchReaderExec
+    fn find_record_batch_reader_exec(plan: &dyn ExecutionPlan) -> Option<&RecordBatchReaderExec> {
+        if let Some(reader_exec) = plan.as_any().downcast_ref::<RecordBatchReaderExec>() {
+            return Some(reader_exec);
+        }
+
+        // Recursively search children
+        for child in plan.children() {
+            if let Some(reader_exec) = find_record_batch_reader_exec(child.as_ref()) {
+                return Some(reader_exec);
+            }
+        }
+        None
     }
 }
