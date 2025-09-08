@@ -112,7 +112,7 @@ jobs:
 
       - name: Install
         run: |
-          pip install -e "python/sedonadb/[test]" -vv
+          pip install -e "python/sedonadb/[test]" -vv -- --features s2geography
 
       - name: Download minimal geoarrow-data assets
         run: |

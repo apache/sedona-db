@@ -83,8 +83,8 @@ jobs:
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           CIBW_BUILD: "*-win_amd64"
           CIBW_TEST_SKIP: "cp314* cp38*"
-          # CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
-          # CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
+          CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
       - uses: actions/upload-artifact@v4
         with:
