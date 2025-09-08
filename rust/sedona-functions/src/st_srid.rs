@@ -231,7 +231,7 @@ mod test {
     fn udf_crs() {
         let udf: ScalarUDF = st_crs_udf().into();
 
-        // Test that when no CRS is set, SRID is 0
+        // Test that when no CRS is set, CRS is null
         let sedona_type = SedonaType::Wkb(Edges::Planar, None);
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
         tester.assert_return_type(DataType::Utf8);
