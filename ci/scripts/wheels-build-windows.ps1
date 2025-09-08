@@ -16,7 +16,7 @@
 # under the License.
 
 # If running locally:
-# $env:VCPKG_ROOT="C:\Users\dewey\Documents\rscratch\vcpkg"
+# $env:VCPKG_ROOT="C:\Users\dewey\Documents\gh\vcpkg"
 # $env:VCPKG_DEFAULT_TRIPLET="x64-windows-dynamic-release"
 # $env:CIBW_BUILD="cp311-win_amd64"
 
@@ -29,7 +29,7 @@ $vcpkgLibDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\lib"
 try {
     Push-Location "$env:VCPKG_ROOT"
 	.\bootstrap-vcpkg.bat
-	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" geos abseil openssl
+	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" install geos abseil openssl
 	Pop-Location
 }
 finally {
