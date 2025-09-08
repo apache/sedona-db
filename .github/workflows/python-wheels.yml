@@ -68,15 +68,6 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
-      - name: Bootstrap vcpkg
-        shell: bash
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-          VCPKG_DEFAULT_TRIPLET: x64-windows-dynamic-release
-        run: |
-          cd ci/scripts
-          ./wheels-bootstrap-vcpkg.sh
-
       - name: Build and test wheels (sedonadb)
         run: |
           cd ci/scripts

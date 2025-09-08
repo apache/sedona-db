@@ -16,14 +16,26 @@
 # under the License.
 
 # If running locally:
-# $env:VCPKG_ROOT="C:\Users\dewey\Documents\gh\vcpkg"
+# $env:VCPKG_ROOT="C:\Users\dewey\Documents\rscratch\vcpkg"
 # $env:VCPKG_DEFAULT_TRIPLET="x64-windows-dynamic-release"
 # $env:CIBW_BUILD="cp311-win_amd64"
 
+$originalDirectory = Get-Location
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-$vcpkgInstalledDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET"
 $vcpkgBinDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\bin"
 $vcpkgLibDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\lib"
+
+# Ensure vcpkg
+try {
+    Push-Location "$env:VCPKG_ROOT"
+	.\bootstrap-vcpkg.bat
+	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" geos abseil openssl
+	Pop-Location
+}
+finally {
+	# Restore the original working directory
+	Set-Location -Path $originalDirectory
+}
 
 # Put here/windows on PATH for our fake pkg-config and geos-config executables
 $env:PATH += ";$scriptDirectory\windows"
@@ -32,9 +44,6 @@ $env:PATH += ";$scriptDirectory\windows"
 # (well, specifically our dummy geos-config) the information it needs to build bindings
 $env:GEOS_LIB_DIR = "$vcpkgLibDirectory"
 $env:GEOS_VERSION = "3.13.0"
-$env:OPENSSL_ROOT_DIR = "$vcpkgInstalledDirectory"
-$env:CMAKE_PREFIX_PATH = "$vcpkgInstalledDirectory"
-$originalDirectory = Get-Location
 
 # Use delvewheel to copy any required dependencies from vcpkg into the wheel
 $env:CIBW_REPAIR_WHEEL_COMMAND_WINDOWS="delvewheel repair -v --add-path=$vcpkgBinDirectory --wheel-dir={dest_dir} {wheel}"
@@ -53,6 +62,7 @@ try {
 
 	Push-Location "$parentDirectory"
 	python -m cibuildwheel --output-dir python\sedonadb\dist python\sedonadb
+	Pop-Location
 }
 finally {
 	# Restore the original working directory
