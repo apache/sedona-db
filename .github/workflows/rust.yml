@@ -41,6 +41,10 @@ defaults:
   run:
     shell: bash -l -eo pipefail {0}
 
+env:
+  # At GEOS updated to 3.14.0
+  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
+
 jobs:
   rust:
     strategy:
@@ -65,7 +69,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: microsoft/vcpkg
-          ref: "2025.06.13"
+          ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
       - name: Set up environment variables and bootstrap vcpkg
@@ -87,7 +91,7 @@ jobs:
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build
-          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-2
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-1
 
       - name: Install vcpkg dependencies
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
