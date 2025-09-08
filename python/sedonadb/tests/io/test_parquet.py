@@ -102,7 +102,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT "OBJECTID", geometry FROM tab
-            WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE ST_Intersects(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
@@ -127,7 +127,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT * FROM tab_dataset
-            WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE ST_Intersects(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
