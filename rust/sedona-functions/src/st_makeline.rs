@@ -194,11 +194,107 @@ fn add_coords(
 mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
+    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
     fn udf_metadata() {
         let geom_from_point: ScalarUDF = st_makeline_udf().into();
         assert_eq!(geom_from_point.name(), "st_makeline");
         assert!(geom_from_point.documentation().is_some());
+    }
+
+    #[rstest]
+    fn udf_invoke(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        use sedona_testing::{compare::assert_array_equal, create::create_array};
+
+        let tester = ScalarUdfTester::new(
+            st_makeline_udf().into(),
+            vec![sedona_type.clone(), sedona_type.clone()],
+        );
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        // Basic usage
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POINT (2 3)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3)");
+
+        // Deduplicating the first point of a linestring
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", "LINESTRING (0 1, 2 3)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3)");
+
+        // Two linestrings should work as well
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING (0 1, 2 3)", "LINESTRING (4 5, 6 7)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3, 4 5, 6 7)");
+
+        // Also multipoints
+        let result = tester
+            .invoke_scalar_scalar("MULTIPOINT (0 1, 2 3)", "MULTIPOINT (4 5, 6 7)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3, 4 5, 6 7)");
+
+        // Mismatched dimensions or unsupported types should error
+        let err = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POINT Z (1 2 3)")
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Can't ST_MakeLine() with mismatched dimensions"
+        );
+
+        let err = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POLYGON EMPTY")
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "ST_MakeLine() only supports Point, LineString, and MultiPoint as input"
+        );
+
+        // Arrays, nulls, and dimensions
+        let array0 = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT Z (0 1 2)"),
+                Some("POINT M (0 1 3)"),
+                Some("POINT ZM (0 1 2 3)"),
+                Some("POINT (0 0)"),
+                None,
+                None,
+            ],
+            &sedona_type,
+        );
+        let array1 = create_array(
+            &[
+                Some("POINT (10 11)"),
+                Some("POINT Z (10 11 12)"),
+                Some("POINT M (10 11 13)"),
+                Some("POINT ZM (10 11 12 13)"),
+                None,
+                Some("POINT (0 0)"),
+                None,
+            ],
+            &sedona_type,
+        );
+        let expected = create_array(
+            &[
+                Some("LINESTRING (0 1, 10 11)"),
+                Some("LINESTRING Z (0 1 2, 10 11 12)"),
+                Some("LINESTRING M (0 1 3, 10 11 13)"),
+                Some("LINESTRING ZM (0 1 2 3, 10 11 12 13)"),
+                None,
+                None,
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_array_array(array0, array1).unwrap();
+        assert_array_equal(&result, &expected);
     }
 }
