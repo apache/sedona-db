@@ -192,7 +192,7 @@ jobs:
         run: |
           fury push \
             --api-token=${GEMFURY_PUSH_TOKEN} \
-            --as="arrow-nightlies" \
+            --as="sedona-nightlies" \
             dist/*
         env:
           NANOARROW_GEMFURY_TOKEN: ${{ secrets.GEMFURY_PUSH_TOKEN }}
