@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
+use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
@@ -59,7 +60,8 @@ impl SedonaScalarKernel for STBuffer {
 
         // Extract the constant scalar value before looping over the input geometries
         let distance: Option<f64>;
-        if let ColumnarValue::Scalar(scalar_arg) = &args[1] {
+        let arg1 = args[1].cast_to(&DataType::Float64, None)?;
+        if let ColumnarValue::Scalar(scalar_arg) = &arg1 {
             if scalar_arg.is_null() {
                 distance = None;
             } else {
@@ -113,7 +115,6 @@ fn invoke_scalar(
 #[cfg(test)]
 mod tests {
     use arrow_array::ArrayRef;
-    use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;

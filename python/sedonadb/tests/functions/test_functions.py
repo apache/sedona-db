@@ -126,8 +126,8 @@ def test_st_astext(eng, geom):
         (None, None, None),
         (None, 1.0, None),
         ("POINT (1 1)", None, None),
-        ("POINT (1 1)", 0.0, 0),
-        ("POINT EMPTY", 1.0, 0),
+        ("POINT (1 1)", 0, 0),
+        ("POINT EMPTY", 1, 0),
         ("LINESTRING EMPTY", 1.0, 0),
         ("POLYGON EMPTY", 1.0, 0),
         ("POINT (0 0)", 1.0, 3.121445152258052),
@@ -663,7 +663,7 @@ def test_st_pointzm(eng, x, y, z, m, expected):
         ("POINT ZM EMPTY", None),
         ("POINT (1 2)", None),
         ("POINT Z (1 2 3)", None),
-        ("POINT M (1 2 3)", 3),
+        ("POINT M (1 2 3.2)", 3.2),
         ("POINT ZM (1 2 3 -4)", -4),
     ],
 )
@@ -681,7 +681,7 @@ def test_st_m(eng, geom, expected):
         ("POINT Z EMPTY", None),
         ("POINT M EMPTY", None),
         ("POINT ZM EMPTY", None),
-        ("POINT (1 2)", 1),
+        ("POINT (1.1 2)", 1.1),
         ("POINT Z (1 2 3)", 1),
         ("POINT M (1 2 3)", 1),
         ("POINT ZM (1 2 3 -4)", 1),
@@ -704,7 +704,7 @@ def test_st_x(eng, geom, expected):
         ("POINT (1 2)", 2),
         ("POINT Z (1 2 3)", 2),
         ("POINT M (1 2 3)", 2),
-        ("POINT ZM (1 2 3 -4)", 2),
+        ("POINT ZM (1 2.2 3 -4)", 2.2),
     ],
 )
 def test_st_y(eng, geom, expected):
@@ -742,7 +742,7 @@ def test_st_z(eng, geom, expected):
         ("POINT Z (1 2 3)", 1),
         ("POINT M (1 2 3)", 1),
         ("POINT ZM (1 2 3 4)", 1),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 0),
+        ("MULTILINESTRING ((-1.1 0, 1 1), (2 2, 3 3))", -1.1),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0),
         (
             "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))",
@@ -773,7 +773,7 @@ def test_st_xmin(eng, geom, expected):
         ("POINT Z (1 2 3)", 2),
         ("POINT M (1 2 3)", 2),
         ("POINT ZM (1 2 3 4)", 2),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 0),
+        ("MULTILINESTRING ((0 0, 1 1), (2 -2.2, 3 3))", -2.2),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0),
         (
             "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))",
@@ -804,7 +804,7 @@ def test_st_ymin(eng, geom, expected):
         ("POINT Z (1 2 3)", 1),
         ("POINT M (1 2 3)", 1),
         ("POINT ZM (1 2 3 4)", 1),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 3),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3.3 3))", 3.3),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1),
         (
             "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))",
@@ -948,8 +948,8 @@ def test_st_zmax(eng, geom, expected):
             None,
         ),
         (
-            "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4), LINESTRING ZM (3 4 5 6, 7 8 9 10), POLYGON ZM ((0 0 0 0, 1 0 0 0, 0 1 0 0, 0 0 0 0)))",
-            0,
+            "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4), LINESTRING ZM (3 4 5 6, 7 8 9 10), POLYGON ZM ((0 0 0 -1.1, 1 0 0 0, 0 1 0 0, 0 0 0 0)))",
+            -1.1,
         ),
         (
             "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6), GEOMETRYCOLLECTION (POINT (10 10)))",

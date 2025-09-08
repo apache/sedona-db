@@ -35,6 +35,20 @@ def test_read_parquet(con, geoarrow_data):
     assert len(tab) == 244
 
 
+def test_read_parquet_local_glob(con, geoarrow_data):
+    # The above test uses .glob() method, this test uses the raw string
+    tab = con.read_parquet(
+        geoarrow_data / "example/files/*_geo.parquet"
+    ).to_arrow_table()
+    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 244
+
+    tab = con.read_parquet(
+        geoarrow_data / "example/files/example_polygon-*geo.parquet"
+    ).to_arrow_table()
+    assert len(tab) == 12
+
+
 def test_read_parquet_error(con):
     with pytest.raises(sedonadb._lib.SedonaError, match="No table paths were provided"):
         con.read_parquet([])

@@ -24,7 +24,7 @@ use datafusion::{
         file_format::parquet::ParquetFormat,
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
     },
-    execution::{context::DataFilePaths, options::ReadOptions, SessionState},
+    execution::{options::ReadOptions, SessionState},
     prelude::{ParquetReadOptions, SessionConfig, SessionContext},
 };
 use datafusion_common::{exec_err, Result};
@@ -36,12 +36,11 @@ use crate::format::GeoParquetFormat;
 /// Because [ListingTable] implements `TableProvider`, this can be used to
 /// implement geo-aware Parquet reading with interfaces that are otherwise
 /// hard-coded to the built-in Parquet reader.
-pub async fn geoparquet_listing_table<P: DataFilePaths>(
+pub async fn geoparquet_listing_table(
     context: &SessionContext,
-    table_paths: P,
+    table_paths: Vec<ListingTableUrl>,
     options: GeoParquetReadOptions<'_>,
 ) -> Result<ListingTable> {
-    let table_paths = table_paths.to_urls()?;
     let session_config = context.copied_config();
     let listing_options =
         options.to_listing_options(&session_config, context.copied_table_options());
@@ -134,7 +133,9 @@ mod test {
         let data_dir = geoarrow_data_dir().unwrap();
         let tab = geoparquet_listing_table(
             &ctx,
-            format!("{data_dir}/example/files/*_geo.parquet"),
+            vec![
+                ListingTableUrl::parse(format!("{data_dir}/example/files/*_geo.parquet")).unwrap(),
+            ],
             GeoParquetReadOptions::default(),
         )
         .await
@@ -169,15 +170,18 @@ mod test {
     #[tokio::test]
     async fn listing_table_errors() {
         let ctx = SessionContext::new();
-        let err =
-            geoparquet_listing_table(&ctx, Vec::<String>::new(), GeoParquetReadOptions::default())
-                .await
-                .unwrap_err();
+        let err = geoparquet_listing_table(
+            &ctx,
+            Vec::<ListingTableUrl>::new(),
+            GeoParquetReadOptions::default(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.message(), "No table paths were provided");
 
         let err = geoparquet_listing_table(
             &ctx,
-            "foofy.wrongextension",
+            vec![ListingTableUrl::parse("foofy.wrongextension").unwrap()],
             GeoParquetReadOptions::default(),
         )
         .await

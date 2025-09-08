@@ -55,7 +55,8 @@ impl SedonaScalarKernel for STDWithin {
     ) -> Result<ColumnarValue> {
         // Extract the constant scalar value before looping over the input geometries
         let distance: Option<f64>;
-        if let ColumnarValue::Scalar(scalar_arg) = &args[2] {
+        let arg2 = args[2].cast_to(&DataType::Float64, None)?;
+        if let ColumnarValue::Scalar(scalar_arg) = &arg2 {
             if scalar_arg.is_null() {
                 distance = None;
             } else {
@@ -145,7 +146,7 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
-        let distance = 1.0;
+        let distance = 1;
 
         let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
         assert_array_equal(
