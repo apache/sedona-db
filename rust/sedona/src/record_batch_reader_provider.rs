@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::RwLock;
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow_array::RecordBatchReader;
@@ -33,6 +32,7 @@ use datafusion::{
     prelude::Expr,
 };
 use datafusion_common::DataFusionError;
+use parking_lot::Mutex;
 use sedona_common::sedona_internal_err;
 
 /// A [TableProvider] wrapping a [RecordBatchReader]
@@ -42,7 +42,7 @@ use sedona_common::sedona_internal_err;
 /// such that extension types are preserved in DataFusion internals (i.e.,
 /// it is intended for scanning external tables as SedonaDB).
 pub struct RecordBatchReaderProvider {
-    reader: RwLock<Option<Box<dyn RecordBatchReader + Send>>>,
+    reader: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
     schema: SchemaRef,
 }
 
@@ -52,7 +52,7 @@ impl RecordBatchReaderProvider {
     pub fn new(reader: Box<dyn RecordBatchReader + Send>) -> Self {
         let schema = reader.schema();
         Self {
-            reader: RwLock::new(Some(reader)),
+            reader: Mutex::new(Some(reader)),
             schema,
         }
     }
@@ -88,10 +88,8 @@ impl TableProvider for RecordBatchReaderProvider {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let mut writable_reader = self.reader.try_write().map_err(|_| {
-            DataFusionError::Internal("Failed to acquire lock on RecordBatchReader".to_string())
-        })?;
-        if let Some(reader) = writable_reader.take() {
+        let mut reader_guard = self.reader.lock();
+        if let Some(reader) = reader_guard.take() {
             Ok(Arc::new(RecordBatchReaderExec::new(reader, limit)))
         } else {
             sedona_internal_err!("Can't scan RecordBatchReader provider more than once")
@@ -99,14 +97,68 @@ impl TableProvider for RecordBatchReaderProvider {
     }
 }
 
+/// An iterator that limits the number of rows from a RecordBatchReader
+struct RowLimitedIterator {
+    reader: Option<Box<dyn RecordBatchReader + Send>>,
+    limit: usize,
+    rows_consumed: usize,
+}
+
+impl RowLimitedIterator {
+    fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
+        Self {
+            reader: Some(reader),
+            limit,
+            rows_consumed: 0,
+        }
+    }
+}
+
+impl Iterator for RowLimitedIterator {
+    type Item = Result<arrow_array::RecordBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Check if we have already consumed enough rows
+        if self.rows_consumed >= self.limit {
+            self.reader = None;
+            return None;
+        }
+
+        let reader = self.reader.as_mut()?;
+        match reader.next() {
+            Some(Ok(batch)) => {
+                let batch_rows = batch.num_rows();
+
+                if self.rows_consumed + batch_rows <= self.limit {
+                    // Batch fits within limit, consume it entirely
+                    self.rows_consumed += batch_rows;
+                    Some(Ok(batch))
+                } else {
+                    // Batch would exceed limit, need to truncate it
+                    let rows_to_take = self.limit - self.rows_consumed;
+                    self.rows_consumed = self.limit;
+                    self.reader = None;
+                    Some(Ok(batch.slice(0, rows_to_take)))
+                }
+            }
+            Some(Err(e)) => {
+                self.reader = None;
+                Some(Err(DataFusionError::from(e)))
+            }
+            None => {
+                self.reader = None;
+                None
+            }
+        }
+    }
+}
+
 struct RecordBatchReaderExec {
-    reader: RwLock<Option<Box<dyn RecordBatchReader + Send>>>,
+    reader: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
     schema: SchemaRef,
     properties: PlanProperties,
     limit: Option<usize>,
 }
-
-unsafe impl Sync for RecordBatchReaderExec {}
 
 impl RecordBatchReaderExec {
     fn new(reader: Box<dyn RecordBatchReader + Send>, limit: Option<usize>) -> Self {
@@ -119,7 +171,7 @@ impl RecordBatchReaderExec {
         );
 
         Self {
-            reader: RwLock::new(Some(reader)),
+            reader: Mutex::new(Some(reader)),
             schema,
             properties,
             limit,
@@ -177,29 +229,35 @@ impl ExecutionPlan for RecordBatchReaderExec {
         _partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let mut writable_reader = self.reader.try_write().map_err(|_| {
-            DataFusionError::Internal("Failed to acquire lock on RecordBatchReader".to_string())
-        })?;
+        let mut reader_guard = self.reader.lock();
 
-        let reader = if let Some(reader) = writable_reader.take() {
+        let reader = if let Some(reader) = reader_guard.take() {
             reader
         } else {
             return sedona_internal_err!("Can't scan RecordBatchReader provider more than once");
         };
 
-        let limit = self.limit;
-
-        // Create a stream from the RecordBatchReader iterator
-        let iter = reader
-            .map(|item| match item {
-                Ok(batch) => Ok(batch),
-                Err(e) => Err(DataFusionError::from(e)),
-            })
-            .take(limit.unwrap_or(usize::MAX));
-
-        let stream = Box::pin(futures::stream::iter(iter));
-        let record_batch_stream = RecordBatchStreamAdapter::new(self.schema.clone(), stream);
-        Ok(Box::pin(record_batch_stream))
+        match self.limit {
+            Some(limit) => {
+                // Create a row-limited iterator that properly handles row counting
+                let iter = RowLimitedIterator::new(reader, limit);
+                let stream = Box::pin(futures::stream::iter(iter));
+                let record_batch_stream =
+                    RecordBatchStreamAdapter::new(self.schema.clone(), stream);
+                Ok(Box::pin(record_batch_stream))
+            }
+            None => {
+                // No limit, just convert the reader directly to a stream
+                let iter = reader.map(|item| match item {
+                    Ok(batch) => Ok(batch),
+                    Err(e) => Err(DataFusionError::from(e)),
+                });
+                let stream = Box::pin(futures::stream::iter(iter));
+                let record_batch_stream =
+                    RecordBatchStreamAdapter::new(self.schema.clone(), stream);
+                Ok(Box::pin(record_batch_stream))
+            }
+        }
     }
 }
 
