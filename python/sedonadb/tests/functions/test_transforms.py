@@ -66,7 +66,7 @@ def test_st_srid(eng, geom, srid, expected_srid):
     )
 
 
-# PostGIS does not have an APIs ST_SetCrs, ST_Crs
+# PostGIS does not have an API ST_SetCrs, ST_Crs
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom", "crs", "expected_srid"),
