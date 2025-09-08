@@ -194,20 +194,18 @@ fn read_file_maybe_utf16(path: &PathBuf) -> String {
 
         // Skip the BOM and convert the rest
         let u16_bytes = &linker_flags_bytes[2..];
-        let u16_slice = unsafe {
-            std::slice::from_raw_parts(u16_bytes.as_ptr() as *const u16, u16_bytes.len() / 2)
-        };
+        let u16_vec: Vec<u16> = u16_bytes
+            .chunks_exact(2)
+            .map(|chunk| {
+                if is_le {
+                    u16::from_le_bytes([chunk[0], chunk[1]])
+                } else {
+                    u16::from_be_bytes([chunk[0], chunk[1]])
+                }
+            })
+            .collect();
 
-        if is_le {
-            String::from_utf16_lossy(u16_slice).to_string()
-        } else {
-            // Convert from big endian to host endian
-            let mut swapped = Vec::with_capacity(u16_slice.len());
-            for &value in u16_slice {
-                swapped.push(u16::from_be(value));
-            }
-            String::from_utf16_lossy(&swapped).to_string()
-        }
+        String::from_utf16_lossy(&u16_vec).to_string()
     } else {
         String::from_utf8_lossy(&linker_flags_bytes).to_string()
     }
