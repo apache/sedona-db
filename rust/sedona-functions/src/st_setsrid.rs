@@ -90,7 +90,7 @@ fn set_crs_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         "Set CRS information for a geometry or geography",
-        "ST_SetSRID (geom: Geometry, crs: String)",
+        "ST_SetCrs (geom: Geometry, crs: String)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
     .with_argument(
@@ -98,8 +98,7 @@ fn set_crs_doc() -> Documentation {
         "string: Coordinate reference system identifier (e.g., 'OGC:CRS84')",
     )
     .with_sql_example(
-        "SELECT ST_SetSRID(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 'OGC:CRS84')"
-            .to_string(),
+        "SELECT ST_SetCrs(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 'OGC:CRS84')".to_string(),
     )
     .build()
 }
@@ -115,7 +114,10 @@ impl SedonaScalarKernel for STSetSRID {
         args: &[SedonaType],
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
-        if args.len() != 2 || !ArgMatcher::is_numeric().match_type(&args[1]) {
+        if args.len() != 2
+            || !(ArgMatcher::is_numeric().match_type(&args[1])
+                || ArgMatcher::is_null().match_type(&args[1]))
+        {
             return Ok(None);
         }
         determine_return_type(args, scalar_args, self.engine.as_ref())
@@ -147,7 +149,10 @@ impl SedonaScalarKernel for STSetCRS {
         args: &[SedonaType],
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
-        if args.len() != 2 || !ArgMatcher::is_string().match_type(&args[1]) {
+        if args.len() != 2
+            || !(ArgMatcher::is_string().match_type(&args[1])
+                || ArgMatcher::is_null().match_type(&args[1]))
+        {
             return Ok(None);
         }
         determine_return_type(args, scalar_args, self.engine.as_ref())

@@ -207,6 +207,11 @@ impl ArgMatcher {
         Arc::new(IsGeography {})
     }
 
+    /// Matches a null argument
+    pub fn is_null() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsNull {})
+    }
+
     /// Matches any numeric argument
     pub fn is_numeric() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsNumeric {})
@@ -368,6 +373,14 @@ impl TypeMatcher for IsBoolean {
             }
             _ => false,
         }
+    }
+}
+
+#[derive(Debug)]
+struct IsNull {}
+impl TypeMatcher for IsNull {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        matches!(arg, SedonaType::Arrow(DataType::Null))
     }
 }
 
@@ -602,6 +615,9 @@ mod tests {
 
         assert!(ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Boolean)));
         assert!(!ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Int32)));
+
+        assert!(ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Null)));
+        assert!(!ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Int32)));
     }
 
     #[test]
