@@ -112,6 +112,7 @@ jobs:
 
       - name: Install
         run: |
+          export MATURIN_PEP517_ARGS="--features s2geography"
           pip install -e "python/sedonadb/[test]" -vv -- --features s2geography
 
       - name: Download minimal geoarrow-data assets
