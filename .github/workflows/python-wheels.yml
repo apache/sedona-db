@@ -168,3 +168,31 @@ jobs:
         with:
           name: release-wheels-${{ matrix.config.label }}
           path: python/sedonadb/dist/*.whl
+
+  upload_nightly:
+    needs: ["wheels-linux", "macOS-arm64", "windows-x86_64"]
+    name: Upload nightly packages
+    runs-on: "macos-latest"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Install gemfury client
+        run: |
+          brew tap gemfury/tap
+          brew install fury-cli
+          fury --version
+
+      - name: Upload packages to Gemfury
+        if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          fury push \
+            --api-token=${GEMFURY_PUSH_TOKEN} \
+            --as="arrow-nightlies" \
+            dist/*
+        env:
+          NANOARROW_GEMFURY_TOKEN: ${{ secrets.GEMFURY_PUSH_TOKEN }}
