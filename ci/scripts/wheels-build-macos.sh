@@ -46,7 +46,7 @@ export CIBW_REPAIR_WHEEL_COMMAND_MACOS="DYLD_LIBRARY_PATH=$VCPKG_INSTALL_NAME_DI
 export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS MACOSX_DEPLOYMENT_TARGET=12.0 CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
 
 # This platform supports s2geography
-MATURIN_PEP517_ARGS="--features s2geography"
+export CIBW_BUILD_FRONTEND="pip[args: --features s2geography]"
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --output-dir python/$1/dist python/$1

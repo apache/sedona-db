@@ -52,7 +52,7 @@ export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_DEFAULT_TRIPLET=$VCPKG_DE
 export CIBW_BEFORE_ALL="$BEFORE_ALL_MANYLINUX && git clone https://github.com/microsoft/vcpkg.git /vcpkg && bash {package}/../../ci/scripts/wheels-bootstrap-vcpkg.sh"
 
 # This platform supports s2geography
-MATURIN_PEP517_ARGS="--features s2geography"
+export CIBW_BUILD_FRONTEND="pip[args: --features s2geography]"
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --platform linux --archs ${ARCH} --output-dir python/$2/dist python/$2
