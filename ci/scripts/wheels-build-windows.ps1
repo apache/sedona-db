@@ -22,13 +22,14 @@
 
 $originalDirectory = Get-Location
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-$vcpkgBinDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\bin"
-$vcpkgLibDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET\lib"
+$vcpkgInstalledDirectory = "$env:VCPKG_ROOT\installed\$env:VCPKG_DEFAULT_TRIPLET"
+$vcpkgBinDirectory = "$vcpkgInstalledDirectory\bin"
+$vcpkgLibDirectory = "$vcpkgInstalledDirectory\lib"
 
 # Ensure vcpkg
 try {
     Push-Location "$env:VCPKG_ROOT"
-	.\bootstrap-vcpkg.bat
+	.\bootstrap-vcpkg
 	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" install geos abseil openssl
 	Pop-Location
 }
@@ -72,8 +73,17 @@ $env:PATH += ";$scriptDirectory\windows"
 $env:GEOS_LIB_DIR = "$vcpkgLibDirectory"
 $env:GEOS_VERSION = "3.13.0"
 
+# Some CMake configurations needs this separately from the toolchain file
+$env:CMAKE_PREFIX_PATH="$vcpkgInstalledDirectory"
+$env:OPENSSL_ROOT_DIR="$vcpkgInstalledDirectory"
+
+# This platform can support s2geography
+$env:MATURIN_PEP517_ARGS="--features s2geography"
+
 # Use delvewheel to copy any required dependencies from vcpkg into the wheel
-$env:CIBW_REPAIR_WHEEL_COMMAND_WINDOWS="delvewheel repair -v --add-path=$vcpkgBinDirectory --wheel-dir={dest_dir} {wheel}"
+# combase.dll seems to be required; however, causes errors when copied into the wheel
+# This likely means that the wheel won't work on Windows 7.
+$env:CIBW_REPAIR_WHEEL_COMMAND_WINDOWS="delvewheel repair -v --exclude=combase.dll --add-path=$vcpkgBinDirectory --wheel-dir={dest_dir} {wheel}"
 
 # Quality of life: don't change the working directory of the calling script even when it fails
 $parentDirectory = Split-Path -Parent (Split-Path -Parent $scriptDirectory)
