@@ -60,7 +60,7 @@ fn doc() -> Documentation {
     )
     .with_argument("x", "double: X value")
     .with_argument("y", "double: Y value")
-    .with_sql_example("SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2 3)) as geom")
+    .with_sql_example("SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom")
     .build()
 }
 
