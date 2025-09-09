@@ -16,7 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
-use arrow_schema::Schema;
+use arrow_schema::{DataType, Schema};
 use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::{
@@ -28,7 +28,10 @@ use sedona_common::sedona_internal_err;
 use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
 use sedona_schema::datatypes::SedonaType;
 
-use crate::statistics::GeoStatistics;
+use crate::{
+    statistics::GeoStatistics,
+    utils::{parse_distance_predicate, ParsedDistancePredicate},
+};
 
 /// Simplified parsed spatial filter
 ///
@@ -132,46 +135,10 @@ impl SpatialFilter {
     ///
     /// Parses expr to extract known expressions we can evaluate against statistics.
     pub fn try_from_expr(expr: &Arc<dyn PhysicalExpr>) -> Result<Self> {
-        if let Some(scalar_fun) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
-            let raw_args = scalar_fun.args();
-            let args = parse_args(raw_args);
-            match scalar_fun.fun().name() {
-                "st_intersects" => {
-                    if args.len() != 2 {
-                        return sedona_internal_err!(
-                            "unexpected argument count in filter evaluation"
-                        );
-                    }
-
-                    match (&args[0], &args[1]) {
-                        (ArgRef::Col(column), ArgRef::Lit(literal))
-                        | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
-                            match literal_bounds(literal) {
-                                Ok(literal_bounds) => {
-                                    Ok(Self::Intersects(column.clone(), literal_bounds))
-                                }
-                                Err(e) => Err(DataFusionError::External(Box::new(e))),
-                            }
-                        }
-                        // Not between a literal and a column
-                        _ => Ok(Self::Unknown),
-                    }
-                }
-                "st_hasz" => {
-                    if args.len() != 1 {
-                        return sedona_internal_err!(
-                            "unexpected argument count in filter evaluation"
-                        );
-                    }
-
-                    match &args[0] {
-                        ArgRef::Col(column) => Ok(Self::HasZ(column.clone())),
-                        _ => Ok(Self::Unknown),
-                    }
-                }
-                // Not a function we know about
-                _ => Ok(Self::Unknown),
-            }
+        if let Some(spatial_filter) = Self::try_from_range_predicate(expr)? {
+            Ok(spatial_filter)
+        } else if let Some(spatial_filter) = Self::try_from_distance_predicate(expr)? {
+            Ok(spatial_filter)
         } else if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
             match binary_expr.op() {
                 Operator::And => Ok(Self::And(
@@ -198,6 +165,90 @@ impl SpatialFilter {
         } else {
             // Not an expression we know about
             Ok(Self::Unknown)
+        }
+    }
+
+    fn try_from_range_predicate(expr: &Arc<dyn PhysicalExpr>) -> Result<Option<Self>> {
+        let Some(scalar_fun) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() else {
+            return Ok(None);
+        };
+
+        let raw_args = scalar_fun.args();
+        let args = parse_args(raw_args);
+        let fun_name = scalar_fun.fun().name();
+        match fun_name {
+            "st_intersects" | "st_contains" | "st_covers" | "st_equals" | "st_touches"
+            | "st_within" | "st_covered_by" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal))
+                    | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                if matches!(fun_name, "st_within" | "st_covered_by") {
+                                    Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
+                                } else {
+                                    Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                                }
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_hasz" => {
+                if args.len() != 1 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match &args[0] {
+                    ArgRef::Col(column) => Ok(Some(Self::HasZ(column.clone()))),
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn try_from_distance_predicate(expr: &Arc<dyn PhysicalExpr>) -> Result<Option<Self>> {
+        let Some(ParsedDistancePredicate {
+            arg0,
+            arg1,
+            arg_distance,
+        }) = parse_distance_predicate(expr)
+        else {
+            return Ok(None);
+        };
+
+        let raw_args = [arg0, arg1, arg_distance];
+        let args = parse_args(&raw_args);
+
+        match (&args[0], &args[1], &args[2]) {
+            (ArgRef::Col(column), ArgRef::Lit(literal), ArgRef::Lit(distance))
+            | (ArgRef::Lit(literal), ArgRef::Col(column), ArgRef::Lit(distance)) => {
+                match (
+                    literal_bounds(literal),
+                    distance.value().cast_to(&DataType::Float64)?,
+                ) {
+                    (Ok(literal_bounds), distance_scalar_value) => {
+                        if let ScalarValue::Float64(Some(dist)) = distance_scalar_value {
+                            // let expanded_bounds = literal_bounds.expand_by(dist);
+                            let expanded_bounds = literal_bounds;
+                            Ok(Some(Self::Intersects(column.clone(), expanded_bounds)))
+                        } else {
+                            sedona_internal_err!("Unexpected distance type in filter expression ({distance_scalar_value:?})")
+                        }
+                    }
+                    (Err(e), _) => Err(DataFusionError::External(Box::new(e))),
+                }
+            }
+            // Not between a literal and a column
+            _ => Ok(Some(Self::Unknown)),
         }
     }
 }
