@@ -17,10 +17,9 @@
 
 [package]
 name = "sedonadb"
-version = "0.1.0"
+version = { workspace = true }
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "_lib"
 crate-type = ["cdylib"]

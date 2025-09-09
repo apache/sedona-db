@@ -55,6 +55,7 @@ copyright: Copyright © 2025 The Apache Software Foundation. Apache Sedona, Sedo
 
 exclude_docs: |
      snippets/*
+     README.md
 markdown_extensions:
    - admonition
    - attr_list

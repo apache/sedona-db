@@ -4790,7 +4790,7 @@ dependencies = [
 
 [[package]]
 name = "sedona"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "abi_stable",
  "arrow-array",
@@ -4831,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-adbc"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -4844,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-cli"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -4863,7 +4863,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-common"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "datafusion",
  "datafusion-common",
@@ -4872,7 +4872,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-expr"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4891,7 +4891,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-functions"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-json",
@@ -4915,7 +4915,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-geo"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4938,7 +4938,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-geoarrow-c"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -4959,7 +4959,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-geometry"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "geo-traits 0.2.0",
  "geo-types",
@@ -4975,7 +4975,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-geoparquet"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -5008,7 +5008,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-geos"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-proj"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "approx",
  "arrow-array",
@@ -5054,7 +5054,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-s2geography"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -5077,7 +5077,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-schema"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -5089,7 +5089,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-spatial-join"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -5129,7 +5129,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-testing"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-tg"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
