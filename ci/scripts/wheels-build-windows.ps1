@@ -37,6 +37,33 @@ finally {
 	Set-Location -Path $originalDirectory
 }
 
+# Download and extract NASM if it doesn't exist
+# On Windows, NASM is required for AWS Rust dependencies
+$NASM_URL = "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip"
+$NASM_DIR = "$scriptDirectory\nasm-2.16.03"
+$NASM_ZIP = "$scriptDirectory\nasm.zip"
+
+if (-not (Test-Path $NASM_DIR)) {
+	Write-Host "Downloading NASM to $NASM_DIR..."
+	New-Item -Path $NASM_DIR -ItemType Directory -Force | Out-Null
+
+	# Download the NASM zip file
+	Invoke-WebRequest -Uri $NASM_URL -OutFile $NASM_ZIP
+
+	# Extract the zip file
+	Expand-Archive -Path $NASM_ZIP -DestinationPath $scriptDirectory -Force
+
+	# Clean up the zip file
+	Remove-Item -Path $NASM_ZIP -Force
+
+	Write-Host "NASM downloaded and extracted to $NASM_DIR"
+} else {
+	Write-Host "NASM directory already exists at $NASM_DIR"
+}
+
+# Add NASM to PATH
+$env:PATH += ";$NASM_DIR"
+
 # Put here/windows on PATH for our fake pkg-config and geos-config executables
 $env:PATH += ";$scriptDirectory\windows"
 
