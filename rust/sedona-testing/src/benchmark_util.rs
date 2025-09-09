@@ -577,7 +577,8 @@ mod test {
         #[values(
             (BenchmarkArgSpec::Point, GeometryTypeId::Point, 1),
             (BenchmarkArgSpec::LineString(10), GeometryTypeId::LineString, 10),
-            (BenchmarkArgSpec::Polygon(10), GeometryTypeId::Polygon, 11)
+            (BenchmarkArgSpec::Polygon(10), GeometryTypeId::Polygon, 11),
+            (BenchmarkArgSpec::MultiPoint(10), GeometryTypeId::MultiPoint, 10),
         )]
         config: (BenchmarkArgSpec, GeometryTypeId, i64),
     ) {
