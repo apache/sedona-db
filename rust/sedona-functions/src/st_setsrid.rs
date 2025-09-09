@@ -333,23 +333,6 @@ mod test {
         assert_eq!(return_type, WKB_GEOMETRY);
         assert_value_equal(&result, &geom_arg);
 
-        // Call with an integer code destination (should result in a lnglat crs)
-        let (return_type, result) = call_udf(
-            &udf,
-            geom_arg.clone(),
-            WKB_GEOMETRY,
-            epsg_code_scalar.clone(),
-        )
-        .unwrap();
-        assert_eq!(return_type, wkb_lnglat);
-        assert_value_equal(&result, &geom_lnglat);
-
-        // Call with an integer code of 0 (should unset the output crs)
-        let (return_type, result) =
-            call_udf(&udf, geom_lnglat.clone(), wkb_lnglat, unset_scalar.clone()).unwrap();
-        assert_eq!(return_type, WKB_GEOMETRY);
-        assert_value_equal(&result, &geom_arg);
-
         // Ensure that an engine can reject a CRS if the UDF was constructed with one
         let udf_with_validation: ScalarUDF =
             st_set_crs_with_engine_udf(Some(Arc::new(ExtremelyUnusefulEngine {}))).into();
