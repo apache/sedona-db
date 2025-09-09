@@ -470,6 +470,13 @@ mod test {
         // ...except the full interval
         assert!(empty.intersects_interval(&T::full()));
 
+        // Empty contains no intervals
+        assert!(!empty.contains_interval(&T::new(-10.0, 10.0)));
+        assert!(!empty.contains_interval(&T::full()));
+
+        // ...except empty itself (empty set is subset of itself)
+        assert!(empty.contains_interval(&T::empty()));
+
         // Merging NaN is still empty
         assert_eq!(empty.merge_value(f64::NAN), empty);
 
@@ -546,6 +553,21 @@ mod test {
         assert!(!finite.intersects_interval(&T::new(0.0, 5.0)));
         assert!(!finite.intersects_interval(&T::new(25.0, 30.0)));
         assert!(!finite.intersects_interval(&T::empty()));
+
+        // Intervals that are contained
+        assert!(finite.contains_interval(&T::new(14.0, 16.0)));
+        assert!(finite.contains_interval(&T::new(10.0, 15.0)));
+        assert!(finite.contains_interval(&T::new(15.0, 20.0)));
+        assert!(finite.contains_interval(&T::new(10.0, 20.0))); // itself
+        assert!(finite.contains_interval(&T::empty()));
+
+        // Intervals that are not contained
+        assert!(!finite.contains_interval(&T::new(5.0, 15.0))); // extends below
+        assert!(!finite.contains_interval(&T::new(15.0, 25.0))); // extends above
+        assert!(!finite.contains_interval(&T::new(5.0, 25.0))); // extends both ways
+        assert!(!finite.contains_interval(&T::new(0.0, 5.0))); // completely below
+        assert!(!finite.contains_interval(&T::new(25.0, 30.0))); // completely above
+        assert!(!finite.contains_interval(&T::full())); // full interval is larger
 
         // Merging NaN
         assert_eq!(finite.merge_value(f64::NAN), finite);
@@ -677,6 +699,47 @@ mod test {
         assert!(wraparound.intersects_interval(&WraparoundInterval::new(5.0, 0.0)));
         assert!(wraparound.intersects_interval(&WraparoundInterval::new(25.0, 30.0)));
         assert!(wraparound.intersects_interval(&WraparoundInterval::new(30.0, 25.0)));
+    }
+
+    #[test]
+    fn wraparound_interval_actually_wraparound_contains_interval() {
+        // Everything *except* the interval (10, 20)
+        let wraparound = WraparoundInterval::new(20.0, 10.0);
+
+        // Contains itself
+        assert!(wraparound.contains_interval(&wraparound));
+
+        // Empty is contained by everything
+        assert!(wraparound.contains_interval(&WraparoundInterval::empty()));
+
+        // Does not contain the full interval
+        assert!(!wraparound.contains_interval(&WraparoundInterval::full()));
+
+        // Regular interval completely between endpoints is not contained
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(14.0, 16.0)));
+
+        // Wraparound intervals that exclude more (narrower included regions) are contained
+        assert!(wraparound.contains_interval(&WraparoundInterval::new(22.0, 8.0))); // excludes (8,22) which is larger than (10,20)
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(18.0, 12.0))); // excludes (12,18) which is smaller than (10,20)
+
+        // Regular intervals don't work the same way due to the split logic
+        // For a regular interval (a, b), split gives (left=(a,b), right=empty)
+        // For wraparound to contain it, we need both parts to be contained
+        // This means (-inf, 10] must contain (a,b) AND [20, inf) must contain empty
+        // The second is always true, but the first requires b <= 10
+        assert!(wraparound.contains_interval(&WraparoundInterval::new(0.0, 5.0))); // completely within left part
+        assert!(wraparound.contains_interval(&WraparoundInterval::new(-5.0, 10.0))); // fits in left part
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(25.0, 30.0))); // doesn't fit in left part
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(20.0, 25.0))); // doesn't fit in left part
+
+        // Regular intervals that overlap the excluded zone are not contained
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(5.0, 15.0))); // overlaps excluded zone
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(15.0, 25.0))); // overlaps excluded zone
+
+        // Wraparound intervals that exclude less (wider included regions) are not contained
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(15.0, 5.0))); // excludes (5,15) which is smaller
+        assert!(!wraparound.contains_interval(&WraparoundInterval::new(25.0, 15.0)));
+        // excludes (15,25) which is smaller
     }
 
     #[test]

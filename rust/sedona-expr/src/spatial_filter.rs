@@ -87,7 +87,7 @@ impl SpatialFilter {
 
     fn evaluate_covered_by_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
         if let Some(bbox) = column_stats.bbox() {
-            bounds.contains(&bbox)
+            bounds.contains(bbox)
         } else {
             true
         }

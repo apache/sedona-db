@@ -208,6 +208,88 @@ mod test {
     }
 
     #[test]
+    fn bounding_box_contains() {
+        let xyzm = BoundingBox::xyzm(
+            (10, 20),
+            (30, 40),
+            Some((50, 60).into()),
+            Some((70, 80).into()),
+        );
+
+        // Should contain a smaller box completely within bounds
+        assert!(xyzm.contains(&BoundingBox::xy((14, 16), (34, 36))));
+
+        // Should contain itself
+        assert!(xyzm.contains(&xyzm));
+
+        // Should contain a box without z or m information if xy is contained
+        assert!(xyzm.contains(&BoundingBox::xy((12, 18), (32, 38))));
+
+        // Should contain without z information but with contained m
+        assert!(xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((74, 76).into())
+        )));
+
+        // Should contain without m information but with contained z
+        assert!(xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((54, 56).into()),
+            None,
+        )));
+
+        // Should contain boxes that touch the boundaries
+        assert!(xyzm.contains(&BoundingBox::xy((10, 20), (30, 40))));
+        assert!(xyzm.contains(&BoundingBox::xy((10, 15), (30, 35))));
+        assert!(xyzm.contains(&BoundingBox::xy((15, 20), (35, 40))));
+
+        // Should *not* contain if x or y extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xy((4, 16), (34, 36)))); // x extends below
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 26), (34, 36)))); // x extends above
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 16), (24, 36)))); // y extends below
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 16), (34, 46)))); // y extends above
+
+        // Should *not* contain if z is provided but extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((44, 56).into()), // z extends below
+            None
+        )));
+
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((54, 66).into()), // z extends above
+            None
+        )));
+
+        // Should *not* contain if m is provided but extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((64, 76).into()) // m extends below
+        )));
+
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((74, 86).into()) // m extends above
+        )));
+
+        // Should *not* contain boxes that are completely outside
+        assert!(!xyzm.contains(&BoundingBox::xy((0, 5), (30, 40)))); // x completely below
+        assert!(!xyzm.contains(&BoundingBox::xy((25, 30), (30, 40)))); // x completely above
+        assert!(!xyzm.contains(&BoundingBox::xy((10, 20), (0, 25)))); // y completely below
+        assert!(!xyzm.contains(&BoundingBox::xy((10, 20), (45, 50)))); // y completely above
+    }
+
+    #[test]
     fn bounding_box_update() {
         let xyzm = BoundingBox::xyzm(
             (10, 20),
