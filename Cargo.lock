@@ -4993,6 +4993,7 @@ dependencies = [
  "geo-traits 0.2.0",
  "object_store",
  "parquet",
+ "rstest",
  "sedona-common",
  "sedona-expr",
  "sedona-geometry",
