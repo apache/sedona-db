@@ -58,8 +58,8 @@ fn doc() -> Documentation {
         "Construct a line".to_string(),
         "ST_MakeLine (g1: Geometry or Geography, g2: Geometry or Geography)".to_string(),
     )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
+    .with_argument("g1", "Geometry or Geography: The first point or geometry")
+    .with_argument("g2", "Geometry or Geography: The second point or geometry")
     .with_sql_example("SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom")
     .build()
 }
