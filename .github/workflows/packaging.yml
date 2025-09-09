@@ -45,43 +45,23 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Prepare version
+      - name: Prepare dev version
         shell: bash
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # In the case of a tag, the version in Cargo.toml is already correct
             VERSION=${GITHUB_REF_NAME#apache-sedona-db-}
             VERSION=${VERSION%-rc*}
           else
-            VERSION=$(grep 'set(NANOARROW_VERSION' CMakeLists.txt | \
-                        grep -E -o '[0-9]+\.[0-9]+\.[0-9]+')
-            description=$(git describe \
-                            --always \
-                            --dirty \
-                            --long \
-                            --match "apache-sedona-db-[0-9]*.*" \
-                            --tags)
-            case "${description}" in
-              # apache-sedona-db-0.1.0-10-1234567-dirty
-              apache-sedona-db-*)
-                # 10-1234567-dirty
-                distance="${description#apache-sedona-db-*.*.*-}"
-                # 10-1234567
-                distance="${distance%-dirty}"
-                # 10
-                distance="${distance%-*}"
-                ;;
-              *)
-                distance=$(git log --format=oneline | wc -l)
-                ;;
-            esac
-            VERSION="${VERSION}.dev${distance}"
+            # Set an alpha version and save it to env
+            VERSION=$(python ci/scripts/set_dev_version.py)
           fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
       - name: Create archive
         shell: bash
         run: |
-          dev/release/source_build.sh \
+          ci/scripts/build-source.sh \
             apache-sedona-db-${VERSION} \
             $(git log -n 1 --format=%h)
 
@@ -98,6 +78,21 @@ jobs:
       - source
 
     steps:
+      - name: Use stable Rust
+        id: rust
+        run: |
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+
+      - name: Install dependencies
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y libgeos-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Update this key to force a new cache
+          prefix-key: "packaging-docs-v1"
+
       - uses: actions/download-artifact@v4
         with:
           name: source
@@ -121,17 +116,15 @@ jobs:
 
       - name: Install dev SedonaDB Python
         run: |
-            pip install sedona-db/python/sedonadb/
+            pip install sedona-db/python/sedonadb/ -vv
 
       - name: Build documentation
         run: |
-          cd sedona-db
-          docker compose run --rm -e GITHUB_ACTIONS docs
-          echo "::endgroup::"
+          sedona-db/ci/scripts/build-docs.sh
 
       - name: Compress docs
         run: |
-          cp -R sedona-db/docs/_build/html sedona-db-docs
+          cp -R sedona-db/site sedona-db-docs
           tar -czf docs.tgz sedona-db-docs
 
       - name: Upload docs
@@ -154,30 +147,30 @@ jobs:
         with:
           name: docs
 
-      - name: Clone asf-site branch
-        uses: actions/checkout@v4
-        with:
-          ref: asf-site
-          path: pages-clone
+    #   - name: Clone asf-site branch
+    #     uses: actions/checkout@v4
+    #     with:
+    #       ref: asf-site
+    #       path: pages-clone
 
-      - name: Update development documentation
-        env:
-          DOC_TAG: "main"
+    #   - name: Update development documentation
+    #     env:
+    #       DOC_TAG: "main"
 
-        run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
+    #     run: |
+    #       git config --global user.email "actions@github.com"
+    #       git config --global user.name "GitHub Actions"
 
-          cd pages-clone
-          if [ -d "$DOC_TAG" ]; then
-            git rm -rf "$DOC_TAG"
-          fi
+    #       cd pages-clone
+    #       if [ -d "$DOC_TAG" ]; then
+    #         git rm -rf "$DOC_TAG"
+    #       fi
 
-          tar -xf ../docs.tgz
-          mv sedona-db-docs "$DOC_TAG"
+    #       tar -xf ../docs.tgz
+    #       mv sedona-db-docs "$DOC_TAG"
 
-          git add *
-          git commit --allow-empty -m"update documentation for tag $DOC_TAG"
+    #       git add *
+    #       git commit --allow-empty -m"update documentation for tag $DOC_TAG"
 
       - name: Push development documentation to asf-site
         if: success() && github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'

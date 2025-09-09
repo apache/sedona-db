@@ -18,10 +18,13 @@
 import os
 import re
 import subprocess
+import tomllib
 
 
 def git(*args):
-    out = subprocess.run(["git"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out = subprocess.run(
+        ["git"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     if out.returncode != 0:
         raise RuntimeError(f"git {args} failed:\n{out.stderr.decode()}")
 
@@ -71,15 +74,19 @@ def find_commits_since(begin_sha, end_sha="HEAD"):
     lines = git("log", "--pretty=oneline", f"{begin_sha}..{end_sha}")
     return lines
 
+
 def main():
     _, last_dev_tag = find_last_dev_tag()
     dev_distance = len(find_commits_since(last_dev_tag))
 
     file_regex_replace(
-        r'^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)\.dev[0-9]+"',
-        f'"\\1.alpha.{dev_distance}"',
+        r'\nversion = "([0-9]+\.[0-9]+\.[0-9]+)"',
+        f'\nversion = "\\1-alpha{dev_distance}"',
         src_path("Cargo.toml"),
     )
+
+    with open(src_path("Cargo.toml"), "rb") as f:
+        print(tomllib.load(f)["workspace"]["package"]["version"])
 
 
 if __name__ == "__main__":
