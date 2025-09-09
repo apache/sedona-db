@@ -77,9 +77,6 @@ $env:GEOS_VERSION = "3.13.0"
 $env:CMAKE_PREFIX_PATH="$vcpkgInstalledDirectory"
 $env:OPENSSL_ROOT_DIR="$vcpkgInstalledDirectory"
 
-# This platform can support s2geography
-$env:MATURIN_PEP517_ARGS="--features s2geography"
-
 # Use delvewheel to copy any required dependencies from vcpkg into the wheel
 # combase.dll seems to be required; however, causes errors when copied into the wheel
 # This likely means that the wheel won't work on Windows 7.
