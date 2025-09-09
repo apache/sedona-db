@@ -119,7 +119,7 @@ class TestBenchBase:
             tab = self.sedonadb.execute_and_collect(query)
 
             self.sedonadb.create_table_arrow(name, tab)
-            self.postgis.create_table_arrow(name, tab)
+            # self.postgis.create_table_arrow(name, tab)
             self.duckdb.create_table_arrow(name, tab)
 
     def _get_eng(self, eng):
