@@ -21,7 +21,7 @@ on:
     branches:
       - main
     paths:
-      - 'ci/scripts/**'
+      - 'ci/scripts/wheels-*'
       - '.github/workflows/python-wheels.yml'
   push:
     branches:
