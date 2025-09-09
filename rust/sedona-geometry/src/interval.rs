@@ -107,6 +107,13 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq {
     ///
     /// When accumulating intervals in a loop, use [Interval::update_value].
     fn merge_value(&self, other: f64) -> Self;
+
+    /// Expand this interval by a given distance
+    ///
+    /// Returns a new interval where both endpoints are moved outward by the given distance.
+    /// For regular intervals, this expands both lo and hi by the distance.
+    /// For wraparound intervals, this may result in the full interval if expansion is large enough.
+    fn expand_by(&self, distance: f64) -> Self;
 }
 
 /// 1D Interval that never wraps around
@@ -239,6 +246,14 @@ impl IntervalTrait for Interval {
         let mut out = *self;
         out.update_value(other);
         out
+    }
+
+    fn expand_by(&self, distance: f64) -> Self {
+        if self.is_empty() || distance.is_nan() || distance < 0.0 {
+            return *self;
+        }
+
+        Self::new(self.lo - distance, self.hi + distance)
     }
 }
 
@@ -442,6 +457,35 @@ impl IntervalTrait for WraparoundInterval {
             }
         }
     }
+
+    fn expand_by(&self, distance: f64) -> Self {
+        if self.is_empty() || distance.is_nan() || distance < 0.0 {
+            return *self;
+        }
+
+        if !self.is_wraparound() {
+            // For non-wraparound, just expand the inner interval
+            return Self {
+                inner: self.inner.expand_by(distance),
+            };
+        }
+
+        // For wraparound intervals, expanding means including more values
+        // Wraparound interval (a, b) where a > b excludes the region (b, a)
+        // To expand by distance d, we shrink the excluded region from (b, a) to (b+d, a-d)
+        // This means the new wraparound interval becomes (a-d, b+d)
+        let excluded_lo = self.inner.hi + distance; // b + d
+        let excluded_hi = self.inner.lo - distance; // a - d
+
+        // If the excluded region disappears (excluded_lo >= excluded_hi), we get the full interval
+        if excluded_lo >= excluded_hi {
+            return Self::full();
+        }
+
+        // The new wraparound interval excludes (excluded_lo, excluded_hi)
+        // So the interval itself is (excluded_hi, excluded_lo)
+        Self::new(excluded_hi, excluded_lo)
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +535,12 @@ mod test {
             empty.merge_interval(&T::new(10.0, 20.0)),
             T::new(10.0, 20.0)
         );
+
+        // Expanding empty interval keeps it empty
+        assert_eq!(empty.expand_by(5.0), empty);
+        assert_eq!(empty.expand_by(0.0), empty);
+        assert_eq!(empty.expand_by(-1.0), empty);
+        assert_eq!(empty.expand_by(f64::NAN), empty);
     }
 
     #[test]
@@ -620,6 +670,19 @@ mod test {
             finite.merge_interval(&T::new(25.0, 30.0)),
             T::new(10.0, 30.0)
         );
+
+        // Expanding by positive distance
+        assert_eq!(finite.expand_by(2.0), T::new(8.0, 22.0));
+        assert_eq!(finite.expand_by(5.0), T::new(5.0, 25.0));
+
+        // Expanding by zero does nothing
+        assert_eq!(finite.expand_by(0.0), finite);
+
+        // Expanding by negative distance does nothing
+        assert_eq!(finite.expand_by(-1.0), finite);
+
+        // Expanding by NaN does nothing
+        assert_eq!(finite.expand_by(f64::NAN), finite);
     }
 
     #[test]
@@ -914,6 +977,63 @@ mod test {
             wraparound.merge_interval(&WraparoundInterval::new(15.0, 18.0)),
             WraparoundInterval::new(15.0, 10.0)
         );
+    }
+
+    #[test]
+    fn wraparound_interval_actually_wraparound_expand_by() {
+        // Everything *except* the interval (10, 20)
+        let wraparound = WraparoundInterval::new(20.0, 10.0);
+
+        // Expanding by a small amount shrinks the excluded region
+        // Original excludes (10, 20), expanding by 2 should exclude (12, 18)
+        // So the new interval should be (18, 12) = everything except (12, 18)
+        assert_eq!(
+            wraparound.expand_by(2.0),
+            WraparoundInterval::new(18.0, 12.0)
+        ); // now excludes (12, 18)
+
+        // Expanding by 4 should exclude (14, 16)
+        assert_eq!(
+            wraparound.expand_by(4.0),
+            WraparoundInterval::new(16.0, 14.0)
+        ); // now excludes (14, 16)
+
+        // Expanding by 5.0 should exactly eliminate the excluded region
+        // excluded region (10, 20) shrinks to (15, 15) which is empty
+        assert_eq!(wraparound.expand_by(5.0), WraparoundInterval::full()); // excluded region disappears
+
+        // Any expansion greater than 5.0 should also give full interval
+        assert_eq!(wraparound.expand_by(6.0), WraparoundInterval::full());
+
+        assert_eq!(wraparound.expand_by(100.0), WraparoundInterval::full());
+
+        // Expanding by zero does nothing
+        assert_eq!(wraparound.expand_by(0.0), wraparound);
+
+        // Expanding by negative distance does nothing
+        assert_eq!(wraparound.expand_by(-1.0), wraparound);
+
+        // Expanding by NaN does nothing
+        assert_eq!(wraparound.expand_by(f64::NAN), wraparound);
+
+        // Test a finite (non-wraparound) wraparound interval
+        let non_wraparound = WraparoundInterval::new(10.0, 20.0);
+        assert!(!non_wraparound.is_wraparound());
+        assert_eq!(
+            non_wraparound.expand_by(2.0),
+            WraparoundInterval::new(8.0, 22.0)
+        );
+
+        // Test another wraparound case - excludes (5, 15) with width 10
+        let wraparound2 = WraparoundInterval::new(15.0, 5.0);
+        // Expanding by 3 should shrink excluded region from (5, 15) to (8, 12)
+        assert_eq!(
+            wraparound2.expand_by(3.0),
+            WraparoundInterval::new(12.0, 8.0)
+        );
+
+        // Expanding by 5 should make excluded region disappear: (5+5, 15-5) = (10, 10)
+        assert_eq!(wraparound2.expand_by(5.0), WraparoundInterval::full());
     }
 
     #[test]

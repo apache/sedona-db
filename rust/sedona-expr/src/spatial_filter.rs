@@ -236,13 +236,14 @@ impl SpatialFilter {
                     distance.value().cast_to(&DataType::Float64)?,
                 ) {
                     (Ok(literal_bounds), distance_scalar_value) => {
-                        if let ScalarValue::Float64(Some(dist)) = distance_scalar_value {
-                            // let expanded_bounds = literal_bounds.expand_by(dist);
-                            let expanded_bounds = literal_bounds;
-                            Ok(Some(Self::Intersects(column.clone(), expanded_bounds)))
-                        } else {
-                            sedona_internal_err!("Unexpected distance type in filter expression ({distance_scalar_value:?})")
+                        let ScalarValue::Float64(Some(dist)) = distance_scalar_value else {
+                            return Ok(None);
+                        };
+                        if dist.is_nan() || dist < 0.0 {
+                            return Ok(None);
                         }
+                        let expanded_bounds = literal_bounds.expand_by(dist);
+                        Ok(Some(Self::Intersects(column.clone(), expanded_bounds)))
                     }
                     (Err(e), _) => Err(DataFusionError::External(Box::new(e))),
                 }
