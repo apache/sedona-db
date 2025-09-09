@@ -56,8 +56,6 @@ jobs:
       - name: Install cibuildwheel and delvewheel
         run: python -m pip install cibuildwheel==3.1.4 delvewheel
 
-      - uses: ilammy/setup-nasm@v1
-
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
