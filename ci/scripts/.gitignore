@@ -16,3 +16,4 @@
 # under the License.
 
 # Ignore the nasm compiler downloaded when building Windows wheels
+nasm-*
