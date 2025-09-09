@@ -20,6 +20,17 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// See https://github.com/tidwall/tg/issues/15 for upstream resolution
+#if defined(_MSC_VER)
+#undef __BYTE_ORDER__
+#undef __ORDER_LITTLE_ENDIAN__
+#undef __ORDER_BIG_ENDIAN__
+
+#define __BYTE_ORDER__ 1
+#define __ORDER_LITTLE_ENDIAN__ 1
+#define __ORDER_BIG_ENDIAN__ 0
+#endif
+
 /******************************************************************************
 
 Implementation Notes:
