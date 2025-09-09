@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'true'
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -97,6 +98,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'true'
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -149,6 +151,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'true'
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
