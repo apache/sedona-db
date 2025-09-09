@@ -24,8 +24,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::write_wkb_linestring_header;
+use sedona_schema::datatypes::WKB_GEOGRAPHY;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 
 use crate::executor::WkbExecutor;
@@ -37,9 +39,14 @@ use crate::executor::WkbExecutor;
 pub fn st_makeline_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_makeline",
-        vec![Arc::new(STMakeLineGeom {
-            out_type: WKB_GEOMETRY,
-        })],
+        vec![
+            Arc::new(STMakeLine {
+                out_type: WKB_GEOMETRY,
+            }),
+            Arc::new(STMakeLine {
+                out_type: WKB_GEOGRAPHY,
+            }),
+        ],
         Volatility::Immutable,
         Some(doc()),
     )
@@ -58,18 +65,24 @@ fn doc() -> Documentation {
 }
 
 #[derive(Debug)]
-struct STMakeLineGeom {
+struct STMakeLine {
     out_type: SedonaType,
 }
 
-impl SedonaScalarKernel for STMakeLineGeom {
+impl SedonaScalarKernel for STMakeLine {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            self.out_type.clone(),
-        );
+        let match_geom = ArgMatcher::is_geometry();
+        let match_geog = ArgMatcher::is_geography();
 
-        // TODO: we need another kernel for geography + geography
+        let arg_matchers = if match_geom.match_type(&self.out_type) {
+            vec![match_geom.clone(), match_geom]
+        } else if match_geog.match_type(&self.out_type) {
+            vec![match_geog.clone(), match_geog]
+        } else {
+            return sedona_internal_err!("Unexpected ST_MakeLine() output");
+        };
+
+        let matcher = ArgMatcher::new(arg_matchers, self.out_type.clone());
 
         matcher.match_args(args)
     }
@@ -195,8 +208,11 @@ mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::{
+        testers::ScalarUdfTester,
+        {compare::assert_array_equal, create::create_array},
+    };
 
     #[test]
     fn udf_metadata() {
@@ -207,8 +223,6 @@ mod tests {
 
     #[rstest]
     fn udf_invoke(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use sedona_testing::{compare::assert_array_equal, create::create_array};
-
         let tester = ScalarUdfTester::new(
             st_makeline_udf().into(),
             vec![sedona_type.clone(), sedona_type.clone()],
@@ -296,5 +310,20 @@ mod tests {
 
         let result = tester.invoke_array_array(array0, array1).unwrap();
         assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_geog(#[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_makeline_udf().into(),
+            vec![sedona_type.clone(), sedona_type.clone()],
+        );
+        tester.assert_return_type(WKB_GEOGRAPHY);
+
+        // Basic usage
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POINT (2 3)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3)");
     }
 }
