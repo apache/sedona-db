@@ -27,7 +27,7 @@ class TestBenchBase:
         num_geoms = 100_000
 
         # Setup tables
-        for name, options in [
+        for name, base_options in [
             (
                 "segments_large",
                 {
@@ -69,18 +69,49 @@ class TestBenchBase:
                 },
             ),
         ]:
-            # Generate synthetic data
+            # Generate synthetic data with two different geometry sets that have overlapping spatial distribution
+            # This creates more realistic workloads for spatial predicates
+            
+            # Options for first geometry set (geom1) - left-leaning distribution
+            options1 = base_options.copy()
+            options1.update({
+                "seed": 42,
+                "bounds": [0.0, 0.0, 80.0, 100.0],  # Slightly left-leaning
+                "size_range": [1.0, 15.0]  # Medium-sized geometries for good intersection chance
+            })
+            
+            # Options for second geometry set (geom2) - right-leaning distribution  
+            options2 = base_options.copy()
+            options2.update({
+                "seed": 1337,
+                "bounds": [20.0, 0.0, 100.0, 100.0],  # Slightly right-leaning
+                "size_range": [1.0, 15.0]  # Same size range for fair comparison
+            })
+            
             query = f"""
+                WITH geom1_data AS (
+                    SELECT 
+                        geometry as geom1,
+                        row_number() OVER () as id
+                    FROM sd_random_geometry('{json.dumps(options1)}')
+                ),
+                geom2_data AS (
+                    SELECT 
+                        geometry as geom2,
+                        row_number() OVER () as id
+                    FROM sd_random_geometry('{json.dumps(options2)}')
+                )
                 SELECT
-                    geometry as geom1,
-                    geometry as geom2,
+                    g1.geom1,
+                    g2.geom2,
                     round(random() * 100) as integer
-                FROM sd_random_geometry('{json.dumps(options)}')
+                FROM geom1_data g1
+                JOIN geom2_data g2 ON g1.id = g2.id
             """
             tab = self.sedonadb.execute_and_collect(query)
 
             self.sedonadb.create_table_arrow(name, tab)
-            self.postgis.create_table_arrow(name, tab)
+            # self.postgis.create_table_arrow(name, tab)
             self.duckdb.create_table_arrow(name, tab)
 
     def _get_eng(self, eng):
