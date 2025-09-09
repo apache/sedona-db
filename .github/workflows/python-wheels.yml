@@ -68,6 +68,10 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
+      - name: Set SedonaDB dev version
+        run: |
+          python ci/scripts/set_dev_version.py
+
       - name: Build and test wheels (sedonadb)
         run: |
           cd ci/scripts
@@ -113,6 +117,10 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
+      - name: Set SedonaDB dev version
+        run: |
+          python ci/scripts/set_dev_version.py
+
       - name: Build and test wheels (sedonadb)
         run: |
           cd ci/scripts
@@ -148,6 +156,10 @@ jobs:
 
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==3.1.4
+
+      - name: Set SedonaDB dev version
+        run: |
+          python ci/scripts/set_dev_version.py
 
       - name: Build and test wheels (sedonadb)
         run: |
