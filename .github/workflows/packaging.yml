@@ -90,8 +90,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache
-          prefix-key: "packaging-docs-v1"
+          # Update this key to force a new cache (but share with the python.yml workflow)
+          prefix-key: "python-v1"
 
       - uses: actions/download-artifact@v4
         with:
@@ -155,7 +155,7 @@ jobs:
 
       - name: Update development documentation
         env:
-          DOC_TAG: "main"
+          DOC_TAG: "dev-snapshot-main"
 
         run: |
           git config --global user.email "actions@github.com"

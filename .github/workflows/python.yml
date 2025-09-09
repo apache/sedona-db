@@ -111,7 +111,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache
+          # Update this key to force a new cache (sync with packaging.yml)
           prefix-key: "python-v1"
 
       - name: Install
