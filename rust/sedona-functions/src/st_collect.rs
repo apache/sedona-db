@@ -151,8 +151,7 @@ impl CollectionAccumulator {
                 }
             }
         } else {
-            // TODO: what happens when we try to collect mixed dimensions?
-            write_wkb_geometrycollection_header(&mut new_item, Dimensions::Xy, count_usize)
+            write_wkb_geometrycollection_header(&mut new_item, dimensions, count_usize)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
         }
 
@@ -160,29 +159,10 @@ impl CollectionAccumulator {
         new_item.extend(self.item.iter());
         Ok(Some(new_item))
     }
-
-    // Check the input length for update methods.
-    fn check_update_input_len(input: &[ArrayRef], expected: usize, context: &str) -> Result<()> {
-        if input.is_empty() {
-            return Err(DataFusionError::Internal(format!(
-                "No input arrays provided to accumulator in {context}"
-            )));
-        }
-        if input.len() != expected {
-            return sedona_internal_err!(
-                "Unexpected input length in {} (expected {}, got {})",
-                context,
-                expected,
-                input.len()
-            );
-        }
-        Ok(())
-    }
 }
 
 impl Accumulator for CollectionAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
@@ -310,7 +290,7 @@ mod test {
         let tester = AggregateUdfTester::new(st_collect_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
-        // Finite input with nulls
+        // Finite point input with nulls
         let batches = vec![
             vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
             vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
@@ -320,7 +300,48 @@ mod test {
             Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"),
         );
 
+        // Finite linestring input with nulls
+        let batches = vec![
+            vec![Some("LINESTRING (0 1, 2 3)"), None],
+            vec![Some("LINESTRING (4 5, 6 7)"), None],
+        ];
+        assert_scalar_equal_wkb_geometry(
+            &tester.aggregate_wkt(batches).unwrap(),
+            Some("MULTILINESTRING ((0 1, 2 3), (4 5, 6 7))"),
+        );
+
+        // Finite polygon input with nulls
+        let batches = vec![
+            vec![Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), None],
+            vec![Some("POLYGON ((10 10, 11 10, 10 11, 10 10))"), None],
+        ];
+        assert_scalar_equal_wkb_geometry(
+            &tester.aggregate_wkt(batches).unwrap(),
+            Some("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))"),
+        );
+
+        // Mixed input
+        let batches = vec![
+            vec![Some("POINT (0 1)"), None],
+            vec![Some("LINESTRING (4 5, 6 7)"), None],
+        ];
+        assert_scalar_equal_wkb_geometry(
+            &tester.aggregate_wkt(batches).unwrap(),
+            Some("GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (4 5, 6 7))"),
+        );
+
         // Empty input
         assert_scalar_equal_wkb_geometry(&tester.aggregate_wkt(vec![]).unwrap(), None);
+
+        // Error for mixed dimensions
+        let batches = vec![
+            vec![Some("POINT (0 1)"), None],
+            vec![Some("POINT Z (0 1 2)"), None],
+        ];
+        let err = tester.aggregate_wkt(batches).unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Can't ST_Collect() mixed dimension geometries"
+        );
     }
 }
