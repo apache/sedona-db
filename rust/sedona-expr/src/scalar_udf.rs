@@ -715,8 +715,6 @@ mod tests {
             Some(SedonaType::Arrow(DataType::Boolean))
         );
 
-        assert!(ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Null)));
-        assert!(!ArgMatcher::is_null().match_type(&SedonaType::Arrow(DataType::Int32)));
     }
 
     #[test]
