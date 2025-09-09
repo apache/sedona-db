@@ -393,11 +393,7 @@ class PostGIS(DBEngine):
     """
 
     def __init__(self, uri=None):
-        import sys
         import adbc_driver_postgresql.dbapi
-
-        if sys.platform.startswith('win'):
-            raise RuntimeError("PostGIS on Windows takes too long to connect to")
 
         if uri is None:
             uri = "postgresql://localhost:5432/postgres?user=postgres&password=password"
