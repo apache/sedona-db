@@ -74,10 +74,14 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
-    needs:
-      - source
 
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
       - name: Use stable Rust
         id: rust
         run: |
@@ -93,38 +97,21 @@ jobs:
           # Update this key to force a new cache (but share with the python.yml workflow)
           prefix-key: "python-v1"
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: source
-
-      - name: Extract source archive
-        run: |
-          source_archive=$(echo apache-sedona-db-*.tar.gz)
-          VERSION=${source_archive#apache-sedona-db-}
-          VERSION=${VERSION%.tar.gz}
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          tar xf apache-sedona-db-${VERSION}.tar.gz
-          mv apache-sedona-db-${VERSION} sedona-db
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
       - name: Install docs requirements
         run: |
-            pip install -r sedona-db/docs/requirements.txt
+            pip install -r docs/requirements.txt
 
       - name: Install dev SedonaDB Python
         run: |
-            pip install sedona-db/python/sedonadb/ -vv
+            pip install python/sedonadb/ -vv
 
       - name: Build documentation
         run: |
-          sedona-db/ci/scripts/build-docs.sh
+          ci/scripts/build-docs.sh
 
       - name: Compress docs
         run: |
-          cp -R sedona-db/site sedona-db-docs
+          cp -R site sedona-db-docs
           tar -czf docs.tgz sedona-db-docs
 
       - name: Upload docs
