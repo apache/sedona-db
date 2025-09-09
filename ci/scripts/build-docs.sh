@@ -28,4 +28,10 @@ SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
 export JUPYTER_PLATFORM_DIRS=1
 
 pushd "${SEDONADB_DIR}"
-mkdocs build --strict
+if mkdocs build --strict ; then
+  echo "Success!"
+  exit 0
+else
+  echo "Documentation build failed"
+  exit 1
+fi

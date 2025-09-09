@@ -17,7 +17,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, Literal, Union
+from typing import Iterable, Literal, Union, Any
 
 from sedonadb._lib import InternalContext, configure_proj_shared
 from sedonadb.dataframe import DataFrame, _create_data_frame
@@ -34,7 +34,7 @@ class SedonaContext:
     def __init__(self):
         self._impl = InternalContext()
 
-    def create_data_frame(self, obj, schema=None) -> DataFrame:
+    def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
         """Create a DataFrame from an in-memory or protocol-enabled object.
 
         Converts supported Python objects into a SedonaDB DataFrame so you

@@ -5,3 +5,5 @@ mkdocs-jupyter
 mkdocs-macros-plugin
 mkdocs-material
 mkdocstrings[python]
+ruff
+pyproj
