@@ -42,6 +42,8 @@ use crate::statistics::GeoStatistics;
 pub enum SpatialFilter {
     /// ST_Intersects(\<column\>, \<literal\>) or ST_Intersects(\<literal\>, \<column\>)
     Intersects(Column, BoundingBox),
+    /// ST_CoveredBy(\<column\>, \<literal\>) or ST_CoveredBy(\<literal\>, \<column\>)
+    CoveredBy(Column, BoundingBox),
     /// ST_HasZ(\<column\>)
     HasZ(Column),
     /// Logical AND
@@ -64,6 +66,9 @@ impl SpatialFilter {
             SpatialFilter::Intersects(column, bounds) => {
                 Self::evaluate_intersects_bbox(&table_stats[column.index()], bounds)
             }
+            SpatialFilter::CoveredBy(column, bounds) => {
+                Self::evaluate_covered_by_bbox(&table_stats[column.index()], bounds)
+            }
             SpatialFilter::HasZ(column) => Self::evaluate_has_z(&table_stats[column.index()]),
             SpatialFilter::And(lhs, rhs) => Self::evaluate_and(lhs, rhs, table_stats),
             SpatialFilter::Or(lhs, rhs) => Self::evaluate_or(lhs, rhs, table_stats),
@@ -75,6 +80,14 @@ impl SpatialFilter {
     fn evaluate_intersects_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
         if let Some(bbox) = column_stats.bbox() {
             bbox.intersects(bounds)
+        } else {
+            true
+        }
+    }
+
+    fn evaluate_covered_by_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
+        if let Some(bbox) = column_stats.bbox() {
+            bounds.contains(&bbox)
         } else {
             true
         }

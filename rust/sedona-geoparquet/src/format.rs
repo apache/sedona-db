@@ -352,7 +352,7 @@ impl GeoParquetFileSource {
         if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
             let mut parquet_source = parquet_source.clone();
 
-            // Extract the precicate from the existing source if it exists so we can keep a copy of it
+            // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.predicate().cloned(), predicate) {
                 (None, None) => None,
                 (None, Some(specified_predicate)) => Some(specified_predicate),

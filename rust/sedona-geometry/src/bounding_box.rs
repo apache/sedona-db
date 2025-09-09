@@ -108,6 +108,25 @@ impl BoundingBox {
         intersects_xy && may_intersect_z && may_intersect_m
     }
 
+    /// Calculate whether this bounding box contains another BoundingBox
+    ///
+    /// Returns true if this bounding box contains other or false otherwise.
+    /// This method will consider Z and M dimension if and only if those dimensions are present
+    /// in both bounding boxes.
+    pub fn contains(&self, other: &Self) -> bool {
+        let contains_xy = self.x.contains_interval(&other.x) && self.y.contains_interval(&other.y);
+        let may_contain_z = match (self.z, other.z) {
+            (Some(z), Some(other_z)) => z.contains_interval(&other_z),
+            _ => true,
+        };
+        let may_contain_m = match (self.m, other.m) {
+            (Some(m), Some(other_m)) => m.contains_interval(&other_m),
+            _ => true,
+        };
+
+        contains_xy && may_contain_z && may_contain_m
+    }
+
     /// Update this BoundingBox to include the bounds of another
     ///
     /// This method will propagate missingness of Z or M dimensions from the two boxes

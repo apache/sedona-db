@@ -73,6 +73,15 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq {
     /// `is_wraparound()` when not required for an implementation.
     fn intersects_interval(&self, other: &Self) -> bool;
 
+    /// Check for potential containment of an interval
+    ///
+    /// Note that intervals always contain their endpoints (for both the wraparound and
+    /// non-wraparound case).
+    ///
+    /// This method accepts Self for performance reasons to prevent unnecessary checking of
+    /// `is_wraparound()` when not required for an implementation.
+    fn contains_interval(&self, other: &Self) -> bool;
+
     /// The width of the interval
     ///
     /// For the non-wraparound case, this is the distance between lo and hi. For the wraparound
@@ -204,6 +213,10 @@ impl IntervalTrait for Interval {
         self.lo <= other.hi && other.lo <= self.hi
     }
 
+    fn contains_interval(&self, other: &Self) -> bool {
+        self.lo <= other.lo && self.hi >= other.hi
+    }
+
     fn width(&self) -> f64 {
         self.hi - self.lo
     }
@@ -314,6 +327,12 @@ impl IntervalTrait for WraparoundInterval {
             || left.intersects_interval(&other_right)
             || right.intersects_interval(&other_left)
             || right.intersects_interval(&other_right)
+    }
+
+    fn contains_interval(&self, other: &Self) -> bool {
+        let (left, right) = self.split();
+        let (other_left, other_right) = other.split();
+        left.contains_interval(&other_left) && right.contains_interval(&other_right)
     }
 
     fn width(&self) -> f64 {
