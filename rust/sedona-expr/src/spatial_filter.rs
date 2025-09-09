@@ -177,8 +177,7 @@ impl SpatialFilter {
         let args = parse_args(raw_args);
         let fun_name = scalar_fun.fun().name();
         match fun_name {
-            "st_intersects" | "st_contains" | "st_covers" | "st_equals" | "st_touches"
-            | "st_within" | "st_covered_by" => {
+            "st_intersects" | "st_equals" | "st_touches" => {
                 if args.len() != 2 {
                     return sedona_internal_err!("unexpected argument count in filter evaluation");
                 }
@@ -188,11 +187,65 @@ impl SpatialFilter {
                     | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                if matches!(fun_name, "st_within" | "st_covered_by") {
-                                    Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
-                                } else {
-                                    Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
-                                }
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_within" | "st_covered_by" | "st_coveredby" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal)) => {
+                        // column within/covered_by literal -> CoveredBy filter
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        // literal within/covered_by column -> Intersects filter
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_contains" | "st_covers" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal)) => {
+                        // column contains/covers literal -> Intersects filter
+                        // (column must potentially intersect literal to contain it)
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        // literal contains/covers column -> CoveredBy filter
+                        // (equivalent to st_within(column, literal))
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
@@ -496,7 +549,7 @@ mod test {
 
     #[rstest]
     fn predicate_from_expr_commutative_functions(
-        #[values("st_intersects", "st_contains", "st_covers", "st_equals", "st_touches")] func_name: &str,
+        #[values("st_intersects", "st_equals", "st_touches")] func_name: &str,
     ) {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
@@ -536,8 +589,8 @@ mod test {
     }
 
     #[rstest]
-    fn predicate_from_expr_non_commutative_functions(
-        #[values("st_within", "st_covered_by")] func_name: &str,
+    fn predicate_from_expr_within_covered_by_functions(
+        #[values("st_within", "st_covered_by", "st_coveredby")] func_name: &str,
     ) {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
@@ -546,7 +599,7 @@ mod test {
             Some(storage_field.metadata().into()),
         ));
 
-        // Test functions that should result in CoveredBy filter
+        // Test functions that should result in CoveredBy filter when column is first arg
         let func = create_dummy_spatial_function(func_name, 2);
         let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
             func_name,
@@ -561,8 +614,7 @@ mod test {
             func_name
         );
 
-        // Test reversed argument order: should be converted to Intersects filter since
-        // within/covered_by are not commutative
+        // Test reversed argument order: should be converted to Intersects filter
         let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
             func_name,
             Arc::new(func),
@@ -573,6 +625,49 @@ mod test {
         assert!(
             matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
             "Function {} with reversed args should produce Intersects filter",
+            func_name
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_expr_contains_covers_functions(
+        #[values("st_contains", "st_covers")] func_name: &str,
+    ) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        // Test functions that should result in Intersects filter when column is first arg
+        // (column contains/covers literal -> column must intersect literal)
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "Function {} should produce Intersects filter",
+            func_name
+        );
+
+        // Test reversed argument order: should be converted to CoveredBy filter
+        // (literal contains/covers column -> equivalent to st_within(column, literal))
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
+            vec![literal.clone(), column.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::CoveredBy(_, _)),
+            "Function {} with reversed args should produce CoveredBy filter",
             func_name
         );
     }
@@ -678,10 +773,22 @@ mod test {
         );
     }
 
-    #[test]
-    fn predicate_from_intersects_errors() {
+    #[rstest]
+    fn predicate_from_spatial_relation_function_errors(
+        #[values(
+            "st_intersects",
+            "st_equals",
+            "st_touches",
+            "st_contains",
+            "st_covers",
+            "st_within",
+            "st_covered_by",
+            "st_coveredby"
+        )]
+        func_name: &str,
+    ) {
         let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new(ScalarValue::Null));
-        let st_intersects = create_dummy_spatial_function("st_intersects", 2);
+        let st_intersects = create_dummy_spatial_function(func_name, 2);
 
         // Wrong number of args
         let expr_no_args: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
