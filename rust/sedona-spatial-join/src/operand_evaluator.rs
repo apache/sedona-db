@@ -241,6 +241,7 @@ impl DistanceOperandEvaluator {
 
         // Expand the vec by distance
         let distance_columnar_value = self.inner.distance.evaluate(batch)?;
+        // No timezone conversion needed for distance; pass None as cast_options explicitly.
         let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
         match &distance_columnar_value {
             ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
