@@ -74,6 +74,8 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
 
     steps:
       - uses: actions/checkout@v4
