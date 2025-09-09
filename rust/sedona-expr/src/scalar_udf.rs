@@ -714,7 +714,6 @@ mod tests {
             ArgMatcher::is_boolean().type_if_null(),
             Some(SedonaType::Arrow(DataType::Boolean))
         );
-
     }
 
     #[test]
