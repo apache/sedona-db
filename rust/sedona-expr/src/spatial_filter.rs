@@ -45,8 +45,8 @@ use crate::{
 pub enum SpatialFilter {
     /// ST_Intersects(\<column\>, \<literal\>) or ST_Intersects(\<literal\>, \<column\>)
     Intersects(Column, BoundingBox),
-    /// ST_CoveredBy(\<column\>, \<literal\>) or ST_CoveredBy(\<literal\>, \<column\>)
-    CoveredBy(Column, BoundingBox),
+    /// ST_Covers(\<column\>, \<literal\>) or ST_Covers(\<literal\>, \<column\>)
+    Covers(Column, BoundingBox),
     /// ST_HasZ(\<column\>)
     HasZ(Column),
     /// Logical AND
@@ -69,8 +69,8 @@ impl SpatialFilter {
             SpatialFilter::Intersects(column, bounds) => {
                 Self::evaluate_intersects_bbox(&table_stats[column.index()], bounds)
             }
-            SpatialFilter::CoveredBy(column, bounds) => {
-                Self::evaluate_covered_by_bbox(&table_stats[column.index()], bounds)
+            SpatialFilter::Covers(column, bounds) => {
+                Self::evaluate_covers_bbox(&table_stats[column.index()], bounds)
             }
             SpatialFilter::HasZ(column) => Self::evaluate_has_z(&table_stats[column.index()]),
             SpatialFilter::And(lhs, rhs) => Self::evaluate_and(lhs, rhs, table_stats),
@@ -88,9 +88,9 @@ impl SpatialFilter {
         }
     }
 
-    fn evaluate_covered_by_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
+    fn evaluate_covers_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
         if let Some(bbox) = column_stats.bbox() {
-            bounds.contains(bbox)
+            bbox.contains(bounds)
         } else {
             true
         }
@@ -203,19 +203,19 @@ impl SpatialFilter {
 
                 match (&args[0], &args[1]) {
                     (ArgRef::Col(column), ArgRef::Lit(literal)) => {
-                        // column within/covered_by literal -> CoveredBy filter
+                        // column within/covered_by literal -> Intersects filter
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
                     }
                     (ArgRef::Lit(literal), ArgRef::Col(column)) => {
-                        // literal within/covered_by column -> Intersects filter
+                        // literal within/covered_by column -> Covers filter
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
@@ -231,11 +231,11 @@ impl SpatialFilter {
 
                 match (&args[0], &args[1]) {
                     (ArgRef::Col(column), ArgRef::Lit(literal)) => {
-                        // column contains/covers literal -> CoveredBy filter
-                        // (column's bbox must fully contain literal's bbox)
+                        // column contains/covers literal -> Covers filter
+                        // (column's bbox must fully cover literal's bbox)
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
@@ -424,7 +424,7 @@ mod test {
     }
 
     #[test]
-    fn predicate_covered_by() {
+    fn predicate_covers() {
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
         let literal = Literal::new_with_metadata(
             create_scalar(Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"), &WKB_GEOMETRY),
@@ -433,20 +433,17 @@ mod test {
         let bounds = literal_bounds(&literal).unwrap();
 
         let stats_no_info = [GeoStatistics::unspecified()];
-        let stats_covered = [
-            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((1.0, 1.0), (2.0, 2.0))))
-        ];
+        let stats_covered =
+            [GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0, 4), (0, 4))))];
         let stats_not_covered = [
             GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((3.0, 3.0), (5.0, 5.0))))
         ];
         let col0 = Column::new("col0", 0);
 
-        // CoveredBy should return true when column bbox is fully contained in literal bounds
-        assert!(SpatialFilter::CoveredBy(col0.clone(), bounds.clone()).evaluate(&stats_no_info));
-        assert!(SpatialFilter::CoveredBy(col0.clone(), bounds.clone()).evaluate(&stats_covered));
-        assert!(
-            !SpatialFilter::CoveredBy(col0.clone(), bounds.clone()).evaluate(&stats_not_covered)
-        );
+        // Covers should return true when column bbox is fully contained in literal bounds
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_no_info));
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_covered));
+        assert!(!SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_not_covered));
     }
 
     #[test]
@@ -607,8 +604,8 @@ mod test {
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
-            matches!(predicate, SpatialFilter::CoveredBy(_, _)),
-            "Function {func_name} should produce CoveredBy filter"
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "Function {func_name} should produce Intersects filter"
         );
 
         // Test reversed argument order: should be converted to Intersects filter
@@ -620,8 +617,8 @@ mod test {
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
-            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
-            "Function {func_name} with reversed args should produce Intersects filter"
+            matches!(predicate_reversed, SpatialFilter::Covers(_, _)),
+            "Function {func_name} with reversed args should produce Covers filter"
         );
     }
 
@@ -647,7 +644,7 @@ mod test {
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
-            matches!(predicate, SpatialFilter::CoveredBy(_, _)),
+            matches!(predicate, SpatialFilter::Covers(_, _)),
             "Function {func_name} should produce CoveredBy filter"
         );
 
