@@ -231,21 +231,21 @@ impl SpatialFilter {
 
                 match (&args[0], &args[1]) {
                     (ArgRef::Col(column), ArgRef::Lit(literal)) => {
-                        // column contains/covers literal -> Intersects filter
-                        // (column must potentially intersect literal to contain it)
+                        // column contains/covers literal -> CoveredBy filter
+                        // (column's bbox must fully contain literal's bbox)
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
                     }
                     (ArgRef::Lit(literal), ArgRef::Col(column)) => {
-                        // literal contains/covers column -> CoveredBy filter
-                        // (equivalent to st_within(column, literal))
+                        // literal contains/covers column -> Intersects filter
+                        // (if literal contains column, they must at least intersect)
                         match literal_bounds(literal) {
                             Ok(literal_bounds) => {
-                                Ok(Some(Self::CoveredBy(column.clone(), literal_bounds)))
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
                             }
                             Err(e) => Err(DataFusionError::External(Box::new(e))),
                         }
@@ -640,8 +640,8 @@ mod test {
             Some(storage_field.metadata().into()),
         ));
 
-        // Test functions that should result in Intersects filter when column is first arg
-        // (column contains/covers literal -> column must intersect literal)
+        // Test functions that should result in CoveredBy filter when column is first arg
+        // (column contains/covers literal -> column's bbox must fully contain literal's bbox)
         let func = create_dummy_spatial_function(func_name, 2);
         let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
             func_name,
@@ -651,13 +651,13 @@ mod test {
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
-            matches!(predicate, SpatialFilter::Intersects(_, _)),
-            "Function {} should produce Intersects filter",
+            matches!(predicate, SpatialFilter::CoveredBy(_, _)),
+            "Function {} should produce CoveredBy filter",
             func_name
         );
 
-        // Test reversed argument order: should be converted to CoveredBy filter
-        // (literal contains/covers column -> equivalent to st_within(column, literal))
+        // Test reversed argument order: should be converted to Intersects filter
+        // (literal contains/covers column -> they must at least intersect)
         let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
             func_name,
             Arc::new(func),
@@ -666,8 +666,8 @@ mod test {
         ));
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
-            matches!(predicate_reversed, SpatialFilter::CoveredBy(_, _)),
-            "Function {} with reversed args should produce CoveredBy filter",
+            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
+            "Function {} with reversed args should produce Intersects filter",
             func_name
         );
     }
