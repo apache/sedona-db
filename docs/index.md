@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 <!---
   Licensed to the Apache Software Foundation (ASF) under one
   or more contributor license agreements.  See the NOTICE file
@@ -20,6 +25,10 @@
 # SedonaDB
 
 SedonaDB is a high-performance, dependency-free geospatial compute engine.
+
+You can easily run SedonaDB locally or in the cloud.  The first release supports a core set of vector operations, but the full-suite of common vector and raster computations will be supported soon.
+
+SedonaDB only runs on a single machine, so it’s perfect for processing smaller datasets.  You can use SedonaSpark, SedonaFlink, or SedonaSnow for operations on larger datasets.
 
 === "SQL"
 
@@ -60,13 +69,15 @@ SedonaDB is a high-performance, dependency-free geospatial compute engine.
 
 ## Key features
 
-* **Blazing fast**: SedonaDB runs on a single machine, optimized for geospatial workflows.
-* SedonaDB is a **dependency-free**, **small binary** that is only XX KB.
-* Supports **various file formats**, including GeoJSON, Shapefile, GeoParquet, CSV, and PostGIS.
-* Exposes **several language APIs,** including SQL, Python, Rust, and R.
-* **Portable**: Easy to run on the command line, locally or in the cloud with AWS Sagemaker, AWS Lambda, Azure Functions, Azure Machine Learning, or Google Colab.
-* **Extensible**: You can extend SedonaDB to build your own geospatial compute engine custom for your needs.
-* **Open source**: Apache Sedona is an open-source project managed according to the Apache Software Foundation's guidelines.
+SedonaDB has several advantages:
+
+* **Blazing-Fast Performance:** Built in Rust to process massive geospatial datasets with exceptional speed.
+* **Unified Geospatial Toolkit:** Access a comprehensive suite of functions for both vector and raster data in a single, powerful library.
+* **Seamless Ecosystem Integration:** Built on Apache Arrow for smooth interoperability with popular data science libraries like GeoPandas, DuckDB, and Polars.
+* **Flexible APIs:** Effortlessly switch between Python and SQL interfaces to match your preferred workflow and skillset.
+* **Guaranteed CRS Propagation:** Automatically manages coordinate reference systems (CRS) to ensure spatial accuracy and prevent common errors.
+* **Broad File Format Support:** Work with a wide range of both modern and legacy geospatial file formats like geoparquet.
+* **Highly Extensible:** Easily customize and extend the library's functionality to meet your project's unique requirements.
 
 ## Installation
 
@@ -76,12 +87,6 @@ Here’s how to install SedonaDB with various build tools:
 
 	```bash
 	pip install "apache-sedona[db]"
-	```
-
-=== "Rust"
-
-	```rust
-	cargo add sedona
 	```
 
 === "R"

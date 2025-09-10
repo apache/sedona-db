@@ -37,12 +37,12 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
-homepage = "https://github.com/wherobots/wherobots-vectorized-compute"
-repository = "https://github.com/wherobots/wherobots-vectorized-compute"
-description = "Apache Sedona for Rust"
+homepage = "https://github.com/apache/sedona-db"
+repository = "https://github.com/apache/sedona-db"
+description = "Apache SedonaDB Rust API"
 readme = "README.md"
 edition = "2021"
 

@@ -28,6 +28,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona::context::SedonaDataFrame;
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
@@ -58,6 +59,7 @@ impl InternalDataFrame {
     fn primary_geometry_column(&self) -> Result<Option<String>, PySedonaError> {
         Ok(self
             .inner
+            .schema()
             .primary_geometry_column_index()?
             .map(|i| self.inner.schema().field(i).name().to_string()))
     }
@@ -65,6 +67,7 @@ impl InternalDataFrame {
     fn geometry_columns(&self) -> Result<Vec<String>, PySedonaError> {
         let names = self
             .inner
+            .schema()
             .geometry_column_indices()?
             .into_iter()
             .map(|i| self.inner.schema().field(i).name().to_string())
@@ -170,11 +173,7 @@ impl InternalDataFrame {
             }
         }
 
-        let stream = wait_for_future(
-            py,
-            &self.runtime,
-            self.inner.clone().execute_stream_sedona(),
-        )??;
+        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
         let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
         let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 

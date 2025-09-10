@@ -40,6 +40,7 @@ use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
 use sedona_common::{option::SedonaOptions, sedona_internal_err};
+use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
 
 /// Physical planner extension for spatial joins
 ///
@@ -594,60 +595,24 @@ fn match_distance_predicate(
     expr: &Arc<dyn PhysicalExpr>,
     column_indices: &[ColumnIndex],
 ) -> Option<DistancePredicate> {
-    // There are 3 forms of distance predicates:
-    // 1. st_dwithin(geom1, geom2, distance)
-    // 2. st_distance(geom1, geom2) <= distance or st_distance(geom1, geom2) < distance
-    // 3. distance >= st_distance(geom1, geom2) or distance > st_distance(geom1, geom2)
-    let (arg0, arg1, distance_bound_expr) =
-        if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
-            // handle case 2. and 3.
-            let left = binary_expr.left();
-            let right = binary_expr.right();
-            let (st_distance_expr, distance_bound_expr) = match *binary_expr.op() {
-                Operator::Lt | Operator::LtEq => (left, right),
-                Operator::Gt | Operator::GtEq => (right, left),
-                _ => return None,
-            };
-
-            if let Some(st_distance_expr) = st_distance_expr
-                .as_any()
-                .downcast_ref::<ScalarFunctionExpr>()
-            {
-                if st_distance_expr.fun().name() != "st_distance" {
-                    return None;
-                }
-
-                let args = st_distance_expr.args();
-                assert!(args.len() >= 2);
-                (&args[0], &args[1], distance_bound_expr)
-            } else {
-                return None;
-            }
-        } else if let Some(st_dwithin_expr) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
-            // handle case 1.
-            if st_dwithin_expr.fun().name() != "st_dwithin" {
-                return None;
-            }
-
-            let args = st_dwithin_expr.args();
-            assert!(args.len() >= 3);
-            (&args[0], &args[1], &args[2])
-        } else {
-            return None;
-        };
+    let ParsedDistancePredicate {
+        arg0,
+        arg1,
+        arg_distance,
+    } = parse_distance_predicate(expr)?;
 
     // Try to find the expressions that evaluates to the arguments of the spatial function
-    let arg0_refs = collect_column_references(arg0, column_indices);
-    let arg1_refs = collect_column_references(arg1, column_indices);
-    let arg_dist_refs = collect_column_references(distance_bound_expr, column_indices);
+    let arg0_refs = collect_column_references(&arg0, column_indices);
+    let arg1_refs = collect_column_references(&arg1, column_indices);
+    let arg_dist_refs = collect_column_references(&arg_distance, column_indices);
 
     let arg_dist_side = side_of_column_references(&arg_dist_refs)?;
     let (arg0_side, arg1_side) = resolve_column_reference_sides(&arg0_refs, &arg1_refs)?;
 
-    let arg0_reprojected = reproject_column_references_for_side(arg0, column_indices, arg0_side);
-    let arg1_reprojected = reproject_column_references_for_side(arg1, column_indices, arg1_side);
+    let arg0_reprojected = reproject_column_references_for_side(&arg0, column_indices, arg0_side);
+    let arg1_reprojected = reproject_column_references_for_side(&arg1, column_indices, arg1_side);
     let arg_dist_reprojected =
-        reproject_column_references_for_side(distance_bound_expr, column_indices, arg_dist_side);
+        reproject_column_references_for_side(&arg_distance, column_indices, arg_dist_side);
 
     match (arg0_side, arg1_side) {
         (JoinSide::Left, JoinSide::Right) => Some(DistancePredicate::new(

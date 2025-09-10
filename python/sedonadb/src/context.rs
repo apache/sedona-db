@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
@@ -74,11 +74,31 @@ impl InternalContext {
         &self,
         py: Python<'py>,
         table_paths: Vec<String>,
+        options: HashMap<String, PyObject>,
     ) -> Result<InternalDataFrame, PySedonaError> {
+        // Convert Python options to strings, filtering out None values
+        let rust_options: HashMap<String, String> = options
+            .into_iter()
+            .filter_map(|(k, v)| {
+                if v.is_none(py) {
+                    None
+                } else {
+                    v.bind(py)
+                        .str()
+                        .and_then(|s| s.extract())
+                        .map(|s: String| (k, s))
+                        .ok()
+                }
+            })
+            .collect();
+
+        let geo_options =
+            sedona_geoparquet::provider::GeoParquetReadOptions::from_table_options(rust_options)
+                .map_err(|e| PySedonaError::SedonaPython(format!("Invalid table options: {e}")))?;
         let df = wait_for_future(
             py,
             &self.runtime,
-            self.inner.read_parquet(table_paths, Default::default()),
+            self.inner.read_parquet(table_paths, geo_options),
         )??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }

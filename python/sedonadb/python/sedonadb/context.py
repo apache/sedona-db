@@ -17,7 +17,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, Literal, Union
+from typing import Any, Dict, Iterable, Literal, Optional, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
 from sedonadb.dataframe import DataFrame, _create_data_frame
@@ -34,7 +34,7 @@ class SedonaContext:
     def __init__(self):
         self._impl = InternalContext()
 
-    def create_data_frame(self, obj, schema=None) -> DataFrame:
+    def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
         """Create a DataFrame from an in-memory or protocol-enabled object.
 
         Converts supported Python objects into a SedonaDB DataFrame so you
@@ -106,12 +106,18 @@ class SedonaContext:
         """
         self._impl.drop_view(name)
 
-    def read_parquet(self, table_paths: Union[str, Path, Iterable[str]]) -> DataFrame:
+    def read_parquet(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
         Args:
             table_paths: A str, Path, or iterable of paths containing URLs to Parquet
                 files.
+            options: Optional dictionary of options to pass to the Parquet reader.
+                For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
 
         Examples:
 
@@ -124,8 +130,12 @@ class SedonaContext:
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
 
+        if options is None:
+            options = {}
+
         return DataFrame(
-            self._impl, self._impl.read_parquet([str(path) for path in table_paths])
+            self._impl,
+            self._impl.read_parquet([str(path) for path in table_paths], options),
         )
 
     def sql(self, sql: str) -> DataFrame:

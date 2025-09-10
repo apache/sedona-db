@@ -19,13 +19,16 @@
 
 # SQL API Reference
 
-SedonaDB SQL is a derivative of [DataFusion SQL](https://datafusion.apache.org/user-guide/sql/index.html)
-with support for additional functions, data types, and file formats built in to SQL syntax.
+The following SQL functions are available for SedonaDB.
 
-See the [Apache Sedona SQL documentation](https://sedona.apache.org/latest/api/sql/Overview/) for
-additional function documentation and examples.
+You can query data directly from files and URLs by treating them like database tables. This feature supports formats like **Parquet**, **CSV**, and **JSON**.
 
-Here are the markdown files for each SQL function found in the provided `.rs` files.
+To query a file, place its path or URL in single quotes within the `FROM` clause.
+
+```python
+# Query a remote Parquet file directly
+"SELECT * FROM 'https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet'").show()
+```
 
 ## ST_Analyze_Aggr
 
@@ -607,4 +610,551 @@ Computes the symmetric difference between geomA and geomB.
 
 ```sql
 SELECT ST_SymDifference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+```
+
+## ST_Area
+
+### Description
+
+Return the area of a geometry.
+
+### Format
+
+`ST_Area (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
+```
+
+## ST_Centroid
+
+### Description
+
+Returns the centroid of geom.
+
+### Format
+
+`ST_Centroid (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_AsText(ST_Centroid(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')));
+```
+
+## ST_Dimension
+
+### Description
+
+Return the dimension of the geometry.
+
+### Format
+
+`ST_Dimension (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_Dimension(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+```
+
+## ST_GeomFromWKB
+
+### Description
+
+Construct a Geometry from WKB.
+
+### Format
+
+`ST_GeomFromWKB (Wkb: Binary)`
+
+### Arguments
+
+  * **WKB**: binary: Well-known binary representation of the geometry.
+
+### SQL Example
+
+```sql
+-- Creates a POINT(1 2) geometry from its WKB representation
+SELECT ST_AsText(ST_GeomFromWKB(FROM_HEX('0101000000000000000000F03F0000000000000040')));
+```
+
+## ST_GeomFromWKT
+
+### Description
+
+Construct a Geometry from WKT. This function also has the alias **ST_GeomFromText**.
+
+### Format
+
+`ST_GeomFromWKT (Wkt: String)`
+
+### Arguments
+
+  * **WKT**: string: Well-known text representation of the geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_AsText(ST_GeomFromWKT('POINT (30 10)'));
+```
+
+## ST_IsEmpty
+
+### Description
+
+Return true if the geometry is empty.
+
+### Format
+
+`ST_IsEmpty (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'));
+```
+
+## ST_Length
+
+### Description
+
+Returns the length of geom. This function only supports LineString, MultiLineString, and GeometryCollections containing linear geometries. Use ST_Perimeter for polygons.
+
+### Format
+
+`ST_Length (A: Geometry)`
+
+### Arguments
+
+  * **geom**: geometry: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_Length(ST_GeomFromWKT('LINESTRING(0 0, 10 0)'));
+```
+
+## ST_Perimeter
+
+### Description
+
+This function calculates the 2D perimeter of a given geometry. It supports Polygon, MultiPolygon, and GeometryCollection geometries (as long as the GeometryCollection contains polygonal geometries). For other types, it returns 0. To measure lines, use ST_Length.
+
+To get the perimeter in meters, set **use_spheroid** to true. This calculates the geodesic perimeter using the WGS84 spheroid. When using use_spheroid, the **lenient** parameter defaults to true, assuming the geometry uses EPSG:4326. To throw an exception instead, set lenient to false.
+
+### Format
+
+`ST_Perimeter(geom: Geometry)`
+`ST_Perimeter(geom: Geometry, use_spheroid: Boolean)`
+`ST_Perimeter(geom: Geometry, use_spheroid: Boolean, lenient: Boolean = True)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+  * **use_spheroid**: If true, calculates the geodesic perimeter using the WGS84 spheroid. Defaults to false.
+  * **lenient**: If true, assumes the geometry uses EPSG:4326 when use_spheroid is true. Defaults to true.
+
+### SQL Example
+
+```sql
+SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+```
+
+## ST_Point
+
+### Description
+
+Construct a Point Geometry from X and Y.
+
+### Format
+
+`ST_Point (x: Double, y: Double)`
+
+### Arguments
+
+  * **x**: X value.
+  * **y**: Y value.
+
+### SQL Example
+
+```sql
+SELECT ST_AsText(ST_Point(-74.0060, 40.7128));
+```
+
+Of course. Here is the documentation separated into individual functions.
+
+## ST_XMin
+
+### Description
+
+Returns the minimum **X-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_XMin (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_XMin(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
+-- Returns: 1
+```
+
+## ST_XMax
+
+### Description
+
+Returns the maximum **X-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_XMax (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_XMax(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
+-- Returns: 10
+```
+
+## ST_YMin
+
+### Description
+
+Returns the minimum **Y-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_YMin (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_YMin(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
+-- Returns: 5
+```
+
+## ST_YMax
+
+### Description
+
+Returns the maximum **Y-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_YMax (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_YMax(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
+-- Returns: 15
+```
+
+## ST_ZMin
+
+### Description
+
+Returns the minimum **Z-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_ZMin (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_ZMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
+-- Returns: 3
+```
+
+## ST_ZMax
+
+### Description
+
+Returns the maximum **Z-coordinate** of a geometry's bounding box.
+
+### Format
+
+`ST_ZMax (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_ZMax(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
+-- Returns: 7
+```
+
+## ST_MMin
+
+### Description
+
+Returns the minimum **M-coordinate** (measure) of a geometry's bounding box.
+
+### Format
+
+`ST_MMin (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
+-- Returns: 4
+```
+
+## ST_MMax
+
+### Description
+
+Returns the maximum **M-coordinate** (measure) of a geometry's bounding box.
+
+### Format
+
+`ST_MMax (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+
+### SQL Example
+
+```sql
+SELECT ST_MMax(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
+-- Returns: 8
+```
+
+## ST_AsBinary
+
+### Description
+
+Return the Well-Known Binary representation of a geometry or geography. This function also has the alias **ST_AsWKB**.
+
+### Format
+
+`ST_AsBinary (A: Geometry)`
+
+### Arguments
+
+  * **geom**: Input geometry or geography.
+
+### SQL Example
+
+```sql
+SELECT ST_AsBinary(ST_Point(1.0, 2.0));
+```
+
+## ST_Buffer
+
+### Description
+
+Returns a geometry that represents all points whose distance from the input geometry is less than or equal to a specified distance.
+
+### Format
+
+`ST_Buffer (A: Geometry, distance: Double)`
+
+### Arguments
+
+  * **geom**: Input geometry.
+  * **distance**: Radius of the buffer.
+
+### SQL Example
+
+```sql
+SELECT ST_Buffer(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), 1.0);
+```
+
+## ST_DWithin
+
+### Description
+
+Returns true if two geometries are within a specified distance of each other.
+
+### Format
+
+`ST_DWithin (A: Geometry, B: Geometry, distance: Double)`
+
+### Arguments
+
+  * **geomA**: Input geometry or geography.
+  * **geomB**: Input geometry or geography.
+  * **distance**: Distance in units of the geometry's coordinate system.
+
+### SQL Example
+
+```sql
+SELECT ST_DWithin(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'), 0.5);
+```
+
+## ST_Envelope_Aggr
+
+### Description
+
+An aggregate function that returns the collective bounding box (envelope) of a set of geometries.
+
+### Format
+
+`ST_Envelope_Aggr (geom: Geometry)`
+
+### Arguments
+
+  * **geom**: A column of geometries to be aggregated.
+
+### SQL Example
+
+```sql
+-- Create a table with geometries and calculate the aggregate envelope
+WITH shapes(geom) AS (
+    VALUES (ST_GeomFromWKT('POINT (0 1)')),
+           (ST_GeomFromWKT('POINT (10 11)'))
+)
+SELECT ST_AsText(ST_Envelope_Aggr(geom)) FROM shapes;
+-- Returns: POLYGON ((0 1, 0 11, 10 11, 10 1, 0 1))
+```
+
+## ST_Intersection_Aggr
+
+### Description
+
+An aggregate function that returns the geometric intersection of all geometries in a set.
+
+### Format
+
+`ST_Intersection_Aggr (geom: Geometry)`
+
+### Arguments
+
+  * **geom**: A column of geometries to be aggregated.
+
+### SQL Example
+
+```sql
+-- Create a table with overlapping polygons and find their common intersection
+WITH shapes(geom) AS (
+    VALUES (ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
+           (ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'))
+)
+SELECT ST_AsText(ST_Intersection_Aggr(geom)) FROM shapes;
+-- Returns: POLYGON ((1 1, 1 2, 2 2, 2 1, 1 1))
+```
+
+## ST_SetSRID
+
+### Description
+
+Sets the spatial reference system identifier (SRID) of a geometry. This only changes the metadata; it does not transform the coordinates.
+
+### Format
+
+`ST_SetSRID (geom: Geometry, srid: Integer)`
+
+### Arguments
+
+  * **geom**: Input geometry or geography.
+  * **srid**: EPSG code to set (e.g., 4326).
+
+### SQL Example
+
+```sql
+SELECT ST_SetSRID(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 4326);
+```
+
+## ST_Transform
+
+### Description
+
+Transforms the coordinates of a geometry from a source Coordinate Reference System (CRS) to a target CRS.
+
+If the source CRS is not specified, it will be read from the geometry's metadata. Sedona ensures that coordinates are handled in longitude/latitude order for geographic CRS transformations.
+
+### Format
+
+`ST_Transform (A: Geometry, TargetCRS: String)`
+`ST_Transform (A: Geometry, SourceCRS: String, TargetCRS: String)`
+
+### Arguments
+
+  * **geom**: Input geometry or geography.
+  * **source_crs**: The source CRS code (e.g., 'EPSG:4326').
+  * **target_crs**: The target CRS code to transform into.
+  * **lenient**: A boolean that, if true, assumes the source is EPSG:4326 if not specified. Defaults to true.
+
+### SQL Example
+
+```sql
+-- Transform a WGS84 polygon to UTM zone 49N
+SELECT ST_Transform(ST_SetSRID(ST_GeomFromWkt('POLYGON((170 50,170 72,-130 72,-130 50,170 50))'), 4326), 'EPSG:32649');
+```
+
+## ST_Union_Aggr
+
+### Description
+
+An aggregate function that returns the geometric union of all geometries in a set.
+
+### Format
+
+`ST_Union_Aggr (geom: Geometry)`
+
+### Arguments
+
+  * **geom**: A column of geometries to be aggregated.
+
+### SQL Example
+
+```sql
+-- Create a table with two separate polygons and unite them into a single multipolygon
+WITH shapes(geom) AS (
+    VALUES (ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')),
+           (ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))'))
+)
+SELECT ST_AsText(ST_Union_Aggr(geom)) FROM shapes;
+-- Returns: MULTIPOLYGON (((2 2, 3 2, 3 3, 2 3, 2 2)), ((0 0, 1 0, 1 1, 0 1, 0 0)))
 ```

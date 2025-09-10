@@ -25,7 +25,7 @@ use datafusion_expr::{
 use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
-use crate::scalar_udf::ArgMatcher;
+use sedona_schema::matchers::ArgMatcher;
 
 pub type SedonaAccumulatorRef = Arc<dyn SedonaAccumulator + Send + Sync>;
 

@@ -14,14 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use arrow_array::{ArrayRef, StructArray};
-use arrow_schema::{DataType, Field, Fields};
-use datafusion_common::error::Result;
-use datafusion_common::scalar::ScalarValue;
-use datafusion_expr::ColumnarValue;
-use sedona_common::sedona_internal_err;
+use arrow_schema::{DataType, Field};
 
 /// Parsed representation of an Arrow extension type
 ///
@@ -84,78 +79,6 @@ impl ExtensionType {
         field
     }
 
-    /// Wrap this ExtensionType as a Struct DataType
-    ///
-    /// This is the representation required internally until DataFusion can represent
-    /// a non-standard Arrow type. This representation is a Struct that contains exactly
-    /// one field whose name is the extension name and whose field metadata contains the
-    /// extension name and metadata.
-    pub fn to_data_type(&self) -> DataType {
-        let field = self.to_field(&self.extension_name, true);
-        DataType::Struct(Fields::from(vec![field]))
-    }
-
-    /// Wrap storage ColumnarValue as a StructArray
-    pub fn wrap_arg(&self, arg: &ColumnarValue) -> Result<ColumnarValue> {
-        match arg {
-            ColumnarValue::Array(array) => {
-                let array_out = self.wrap_array(array.clone())?;
-                Ok(ColumnarValue::Array(array_out))
-            }
-            ColumnarValue::Scalar(scalar) => {
-                let scalar_out = self.wrap_scalar(scalar)?;
-                Ok(ColumnarValue::Scalar(scalar_out))
-            }
-        }
-    }
-
-    /// Wrap storage array as a StructArray
-    pub fn wrap_array(&self, array: ArrayRef) -> Result<ArrayRef> {
-        if array.data_type() != &self.storage_type {
-            return sedona_internal_err!(
-                "Type to wrap ({}) does not match storage type ({})",
-                array.data_type(),
-                &self.storage_type
-            );
-        }
-
-        let array_data = array.to_data();
-        let array_nulls = array_data.nulls();
-        let wrapped = StructArray::new(
-            vec![self.to_field(&self.extension_name, true)].into(),
-            vec![array],
-            array_nulls.cloned(),
-        );
-
-        Ok(Arc::new(wrapped))
-    }
-
-    /// Wrap storage scalar as a StructArray
-    pub fn wrap_scalar(&self, scalar: &ScalarValue) -> Result<ScalarValue> {
-        let array_in = scalar.to_array()?;
-        let array_out = self.wrap_array(array_in)?;
-        ScalarValue::try_from_array(&array_out, 0)
-    }
-
-    pub fn unwrap_arg(&self, arg: &ColumnarValue) -> Result<ColumnarValue> {
-        match arg {
-            ColumnarValue::Array(array) => Ok(ColumnarValue::Array(self.unwrap_array(array)?)),
-            ColumnarValue::Scalar(scalar) => Ok(ColumnarValue::Scalar(self.unwrap_scalar(scalar)?)),
-        }
-    }
-
-    pub fn unwrap_array(&self, array: &ArrayRef) -> Result<ArrayRef> {
-        let struct_array = StructArray::from(array.to_data());
-        Ok(struct_array.column(0).clone())
-    }
-
-    pub fn unwrap_scalar(&self, scalar: &ScalarValue) -> Result<ScalarValue> {
-        let array = scalar.to_array()?;
-        let struct_array = StructArray::from(array.to_data());
-        let array_out = struct_array.column(0).clone();
-        ScalarValue::try_from_array(&array_out, 0)
-    }
-
     /// Unwrap a Field into an ExtensionType if the field represents one
     ///
     /// Returns None if the field does not have Arrow extension metadata
@@ -170,28 +93,6 @@ impl ExtensionType {
                 metadata.get("ARROW:extension:metadata").cloned(),
             )
         })
-    }
-
-    /// Unwrap a DataType that is potentially an extension type wrapped in a Struct
-    ///
-    /// Returns None if the storage type is not a Struct, if the Struct contains
-    /// any number of fields != 1, if its only field is does not contain extension
-    /// metadata, or if its extension name does not match the name of the struct.
-    pub fn from_data_type(storage_type: &DataType) -> Option<ExtensionType> {
-        if let DataType::Struct(fields) = storage_type {
-            if fields.len() != 1 {
-                return None;
-            }
-
-            let field = &fields[0];
-            if let Some(extension_type) = ExtensionType::from_field(field) {
-                if &extension_type.extension_name == field.name() {
-                    return Some(extension_type);
-                }
-            }
-        }
-
-        None
     }
 }
 
@@ -227,34 +128,5 @@ mod tests {
         assert_eq!(metadata["ARROW:extension:name"], "foofy");
         assert!(metadata.contains_key("ARROW:extension:metadata"));
         assert_eq!(metadata["ARROW:extension:metadata"], "foofy metadata");
-    }
-
-    #[test]
-    fn extension_type_struct() {
-        let ext_type = ExtensionType::new(
-            "foofy",
-            DataType::Binary,
-            Some("foofy metadata".to_string()),
-        );
-        let ext_struct = &ext_type.to_data_type();
-        match ext_struct {
-            DataType::Struct(fields) => {
-                assert_eq!(fields.len(), 1);
-                assert_eq!(fields[0].name(), "foofy");
-            }
-            _ => panic!("not a struct"),
-        }
-
-        match ExtensionType::from_data_type(ext_struct) {
-            Some(ext_type) => {
-                assert_eq!(ext_type.extension_name, "foofy");
-                assert_eq!(
-                    ext_type.extension_metadata,
-                    Some("foofy metadata".to_string())
-                );
-                assert_eq!(ext_type.storage_type, DataType::Binary);
-            }
-            None => panic!("unwrap did not detect valid extension type"),
-        }
     }
 }

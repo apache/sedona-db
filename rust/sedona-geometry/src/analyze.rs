@@ -15,10 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::{
-    bounding_box::BoundingBox, error::SedonaGeometryError, interval::IntervalTrait,
-    point_count::count_points, types::GeometryTypeAndDimensions,
+    bounding_box::BoundingBox,
+    error::SedonaGeometryError,
+    interval::IntervalTrait,
+    point_count::count_points,
+    types::{GeometryTypeAndDimensions, GeometryTypeId},
 };
-use geo_traits::{GeometryTrait, GeometryType};
 use wkb::reader::Wkb;
 
 /// Contains analysis results for a geometry
@@ -40,23 +42,7 @@ pub fn analyze_geometry(geom: &Wkb) -> Result<GeometryAnalysis, SedonaGeometryEr
     let size_bytes = geom.buf().len();
 
     // Get geometry type using as_type() which is public
-    let geom_type = geom.as_type();
-    let wkb_type_id = match geom_type {
-        GeometryType::Point(_) => 1,
-        GeometryType::LineString(_) => 2,
-        GeometryType::Polygon(_) => 3,
-        GeometryType::MultiPoint(_) => 4,
-        GeometryType::MultiLineString(_) => 5,
-        GeometryType::MultiPolygon(_) => 6,
-        GeometryType::GeometryCollection(_) => 7,
-        _ => 0,
-    };
-
-    // Handle the Result properly
-    let geometry_type_id = crate::types::GeometryTypeId::try_from_wkb_id(wkb_type_id)
-        .unwrap_or(crate::types::GeometryTypeId::Geometry);
-
-    let geometry_type = GeometryTypeAndDimensions::new(geometry_type_id, geom.dim());
+    let geometry_type = GeometryTypeAndDimensions::try_from_geom(geom)?;
 
     // Get point count directly using the geometry traits
     let point_count = count_points(geom);
@@ -69,21 +55,24 @@ pub fn analyze_geometry(geom: &Wkb) -> Result<GeometryAnalysis, SedonaGeometryEr
 
     // Determine geometry type counts directly
     let puntal_count = matches!(
-        geom_type,
-        GeometryType::Point(_) | GeometryType::MultiPoint(_)
+        geometry_type.geometry_type(),
+        GeometryTypeId::Point | GeometryTypeId::MultiPoint
     ) as i64;
 
     let lineal_count = matches!(
-        geom_type,
-        GeometryType::LineString(_) | GeometryType::Line(_) | GeometryType::MultiLineString(_)
+        geometry_type.geometry_type(),
+        GeometryTypeId::LineString | GeometryTypeId::MultiLineString
     ) as i64;
 
     let polygonal_count = matches!(
-        geom_type,
-        GeometryType::Polygon(_) | GeometryType::MultiPolygon(_)
+        geometry_type.geometry_type(),
+        GeometryTypeId::Polygon | GeometryTypeId::MultiPolygon
     ) as i64;
 
-    let collection_count = matches!(geom_type, GeometryType::GeometryCollection(_)) as i64;
+    let collection_count = matches!(
+        geometry_type.geometry_type(),
+        GeometryTypeId::GeometryCollection
+    ) as i64;
 
     Ok(GeometryAnalysis {
         size_bytes,

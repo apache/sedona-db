@@ -22,9 +22,9 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType};
+use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_SetSRID() scalar UDF implementation
 ///

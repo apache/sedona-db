@@ -24,8 +24,8 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 

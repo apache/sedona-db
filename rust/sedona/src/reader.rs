@@ -59,7 +59,7 @@ mod test {
 
     use arrow_schema::{DataType, Field, Schema};
 
-    use crate::context::{SedonaContext, SedonaDataFrame};
+    use crate::context::SedonaContext;
 
     use super::*;
 
@@ -68,10 +68,10 @@ mod test {
         let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
         let ctx = SedonaContext::new();
         let df = runtime.block_on(ctx.sql("SELECT 1 as one")).unwrap();
-        let expected_batches = runtime.block_on(df.clone().collect_sedona()).unwrap();
+        let expected_batches = runtime.block_on(df.clone().collect()).unwrap();
         assert_eq!(expected_batches.len(), 1);
 
-        let stream = runtime.block_on(df.execute_stream_sedona()).unwrap();
+        let stream = runtime.block_on(df.execute_stream()).unwrap();
         let mut reader = SedonaStreamReader::new(runtime, stream);
 
         let expected_schema = Arc::new(Schema::new([

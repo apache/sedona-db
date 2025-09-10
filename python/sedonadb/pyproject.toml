@@ -39,6 +39,11 @@ test = [
     "pandas",
     "pytest",
 ]
+geopandas = [
+    "adbc-driver-manager[dbapi]",
+    "geoarrow-pyarrow",
+    "geopandas",
+]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

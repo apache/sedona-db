@@ -193,6 +193,40 @@ def test_st_centroid(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        ("POINT (0 0)", "POINT (0 0)"),
+        ("MULTIPOINT (0 0, 1 1)", "LINESTRING (0 0, 1 1)"),
+        ("MULTIPOINT (0 0, 1 1, 1 0)", "POLYGON ((0 0, 1 1, 1 0, 0 0))"),
+        ("MULTIPOINT (0 0, 1 1, 1 0, 0.5 0.25)", "POLYGON ((0 0, 1 1, 1 0, 0 0))"),
+    ],
+)
+def test_st_convexhull(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ConvexHull({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_makeline(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3))", "LINESTRING (0 1, 2 3)"
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_GeomFromText('LINESTRING (0 1, 2 3)'))",
+        "LINESTRING (0 1, 2 3)",
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_MakeLine(ST_Point(0, 1), ST_GeomFromText('LINESTRING (2 3, 4 5)'))",
+        "LINESTRING (0 1, 2 3, 4 5)",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT EMPTY", 0),
         ("LINESTRING EMPTY", 1),
         ("POLYGON EMPTY", 2),
