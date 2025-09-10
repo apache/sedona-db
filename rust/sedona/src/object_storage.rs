@@ -52,7 +52,11 @@ use object_store::ClientOptions;
 
 use crate::context::SedonaContext;
 
-pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str) -> Result<()> {
+pub async fn ensure_object_store_registered_with_options(
+    state: &mut SessionState,
+    name: &str,
+    custom_options: Option<&HashMap<String, String>>,
+) -> Result<()> {
     let optimized_name = substitute_tilde(name.to_owned());
     let table_url = ListingTableUrl::parse(optimized_name.as_str())?;
     let scheme = table_url.scheme();
@@ -67,17 +71,38 @@ pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str
         Err(_) => {
             let mut builder = SessionStateBuilder::from(state.clone());
 
-            // Register the store for this URL. Here we don't have access
-            // to any command options so the only choice is to use an empty collection
+            // Register the store for this URL with custom options if provided
             match scheme {
                 "s3" | "oss" | "cos" => {
                     if let Some(table_options) = builder.table_options() {
-                        table_options.extensions.insert(AwsOptions::default())
+                        let mut aws_options = AwsOptions::default();
+
+                        // Process custom options if provided
+                        if let Some(options) = custom_options {
+                            for (key, value) in options {
+                                if key.starts_with("aws.") {
+                                    let _ = aws_options.set(key, value);
+                                }
+                            }
+                        }
+
+                        table_options.extensions.insert(aws_options);
                     }
                 }
                 "gs" | "gcs" => {
                     if let Some(table_options) = builder.table_options() {
-                        table_options.extensions.insert(GcpOptions::default())
+                        let mut gcp_options = GcpOptions::default();
+
+                        // Process custom options if provided
+                        if let Some(options) = custom_options {
+                            for (key, value) in options {
+                                if key.starts_with("gcp.") {
+                                    let _ = gcp_options.set(key, value);
+                                }
+                            }
+                        }
+
+                        table_options.extensions.insert(gcp_options);
                     }
                 }
                 _ => {}
@@ -95,6 +120,11 @@ pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str
     }
 
     Ok(())
+}
+
+// Backward compatibility wrapper
+pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str) -> Result<()> {
+    ensure_object_store_registered_with_options(state, name, None).await
 }
 
 pub fn substitute_tilde(cur: String) -> String {
@@ -120,37 +150,51 @@ pub async fn get_s3_object_store_builder(
         region,
         endpoint,
         allow_http,
+        skip_signature,
     } = aws_options;
 
     let bucket_name = get_bucket_name(url)?;
-    let mut builder = AmazonS3Builder::from_env().with_bucket_name(bucket_name);
 
-    if let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) {
-        builder = builder
-            .with_access_key_id(access_key_id)
-            .with_secret_access_key(secret_access_key);
-
-        if let Some(session_token) = session_token {
-            builder = builder.with_token(session_token);
-        }
+    let mut builder = if let Some(true) = skip_signature {
+        // For anonymous access, create builder without loading environment credentials
+        // and immediately set skip_signature to prevent credential fetching
+        AmazonS3Builder::new()
+            .with_bucket_name(bucket_name)
+            .with_skip_signature(true)
     } else {
-        let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
-        if let Some(region) = config.region() {
-            builder = builder.with_region(region.to_string());
+        // For authenticated access, load from environment as usual
+        AmazonS3Builder::from_env().with_bucket_name(bucket_name)
+    };
+
+    // Handle authenticated access (only if not skipping signature)
+    if !matches!(skip_signature, Some(true)) {
+        if let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) {
+            builder = builder
+                .with_access_key_id(access_key_id)
+                .with_secret_access_key(secret_access_key);
+
+            if let Some(session_token) = session_token {
+                builder = builder.with_token(session_token);
+            }
+        } else {
+            let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+            if let Some(region) = config.region() {
+                builder = builder.with_region(region.to_string());
+            }
+
+            let credentials = config
+                .credentials_provider()
+                .ok_or_else(|| {
+                    DataFusionError::ObjectStore(Box::new(object_store::Error::Generic {
+                        store: "S3",
+                        source: "Failed to get S3 credentials from the environment".into(),
+                    }))
+                })?
+                .clone();
+
+            let credentials = Arc::new(S3CredentialProvider { credentials });
+            builder = builder.with_credentials(credentials);
         }
-
-        let credentials = config
-            .credentials_provider()
-            .ok_or_else(|| {
-                DataFusionError::ObjectStore(Box::new(object_store::Error::Generic {
-                    store: "S3",
-                    source: "Failed to get S3 credentials from the environment".into(),
-                }))
-            })?
-            .clone();
-
-        let credentials = Arc::new(S3CredentialProvider { credentials });
-        builder = builder.with_credentials(credentials);
     }
 
     if let Some(region) = region {
@@ -293,6 +337,8 @@ pub struct AwsOptions {
     pub endpoint: Option<String>,
     /// Allow HTTP (otherwise will always use https)
     pub allow_http: Option<bool>,
+    /// Skip request signing for anonymous access
+    pub skip_signature: Option<bool>,
 }
 
 impl ExtensionOptions for AwsOptions {
@@ -330,6 +376,9 @@ impl ExtensionOptions for AwsOptions {
             "allow_http" => {
                 self.allow_http.set(rem, value)?;
             }
+            "skip_signature" | "SKIP_SIGNATURE" => {
+                self.skip_signature.set(rem, value)?;
+            }
             _ => {
                 return config_err!("Config value \"{}\" not found on AwsOptions", rem);
             }
@@ -366,6 +415,7 @@ impl ExtensionOptions for AwsOptions {
         self.region.visit(&mut v, "region", "");
         self.endpoint.visit(&mut v, "endpoint", "");
         self.allow_http.visit(&mut v, "allow_http", "");
+        self.skip_signature.visit(&mut v, "skip_signature", "");
         v.0
     }
 }

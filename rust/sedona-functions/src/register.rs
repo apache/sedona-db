@@ -78,6 +78,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_haszm::st_hasz_udf,
         crate::st_isempty::st_isempty_udf,
         crate::st_length::st_length_udf,
+        crate::st_makeline::st_makeline_udf,
         crate::st_perimeter::st_perimeter_udf,
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,
@@ -106,6 +107,7 @@ pub fn default_function_set() -> FunctionSet {
     register_aggregate_udfs!(
         function_set,
         crate::st_analyze_aggr::st_analyze_aggr_udf,
+        crate::st_collect::st_collect_udf,
         crate::st_envelope_aggr::st_envelope_aggr_udf,
         crate::st_intersection_aggr::st_intersection_aggr_udf,
         crate::st_union_aggr::st_union_aggr_udf,

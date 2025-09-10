@@ -40,7 +40,7 @@ fi
 # manylinux is AlmaLinux/Fedora-based, musllinux is Alpine-based
 # If we want musllinux support there will be some workshopping required (vcpkg
 # needs some newer components than are provided by the default musllinux image)
-BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang"
+BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang perl"
 
 # This approach downloads and builds native dependencies with vcpkg once for every image.
 # Compared to the Rust build time, the native dependency build time is not too bad. We could
@@ -48,9 +48,8 @@ BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang"
 # add quite a bit of complexity but could save time if we build wheels for linux frequently.
 # The native and Rust builds are cached on each image such that compile work is effectively
 # cached between Python versions (just not between invocations of this script).
-export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib"
+export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib MATURIN_PEP517_ARGS='--features s2geography'"
 export CIBW_BEFORE_ALL="$BEFORE_ALL_MANYLINUX && git clone https://github.com/microsoft/vcpkg.git /vcpkg && bash {package}/../../ci/scripts/wheels-bootstrap-vcpkg.sh"
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --platform linux --archs ${ARCH} --output-dir python/$2/dist python/$2
-popd

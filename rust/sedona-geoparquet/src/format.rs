@@ -352,7 +352,7 @@ impl GeoParquetFileSource {
         if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
             let mut parquet_source = parquet_source.clone();
 
-            // Extract the precicate from the existing source if it exists so we can keep a copy of it
+            // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.predicate().cloned(), predicate) {
                 (None, None) => None,
                 (None, Some(specified_predicate)) => Some(specified_predicate),
@@ -530,6 +530,7 @@ mod test {
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
 
+    use rstest::rstest;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_testing::create::create_scalar;
@@ -675,21 +676,24 @@ mod test {
         assert_eq!(total_size, 244);
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn pruning_geoparquet_metadata() {
+    async fn pruning_geoparquet_metadata(#[values("st_intersects", "st_within")] udf_name: &str) {
         let data_dir = geoarrow_data_dir().unwrap();
         let ctx = setup_context();
 
         let udf: ScalarUDF = SimpleScalarUDF::new_with_signature(
-            "st_intersects",
+            udf_name,
             Signature::any(2, Volatility::Immutable),
             DataType::Boolean,
             Arc::new(|_args| Ok(ScalarValue::Boolean(Some(true)).into())),
         )
         .into();
 
-        let definitely_non_intersecting_scalar =
-            create_scalar(Some("POINT (100 200)"), &WKB_GEOMETRY);
+        let definitely_non_intersecting_scalar = create_scalar(
+            Some("POLYGON ((100 200), (100 300), (200 300), (100 200))"),
+            &WKB_GEOMETRY,
+        );
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
 
         let df = ctx
@@ -708,7 +712,10 @@ mod test {
         let batches_out = df.collect().await.unwrap();
         assert!(batches_out.is_empty());
 
-        let definitely_intersecting_scalar = create_scalar(Some("POINT (30 10)"), &WKB_GEOMETRY);
+        let definitely_intersecting_scalar = create_scalar(
+            Some("POLYGON ((30 10), (30 20), (40 20), (40 10), (30 10))"),
+            &WKB_GEOMETRY,
+        );
         let df = ctx
             .table(format!("{data_dir}/example/files/*_geo.parquet"))
             .await

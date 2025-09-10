@@ -19,9 +19,12 @@ use std::{sync::Arc, vec};
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
-use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 use crate::geoarrow_c::{ArrayReader, ArrayWriter, CError, Visitor};
 

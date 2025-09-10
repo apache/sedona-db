@@ -27,6 +27,7 @@ use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use std::{sync::Arc, vec};
 
+
 /// ST_Srid() scalar UDF implementation
 ///
 /// Scalar function to return the SRID of a geometry or geography

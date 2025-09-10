@@ -19,3 +19,4 @@ pub mod function_set;
 pub mod scalar_udf;
 pub mod spatial_filter;
 pub mod statistics;
+pub mod utils;

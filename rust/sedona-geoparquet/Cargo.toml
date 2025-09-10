@@ -33,6 +33,7 @@ default = []
 [dev-dependencies]
 sedona-testing = { path = "../sedona-testing" }
 url = { workspace = true }
+rstest = { workspace = true }
 
 [dependencies]
 async-trait = { workspace = true }

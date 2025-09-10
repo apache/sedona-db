@@ -128,9 +128,6 @@ async fn main_inner() -> Result<()> {
         println!("Sedona CLI v{DATAFUSION_CLI_VERSION}");
     }
 
-    // Make Scarf call for usage analytics
-    sedona::scarf::make_scarf_call("cli");
-
     if let Some(ref path) = args.data_path {
         let p = Path::new(path);
         env::set_current_dir(p).unwrap();

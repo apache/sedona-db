@@ -46,6 +46,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_centroid", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_centroid", Polygon(500));
 
+    benchmark::scalar(c, &f, "geos", "st_convexhull", MultiPoint(10));
+
     benchmark::scalar(
         c,
         &f,

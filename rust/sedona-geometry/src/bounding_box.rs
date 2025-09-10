@@ -108,6 +108,39 @@ impl BoundingBox {
         intersects_xy && may_intersect_z && may_intersect_m
     }
 
+    /// Calculate whether this bounding box contains another BoundingBox
+    ///
+    /// Returns true if this bounding box contains other or false otherwise.
+    /// This method will consider Z and M dimension if and only if those dimensions are present
+    /// in both bounding boxes.
+    pub fn contains(&self, other: &Self) -> bool {
+        let contains_xy = self.x.contains_interval(&other.x) && self.y.contains_interval(&other.y);
+        let may_contain_z = match (self.z, other.z) {
+            (Some(z), Some(other_z)) => z.contains_interval(&other_z),
+            _ => true,
+        };
+        let may_contain_m = match (self.m, other.m) {
+            (Some(m), Some(other_m)) => m.contains_interval(&other_m),
+            _ => true,
+        };
+
+        contains_xy && may_contain_z && may_contain_m
+    }
+
+    /// Expand this BoundingBox by a given distance in x and y dimensions only
+    ///
+    /// Returns a new BoundingBox where x and y intervals are expanded by the given distance.
+    /// The x dimension (which may wrap around) is handled correctly.
+    /// Z and M dimensions are left unchanged.
+    pub fn expand_by(&self, distance: f64) -> Self {
+        Self {
+            x: self.x.expand_by(distance),
+            y: self.y.expand_by(distance),
+            z: self.z,
+            m: self.m,
+        }
+    }
+
     /// Update this BoundingBox to include the bounds of another
     ///
     /// This method will propagate missingness of Z or M dimensions from the two boxes
@@ -186,6 +219,88 @@ mod test {
             None,
             Some((64, 66).into())
         )));
+    }
+
+    #[test]
+    fn bounding_box_contains() {
+        let xyzm = BoundingBox::xyzm(
+            (10, 20),
+            (30, 40),
+            Some((50, 60).into()),
+            Some((70, 80).into()),
+        );
+
+        // Should contain a smaller box completely within bounds
+        assert!(xyzm.contains(&BoundingBox::xy((14, 16), (34, 36))));
+
+        // Should contain itself
+        assert!(xyzm.contains(&xyzm));
+
+        // Should contain a box without z or m information if xy is contained
+        assert!(xyzm.contains(&BoundingBox::xy((12, 18), (32, 38))));
+
+        // Should contain without z information but with contained m
+        assert!(xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((74, 76).into())
+        )));
+
+        // Should contain without m information but with contained z
+        assert!(xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((54, 56).into()),
+            None,
+        )));
+
+        // Should contain boxes that touch the boundaries
+        assert!(xyzm.contains(&BoundingBox::xy((10, 20), (30, 40))));
+        assert!(xyzm.contains(&BoundingBox::xy((10, 15), (30, 35))));
+        assert!(xyzm.contains(&BoundingBox::xy((15, 20), (35, 40))));
+
+        // Should *not* contain if x or y extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xy((4, 16), (34, 36)))); // x extends below
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 26), (34, 36)))); // x extends above
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 16), (24, 36)))); // y extends below
+        assert!(!xyzm.contains(&BoundingBox::xy((14, 16), (34, 46)))); // y extends above
+
+        // Should *not* contain if z is provided but extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((44, 56).into()), // z extends below
+            None
+        )));
+
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            Some((54, 66).into()), // z extends above
+            None
+        )));
+
+        // Should *not* contain if m is provided but extends beyond bounds
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((64, 76).into()) // m extends below
+        )));
+
+        assert!(!xyzm.contains(&BoundingBox::xyzm(
+            (14, 16),
+            (34, 36),
+            None,
+            Some((74, 86).into()) // m extends above
+        )));
+
+        // Should *not* contain boxes that are completely outside
+        assert!(!xyzm.contains(&BoundingBox::xy((0, 5), (30, 40)))); // x completely below
+        assert!(!xyzm.contains(&BoundingBox::xy((25, 30), (30, 40)))); // x completely above
+        assert!(!xyzm.contains(&BoundingBox::xy((10, 20), (0, 25)))); // y completely below
+        assert!(!xyzm.contains(&BoundingBox::xy((10, 20), (45, 50)))); // y completely above
     }
 
     #[test]
@@ -298,5 +413,59 @@ mod test {
         assert!(bbox_nan2.x().hi().is_nan());
         assert!(bbox_nan2.y().lo().is_nan());
         assert!(bbox_nan2.y().hi().is_nan());
+    }
+
+    #[test]
+    fn bounding_box_expand_by() {
+        let xyzm = BoundingBox::xyzm(
+            (10, 20),
+            (30, 40),
+            Some((50, 60).into()),
+            Some((70, 80).into()),
+        );
+
+        // Expand by a positive distance - only x and y should change
+        let expanded = xyzm.expand_by(5.0);
+        assert_eq!(expanded.x(), &WraparoundInterval::new(5.0, 25.0));
+        assert_eq!(expanded.y(), &Interval::new(25.0, 45.0));
+        assert_eq!(expanded.z(), &Some(Interval::new(50.0, 60.0))); // unchanged
+        assert_eq!(expanded.m(), &Some(Interval::new(70.0, 80.0))); // unchanged
+
+        // Expand by zero does nothing
+        let unchanged = xyzm.expand_by(0.0);
+        assert_eq!(unchanged, xyzm);
+
+        // Expand by negative distance does nothing
+        let unchanged_neg = xyzm.expand_by(-2.0);
+        assert_eq!(unchanged_neg, xyzm);
+
+        // Expand by NaN does nothing
+        let unchanged_nan = xyzm.expand_by(f64::NAN);
+        assert_eq!(unchanged_nan, xyzm);
+
+        // Test with missing z and m dimensions
+        let xy_only = BoundingBox::xy((10, 20), (30, 40));
+        let expanded_xy = xy_only.expand_by(3.0);
+        assert_eq!(expanded_xy.x(), &WraparoundInterval::new(7.0, 23.0));
+        assert_eq!(expanded_xy.y(), &Interval::new(27.0, 43.0));
+        assert!(expanded_xy.z().is_none());
+        assert!(expanded_xy.m().is_none());
+
+        // Test with empty intervals
+        let bbox_with_empty = BoundingBox::xy((10, 20), Interval::empty());
+        let expanded_empty = bbox_with_empty.expand_by(5.0);
+        assert_eq!(expanded_empty.x(), &WraparoundInterval::new(5.0, 25.0));
+        assert_eq!(expanded_empty.y(), &Interval::empty());
+
+        // Test with wraparound x interval
+        let wraparound_x = BoundingBox::xy(WraparoundInterval::new(170.0, -170.0), (30, 40));
+        let expanded_wraparound = wraparound_x.expand_by(10.0);
+        // Original excludes (-170, 170), expanding by 10 should exclude (-160, 160)
+        // So the new interval should be (160, -160)
+        assert_eq!(
+            expanded_wraparound.x(),
+            &WraparoundInterval::new(160.0, -160.0)
+        );
+        assert_eq!(expanded_wraparound.y(), &Interval::new(20.0, 50.0));
     }
 }

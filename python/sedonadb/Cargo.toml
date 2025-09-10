@@ -17,10 +17,9 @@
 
 [package]
 name = "sedonadb"
-version = "0.1.0"
+version = { workspace = true }
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "_lib"
 crate-type = ["cdylib"]
@@ -28,6 +27,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+s2geography = ["sedona/s2geography"]
 
 [dependencies]
 adbc_core = { workspace = true }
@@ -38,9 +38,10 @@ datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }
-pyo3 = "0.25.1"
+pyo3 = { version = "0.25.1", features = ["extension-module"] }
 sedona = { path = "../../rust/sedona" }
 sedona-adbc = { path = "../../rust/sedona-adbc" }
+sedona-geoparquet = { path = "../../rust/sedona-geoparquet" }
 sedona-schema = { path = "../../rust/sedona-schema" }
 sedona-proj = { path = "../../c/sedona-proj", default-features = false }
 sedona-tg = { path = "../../c/sedona-tg" }

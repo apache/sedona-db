@@ -1,29 +1,21 @@
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
 site_name: SedonaDB
 site_description: "Documentation for Apache SedonaDB"
 nav:
    - Home: index.md
-   - CLI Quickstart: quickstart-cli.md
-   - Python Quickstart: quickstart-python.ipynb
-   - Development: development.md
-   - API Reference:
-      - Python: reference/python.md
-      - SQL: reference/sql.md
+   - SedonaDB Guides:
+     - CLI Quickstart: quickstart-cli.md
+     - Python Quickstart: quickstart-python.ipynb
+     - Development: development.md
+   - SedonaDB Reference:
+      - Python:
+          - Python Functions: reference/python.md
+      - SQL:
+          - SQL Functions: reference/sql.md
+          - Spatial Joins: reference/sql-joins.md
+          - Read Parquet Files: reference/read-parquet-files.md
+   - Blog: "https://sedona.apache.org/latest/blog/"
+   - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
+   - Return to Sedona Homepage: "https://sedona.apache.org/latest/"
 repo_url: https://github.com/apache/sedona-db
 repo_name: apache/sedona-db
 theme:
@@ -32,7 +24,7 @@ theme:
     font: false
     name: 'material'
   palette:
-    primary: 'deep orange'
+    primary: custom
     accent: 'green'
   favicon: image/sedona_logo_symbol.png
   logo: image/sedona_logo_symbol_white.svg
@@ -47,14 +39,25 @@ theme:
     - search.suggest
     - navigation.footer
     - navigation.instant
+    - navigation.top
+    - navigation.sections
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.top
+extra:
+  version:
+    provider: mike
+    default:
+       - 0.1
+
+
+extra_css:
+  - stylesheets/extra.css
 
 copyright: Copyright © 2025 The Apache Software Foundation. Apache Sedona, Sedona, Apache, the Apache feather logo, and the Apache Sedona project logo are either registered trademarks or trademarks of The Apache Software Foundation in the United States and other countries. All other marks mentioned may be trademarks or registered trademarks of their respective owners. Please visit <a href="https://www.apache.org/">Apache Software Foundation</a> for more details.<img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=f3e121f6-c909-4592-8be6-5bd345768cba" /><img referrerpolicy="no-referrer-when-downgrade" src="https://analytics.apache.org/matomo.php?idsite=74&rec=1" />
 
 exclude_docs: |
      snippets/*
+     README.md
 markdown_extensions:
    - admonition
    - attr_list
@@ -113,21 +116,23 @@ plugins:
         manual: false
    - tags
    - mkdocstrings:
-        enable_inventory: true
-        handlers:
-          python:
-            paths: [python/sedonadb]
-            inventories:
-              - https://docs.python.org/3/objects.inv
-              - https://geopandas.org/en/stable/objects.inv
-              - https://pandas.pydata.org/docs/objects.inv
-            options:
-              docstring_section_style: list
-              docstring_style: google
-              line_length: 80
-              separate_signature: true
-              show_root_heading: true
-              show_signature_annotations: true
-              show_source: false
-              show_symbol_type_toc: true
-              signature_crossrefs: true
+          handlers:
+               python:
+          # 'inventories' is a direct setting for the Python handler
+                    inventories:
+                         - https://docs.python.org/3/objects.inv
+                         - https://geopandas.org/en/stable/objects.inv
+                         - https://pandas.pydata.org/docs/objects.inv
+     # All display and path options go under a SINGLE 'options' block
+                    options:
+                         docstring_section_style: list
+                         docstring_style: google
+                         line_length: 80
+                         separate_signature: true
+                         show_root_heading: true
+                         show_signature_annotations: true
+                         show_source: false
+                         show_symbol_type_toc: true
+                         signature_crossrefs: true
+                         extra:
+                              paths: ['python']

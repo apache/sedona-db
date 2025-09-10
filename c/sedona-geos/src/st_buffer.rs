@@ -22,9 +22,12 @@ use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
 use geos::{BufferParams, Geom};
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
-use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 use crate::executor::GeosExecutor;
 

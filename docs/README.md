@@ -22,8 +22,11 @@
 SedonaDB's documentation is powered by [mkdocs.org](https://www.mkdocs.org) and [mkdocs-material](https://squidfunk.github.io/mkdocs-material/reference/). To build the documentation locally, clone the repo, install the Python requirements, and use the `mkdocs` command-line tool to build or serve the documentation.
 
 ```shell
-pip install -e "python/sedonadb/[test]" -vv # OPTIONAL: build the doc for the latest dev version of sedona-db
 git clone https://github.com/apache/sedona-db.git && cd sedona-db
+
+# OPTIONAL: build the doc for the latest dev version of sedona-db
+pip install -e "python/sedonadb/[test]" -vv
+
 pip install -r docs/requirements.txt
 ```
 

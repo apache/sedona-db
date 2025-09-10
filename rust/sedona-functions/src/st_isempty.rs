@@ -23,9 +23,9 @@ use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::is_empty::is_geometry_empty;
-use sedona_schema::datatypes::SedonaType;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 pub fn st_isempty_udf() -> SedonaScalarUDF {

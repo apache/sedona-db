@@ -146,12 +146,9 @@ mod tests {
     use datafusion_common::{not_impl_err, scalar::ScalarValue};
 
     use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
-    use sedona_schema::datatypes::SedonaType;
+    use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-    use crate::{
-        aggregate_udf::SedonaAccumulator,
-        scalar_udf::{ArgMatcher, SimpleSedonaScalarKernel},
-    };
+    use crate::{aggregate_udf::SedonaAccumulator, scalar_udf::SimpleSedonaScalarKernel};
 
     use super::*;
 

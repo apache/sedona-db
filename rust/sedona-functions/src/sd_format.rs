@@ -29,8 +29,8 @@ use datafusion_common::{
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// SD_Format() scalar UDF implementation
 ///
@@ -549,7 +549,7 @@ mod tests {
             );
             let result = tester.invoke_array(test_array.clone()).unwrap();
             if !matches!(expected_data_type, DataType::ListView(_)) {
-                assert_eq!(&result, &test_array, "Failed for test case: {description}",);
+                assert_eq!(&result, &test_array, "Failed for test case: {description}");
             }
         }
     }

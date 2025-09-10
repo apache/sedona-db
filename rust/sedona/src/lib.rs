@@ -22,5 +22,4 @@ mod object_storage;
 pub mod random_geometry_provider;
 pub mod reader;
 pub mod record_batch_reader_provider;
-pub mod scarf;
 pub mod show;
