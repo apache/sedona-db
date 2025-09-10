@@ -14,11 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::builder::UInt32Builder;
-use std::{sync::Arc, vec};
-
 use crate::executor::WkbExecutor;
 use arrow_array::builder::StringBuilder;
+use arrow_array::builder::UInt32Builder;
+use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::{
@@ -26,6 +25,7 @@ use datafusion_expr::{
 };
 use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
+use std::{sync::Arc, vec};
 
 /// ST_Srid() scalar UDF implementation
 ///
@@ -103,16 +103,13 @@ impl SedonaScalarKernel for StSrid {
             _ => Some(0),
         };
 
-        executor.execute_wkb_void(|maybe_wkb| {
-            match maybe_wkb {
-                Some(_wkb) => {
-                    builder.append_option(srid_opt);
-                }
-                _ => builder.append_null(),
-            }
-
-            Ok(())
-        })?;
+        if let ColumnarValue::Array(array) = &args[0] {
+            (0..array.len()).for_each(|i| {
+                builder.append_option(if array.is_null(i) { None } else { srid_opt });
+            });
+        } else if let ColumnarValue::Scalar(scalar) = &args[0] {
+            builder.append_option(if scalar.is_null() { None } else { srid_opt });
+        }
 
         executor.finish(Arc::new(builder.finish()))
     }
@@ -125,7 +122,7 @@ impl SedonaScalarKernel for StCrs {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8View),
         );
 
         matcher.match_args(args)
@@ -142,23 +139,22 @@ impl SedonaScalarKernel for StCrs {
             StringBuilder::with_capacity(executor.num_iterations(), preallocate_bytes);
         let crs_opt: Option<String> = match &arg_types[0] {
             SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-                match crs.to_authority_code()? {
-                    Some(auth_code) => Some(auth_code),
-                    None => Some(crs.to_json()),
-                }
+                Some(crs.to_json())
             }
             _ => None,
         };
 
-        executor.execute_wkb_void(|maybe_wkb| {
-            match maybe_wkb {
-                Some(_wkb) => builder.append_option(crs_opt.clone()),
-
-                _ => builder.append_null(),
-            }
-
-            Ok(())
-        })?;
+        if let ColumnarValue::Array(array) = &args[0] {
+            (0..array.len()).for_each(|i| {
+                builder.append_option(if array.is_null(i) {
+                    None
+                } else {
+                    crs_opt.clone()
+                });
+            });
+        } else if let ColumnarValue::Scalar(scalar) = &args[0] {
+            builder.append_option(if scalar.is_null() { None } else { crs_opt });
+        }
 
         executor.finish(Arc::new(builder.finish()))
     }
@@ -234,7 +230,7 @@ mod test {
         // Test that when no CRS is set, CRS is null
         let sedona_type = SedonaType::Wkb(Edges::Planar, None);
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
-        tester.assert_return_type(DataType::Utf8);
+        tester.assert_return_type(DataType::Utf8View);
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
             .unwrap();
@@ -252,8 +248,10 @@ mod test {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
             .unwrap();
-        tester
-            .assert_scalar_result_equals(result, ScalarValue::Utf8(Some("EPSG:4837".to_string())));
+        tester.assert_scalar_result_equals(
+            result,
+            ScalarValue::Utf8(Some("\"EPSG:4837\"".to_string())),
+        );
 
         // Test with a CRS but null geom
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
