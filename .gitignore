@@ -43,3 +43,6 @@ site/
 
 # Python cache files
 __pycache__
+
+# R-related files
+.Rproj.user

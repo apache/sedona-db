@@ -1,0 +1,60 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+TARGET = @TARGET@
+
+PROFILE = @PROFILE@
+FEATURE_FLAGS = @FEATURE_FLAGS@
+
+# Add flags if necessary
+RUSTFLAGS =
+
+TARGET_DIR = $(CURDIR)/rust/target
+LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
+STATLIB = $(LIBDIR)/libsedonadbr.a
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr @PKG_LIBS@
+
+CARGO_BUILD_ARGS = --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)
+
+all: $(SHLIB) clean_intermediate
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	# In some environments, ~/.cargo/bin might not be included in PATH, so we need
+	# to set it here to ensure cargo can be invoked. It is appended to PATH and
+	# therefore is only used if cargo is absent from the user's PATH.
+	export PATH="$(PATH):$(HOME)/.cargo/bin" && \
+	  export CC="$(CC)" && \
+	  export CFLAGS="$(CFLAGS)" && \
+	  export RUSTFLAGS="$(RUSTFLAGS)" && \
+	  if [ "$(TARGET)" != "wasm32-unknown-emscripten" ]; then \
+	    cargo build $(CARGO_BUILD_ARGS); \
+	  else \
+	    export CARGO_PROFILE_DEV_PANIC="abort" && \
+	    export CARGO_PROFILE_RELEASE_PANIC="abort" && \
+	    export RUSTFLAGS="$(RUSTFLAGS) -Zdefault-visibility=hidden" && \
+	    cargo +nightly build $(CARGO_BUILD_ARGS) --target $(TARGET) -Zbuild-std=panic_abort,std; \
+	  fi
+
+clean_intermediate: $(SHLIB)
+	rm -f $(STATLIB)
+
+clean:
+	rm -Rf $(SHLIB) $(OBJECTS) $(STATLIB) ./rust/target
+
+.PHONY: all clean_intermediate clean

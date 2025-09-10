@@ -1,0 +1,23 @@
+Package: sedonadb
+Title: Bindings for Apache SedonaDB
+Version: 0.0.0.9000
+Authors@R:
+    person("Dewey", "Dunnington", , "dewey@dunnington.ca", role = c("aut", "cre"))
+Description: Provides bindings for Apache SedonaDB, a lightweight
+    query engine optimized for spatial workflows.
+License: Apache License (>= 2)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+SystemRequirements: Cargo (Rust's package manager), rustc
+Depends: R (>= 4.1.0)
+Suggests:
+    adbcdrivermanager,
+    rlang,
+    testthat (>= 3.0.0),
+    withr,
+    wk
+Config/testthat/edition: 3
+Imports:
+    geoarrow,
+    nanoarrow

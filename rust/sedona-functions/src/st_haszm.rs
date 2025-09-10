@@ -25,8 +25,8 @@ use datafusion_expr::{
 };
 use geo_traits::{Dimensions, GeometryTrait};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 pub fn st_hasz_udf() -> SedonaScalarUDF {

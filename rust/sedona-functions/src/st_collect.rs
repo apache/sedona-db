@@ -29,10 +29,7 @@ use datafusion_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_expr::{
-    aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
-    scalar_udf::ArgMatcher,
-};
+use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
 use sedona_geometry::{
     types::{GeometryTypeAndDimensions, GeometryTypeId},
     wkb_factory::{
@@ -40,7 +37,10 @@ use sedona_geometry::{
         write_wkb_multipoint_header, write_wkb_multipolygon_header,
     },
 };
-use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 /// ST_Collect() aggregate UDF implementation
 ///

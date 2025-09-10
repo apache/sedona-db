@@ -1,0 +1,94 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: r
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/r.yml'
+      - 'rust/**'
+      - 'c/**'
+      - 'r/**'
+jobs:
+
+  test:
+    runs-on: ${{ matrix.config.os }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: ubuntu-latest, r: 'release'}
+          - {os: macos-latest, r: 'release'}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          http-user-agent: ${{ matrix.config.http-user-agent }}
+          use-public-rspm: true
+
+      - name: Use stable Rust
+        id: rust
+        run: |
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+
+      - name: Install dependencies (Linux)
+        if: matrix.config.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libgeos-dev
+
+      - name: Install dependencies (MacOS)
+        if: matrix.config.os == 'macos-latest'
+        run: brew install geos
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Update this key to force a new cache
+          prefix-key: "r-v1"
+
+      - name: Install build dependencies
+        run: |
+            R -e 'install.packages(c("nanoarrow", "geoarrow"))'
+
+      - name: Install R Package
+        run: |
+          R CMD INSTALL r/sedonadb --preclean
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          needs: check
+          working-directory: r/sedonadb
+
+      - name: Test R Package
+        run: |
+            R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'

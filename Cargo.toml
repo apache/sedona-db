@@ -21,6 +21,7 @@ members = [
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
+    "r/sedonadb/src/rust",
     "rust/sedona-adbc",
     "rust/sedona-expr",
     "rust/sedona-functions",

@@ -88,6 +88,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_transform::st_transform_udf,
         crate::st_setsrid::st_set_crs_udf,
         crate::st_setsrid::st_set_srid_udf,
+        crate::st_srid::st_crs_udf,
         crate::st_srid::st_srid_udf,
         crate::st_xyzm::st_m_udf,
         crate::st_xyzm::st_x_udf,

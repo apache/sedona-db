@@ -1,0 +1,12 @@
+^sedonadb\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+
+^src/rust/\.cargo$
+^src/rust/target$
+^src/Makevars$
+^src/Makevars\.win$
+^\.cache$
+^compile_commands\.json$
+^\.vscode$
+^README\.Rmd$

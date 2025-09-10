@@ -1,0 +1,10 @@
+# On Windows, link.exe fails when the artifact contains unresolved symbols
+# (i.e., R's API, which cannot be used without a real R session). This option
+# makes the linker ignore these problems.
+#
+# This setting is needed only when you run `cargo test`, not when `R CMD check`
+# etc. The `.cargo` directory need to be excluded on building the package (i.e.
+# add `^src/rust/\.cargo$` to `.Rbuildignore`) because otherwise you'll get the
+# "hidden files and directories" NOTE.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/FORCE:UNRESOLVED"]

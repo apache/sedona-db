@@ -569,8 +569,7 @@ mod test {
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
             matches!(predicate, SpatialFilter::Intersects(_, _)),
-            "Function {} should produce Intersects filter",
-            func_name
+            "Function {func_name} should produce Intersects filter"
         );
 
         // Test reversed argument order
@@ -583,8 +582,7 @@ mod test {
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
             matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
-            "Function {} with reversed args should produce Intersects filter",
-            func_name
+            "Function {func_name} with reversed args should produce Intersects filter"
         );
     }
 
@@ -610,8 +608,7 @@ mod test {
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
             matches!(predicate, SpatialFilter::CoveredBy(_, _)),
-            "Function {} should produce CoveredBy filter",
-            func_name
+            "Function {func_name} should produce CoveredBy filter"
         );
 
         // Test reversed argument order: should be converted to Intersects filter
@@ -624,8 +621,7 @@ mod test {
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
             matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
-            "Function {} with reversed args should produce Intersects filter",
-            func_name
+            "Function {func_name} with reversed args should produce Intersects filter"
         );
     }
 
@@ -652,8 +648,7 @@ mod test {
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(
             matches!(predicate, SpatialFilter::CoveredBy(_, _)),
-            "Function {} should produce CoveredBy filter",
-            func_name
+            "Function {func_name} should produce CoveredBy filter"
         );
 
         // Test reversed argument order: should be converted to Intersects filter
@@ -667,8 +662,7 @@ mod test {
         let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
         assert!(
             matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
-            "Function {} with reversed args should produce Intersects filter",
-            func_name
+            "Function {func_name} with reversed args should produce Intersects filter"
         );
     }
 

@@ -23,8 +23,11 @@ use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
 use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_expr::scalar_udf::SedonaScalarUDF;
+use sedona_schema::{
+    datatypes::{Edges, SedonaType},
+    matchers::ArgMatcher,
+};
 use std::iter::zip;
 use std::sync::Arc;
 

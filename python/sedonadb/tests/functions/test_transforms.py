@@ -50,7 +50,23 @@ def test_st_setsrid(eng, geom, srid, expected_srid):
         assert df.crs == pyproj.CRS(expected_srid)
 
 
-# PostGIS does not have an API ST_SetCrs
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "srid", "expected_srid"),
+    [
+        ("POINT (1 1)", 3857, 3857),
+        ("POINT (1 1)", 0, 0),
+    ],
+)
+def test_st_srid(eng, geom, srid, expected_srid):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_SRID(ST_SetSrid({geom_or_null(geom)}, {val_or_null(srid)}))",
+        expected_srid,
+    )
+
+
+# PostGIS does not have an API ST_SetCrs, ST_Crs
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom", "crs", "expected_srid"),
@@ -64,3 +80,16 @@ def test_st_setcrs_sedonadb(eng, geom, crs, expected_srid):
     result = eng.execute_and_collect(f"SELECT ST_SetCrs({geom_or_null(geom)}, '{crs}')")
     df = eng.result_to_pandas(result)
     assert df.crs.to_epsg() == expected_srid
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_crs_sedonadb(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), 'EPSG:26920'))",
+        '"EPSG:26920"',
+    )
+    eng.assert_query_result(
+        "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), NULL))",
+        None,
+    )

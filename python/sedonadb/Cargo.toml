@@ -41,6 +41,7 @@ futures = { workspace = true }
 pyo3 = { version = "0.25.1", features = ["extension-module"] }
 sedona = { path = "../../rust/sedona" }
 sedona-adbc = { path = "../../rust/sedona-adbc" }
+sedona-geoparquet = { path = "../../rust/sedona-geoparquet" }
 sedona-schema = { path = "../../rust/sedona-schema" }
 sedona-proj = { path = "../../c/sedona-proj", default-features = false }
 sedona-tg = { path = "../../c/sedona-tg" }

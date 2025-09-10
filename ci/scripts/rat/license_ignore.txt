@@ -1,5 +1,8 @@
+.Rbuildignore
 *.ipynb
 *.json
+*.Rd
+*.Rproj
 *.svg
 c/sedona-geoarrow-c/src/geoarrow/*
 c/sedona-geoarrow-c/src/geoarrow/ryu/*
@@ -9,5 +12,8 @@ c/sedona-s2geography/s2geometry/*
 c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/rat/license_*.txt
+DESCRIPTION
 LICENSE
+NAMESPACE
+sedonadb-win.def
 submodules/geoarrow-data/*

@@ -14,20 +14,19 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::{collections::VecDeque, sync::Arc};
 
-use arrow_array::RecordBatch;
+use crate::exec::create_plan_from_sql;
+use crate::{
+    catalog::DynamicObjectStoreCatalog,
+    random_geometry_provider::RandomGeometryFunction,
+    show::{show_batches, DisplayTableOptions},
+};
 use async_trait::async_trait;
 use datafusion::{
     common::{plan_datafusion_err, plan_err},
     error::{DataFusionError, Result},
-    execution::{
-        context::DataFilePaths, runtime_env::RuntimeEnvBuilder, SendableRecordBatchStream,
-        SessionStateBuilder,
-    },
+    execution::{context::DataFilePaths, runtime_env::RuntimeEnvBuilder, SessionStateBuilder},
     prelude::{DataFrame, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
@@ -35,22 +34,10 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
-use sedona_expr::{
-    function_set::FunctionSet,
-    scalar_udf::{ArgMatcher, ScalarKernelRef},
-};
+use sedona_expr::{function_set::FunctionSet, scalar_udf::ScalarKernelRef};
 use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
-};
-use sedona_schema::datatypes::SedonaType;
-
-use crate::exec::create_plan_from_sql;
-use crate::{
-    catalog::DynamicObjectStoreCatalog,
-    object_storage::ensure_object_store_registered,
-    random_geometry_provider::RandomGeometryFunction,
-    show::{show_batches, DisplayTableOptions},
 };
 
 /// Sedona SessionContext wrapper
@@ -232,18 +219,28 @@ impl SedonaContext {
         options: GeoParquetReadOptions<'_>,
     ) -> Result<DataFrame> {
         let urls = table_paths.to_urls()?;
-        let provider =
-            match geoparquet_listing_table(&self.ctx, urls.clone(), options.clone()).await {
-                Ok(provider) => provider,
-                Err(e) => {
-                    if urls.is_empty() {
-                        return Err(e);
-                    }
 
-                    ensure_object_store_registered(&mut self.ctx.state(), urls[0].as_str()).await?;
-                    geoparquet_listing_table(&self.ctx, urls, options).await?
-                }
-            };
+        // Pre-register object store with our custom options before creating GeoParquetReadOptions
+        if !urls.is_empty() {
+            use crate::object_storage::ensure_object_store_registered_with_options;
+            // Extract the table options from GeoParquetReadOptions for object store registration
+            let table_options_map = options.table_options().cloned().unwrap_or_default();
+
+            // TODO: Consider registering object stores per-bucket instead of per-scheme to avoid
+            // authentication conflicts. Currently, if a user first accesses a public S3 bucket with
+            // aws.skip_signature=true and then tries to access a private bucket, the cached object
+            // store will still have skip_signature enabled, preventing authentication to the private
+            // bucket. A per-bucket registration approach would solve this by using bucket-specific
+            // cache keys like "s3://bucket-name" instead of just "s3://".
+            ensure_object_store_registered_with_options(
+                &mut self.ctx.state(),
+                urls[0].as_str(),
+                Some(&table_options_map),
+            )
+            .await?;
+        }
+
+        let provider = geoparquet_listing_table(&self.ctx, urls, options).await?;
 
         self.ctx.read_table(Arc::new(provider))
     }
@@ -263,32 +260,6 @@ impl Default for SedonaContext {
 /// handling when written or exported to an external system.
 #[async_trait]
 pub trait SedonaDataFrame {
-    /// Execute this `DataFrame` and buffer all resulting `RecordBatch`es  into memory.
-    ///
-    /// Because user-defined data types currently require special handling to work with
-    /// DataFusion internals, output with geometry columns must use this function to
-    /// be recognized as an Arrow extension type in an external system.
-    async fn collect_sedona(self) -> Result<Vec<RecordBatch>>;
-
-    /// Execute this `DataFrame` and stream batches to the consumer
-    ///
-    /// Because user-defined data types currently require special handling to work with
-    /// DataFusion internals, output with geometry columns must use this function to
-    /// be recognized as an Arrow extension type in an external system.
-    async fn execute_stream_sedona(self) -> Result<SendableRecordBatchStream>;
-
-    /// Return the indices of the columns that are geometry or geography
-    fn geometry_column_indices(&self) -> Result<Vec<usize>>;
-
-    /// Return the index of the column that should be considered the primary geometry
-    ///
-    /// This applies a heuritic to detect the "primary" geometry column for operations
-    /// that need this information (e.g., creating a GeoPandas GeoDataFrame). The
-    /// heuristic chooses (1) the column named "geometry", (2) the column name
-    /// "geography", (3) the column named "geom", (4) the column named "geog",
-    /// or (5) the first column with a geometry or geography data type.
-    fn primary_geometry_column_index(&self) -> Result<Option<usize>>;
-
     /// Build a table of the first `limit` results in this DataFrame
     ///
     /// This will limit and execute the query and build a table using [show_batches].
@@ -302,48 +273,6 @@ pub trait SedonaDataFrame {
 
 #[async_trait]
 impl SedonaDataFrame for DataFrame {
-    async fn collect_sedona(self) -> Result<Vec<RecordBatch>> {
-        self.collect().await
-    }
-
-    /// Executes this DataFrame and returns a stream over a single partition
-    async fn execute_stream_sedona(self) -> Result<SendableRecordBatchStream> {
-        self.execute_stream().await
-    }
-
-    fn geometry_column_indices(&self) -> Result<Vec<usize>> {
-        let mut indices = Vec::new();
-        let matcher = ArgMatcher::is_geometry_or_geography();
-        for (i, field) in self.schema().fields().iter().enumerate() {
-            if matcher.match_type(&SedonaType::from_storage_field(field)?) {
-                indices.push(i);
-            }
-        }
-
-        Ok(indices)
-    }
-
-    fn primary_geometry_column_index(&self) -> Result<Option<usize>> {
-        let indices = self.geometry_column_indices()?;
-        if indices.is_empty() {
-            return Ok(None);
-        }
-
-        let names_map = indices
-            .iter()
-            .rev()
-            .map(|i| (self.schema().field(*i).name().to_lowercase(), *i))
-            .collect::<HashMap<_, _>>();
-
-        for special_name in ["geometry", "geography", "geom", "geog"] {
-            if let Some(i) = names_map.get(special_name) {
-                return Ok(Some(*i));
-            }
-        }
-
-        Ok(Some(indices[0]))
-    }
-
     async fn show_sedona<'a>(
         self,
         ctx: &SedonaContext,
@@ -420,32 +349,6 @@ mod tests {
         );
 
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn geometry_columns() {
-        let ctx = SedonaContext::new();
-
-        // No geometry column
-        let df = ctx.sql("SELECT 1 as one").await.unwrap();
-        assert!(df.geometry_column_indices().unwrap().is_empty());
-        assert!(df.primary_geometry_column_index().unwrap().is_none());
-
-        // Should list geometry and geography but pick geom as the primary column
-        let df = ctx
-            .sql("SELECT ST_GeogPoint(0, 1) as geog, ST_Point(0, 1) as geom")
-            .await
-            .unwrap();
-        assert_eq!(df.geometry_column_indices().unwrap(), vec![0, 1]);
-        assert_eq!(df.primary_geometry_column_index().unwrap(), Some(1));
-
-        // ...but should still detect a column without a special name
-        let df = ctx
-            .sql("SELECT ST_Point(0, 1) as name_not_special_cased")
-            .await
-            .unwrap();
-        assert_eq!(df.geometry_column_indices().unwrap(), vec![0]);
-        assert_eq!(df.primary_geometry_column_index().unwrap(), Some(0));
     }
 
     #[tokio::test]
