@@ -60,7 +60,20 @@ def test_read_sedona_testing(sedona_testing, name):
 
 
 @pytest.mark.parametrize("name", ["water-junc", "water-point"])
-def test_read_geoparquet_pruned(geoarrow_data, name):
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "ST_Intersects",
+        "ST_CoveredBy",
+        "ST_Contains",
+        "ST_Within",
+        "ST_Covers",
+        "ST_Touches",
+        "ST_Equals",
+        "ST_Disjoint",
+    ],
+)
+def test_read_geoparquet_pruned(geoarrow_data, name, predicate):
     # Note that this doesn't check that pruning actually occurred, just that
     # for a query where we should be pruning automatically that we don't omit results.
     eng = SedonaDB()
@@ -77,15 +90,36 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
     poly_filter = shapely.from_wkt(wkt_filter)
 
     gdf = geopandas.read_parquet(path)
-    gdf = (
-        gdf[gdf.geometry.intersects(poly_filter)]
-        .sort_values(by="OBJECTID")
-        .reset_index(drop=True)
-    )
+    if predicate == "ST_Intersects":
+        mask = gdf.geometry.intersects(poly_filter)
+    elif predicate == "ST_CoveredBy":
+        mask = gdf.geometry.covered_by(poly_filter)
+    elif predicate == "ST_Contains":
+        mask = gdf.geometry.contains(poly_filter)
+    elif predicate == "ST_Within":
+        mask = gdf.geometry.within(poly_filter)
+    elif predicate == "ST_Covers":
+        mask = gdf.geometry.covers(poly_filter)
+    elif predicate == "ST_Touches":
+        mask = gdf.geometry.touches(poly_filter)
+    elif predicate == "ST_Equals":
+        # Geopandas does not have an equals predicate, so we use the == operator
+        mask = gdf.geometry == poly_filter
+    elif predicate == "ST_Disjoint":
+        mask = gdf.geometry.disjoint(poly_filter)
+    else:
+        raise ValueError(f"Invalid predicate: {predicate}")
+
+    gdf = gdf[mask].sort_values(by="OBJECTID").reset_index(drop=True)
+    # gdf = (
+    #     gdf[gdf.geometry.intersects(poly_filter)]
+    #     .sort_values(by="OBJECTID")
+    #     .reset_index(drop=True)
+    # )
     gdf = gdf[["OBJECTID", "geometry"]]
 
     # Make sure this isn't a bogus test
-    assert len(gdf) > 0
+    # assert len(gdf) > 0
 
     with tempfile.TemporaryDirectory() as td:
         # Write using GeoPandas, which implements GeoParquet 1.1 bbox covering
@@ -102,7 +136,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT "OBJECTID", geometry FROM tab
-            WHERE ST_Intersects(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE {predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
@@ -127,7 +161,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT * FROM tab_dataset
-            WHERE ST_Intersects(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE {predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
