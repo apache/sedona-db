@@ -81,14 +81,15 @@ def test_st_setcrs_sedonadb(eng, geom, crs, expected_srid):
     df = eng.result_to_pandas(result)
     assert df.crs.to_epsg() == expected_srid
 
+
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_crs_sedonadb(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), 'EPSG:26920'))",
-        "\"EPSG:26920\""
+        "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), 'EPSG:26920'))",
+        '"EPSG:26920"',
     )
     eng.assert_query_result(
-        f"SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), NULL))",
+        "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), NULL))",
         None,
     )

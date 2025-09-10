@@ -23,10 +23,10 @@ use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
+use sedona_schema::matchers::ArgMatcher;
 use std::{sync::Arc, vec};
-
 
 /// ST_Srid() scalar UDF implementation
 ///
@@ -104,12 +104,15 @@ impl SedonaScalarKernel for StSrid {
             _ => Some(0),
         };
 
-        if let ColumnarValue::Array(array) = &args[0] {
-            (0..array.len()).for_each(|i| {
-                builder.append_option(if array.is_null(i) { None } else { srid_opt });
-            });
-        } else if let ColumnarValue::Scalar(scalar) = &args[0] {
-            builder.append_option(if scalar.is_null() { None } else { srid_opt });
+        match &args[0] {
+            ColumnarValue::Array(array) => {
+                (0..array.len()).for_each(|i| {
+                    builder.append_option(if array.is_null(i) { None } else { srid_opt });
+                });
+            }
+            ColumnarValue::Scalar(scalar) => {
+                builder.append_option(if scalar.is_null() { None } else { srid_opt });
+            }
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -145,16 +148,19 @@ impl SedonaScalarKernel for StCrs {
             _ => None,
         };
 
-        if let ColumnarValue::Array(array) = &args[0] {
-            (0..array.len()).for_each(|i| {
-                builder.append_option(if array.is_null(i) {
-                    None
-                } else {
-                    crs_opt.clone()
+        match &args[0] {
+            ColumnarValue::Array(array) => {
+                (0..array.len()).for_each(|i| {
+                    builder.append_option(if array.is_null(i) {
+                        None
+                    } else {
+                        crs_opt.clone()
+                    });
                 });
-            });
-        } else if let ColumnarValue::Scalar(scalar) = &args[0] {
-            builder.append_option(if scalar.is_null() { None } else { crs_opt });
+            }
+            ColumnarValue::Scalar(scalar) => {
+                builder.append_option(if scalar.is_null() { None } else { crs_opt });
+            }
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -163,10 +169,12 @@ impl SedonaScalarKernel for StCrs {
 
 #[cfg(test)]
 mod test {
+    use arrow_array::create_array;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
+    use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
     use std::str::FromStr;
 
@@ -204,7 +212,7 @@ mod test {
         let crs_value = serde_json::Value::String("EPSG:4837".to_string());
         let crs = deserialize_crs(&crs_value).unwrap();
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
-        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
+        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type.clone()]);
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
             .unwrap();
@@ -213,6 +221,17 @@ mod test {
         // Test with a CRS but null geom
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
+
+        // Call with an array
+        let wkb_array = create_array(
+            &[Some("POINT (1 2)"), None, Some("MULTIPOINT (3 4)")],
+            &sedona_type,
+        );
+        let expected = create_array!(UInt32, [Some(4837_u32), None, Some(4837_u32)]);
+        assert_eq!(
+            &tester.invoke_array(wkb_array).unwrap().as_ref(),
+            &expected.as_ref()
+        );
 
         // Call with a CRS with no SRID (should error)
         let crs_value = serde_json::Value::from_str("{}");
@@ -245,13 +264,25 @@ mod test {
         let crs_value = serde_json::Value::String("EPSG:4837".to_string());
         let crs = deserialize_crs(&crs_value).unwrap();
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
-        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
+        let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type.clone()]);
+        let expected_crs = "\"EPSG:4837\"".to_string();
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
             .unwrap();
-        tester.assert_scalar_result_equals(
-            result,
-            ScalarValue::Utf8(Some("\"EPSG:4837\"".to_string())),
+        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(Some(expected_crs.clone())));
+
+        // Call with an array
+        let wkb_array = create_array(
+            &[Some("POINT (1 2)"), None, Some("MULTIPOINT (3 4)")],
+            &sedona_type,
+        );
+        let expected = create_array!(
+            Utf8,
+            [Some(expected_crs.clone()), None, Some(expected_crs.clone())]
+        );
+        assert_eq!(
+            &tester.invoke_array(wkb_array).unwrap().as_ref(),
+            &expected.as_ref()
         );
 
         // Test with a CRS but null geom
