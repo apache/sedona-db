@@ -3,7 +3,7 @@ site_description: "Documentation for Apache SedonaDB"
 nav:
    - Home: index.md
    - SedonaDB Guides:
-     - SedonaDB Guide: programming-guide.md
+     - SedonaDB Guide: programming-guide.ipynb
      - CLI Quickstart: quickstart-cli.md
      - Python Quickstart: quickstart-python.ipynb
      - Development: development.md
