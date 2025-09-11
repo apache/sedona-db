@@ -20,12 +20,13 @@ use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use geo_traits::to_geo::ToGeoGeometry;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::transform::{transform, CachingCrsEngine, CrsEngine, CrsTransform};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::crs::deserialize_crs;
 use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::matchers::ArgMatcher;
 use std::cell::OnceCell;
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
@@ -345,7 +346,13 @@ mod tests {
             arg_fields: &[],
             scalar_arguments: &[],
         });
-        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+        assert!(
+            result.is_err()
+                && result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("No kernel matching arguments")
+        );
 
         // Too many args
         let arg_types = [
@@ -363,7 +370,13 @@ mod tests {
             arg_fields: &arg_fields,
             scalar_arguments: &[None, None, None, None, None],
         });
-        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+        assert!(
+            result.is_err()
+                && result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("No kernel matching arguments")
+        );
 
         // First arg not geometry
         let arg_types = [
@@ -378,7 +391,13 @@ mod tests {
             arg_fields: &arg_fields,
             scalar_arguments: &[None, None],
         });
-        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+        assert!(
+            result.is_err()
+                && result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("No kernel matching arguments")
+        );
 
         // Second arg not string or numeric
         let arg_types = [WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)];
@@ -390,7 +409,13 @@ mod tests {
             arg_fields: &arg_fields,
             scalar_arguments: &[None, None],
         });
-        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+        assert!(
+            result.is_err()
+                && result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("No kernel matching arguments")
+        );
     }
 
     #[rstest]
