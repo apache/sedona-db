@@ -718,6 +718,70 @@ mod test {
     }
 
     #[test]
+    fn geography_file_stats_drop_bbox() {
+        // Schema with a geography column that includes bbox in metadata.
+        let file_schema = Schema::new(vec![
+            Field::new("not_geo", DataType::Binary, true),
+            WKB_GEOGRAPHY
+                .to_storage_field("some_geog", true)
+                .expect("geography field"),
+        ]);
+
+        let geoparquet_metadata_with_bbox = GeoParquetMetadata::try_new(
+            r#"{
+                "columns": {
+                    "some_geog": {
+                        "encoding": "WKB",
+                        "geometry_types": ["Point"],
+                        "bbox": [10.0, 20.0, 30.0, 40.0]
+                    }
+                },
+                "version": "1.1.0",
+                "primary_column": "some_geog"
+            }"#,
+        )
+        .unwrap();
+
+        let stats =
+            geoparquet_file_geo_stats(&file_schema.clone().into(), &geoparquet_metadata_with_bbox)
+                .expect("stats");
+
+        // not_geo -> unspecified, geography -> bbox must be None (pruning disabled) but geometry types preserved
+        assert_eq!(stats.len(), 2);
+        assert!(stats[0].bbox().is_none());
+        assert!(
+            stats[1].bbox().is_none(),
+            "geography bbox should be stripped to disable pruning"
+        );
+        assert!(
+            stats[1].geometry_types().is_some(),
+            "geometry types should be retained for geography"
+        );
+    }
+
+    #[test]
+    fn geography_covering_ignored() {
+        // Build a schema similar to geometry covering case but with geography instead.
+        let file_schema = geography_file_schema_with_covering();
+        let parquet_schema = ArrowSchemaConverter::new()
+            .convert(file_schema.as_ref())
+            .unwrap();
+        let parquet_file_metadata =
+            FileMetaData::new(0, 0, None, None, Arc::new(parquet_schema), None);
+        let parquet_metadata = ParquetMetaDataBuilder::new(parquet_file_metadata).build();
+
+        // Covering metadata referencing bbox columns for the geography column.
+        let geog_covering_metadata = geography_geoparquet_metadata_with_covering();
+
+        // Because geography is not prunable, parse_column_coverings should yield None for that column.
+        assert_eq!(
+            parse_column_coverings(&file_schema, &parquet_metadata, &geog_covering_metadata)
+                .unwrap(),
+            vec![None, None, None]
+        );
+    }
+
+    #[test]
     fn schema_contains_geo() {
         let other_field = Field::new("not_geo", arrow_schema::DataType::Binary, true);
         let geometry_field = WKB_GEOMETRY.to_storage_field("geom", true).unwrap();
@@ -775,6 +839,52 @@ mod test {
                 },
                 "version": "1.1.0",
                 "primary_column": "some_geo"
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn geography_file_schema_with_covering() -> SchemaRef {
+        Arc::new(Schema::new(vec![
+            Field::new("not_geo", DataType::Binary, true),
+            WKB_GEOGRAPHY
+                .to_storage_field("some_geog", true)
+                .expect("geography field"),
+            Field::new(
+                "bbox",
+                DataType::Struct(
+                    vec![
+                        Field::new("xmin", DataType::Float64, true),
+                        Field::new("ymin", DataType::Float64, true),
+                        Field::new("xmax", DataType::Float64, true),
+                        Field::new("ymax", DataType::Float64, true),
+                    ]
+                    .into(),
+                ),
+                true,
+            ),
+        ]))
+    }
+
+    fn geography_geoparquet_metadata_with_covering() -> GeoParquetMetadata {
+        GeoParquetMetadata::try_new(
+            r#"{
+                "columns": {
+                    "some_geog": {
+                        "encoding": "WKB",
+                        "geometry_types": [],
+                        "covering": {
+                            "bbox": {
+                                "xmin": ["bbox", "xmin"],
+                                "ymin": ["bbox", "ymin"],
+                                "xmax": ["bbox", "xmax"],
+                                "ymax": ["bbox", "ymax"]
+                            }
+                        }
+                    }
+                },
+                "version": "1.1.0",
+                "primary_column": "some_geog"
             }"#,
         )
         .unwrap()
