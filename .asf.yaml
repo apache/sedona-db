@@ -16,10 +16,18 @@
 # under the License.
 
 github:
-  description: "Single-node compute engine for processing large-scale geospatial data"
+  description: "A single-node analytical database engine with geospatial as the first-class citizen"
   homepage: https://sedona.apache.org/sedonadb
   enabled_merge_buttons:
+    # enable squash button:
     squash:  true
+    # default commit message when merging with a squash commit
+    # can either be: DEFAULT | PR_TITLE | PR_TITLE_AND_COMMIT_DETAILS | PR_TITLE_AND_DESC
+    squash_commit_message: PR_TITLE
+    # enable merge button:
+    merge:   false
+    # disable rebase button:
+    rebase:  false
   features:
     issues: true
   labels:
