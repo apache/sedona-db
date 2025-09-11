@@ -185,6 +185,15 @@ impl SpatialJoinOptimizer {
                     return Ok(None);
                 }
 
+                // Check if the geospatial types involved in spatial_predicate are supported (planar geometries only)
+                if !is_spatial_predicate_supported(
+                    &spatial_predicate,
+                    &hash_join.left().schema(),
+                    &hash_join.right().schema(),
+                ) {
+                    return Ok(None);
+                }
+
                 // Extract the equi-join conditions and convert them to a filter
                 let equi_filter = self.create_equi_filter_from_hash_join(hash_join)?;
 
@@ -869,6 +878,8 @@ fn is_spatial_predicate_supported(
     left_schema: &Schema,
     right_schema: &Schema,
 ) -> bool {
+    /// Only spatial predicates working with planar geometry are supported for optimization.
+    /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
     fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> bool {
         let Ok(left_return_field) = expr.return_field(schema) else {
             return false;
@@ -902,7 +913,7 @@ mod tests {
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
     use datafusion_physical_plan::joins::utils::JoinFilter;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
     use std::sync::Arc;
 
     // Helper function to create a test schema
@@ -2454,5 +2465,40 @@ mod tests {
 
         let result = transform_join_filter(&join_filter);
         assert!(result.is_none()); // Should fail - k must be a literal value
+    }
+
+    #[test]
+    fn test_is_spatial_predicate_supported() {
+        // Planar geometry field
+        let geom_field = WKB_GEOMETRY.to_storage_field("geom", false).unwrap();
+        let schema = Arc::new(Schema::new(vec![geom_field.clone()]));
+        let col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred = RelationPredicate::new(
+            col_expr.clone(),
+            col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred = SpatialPredicate::Relation(rel_pred);
+        assert!(super::is_spatial_predicate_supported(
+            &spatial_pred,
+            &schema,
+            &schema
+        ));
+
+        // Geography field (should NOT be supported)
+        let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
+        let geog_schema = Arc::new(Schema::new(vec![geog_field.clone()]));
+        let geog_col_expr = Arc::new(Column::new("geog", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred_geog = RelationPredicate::new(
+            geog_col_expr.clone(),
+            geog_col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
+        assert!(!super::is_spatial_predicate_supported(
+            &spatial_pred_geog,
+            &geog_schema,
+            &geog_schema
+        ));
     }
 }
