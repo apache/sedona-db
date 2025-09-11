@@ -65,20 +65,19 @@ def test_read_sedona_testing(sedona_testing, name):
     [
         "intersects",
         "coveredby",
-        "contains",
         "within",
-        "covers",
-        "touches",
         "equals",
         "disjoint",
     ],
 )
-def test_read_geoparquet_pruned(geoarrow_data, name, predicate):
+def test_read_geoparquet_prune_points(geoarrow_data, name, predicate):
     # Note that this doesn't check that pruning actually occurred, just that
     # for a query where we should be pruning automatically that we don't omit results.
     eng = SedonaDB()
     path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
     skip_if_not_exists(path)
+
+    gdf = geopandas.read_parquet(path)
 
     # Roughly a diamond around Gaspereau Lake, Nova Scotia, in UTM zone 20
     wkt_filter = """
@@ -87,9 +86,13 @@ def test_read_geoparquet_pruned(geoarrow_data, name, predicate):
             376000 4983000, 371000 4978000
         ))
     """
+
+    # Use a wkt_filter that will lead to non-empty results
+    if predicate == "equals":
+        wkt_filter = gdf.geometry.iloc[0].wkt
+
     poly_filter = shapely.from_wkt(wkt_filter)
 
-    gdf = geopandas.read_parquet(path)
     if predicate == "equals":
         # Geopandas does not have an equals predicate, so we use the == operator
         mask = gdf.geometry == poly_filter
@@ -100,6 +103,9 @@ def test_read_geoparquet_pruned(geoarrow_data, name, predicate):
 
     gdf = gdf[mask].sort_values(by="OBJECTID").reset_index(drop=True)
     gdf = gdf[["OBJECTID", "geometry"]]
+
+    # Make sure this isn't a bogus test
+    assert len(gdf) > 0
 
     with tempfile.TemporaryDirectory() as td:
         # Write using GeoPandas, which implements GeoParquet 1.1 bbox covering
@@ -143,6 +149,92 @@ def test_read_geoparquet_pruned(geoarrow_data, name, predicate):
             SELECT * FROM tab_dataset
             WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
+        """
+        )
+        eng.assert_result(result, gdf)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "contains",
+        "covers",
+        "touches",
+    ],
+)
+def test_read_geoparquet_prune_polygons(sedona_testing, predicate):
+    # Note that this doesn't check that pruning actually occurred, just that
+    # for a query where we should be pruning automatically that we don't omit results.
+    eng = SedonaDB()
+    path = sedona_testing / "data" / "parquet" / "geoparquet-1.0.0.parquet"
+    skip_if_not_exists(path)
+
+    # A point inside of a polygon for contains / covers
+    wkt_filter = "POINT (33.60 -5.54)"
+
+    if predicate == "touches":
+        # A point on the boundary of a polygon
+        wkt_filter = "POINT (33.90371119710453 -0.9500000000000001)"
+
+    poly_filter = shapely.from_wkt(wkt_filter)
+
+    gdf = geopandas.read_parquet(path)
+    if predicate == "equals":
+        # Geopandas does not have an equals predicate, so we use the == operator
+        mask = gdf.geometry == poly_filter
+    elif predicate == "coveredby":
+        mask = gdf.geometry.covered_by(poly_filter)
+    else:
+        mask = getattr(gdf.geometry, predicate)(poly_filter)
+
+    gdf = gdf[mask].sort_values(by="pop_est").reset_index(drop=True)
+    gdf = gdf[["pop_est", "geometry"]]
+
+    # Make sure this isn't a bogus test
+    assert len(gdf) > 0
+
+    with tempfile.TemporaryDirectory() as td:
+        # Write using GeoPandas, which implements GeoParquet 1.1 bbox covering
+        # Write tiny row groups so that many bounding boxes have to be checked
+        tmp_parquet = Path(td) / "geoparquet-1.0.0.parquet"
+        geopandas.read_parquet(path).to_parquet(
+            tmp_parquet,
+            schema_version="1.1.0",
+            write_covering_bbox=True,
+            row_group_size=1024,
+        )
+
+        eng.create_view_parquet("tab", tmp_parquet)
+        result = eng.execute_and_collect(
+            f"""
+            SELECT "pop_est", geometry FROM tab
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "pop_est";
+        """
+        )
+        eng.assert_result(result, gdf)
+
+        # Write a dataset with one file per row group to check file pruning correctness
+        ds_dir = Path(td) / "ds"
+        ds_dir.mkdir()
+        ds_paths = []
+
+        with parquet.ParquetFile(tmp_parquet) as f:
+            for i in range(f.metadata.num_row_groups):
+                tab = f.read_row_group(i, ["pop_est", "geometry"])
+                df = geopandas.GeoDataFrame.from_arrow(tab)
+                ds_path = ds_dir / f"file{i}.parquet"
+                df.to_parquet(ds_path)
+                ds_paths.append(ds_path)
+
+        # Check a query against the same dataset without the bbox column but with file-level
+        # geoparquet metadata bounding boxes
+        eng.create_view_parquet("tab_dataset", ds_paths)
+        result = eng.execute_and_collect(
+            f"""
+            SELECT * FROM tab_dataset
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "pop_est";
         """
         )
         eng.assert_result(result, gdf)
