@@ -26,10 +26,10 @@ Here’s how to manually create a SedonaDB DataFrame:
 
 ```python
 df = sd.sql("""
-SELECT * FROM (VALUES 
-    ('one', ST_GeomFromWkt('POINT(1 2)')), 
-    ('two', ST_GeomFromWkt('POLYGON((-74.0 40.7, -74.0 40.8, -73.9 40.8, -73.9 40.7, -74.0 40.7))')), 
-    ('three', ST_GeomFromWkt('LINESTRING(-74.0060 40.7128, -73.9352 40.7306, -73.8561 40.8484)'))) 
+SELECT * FROM (VALUES
+    ('one', ST_GeomFromWkt('POINT(1 2)')),
+    ('two', ST_GeomFromWkt('POLYGON((-74.0 40.7, -74.0 40.8, -73.9 40.8, -73.9 40.7, -74.0 40.7))')),
+    ('three', ST_GeomFromWkt('LINESTRING(-74.0060 40.7128, -73.9352 40.7306, -73.8561 40.8484)')))
 AS t(val, point)""")
 ```
 
@@ -164,7 +164,7 @@ CREATE table restaurants AS (
 )
 
 CREATE table  customers AS (
-    SELECT * FROM (VALUES 
+    SELECT * FROM (VALUES
         (1, ST_Point(-74.0, 40.7), 'Alice'),
         (2, ST_Point(-73.9, 40.8), 'Bob'),
         (3, ST_Point(-74.1, 40.6), 'Carol')
@@ -175,7 +175,7 @@ CREATE table  customers AS (
 Perform a KNN join to identify the two restaurants that are nearest to each customer:
 
 ```sql
-SELECT 
+SELECT
     c.name AS customer,
     r.name AS restaurant
 FROM customers c, restaurants r
