@@ -336,6 +336,64 @@ mod tests {
     const WGS84: &str = "EPSG:4326";
 
     #[rstest]
+    fn invalid_arg_checks() {
+        let udf: SedonaScalarUDF =
+            SedonaScalarUDF::from_kernel("st_transform", st_transform_impl());
+
+        // No args
+        let result = udf.return_field_from_args(ReturnFieldArgs {
+            arg_fields: &[],
+            scalar_arguments: &[],
+        });
+        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+
+        // Too many args
+        let arg_types = [
+            WKB_GEOMETRY,
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Boolean),
+            SedonaType::Arrow(DataType::Int32),
+        ];
+        let arg_fields: Vec<Arc<Field>> = arg_types
+            .iter()
+            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
+            .collect();
+        let result = udf.return_field_from_args(ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &[None, None, None, None, None],
+        });
+        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+
+        // First arg not geometry
+        let arg_types = [
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8),
+        ];
+        let arg_fields: Vec<Arc<Field>> = arg_types
+            .iter()
+            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
+            .collect();
+        let result = udf.return_field_from_args(ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &[None, None],
+        });
+        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+
+        // Second arg not string or numeric
+        let arg_types = [WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)];
+        let arg_fields: Vec<Arc<Field>> = arg_types
+            .iter()
+            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
+            .collect();
+        let result = udf.return_field_from_args(ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &[None, None],
+        });
+        assert!(result.is_err() && result.unwrap_err().to_string().contains("No kernel matching arguments"));
+    }
+
+    #[rstest]
     fn test_invoke_batch_with_geo_crs() {
         // From-CRS pulled from sedona type
         let arg_types = [
