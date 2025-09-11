@@ -311,10 +311,8 @@ fn parse_column_coverings(
         .fields()
         .iter()
         .map(|field| -> Result<_> {
-            if !metadata.columns.contains_key(field.name()) {
-                return Ok(None);
-            }
-            if !is_prunable_geospatial_field(field) {
+            if !metadata.columns.contains_key(field.name()) || !is_prunable_geospatial_field(field)
+            {
                 return Ok(None);
             }
 
