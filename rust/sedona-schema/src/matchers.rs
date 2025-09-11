@@ -521,7 +521,7 @@ mod tests {
                 ArgMatcher::is_geometry(),
                 ArgMatcher::or(vec![
                     ArgMatcher::is_boolean(),
-                    ArgMatcher::optional(ArgMatcher::is_numeric()),
+                    ArgMatcher::is_numeric(),
                 ]),
             ],
             SedonaType::Arrow(DataType::Null),
