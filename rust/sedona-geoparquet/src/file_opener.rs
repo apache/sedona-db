@@ -16,7 +16,7 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
-use arrow_schema::SchemaRef;
+use arrow_schema::{Field, SchemaRef};
 use datafusion::datasource::{
     file_format::parquet::fetch_parquet_metadata,
     listing::PartitionedFile,
@@ -200,7 +200,13 @@ fn geoparquet_file_geo_stats(
             // If this column is in the GeoParquet metadata, construct actual statistics
             // (otherwise, construct unspecified statistics)
             if let Some(column_metadata) = metadata.columns.get(field.name()) {
-                Ok(column_metadata.to_geo_statistics())
+                if is_prunable_geospatial_field(field) {
+                    Ok(column_metadata.to_geo_statistics())
+                } else {
+                    // Bounding box based pruning does not work for geography fields, so we remove
+                    // the bbox from statistics to ensure that they are not used for pruning.
+                    Ok(column_metadata.to_geo_statistics().with_bbox(None))
+                }
             } else {
                 Ok(GeoStatistics::unspecified())
             }
@@ -240,6 +246,15 @@ fn row_group_covering_geo_stats(
             }
         })
         .collect()
+}
+
+/// Our current spatial data pruning implementation does not correctly handle geography data.
+/// We therefore only consider geometry fields for pruning.
+fn is_prunable_geospatial_field(field: &Field) -> bool {
+    SedonaType::from_storage_field(field).is_ok_and(|sedona_type| {
+        let matcher = ArgMatcher::is_geometry();
+        matcher.match_type(&sedona_type)
+    })
 }
 
 /// Parse raw Parquet Statistics into a (min, max) tuple
@@ -297,6 +312,9 @@ fn parse_column_coverings(
         .iter()
         .map(|field| -> Result<_> {
             if !metadata.columns.contains_key(field.name()) {
+                return Ok(None);
+            }
+            if !is_prunable_geospatial_field(field) {
                 return Ok(None);
             }
 
