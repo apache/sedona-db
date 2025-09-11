@@ -157,22 +157,27 @@ impl SedonaScalarKernel for STTransform {
         arg_types: &[SedonaType],
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+           vec![
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::or(vec![
+                    ArgMatcher::is_numeric(),
+                    ArgMatcher::is_string()
+                ]),
+                ArgMatcher::optional(ArgMatcher::or(vec![
+                    ArgMatcher::is_numeric(),
+                    ArgMatcher::is_string()
+                ])),
+                ArgMatcher::optional(ArgMatcher::is_boolean()),
+            ], SedonaType::Wkb(Edges::Planar, None)
+        );
+
+        if !matcher.match_args(arg_types) {
+            return Ok(None);
+        }
+
         let mut indexes = TransformArgIndexes::new();
         define_arg_indexes(arg_types, &mut indexes);
-
-        if (arg_types.len() < 2) || (arg_types.len() > 4) {
-            return Ok(None);
-        }
-
-        if !ArgMatcher::is_geometry_or_geography().match_type(&arg_types[indexes.wkb]) {
-            return Ok(None);
-        }
-
-        if !(ArgMatcher::is_numeric().match_type(&arg_types[indexes.first_crs])
-            || ArgMatcher::is_string().match_type(&arg_types[indexes.first_crs]))
-        {
-            return Ok(None);
-        }
 
         let scalar_arg_opt = if let Some(second_crs_index) = indexes.second_crs {
             scalar_args.get(second_crs_index).unwrap()
@@ -193,7 +198,7 @@ impl SedonaScalarKernel for STTransform {
                 let crs = deserialize_crs(&val)?;
                 Ok(Some(SedonaType::Wkb(Edges::Planar, crs)))
             }
-            _ => Ok(None),
+            _ => Ok(Some(SedonaType::Wkb(Edges::Planar, None))),
         }
     }
 
@@ -211,7 +216,11 @@ impl SedonaScalarKernel for STTransform {
         let mut indexes = TransformArgIndexes::new();
         define_arg_indexes(arg_types, &mut indexes);
 
-        let first_crs = get_crs_str(args, indexes.first_crs).unwrap();
+        let first_crs = get_crs_str(args, indexes.first_crs).ok_or_else(|| {;
+            DataFusionError::Execution(
+                "First CRS argument must be a string or numeric scalar".to_string(),
+            )
+        })?;
 
         let lenient = indexes
             .lenient
