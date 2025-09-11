@@ -20,7 +20,7 @@ use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
-use arrow_schema::SchemaRef;
+use arrow_schema::{Schema, SchemaRef};
 use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
 use datafusion::{
     config::ConfigOptions, execution::session_state::SessionStateBuilder,
@@ -41,6 +41,8 @@ use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
 use sedona_common::{option::SedonaOptions, sedona_internal_err};
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
+use sedona_schema::datatypes::SedonaType;
+use sedona_schema::matchers::ArgMatcher;
 
 /// Physical planner extension for spatial joins
 ///
@@ -139,6 +141,15 @@ impl SpatialJoinOptimizer {
                 let left = left.clone();
                 let right = nested_loop_join.right().clone();
                 let join_type = nested_loop_join.join_type();
+
+                // Check if the geospatial types involved in spatial_predicate are supported
+                if !is_spatial_predicate_supported(
+                    &spatial_predicate,
+                    &left.schema(),
+                    &right.schema(),
+                ) {
+                    return Ok(None);
+                }
 
                 // Create the spatial join
                 let spatial_join = SpatialJoinExec::try_new(
@@ -851,6 +862,32 @@ fn replace_join_filter_expr(expr: &Arc<dyn PhysicalExpr>, join_filter: &JoinFilt
         pruned_column_indices,
         Arc::new(pruned_schema),
     )
+}
+
+fn is_spatial_predicate_supported(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> bool {
+    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> bool {
+        let Ok(left_return_field) = expr.return_field(schema) else {
+            return false;
+        };
+        let Ok(sedona_type) = SedonaType::from_storage_field(&left_return_field) else {
+            return false;
+        };
+        let matcher = ArgMatcher::is_geometry();
+        matcher.match_type(&sedona_type)
+    }
+
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate { left, right, .. })
+        | SpatialPredicate::Distance(DistancePredicate { left, right, .. })
+        | SpatialPredicate::KNearestNeighbors(KNNPredicate { left, right, .. }) => {
+            is_geometry_type_supported(left, left_schema)
+                && is_geometry_type_supported(right, right_schema)
+        }
+    }
 }
 
 #[cfg(test)]
