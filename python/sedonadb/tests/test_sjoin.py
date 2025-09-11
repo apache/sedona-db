@@ -76,3 +76,31 @@ def test_spatial_join(join_type, on):
     sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
     assert len(sedonadb_results) > 0
     eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+@pytest.mark.xfail(reason="https://github.com/apache/sedona-db/issues/63")
+def test_spatial_join_geography(geoarrow_data):
+    eng_sedonadb = SedonaDB.create_or_skip()
+    eng_postgis = PostGIS.create_or_skip()
+
+    eng_sedonadb.create_table_parquet(
+        "sjoin_geog_all",
+        geoarrow_data
+        / "natural-earth/files/natural-earth_countries-geography_geo.parquet",
+    )
+    test_data = eng_sedonadb.execute_and_collect(
+        "SELECT * FROM sjoin_geog_all LIMIT 100"
+    )
+    eng_sedonadb.create_table_arrow("sjoin_geog", test_data)
+    eng_postgis.create_table_arrow("sjoin_geog", test_data)
+
+    sql = """
+           SELECT a.name a_name, a.continent a_continent, b.name b_name, b.continent b_continent
+           FROM sjoin_geog a, sjoin_geog b
+           WHERE ST_Intersects(a.geometry, b.geometry)
+           ORDER BY a_name, a_continent, b_name, b_continent
+           """
+
+    sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
+    assert len(sedonadb_results) > 0
+    eng_postgis.assert_query_result(sql, sedonadb_results)
