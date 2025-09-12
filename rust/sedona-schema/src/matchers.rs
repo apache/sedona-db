@@ -271,7 +271,7 @@ impl TypeMatcher for OrMatcher {
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
-        self.matchers.get(0).and_then(|m| m.type_if_null())
+        None
     }
 }
 
@@ -536,7 +536,7 @@ mod tests {
         // Return type if null
         assert_eq!(
             ArgMatcher::or(vec![ArgMatcher::is_boolean(), ArgMatcher::is_numeric()]).type_if_null(),
-            Some(SedonaType::Arrow(DataType::Boolean))
+            None
         );
     }
 
