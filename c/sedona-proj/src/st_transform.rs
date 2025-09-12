@@ -158,21 +158,19 @@ impl SedonaScalarKernel for STTransform {
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-           vec![
+            vec![
                 ArgMatcher::is_geometry_or_geography(),
-                ArgMatcher::or(vec![
-                    ArgMatcher::is_numeric(),
-                    ArgMatcher::is_string()
-                ]),
+                ArgMatcher::or(vec![ArgMatcher::is_numeric(), ArgMatcher::is_string()]),
                 ArgMatcher::optional(ArgMatcher::or(vec![
                     ArgMatcher::is_numeric(),
-                    ArgMatcher::is_string()
+                    ArgMatcher::is_string(),
                 ])),
                 ArgMatcher::optional(ArgMatcher::is_boolean()),
-            ], SedonaType::Wkb(Edges::Planar, None)
+            ],
+            SedonaType::Wkb(Edges::Planar, None),
         );
 
-        if !matcher.match_args(arg_types) {
+        if !matcher.matches(arg_types) {
             return Ok(None);
         }
 
@@ -216,7 +214,7 @@ impl SedonaScalarKernel for STTransform {
         let mut indexes = TransformArgIndexes::new();
         define_arg_indexes(arg_types, &mut indexes);
 
-        let first_crs = get_crs_str(args, indexes.first_crs).ok_or_else(|| {;
+        let first_crs = get_crs_str(args, indexes.first_crs).ok_or_else(|| {
             DataFusionError::Execution(
                 "First CRS argument must be a string or numeric scalar".to_string(),
             )
