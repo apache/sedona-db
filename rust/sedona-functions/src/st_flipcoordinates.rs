@@ -120,7 +120,7 @@ fn swap_yx(
         GeometryType::Point(pt) => {
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)?;
-                swap(pt.coord().unwrap(), dims, writer)?;
+                swap_and_write(pt.coord().unwrap(), dims, writer)?;
             } else {
                 write_wkb_empty_point(writer, dims)?;
             }
@@ -128,7 +128,7 @@ fn swap_yx(
         GeometryType::LineString(ls) => {
             write_wkb_linestring_header(writer, ls.dim(), ls.coords().count())?;
             for coord in ls.coords() {
-                swap(coord, dims, writer)?;
+                swap_and_write(coord, dims, writer)?;
             }
         }
         // Similar pattern for other geometry types...
@@ -139,14 +139,14 @@ fn swap_yx(
             if let Some(exterior) = pl.exterior() {
                 write_wkb_polygon_ring_header(writer, exterior.coords().count())?;
                 for coord in exterior.coords() {
-                    swap(coord, dims, writer)?;
+                    swap_and_write(coord, dims, writer)?;
                 }
             }
 
             for interior in pl.interiors() {
                 write_wkb_polygon_ring_header(writer, interior.coords().count())?;
                 for coord in interior.coords() {
-                    swap(coord, dims, writer)?;
+                    swap_and_write(coord, dims, writer)?;
                 }
             }
         }
@@ -184,7 +184,7 @@ fn swap_yx(
     Ok(())
 }
 
-fn swap<C: CoordTrait<T = f64>>(
+fn swap_and_write<C: CoordTrait<T = f64>>(
     coord: C,
     dims: Dimensions,
     writer: &mut impl std::io::Write,
@@ -243,7 +243,7 @@ mod tests {
             Some("LINESTRING M(10 0 5, 1 3 6)"),
             Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0), (0 1, 1 1, 1 0, 0 1))"),
             Some("GEOMETRYCOLLECTION (POINT (7 5), LINESTRING (-1 -3, 1 2))"),
-            Some("MULTIPONT ZM((1 2 3 4), (5 6 7 8))"),
+            Some("MULTIPOINT ZM(1 2 3 4, 5 6 7 8)"),
             Some("MULTILINESTRING ((0 0, 1 3), (10 0, 1 3))"),
             Some("POINT EMPTY"),
             Some("LINESTRING EMPTY"),
@@ -262,7 +262,7 @@ mod tests {
                 Some("LINESTRING M(0 10 5, 3 1 6)"),
                 Some("POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0), (1 0, 1 1, 0 1, 1 0))"),
                 Some("GEOMETRYCOLLECTION (POINT (5 7), LINESTRING (-3 -1, 2 1))"),
-                Some("MULTIPONT ZM((2 1 3 4), (6 5 7 8))"),
+                Some("MULTIPOINT ZM(2 1 3 4, 6 5 7 8)"),
                 Some("MULTILINESTRING ((0 0, 3 1), (0 10, 3 1))"),
                 Some("POINT EMPTY"),
                 Some("LINESTRING EMPTY"),
