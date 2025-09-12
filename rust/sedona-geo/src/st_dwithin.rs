@@ -18,17 +18,15 @@ use std::sync::Arc;
 
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{cast::as_float64_array, error::Result};
 use datafusion_expr::ColumnarValue;
-use geo::{Distance, Euclidean};
+use geo_generic_alg::line_measures::DistanceExt;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-use crate::to_geo::item_to_geometry;
-
-/// ST_DWithin() implementation using [Euclidean] [Distance]
+/// ST_DWithin() implementation using [DistanceExt]
 pub fn st_dwithin_impl() -> ScalarKernelRef {
     Arc::new(STDWithin {})
 }
@@ -55,26 +53,14 @@ impl SedonaScalarKernel for STDWithin {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Extract the constant scalar value before looping over the input geometries
-        let distance: Option<f64>;
         let arg2 = args[2].cast_to(&DataType::Float64, None)?;
-        if let ColumnarValue::Scalar(scalar_arg) = &arg2 {
-            if scalar_arg.is_null() {
-                distance = None;
-            } else {
-                distance = Some(f64::try_from(scalar_arg.clone())?);
-            }
-        } else {
-            return Err(DataFusionError::Execution(format!(
-                "Invalid distance: {:?}",
-                args[2]
-            )));
-        }
-
         let executor = WkbExecutor::new(arg_types, args);
+        let arg2_array = arg2.to_array(executor.num_iterations())?;
+        let arg2_f64_array = as_float64_array(&arg2_array)?;
+        let mut arg2_iter = arg2_f64_array.iter();
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         executor.execute_wkb_wkb_void(|maybe_wkb0, maybe_wkb1| {
-            match (maybe_wkb0, maybe_wkb1, distance) {
+            match (maybe_wkb0, maybe_wkb1, arg2_iter.next().unwrap()) {
                 (Some(wkb0), Some(wkb1), Some(distance)) => {
                     builder.append_value(invoke_scalar(wkb0, wkb1, distance)?);
                 }
@@ -89,14 +75,13 @@ impl SedonaScalarKernel for STDWithin {
 }
 
 fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb, distance_bound: f64) -> Result<bool> {
-    let geom_a = item_to_geometry(wkb_a)?;
-    let geom_b = item_to_geometry(wkb_b)?;
-    let actual_distance = Euclidean.distance(&geom_a, &geom_b);
+    let actual_distance = wkb_a.distance_ext(wkb_b);
     Ok(actual_distance <= distance_bound)
 }
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::{create_array as arrow_array, ArrayRef};
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
@@ -111,6 +96,8 @@ mod tests {
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
     ) {
+        use sedona_testing::{compare::assert_array_equal, create::create_array};
+
         let udf = SedonaScalarUDF::from_kernel("st_dwithin", st_dwithin_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
@@ -162,5 +149,31 @@ mod tests {
             )
             .unwrap();
         assert!(result.is_null());
+
+        // Test with array args
+        let arg1 = create_array(
+            &[
+                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+                None,
+                Some("POINT EMPTY"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let arg2 = create_array(
+            &[
+                Some("POINT (0.5 0.5)"),
+                Some("POINT (5 5)"),
+                Some("POINT (0 0)"),
+                Some("POINT EMPTY"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1)]);
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
+        assert_array_equal(
+            &tester.invoke_arrays(vec![arg1, arg2, distance]).unwrap(),
+            &expected,
+        );
     }
 }

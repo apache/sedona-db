@@ -20,15 +20,13 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use geo::{Distance, Euclidean};
+use geo_generic_alg::line_measures::DistanceExt;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-use crate::to_geo::item_to_geometry;
-
-/// ST_Distance() implementation using [Euclidean] [Distance]
+/// ST_Distance() implementation using [DistanceExt]
 pub fn st_distance_impl() -> ScalarKernelRef {
     Arc::new(STDistance {})
 }
@@ -69,9 +67,7 @@ impl SedonaScalarKernel for STDistance {
 }
 
 fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb) -> Result<f64> {
-    let geom_a = item_to_geometry(wkb_a)?;
-    let geom_b = item_to_geometry(wkb_b)?;
-    Ok(Euclidean.distance(&geom_a, &geom_b))
+    Ok(wkb_a.distance_ext(wkb_b))
 }
 
 #[cfg(test)]
