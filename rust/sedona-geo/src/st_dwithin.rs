@@ -28,7 +28,7 @@ use wkb::reader::Wkb;
 
 use crate::to_geo::item_to_geometry;
 
-/// ST_DWithin() implementation using [EuclideanDistance]
+/// ST_DWithin() implementation using [Euclidean] [Distance]
 pub fn st_dwithin_impl() -> ScalarKernelRef {
     Arc::new(STDWithin {})
 }
@@ -88,14 +88,11 @@ impl SedonaScalarKernel for STDWithin {
     }
 }
 
-fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb, max_distance: f64) -> Result<bool> {
-    // Convert WKB to geo types for distance calculation
+fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb, distance_bound: f64) -> Result<bool> {
     let geom_a = item_to_geometry(wkb_a)?;
     let geom_b = item_to_geometry(wkb_b)?;
-
-    // Calculate euclidean distance and compare with max_distance
     let actual_distance = Euclidean.distance(&geom_a, &geom_b);
-    Ok(actual_distance <= max_distance)
+    Ok(actual_distance <= distance_bound)
 }
 
 #[cfg(test)]

@@ -28,7 +28,7 @@ use wkb::reader::Wkb;
 
 use crate::to_geo::item_to_geometry;
 
-/// ST_Distance() implementation using [EuclideanDistance]
+/// ST_Distance() implementation using [Euclidean] [Distance]
 pub fn st_distance_impl() -> ScalarKernelRef {
     Arc::new(STDistance {})
 }
@@ -69,11 +69,8 @@ impl SedonaScalarKernel for STDistance {
 }
 
 fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb) -> Result<f64> {
-    // Convert WKB to geo types for distance calculation
     let geom_a = item_to_geometry(wkb_a)?;
     let geom_b = item_to_geometry(wkb_b)?;
-
-    // Use euclidean distance for planar geometries
     Ok(Euclidean.distance(&geom_a, &geom_b))
 }
 
