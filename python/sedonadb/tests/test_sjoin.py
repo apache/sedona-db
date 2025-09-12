@@ -104,7 +104,7 @@ def test_spatial_join_geography(join_type, on):
             "vertices_per_linestring_range": [2, 10],
             "bounds": west_most_bound,
             "size_range": [0.1, 5],
-            "seed": 42,
+            "seed": 43,
         }
     )
     df_point = eng_sedonadb.execute_and_collect(
@@ -118,7 +118,7 @@ def test_spatial_join_geography(join_type, on):
             "vertices_per_linestring_range": [2, 10],
             "bounds": east_most_bound,
             "size_range": [0.1, 5],
-            "seed": 43,
+            "seed": 44,
         }
     )
     df_polygon = eng_sedonadb.execute_and_collect(
