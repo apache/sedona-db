@@ -32,9 +32,12 @@ pub fn st_transform_udf() -> SedonaScalarUDF {
         ArgMatcher::new(
             vec![
                 ArgMatcher::is_geometry_or_geography(),
-                ArgMatcher::is_string(),
-                ArgMatcher::is_optional(ArgMatcher::is_string()),
-                ArgMatcher::is_optional(ArgMatcher::is_boolean()),
+                ArgMatcher::or(vec![ArgMatcher::is_string(), ArgMatcher::is_numeric()]),
+                ArgMatcher::optional(ArgMatcher::or(vec![
+                    ArgMatcher::is_string(),
+                    ArgMatcher::is_numeric(),
+                ])),
+                ArgMatcher::optional(ArgMatcher::is_boolean()),
             ],
             SedonaType::Wkb(Edges::Planar, None),
         ),

@@ -81,7 +81,7 @@ impl SedonaScalarKernel for SDFormatDefault {
         let matcher = ArgMatcher::new(
             vec![
                 ArgMatcher::is_any(),
-                ArgMatcher::is_optional(ArgMatcher::is_string()),
+                ArgMatcher::optional(ArgMatcher::is_string()),
             ],
             formatted_type,
         );

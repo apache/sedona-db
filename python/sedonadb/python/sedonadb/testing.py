@@ -63,6 +63,17 @@ class DBEngine:
     of that name.
     """
 
+    def close(self):
+        """Close the connection - base implementation does nothing"""
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     @classmethod
     def name(cls) -> str:
         """This engine's name
@@ -398,6 +409,11 @@ class PostGIS(DBEngine):
         if uri is None:
             uri = "postgresql://localhost:5432/postgres?user=postgres&password=password"
         self.con = adbc_driver_postgresql.dbapi.connect(uri)
+
+    def close(self):
+        """Close the connection"""
+        if self.con:
+            self.con.close()
 
     @classmethod
     def name(cls):

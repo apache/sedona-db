@@ -85,12 +85,12 @@ impl ArgMatcher {
                 if arg == &&SedonaType::Arrow(DataType::Null) || matcher.match_type(arg) {
                     arg_iter.next(); // Consume the argument
                     continue; // Move to the next matcher
-                } else if matcher.is_optional() {
+                } else if matcher.optional() {
                     continue; // Skip the optional matcher
                 } else {
                     return false; // Non-optional matcher failed
                 }
-            } else if matcher.is_optional() {
+            } else if matcher.optional() {
                 continue; // Skip remaining optional matchers
             } else {
                 return false; // Non-optional matcher failed with no arguments left
@@ -179,10 +179,17 @@ impl ArgMatcher {
     }
 
     /// Matches any argument that is optional
-    pub fn is_optional(
+    pub fn optional(
         matcher: Arc<dyn TypeMatcher + Send + Sync>,
     ) -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(OptionalMatcher { inner: matcher })
+    }
+
+    /// Matches if any of the given matchers match
+    pub fn or(
+        matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>>,
+    ) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(OrMatcher { matchers })
     }
 }
 
@@ -198,7 +205,7 @@ pub trait TypeMatcher: Debug {
     fn match_type(&self, arg: &SedonaType) -> bool;
 
     /// If this argument is optional, return true
-    fn is_optional(&self) -> bool {
+    fn optional(&self) -> bool {
         false
     }
 
@@ -244,12 +251,27 @@ impl TypeMatcher for OptionalMatcher {
         self.inner.match_type(arg)
     }
 
-    fn is_optional(&self) -> bool {
+    fn optional(&self) -> bool {
         true
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
         self.inner.type_if_null()
+    }
+}
+
+#[derive(Debug)]
+struct OrMatcher {
+    matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>>,
+}
+
+impl TypeMatcher for OrMatcher {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        self.matchers.iter().any(|m| m.match_type(arg))
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        None
     }
 }
 
@@ -446,8 +468,8 @@ mod tests {
         let matcher = ArgMatcher::new(
             vec![
                 ArgMatcher::is_geometry(),
-                ArgMatcher::is_optional(ArgMatcher::is_boolean()),
-                ArgMatcher::is_optional(ArgMatcher::is_numeric()),
+                ArgMatcher::optional(ArgMatcher::is_boolean()),
+                ArgMatcher::optional(ArgMatcher::is_numeric()),
             ],
             SedonaType::Arrow(DataType::Null),
         );
@@ -487,6 +509,38 @@ mod tests {
     }
 
     #[test]
+    fn or_matcher() {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::or(vec![ArgMatcher::is_boolean(), ArgMatcher::is_numeric()]),
+            ],
+            SedonaType::Arrow(DataType::Null),
+        );
+
+        // Matches first arg
+        assert!(matcher.matches(&[WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean),]));
+
+        // Matches second arg
+        assert!(matcher.matches(&[WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)]));
+
+        // No match when second arg is incorrect type
+        assert!(!matcher.matches(&[WKB_GEOMETRY, WKB_GEOMETRY]));
+
+        // No match when first arg is incorrect type
+        assert!(!matcher.matches(&[
+            SedonaType::Arrow(DataType::Boolean),
+            SedonaType::Arrow(DataType::Boolean)
+        ]));
+
+        // Return type if null
+        assert_eq!(
+            ArgMatcher::or(vec![ArgMatcher::is_boolean(), ArgMatcher::is_numeric()]).type_if_null(),
+            None
+        );
+    }
+
+    #[test]
     fn arg_matcher_matches_null() {
         for type_matcher in [
             ArgMatcher::is_arrow(DataType::Null),
@@ -498,7 +552,7 @@ mod tests {
             ArgMatcher::is_string(),
             ArgMatcher::is_binary(),
             ArgMatcher::is_boolean(),
-            ArgMatcher::is_optional(ArgMatcher::is_numeric()),
+            ArgMatcher::optional(ArgMatcher::is_numeric()),
         ] {
             let matcher = ArgMatcher::new(vec![type_matcher], SedonaType::Arrow(DataType::Null));
             assert!(matcher.matches(&[SedonaType::Arrow(DataType::Null)]));

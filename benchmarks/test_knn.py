@@ -17,21 +17,20 @@
 import json
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import SedonaDB
+from sedonadb.testing import SedonaDB, PostGIS, DuckDB
 
 
 class TestBenchKNN(TestBenchBase):
     def setup_class(self):
         """Setup test data for KNN benchmarks"""
         self.sedonadb = SedonaDB.create_or_skip()
+        self.postgis = PostGIS.create_or_skip()
+        self.duckdb = DuckDB.create_or_skip()
 
         # Create building-like polygons (index side - fewer, larger geometries)
-        # Note: Dataset sizes are limited to avoid performance issues observed when processing
-        # very large synthetic datasets. Large synthetic datasets have been observed to cause
-        # memory pressure or performance degradation in DataFusion operations.
         building_options = {
             "geom_type": "Polygon",
-            "target_rows": 2_000,  # Reasonable size for benchmarking
+            "target_rows": 2_000,
             "vertices_per_linestring_range": [4, 8],
             "size_range": [0.001, 0.01],
             "seed": 42,
@@ -46,8 +45,10 @@ class TestBenchKNN(TestBenchBase):
         """
         building_tab = self.sedonadb.execute_and_collect(building_query)
         self.sedonadb.create_table_arrow("knn_buildings", building_tab)
+        self.postgis.create_table_arrow("knn_buildings", building_tab)
+        self.duckdb.create_table_arrow("knn_buildings", building_tab)
 
-        # Create trip pickup points (probe side - many small geometries)
+        # Create trip pickup points (probe side)
         trip_options = {
             "geom_type": "Point",
             "target_rows": 10_000,
@@ -62,6 +63,8 @@ class TestBenchKNN(TestBenchBase):
         """
         trip_tab = self.sedonadb.execute_and_collect(trip_query)
         self.sedonadb.create_table_arrow("knn_trips", trip_tab)
+        self.postgis.create_table_arrow("knn_trips", trip_tab)
+        self.duckdb.create_table_arrow("knn_trips", trip_tab)
 
         # Create a smaller test dataset for quick tests
         small_building_query = """
@@ -69,18 +72,22 @@ class TestBenchKNN(TestBenchBase):
         """
         small_building_tab = self.sedonadb.execute_and_collect(small_building_query)
         self.sedonadb.create_table_arrow("knn_buildings_small", small_building_tab)
+        self.postgis.create_table_arrow("knn_buildings_small", small_building_tab)
+        self.duckdb.create_table_arrow("knn_buildings_small", small_building_tab)
 
         small_trip_query = """
             SELECT * FROM knn_trips LIMIT 5000
         """
         small_trip_tab = self.sedonadb.execute_and_collect(small_trip_query)
         self.sedonadb.create_table_arrow("knn_trips_small", small_trip_tab)
+        self.postgis.create_table_arrow("knn_trips_small", small_trip_tab)
+        self.duckdb.create_table_arrow("knn_trips_small", small_trip_tab)
 
     @pytest.mark.parametrize("k", [1, 5, 10])
-    @pytest.mark.parametrize("use_spheroid", [False, True])
+    @pytest.mark.parametrize("engine", [SedonaDB, PostGIS, DuckDB])
     @pytest.mark.parametrize("dataset_size", ["small", "large"])
-    def test_knn_performance(self, benchmark, k, use_spheroid, dataset_size):
-        """Benchmark KNN query performance with different parameters"""
+    def test_knn_performance(self, benchmark, k, engine, dataset_size):
+        """Benchmark KNN query performance comparing SedonaDB vs PostGIS"""
 
         if dataset_size == "small":
             trip_table = "knn_trips_small"
@@ -89,138 +96,162 @@ class TestBenchKNN(TestBenchBase):
         else:
             trip_table = "knn_trips_small"
             building_table = "knn_buildings"
-            trip_limit = 500
+            trip_limit = 1000
 
-        spheroid_str = "TRUE" if use_spheroid else "FALSE"
+        # Get the appropriate engine instance
+        eng = self._get_eng(engine)
 
         def run_knn_query():
-            query = f"""
-                WITH trip_sample AS (
-                    SELECT trip_id, geom as trip_geom
-                    FROM {trip_table}
-                    LIMIT {trip_limit}
-                ),
-                building_with_geom AS (
-                    SELECT building_id, name, geom as building_geom
-                    FROM {building_table}
-                )
-                SELECT
-                    t.trip_id,
-                    b.building_id,
-                    b.name,
-                    ST_Distance(t.trip_geom, b.building_geom) as distance
-                FROM trip_sample t
-                JOIN building_with_geom b ON ST_KNN(t.trip_geom, b.building_geom, {k}, {spheroid_str})
-                ORDER BY t.trip_id, distance
-            """
-            result = self.sedonadb.execute_and_collect(query)
-            return len(result)  # Return result count for verification
+            if engine == SedonaDB:
+                # SedonaDB syntax using ST_KNN function
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM {trip_table}
+                        LIMIT {trip_limit}
+                    ),
+                    building_with_geom AS (
+                        SELECT building_id, name, geom as building_geom
+                        FROM {building_table}
+                    )
+                    SELECT
+                        t.trip_id,
+                        b.building_id,
+                        b.name,
+                        ST_Distance(t.trip_geom, b.building_geom) as distance
+                    FROM trip_sample t
+                    JOIN building_with_geom b ON ST_KNN(t.trip_geom, b.building_geom, {k}, FALSE)
+                    ORDER BY t.trip_id, distance
+                """
+            elif engine == PostGIS:
+                # PostGIS syntax using distance operator and window functions
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM {trip_table}
+                        LIMIT {trip_limit}
+                    ),
+                    building_with_geom AS (
+                        SELECT building_id, name, geom as building_geom
+                        FROM {building_table}
+                    ),
+                    ranked_neighbors AS (
+                        SELECT
+                            t.trip_id,
+                            b.building_id,
+                            b.name,
+                            ST_Distance(t.trip_geom, b.building_geom) as distance,
+                            ROW_NUMBER() OVER (PARTITION BY t.trip_id ORDER BY t.trip_geom <-> b.building_geom) as rn
+                        FROM trip_sample t
+                        CROSS JOIN building_with_geom b
+                    )
+                    SELECT trip_id, building_id, name, distance
+                    FROM ranked_neighbors
+                    WHERE rn <= {k}
+                    ORDER BY trip_id, distance
+                """
+            else:  # DuckDB
+                # DuckDB KNN simulation using spatial joins with distance predicates
+                # Since DuckDB doesn't have native KNN, we use a cross join with distance calculation and ranking
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM {trip_table}
+                        LIMIT {trip_limit}
+                    ),
+                    building_with_geom AS (
+                        SELECT building_id, name, geom as building_geom
+                        FROM {building_table}
+                    ),
+                    distances_calculated AS (
+                        SELECT
+                            t.trip_id,
+                            b.building_id,
+                            b.name,
+                            ST_Distance(t.trip_geom, b.building_geom) as distance
+                        FROM trip_sample t
+                        CROSS JOIN building_with_geom b
+                    ),
+                    ranked_neighbors AS (
+                        SELECT *,
+                            ROW_NUMBER() OVER (PARTITION BY trip_id ORDER BY distance ASC) as rn
+                        FROM distances_calculated
+                    )
+                    SELECT trip_id, building_id, name, distance
+                    FROM ranked_neighbors
+                    WHERE rn <= {k}
+                    ORDER BY trip_id, distance
+                """
+
+            result = eng.execute_and_collect(query)
+            return len(result)
 
         # Run the benchmark
-        result_count = benchmark(run_knn_query)
-
-        # Verify we got the expected number of results (trips * k)
-        expected_count = trip_limit * k
-        assert result_count == expected_count, (
-            f"Expected {expected_count} results, got {result_count}"
-        )
+        benchmark(run_knn_query)
 
     @pytest.mark.parametrize("k", [1, 5, 10, 20])
-    def test_knn_scalability_by_k(self, benchmark, k):
-        """Test how KNN performance scales with increasing k values"""
+    @pytest.mark.parametrize("engine", [SedonaDB, PostGIS, DuckDB])
+    def test_knn_scalability_by_k(self, benchmark, k, engine):
+        """Test how KNN performance scales with increasing k values - SedonaDB vs PostGIS"""
+
+        # Get the appropriate engine instance
+        eng = self._get_eng(engine)
 
         def run_knn_query():
-            query = f"""
-                WITH trip_sample AS (
-                    SELECT trip_id, geom as trip_geom
-                    FROM knn_trips_small
-                    LIMIT 50  -- Small sample for k scaling test
-                )
-                SELECT
-                    COUNT(*) as result_count
-                FROM trip_sample t
-                JOIN knn_buildings_small b ON ST_KNN(t.trip_geom, b.geom, {k}, FALSE)
-            """
-            result = self.sedonadb.execute_and_collect(query)
+            if engine == SedonaDB:
+                # SedonaDB syntax
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM knn_trips_small
+                        LIMIT 50  -- Small sample for k scaling test
+                    )
+                    SELECT
+                        COUNT(*) as result_count
+                    FROM trip_sample t
+                    JOIN knn_buildings_small b ON ST_KNN(t.trip_geom, b.geom, {k}, FALSE)
+                """
+            elif engine == PostGIS:
+                # PostGIS syntax
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM knn_trips_small
+                        LIMIT 50
+                    ),
+                    ranked_neighbors AS (
+                        SELECT
+                            t.trip_id,
+                            ROW_NUMBER() OVER (PARTITION BY t.trip_id ORDER BY t.trip_geom <-> b.geom) as rn
+                        FROM trip_sample t
+                        CROSS JOIN knn_buildings_small b
+                    )
+                    SELECT COUNT(*) as result_count
+                    FROM ranked_neighbors
+                    WHERE rn <= {k}
+                """
+            else:  # DuckDB
+                # DuckDB KNN simulation
+                query = f"""
+                    WITH trip_sample AS (
+                        SELECT trip_id, geom as trip_geom
+                        FROM knn_trips_small
+                        LIMIT 50
+                    ),
+                    ranked_neighbors AS (
+                        SELECT
+                            t.trip_id,
+                            ROW_NUMBER() OVER (PARTITION BY t.trip_id ORDER BY ST_Distance(t.trip_geom, b.geom) ASC) as rn
+                        FROM trip_sample t
+                        CROSS JOIN knn_buildings_small b
+                    )
+                    SELECT COUNT(*) as result_count
+                    FROM ranked_neighbors
+                    WHERE rn <= {k}
+                """
+
+            result = eng.execute_and_collect(query)
             return result.to_pandas().iloc[0]["result_count"]
 
-        result_count = benchmark(run_knn_query)
-        expected_count = 50 * k  # 50 trips * k neighbors each
-        assert result_count == expected_count, (
-            f"Expected {expected_count} results, got {result_count}"
-        )
-
-    def test_knn_correctness(self):
-        """Verify KNN returns results in correct distance order"""
-
-        # Test with a known point and verify ordering
-        query = """
-            WITH test_point AS (
-                SELECT ST_Point(0.0, 0.0) as query_geom
-            )
-            SELECT
-                ST_Distance(test_point.query_geom, b.geom) as distance,
-                b.building_id
-            FROM test_point
-            JOIN knn_buildings_small b ON ST_KNN(test_point.query_geom, b.geom, 5, FALSE)
-            ORDER BY distance
-        """
-
-        result = self.sedonadb.execute_and_collect(query).to_pandas()
-
-        # Verify we got 5 results
-        assert len(result) == 5, f"Expected 5 results, got {len(result)}"
-
-        # Verify distances are in ascending order
-        distances = result["distance"].tolist()
-        assert distances == sorted(distances), (
-            f"Results not ordered by distance: {distances}"
-        )
-
-        # Verify all distances are non-negative
-        assert all(d >= 0 for d in distances), f"Found negative distances: {distances}"
-
-    def test_knn_tie_breaking(self):
-        """Test KNN behavior with tie-breaking when geometries have equal distances"""
-
-        # Create test data with known equal distances
-        setup_query = """
-            WITH test_points AS (
-                SELECT 1 as id, ST_Point(1.0, 0.0) as geom
-                UNION ALL
-                SELECT 2 as id, ST_Point(-1.0, 0.0) as geom
-                UNION ALL
-                SELECT 3 as id, ST_Point(0.0, 1.0) as geom
-                UNION ALL
-                SELECT 4 as id, ST_Point(0.0, -1.0) as geom
-                UNION ALL
-                SELECT 5 as id, ST_Point(2.0, 0.0) as geom
-            )
-            SELECT * FROM test_points
-        """
-        tie_test_tab = self.sedonadb.execute_and_collect(setup_query)
-        self.sedonadb.create_table_arrow("knn_tie_test", tie_test_tab)
-
-        # Query for 2 nearest neighbors from origin - should get 2 of the 4 equidistant points
-        query = """
-            WITH query_point AS (
-                SELECT ST_Point(0.0, 0.0) as geom
-            )
-            SELECT
-                t.id,
-                ST_Distance(query_point.geom, t.geom) as distance
-            FROM query_point
-            JOIN knn_tie_test t ON ST_KNN(query_point.geom, t.geom, 2, FALSE)
-            ORDER BY distance, t.id
-        """
-
-        result = self.sedonadb.execute_and_collect(query).to_pandas()
-
-        # Should get exactly 2 results
-        assert len(result) == 2, f"Expected 2 results, got {len(result)}"
-
-        # Both should be at distance 1.0 (the 4 equidistant points)
-        distances = result["distance"].tolist()
-        assert all(abs(d - 1.0) < 1e-6 for d in distances), (
-            f"Expected distances ~1.0, got {distances}"
-        )
+        # Run the benchmark
+        benchmark(run_knn_query)

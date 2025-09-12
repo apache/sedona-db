@@ -20,7 +20,7 @@ use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
-use arrow_schema::SchemaRef;
+use arrow_schema::{Schema, SchemaRef};
 use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
 use datafusion::{
     config::ConfigOptions, execution::session_state::SessionStateBuilder,
@@ -41,6 +41,8 @@ use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
 use sedona_common::{option::SedonaOptions, sedona_internal_err};
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
+use sedona_schema::datatypes::SedonaType;
+use sedona_schema::matchers::ArgMatcher;
 
 /// Physical planner extension for spatial joins
 ///
@@ -140,6 +142,15 @@ impl SpatialJoinOptimizer {
                 let right = nested_loop_join.right().clone();
                 let join_type = nested_loop_join.join_type();
 
+                // Check if the geospatial types involved in spatial_predicate are supported
+                if !is_spatial_predicate_supported(
+                    &spatial_predicate,
+                    &left.schema(),
+                    &right.schema(),
+                ) {
+                    return Ok(None);
+                }
+
                 // Create the spatial join
                 let spatial_join = SpatialJoinExec::try_new(
                     left,
@@ -171,6 +182,15 @@ impl SpatialJoinOptimizer {
                 // The transform_join_filter now prioritizes ST_KNN predicates
                 // Only proceed if we found an ST_KNN (other spatial predicates are left in hash join)
                 if !matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
+                    return Ok(None);
+                }
+
+                // Check if the geospatial types involved in spatial_predicate are supported (planar geometries only)
+                if !is_spatial_predicate_supported(
+                    &spatial_predicate,
+                    &hash_join.left().schema(),
+                    &hash_join.right().schema(),
+                ) {
                     return Ok(None);
                 }
 
@@ -853,6 +873,34 @@ fn replace_join_filter_expr(expr: &Arc<dyn PhysicalExpr>, join_filter: &JoinFilt
     )
 }
 
+fn is_spatial_predicate_supported(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> bool {
+    /// Only spatial predicates working with planar geometry are supported for optimization.
+    /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
+    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> bool {
+        let Ok(left_return_field) = expr.return_field(schema) else {
+            return false;
+        };
+        let Ok(sedona_type) = SedonaType::from_storage_field(&left_return_field) else {
+            return false;
+        };
+        let matcher = ArgMatcher::is_geometry();
+        matcher.match_type(&sedona_type)
+    }
+
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate { left, right, .. })
+        | SpatialPredicate::Distance(DistancePredicate { left, right, .. })
+        | SpatialPredicate::KNearestNeighbors(KNNPredicate { left, right, .. }) => {
+            is_geometry_type_supported(left, left_schema)
+                && is_geometry_type_supported(right, right_schema)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,7 +913,7 @@ mod tests {
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
     use datafusion_physical_plan::joins::utils::JoinFilter;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
     use std::sync::Arc;
 
     // Helper function to create a test schema
@@ -2417,5 +2465,40 @@ mod tests {
 
         let result = transform_join_filter(&join_filter);
         assert!(result.is_none()); // Should fail - k must be a literal value
+    }
+
+    #[test]
+    fn test_is_spatial_predicate_supported() {
+        // Planar geometry field
+        let geom_field = WKB_GEOMETRY.to_storage_field("geom", false).unwrap();
+        let schema = Arc::new(Schema::new(vec![geom_field.clone()]));
+        let col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred = RelationPredicate::new(
+            col_expr.clone(),
+            col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred = SpatialPredicate::Relation(rel_pred);
+        assert!(super::is_spatial_predicate_supported(
+            &spatial_pred,
+            &schema,
+            &schema
+        ));
+
+        // Geography field (should NOT be supported)
+        let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
+        let geog_schema = Arc::new(Schema::new(vec![geog_field.clone()]));
+        let geog_col_expr = Arc::new(Column::new("geog", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred_geog = RelationPredicate::new(
+            geog_col_expr.clone(),
+            geog_col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
+        assert!(!super::is_spatial_predicate_supported(
+            &spatial_pred_geog,
+            &geog_schema,
+            &geog_schema
+        ));
     }
 }
