@@ -27,20 +27,21 @@ use geo_traits::{
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::wkb_factory::{
-    write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
-    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
-    write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+use sedona_geometry::{
+    error::SedonaGeometryError,
+    wkb_factory::{
+        write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
+        write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
+        write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
+        write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+    },
 };
 
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{Edges, SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use wkb::reader::Wkb;
-
-use sedona_geometry::error::SedonaGeometryError;
 
 /// ST_FlipCoordinates() scalar UDF implementation
 ///
@@ -73,8 +74,12 @@ impl SedonaScalarKernel for STFlipCoordinates {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
 
         if matcher.match_args(args).is_ok() {
-            // keep the CRS in the output type if present
-            Ok(Some(args[0].clone()))
+            match &args[0] {
+                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+                    Ok(Some(SedonaType::Wkb(Edges::Planar, crs.clone())))
+                }
+                _ => Ok(Some(WKB_GEOMETRY)),
+            }
         } else {
             Ok(None)
         }
@@ -131,7 +136,6 @@ fn swap_yx(
                 swap_and_write(coord, dims, writer)?;
             }
         }
-        // Similar pattern for other geometry types...
         GeometryType::Polygon(pl) => {
             let num_rings = pl.interiors().count() + pl.exterior().is_some() as usize;
             write_wkb_polygon_header(writer, pl.dim(), num_rings)?;
@@ -230,7 +234,7 @@ mod tests {
     fn udf_invoke(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester =
             ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(sedona_type.clone());
+        tester.assert_return_type(WKB_GEOMETRY);
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (3 1)");
