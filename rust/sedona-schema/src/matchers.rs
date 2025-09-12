@@ -271,13 +271,7 @@ impl TypeMatcher for OrMatcher {
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
-        let mut types = self.matchers.iter().filter_map(|m| m.type_if_null());
-        let first = types.next()?;
-        if types.all(|t| t == first) {
-            Some(first)
-        } else {
-            None
-        }
+        self.matchers.get(0).and_then(|m| m.type_if_null())
     }
 }
 
@@ -541,6 +535,12 @@ mod tests {
             SedonaType::Arrow(DataType::Boolean),
             SedonaType::Arrow(DataType::Boolean)
         ]));
+
+        // Return type if null
+        assert_eq!(
+            ArgMatcher::or(vec![ArgMatcher::is_boolean(), ArgMatcher::is_numeric()]).type_if_null(),
+            Some(SedonaType::Arrow(DataType::Boolean))
+        );
     }
 
     #[test]
