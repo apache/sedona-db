@@ -513,10 +513,7 @@ mod tests {
         let matcher = ArgMatcher::new(
             vec![
                 ArgMatcher::is_geometry(),
-                ArgMatcher::or(vec![
-                    ArgMatcher::is_boolean(),
-                    ArgMatcher::is_numeric(),
-                ]),
+                ArgMatcher::or(vec![ArgMatcher::is_boolean(), ArgMatcher::is_numeric()]),
             ],
             SedonaType::Arrow(DataType::Null),
         );
