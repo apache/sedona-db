@@ -41,6 +41,30 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_intersects",
         ArrayScalar(Point, Polygon(500)),
     );
+
+    benchmark::scalar(c, &f, "geo", "st_distance", ArrayScalar(Point, Polygon(10)));
+    benchmark::scalar(
+        c,
+        &f,
+        "geo",
+        "st_distance",
+        ArrayScalar(Point, Polygon(500)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geo",
+        "st_dwithin",
+        ArrayArrayScalar(Polygon(10), Polygon(10), Float64(1.0, 2.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geo",
+        "st_dwithin",
+        ArrayArrayScalar(Polygon(10), Polygon(500), Float64(1.0, 2.0)),
+    );
 }
 
 fn criterion_benchmark_aggr(c: &mut Criterion) {

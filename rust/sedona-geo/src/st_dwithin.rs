@@ -103,20 +103,23 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_kernel("st_dwithin", st_dwithin_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                sedona_type.clone(),
-                sedona_type,
+                left_sedona_type.clone(),
+                right_sedona_type.clone(),
                 SedonaType::Arrow(DataType::Float64),
             ],
         );
@@ -127,8 +130,8 @@ mod tests {
         );
 
         // Test points within distance (3-4-5 triangle, distance = 5.0)
-        let point_0_0 = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
-        let point_3_4 = create_scalar(Some("POINT (3 4)"), &WKB_GEOMETRY);
+        let point_0_0 = create_scalar(Some("POINT (0 0)"), &left_sedona_type);
+        let point_3_4 = create_scalar(Some("POINT (3 4)"), &right_sedona_type);
         let distance_5 = ScalarValue::Float64(Some(5.0));
         let distance_4 = ScalarValue::Float64(Some(4.0));
 
@@ -145,7 +148,11 @@ mod tests {
 
         // Test with null values
         let result = tester
-            .invoke_scalar_scalar_scalar(ScalarValue::Null, point_0_0.clone(), distance_5.clone())
+            .invoke_scalar_scalar_scalar(ScalarValue::Null, point_3_4.clone(), distance_5.clone())
+            .unwrap();
+        assert!(result.is_null());
+        let result = tester
+            .invoke_scalar_scalar_scalar(point_0_0.clone(), ScalarValue::Null, distance_5.clone())
             .unwrap();
         assert!(result.is_null());
 

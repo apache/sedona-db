@@ -82,16 +82,22 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_kernel("st_distance", st_distance_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![left_sedona_type.clone(), right_sedona_type.clone()],
+        );
 
         assert_eq!(
             tester.return_type().unwrap(),
@@ -99,8 +105,8 @@ mod tests {
         );
 
         // Test distance between two points (3-4-5 triangle)
-        let point_0_0 = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
-        let point_3_4 = create_scalar(Some("POINT (3 4)"), &WKB_GEOMETRY);
+        let point_0_0 = create_scalar(Some("POINT (0 0)"), &left_sedona_type);
+        let point_3_4 = create_scalar(Some("POINT (3 4)"), &right_sedona_type);
 
         let result = tester
             .invoke_scalar_scalar(point_0_0.clone(), point_3_4.clone())
@@ -113,7 +119,11 @@ mod tests {
 
         // Test with null values
         let result = tester
-            .invoke_scalar_scalar(ScalarValue::Null, point_0_0.clone())
+            .invoke_scalar_scalar(ScalarValue::Null, point_3_4.clone())
+            .unwrap();
+        assert!(result.is_null());
+        let result = tester
+            .invoke_scalar_scalar(point_0_0.clone(), ScalarValue::Null)
             .unwrap();
         assert!(result.is_null());
     }
