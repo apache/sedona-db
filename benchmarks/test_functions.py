@@ -116,8 +116,6 @@ class TestBenchFunctions(TestBenchBase):
 
         benchmark(queries)
 
-
-
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
     @pytest.mark.parametrize(
         "table",
