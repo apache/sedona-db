@@ -566,7 +566,8 @@ fn generate_random_linestring<R: rand::Rng>(
         );
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
-        let coords = generate_circular_vertices(center_x, center_y, half_size, num_vertices, false);
+        let coords =
+            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, false);
         LineString::from(coords)
     }
 }
@@ -582,7 +583,8 @@ fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOp
         );
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
-        let coords = generate_circular_vertices(center_x, center_y, half_size, num_vertices, true);
+        let coords =
+            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, true);
         let shell = LineString::from(coords);
         let mut holes = Vec::new();
 
@@ -593,7 +595,7 @@ fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOp
         if add_hole {
             let new_size = half_size * hole_scale_factor;
             let mut coords =
-                generate_circular_vertices(center_x, center_y, new_size, num_vertices, true);
+                generate_circular_vertices(rng, center_x, center_y, new_size, num_vertices, true);
             coords.reverse();
             holes.push(LineString::from(coords));
         }
@@ -756,7 +758,8 @@ fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> V
     tiles
 }
 
-fn generate_circular_vertices(
+fn generate_circular_vertices<R: rand::Rng>(
+    rng: &mut R,
     center_x: f64,
     center_y: f64,
     radius: f64,
@@ -764,7 +767,11 @@ fn generate_circular_vertices(
     closed: bool,
 ) -> Vec<Coord> {
     let mut out = Vec::new();
-    let mut angle: f64 = 0.0;
+
+    // Randomize starting angle (0 to 2 * PI)
+    let start_angle_dist = Uniform::new(0.0, 2.0 * PI);
+    let mut angle: f64 = rng.sample(start_angle_dist);
+
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
     for _ in 0..num_vertices {
         out.push(Coord {

@@ -33,7 +33,7 @@ class TestBenchBase:
                 {
                     "geom_type": "LineString",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [2, 2],
+                    "vertices_per_linestring_range": [2, 10],
                 },
             ),
             (
@@ -70,33 +70,41 @@ class TestBenchBase:
             ),
         ]:
             # Generate synthetic data with two different geometry sets that have overlapping spatial distribution
-            # This creates more realistic workloads for spatial predicates
-            
+            # The intersection rate between geom1 and geom2 will be around 2%.
+            # This creates more realistic workloads for spatial predicates.
+
             # Options for first geometry set (geom1) - left-leaning distribution
             options1 = base_options.copy()
-            options1.update({
-                "seed": 42,
-                "bounds": [0.0, 0.0, 80.0, 100.0],  # Slightly left-leaning
-                "size_range": [1.0, 15.0]  # Medium-sized geometries for good intersection chance
-            })
-            
-            # Options for second geometry set (geom2) - right-leaning distribution  
+            options1.update(
+                {
+                    "seed": 42,
+                    "bounds": [0.0, 0.0, 80.0, 100.0],  # Slightly left-leaning
+                    "size_range": [
+                        1.0,
+                        15.0,
+                    ],  # Medium-sized geometries for good intersection chance
+                }
+            )
+
+            # Options for second geometry set (geom2) - right-leaning distribution
             options2 = base_options.copy()
-            options2.update({
-                "seed": 1337,
-                "bounds": [20.0, 0.0, 100.0, 100.0],  # Slightly right-leaning
-                "size_range": [1.0, 15.0]  # Same size range for fair comparison
-            })
-            
+            options2.update(
+                {
+                    "seed": 43,
+                    "bounds": [20.0, 0.0, 100.0, 100.0],  # Slightly right-leaning
+                    "size_range": [1.0, 15.0],  # Same size range for fair comparison
+                }
+            )
+
             query = f"""
                 WITH geom1_data AS (
-                    SELECT 
+                    SELECT
                         geometry as geom1,
                         row_number() OVER () as id
                     FROM sd_random_geometry('{json.dumps(options1)}')
                 ),
                 geom2_data AS (
-                    SELECT 
+                    SELECT
                         geometry as geom2,
                         row_number() OVER () as id
                     FROM sd_random_geometry('{json.dumps(options2)}')
@@ -111,7 +119,7 @@ class TestBenchBase:
             tab = self.sedonadb.execute_and_collect(query)
 
             self.sedonadb.create_table_arrow(name, tab)
-            # self.postgis.create_table_arrow(name, tab)
+            self.postgis.create_table_arrow(name, tab)
             self.duckdb.create_table_arrow(name, tab)
 
     def _get_eng(self, eng):

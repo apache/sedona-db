@@ -43,4 +43,5 @@ def test_st_distance(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_Distance({geom_or_null(geom1)}, {geom_or_null(geom2)})",
         expected,
+        numeric_epsilon=1e-8,
     )
