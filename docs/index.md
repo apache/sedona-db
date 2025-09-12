@@ -1,6 +1,8 @@
 ---
 hide:
   - navigation
+
+title: Introducing SedonaDB
 ---
 
 <!---
@@ -22,13 +24,18 @@ hide:
   under the License.
 -->
 
-# SedonaDB
+SedonaDB is a high-performance, dependency-free geospatial compute engine designed for single-node processing, making it ideal for smaller datasets on local machines or cloud instances.
 
-SedonaDB is a high-performance, dependency-free geospatial compute engine.
+The initial `0.1` release supports a core set of vector operations, with comprehensive vector and raster computation capabilities planned for the near future.
 
-You can easily run SedonaDB locally or in the cloud.  The first release supports a core set of vector operations, but the full-suite of common vector and raster computations will be supported soon.
+## Run a query in SQL, Python, or Rust
 
-SedonaDB only runs on a single machine, so it’s perfect for processing smaller datasets.  You can use SedonaSpark, SedonaFlink, or SedonaSnow for operations on larger datasets.
+SedonaDB offers a flexible query interface in SQL, Python, or Rust.
+
+Engineered for speed, SedonaDB provides blazing-fast geospatial processing on a single machine. This makes it perfect for the rapid analysis of smaller datasets, whether you're working locally or on a cloud server. While the initial release focuses on core vector operations, a full suite of vector and raster computations is on the roadmap.
+
+For massive, distributed workloads, you can leverage the power of SedonaSpark,
+SedonaFlink, or SedonaSnow.
 
 === "SQL"
 
@@ -81,7 +88,7 @@ SedonaDB has several advantages:
 
 ## Installation
 
-Here’s how to install SedonaDB with various build tools:
+Here's how to install SedonaDB with various build tools:
 
 === "pip"
 
@@ -95,12 +102,8 @@ Here’s how to install SedonaDB with various build tools:
 	install.packages("sedonadb", repos = "https://community.r-multiverse.org")
 	```
 
-## SedonaDB example with vector data
-
-TODO
-
 ## Have questions?
 
-Feel free to start a GitHub Discussion or join the Discord community to ask the developers any questions you may have.
+Start a [GitHub Discussion ](https://github.com/apache/sedona-db/issues)or join the [Discord community](https://discord.com/invite/9A3k5dEBsY) and ask the developers any questions you may have.
 
 We look forward to collaborating with you!

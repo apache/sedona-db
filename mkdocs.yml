@@ -1,11 +1,12 @@
 site_name: SedonaDB
 site_description: "Documentation for Apache SedonaDB"
+site_url: https://sedona.apache.org/sedonadb/
 nav:
-   - Home: index.md
+   - SedonaDB: index.md
    - SedonaDB Guides:
+     - Python Quickstart: quickstart-python.md
      - SedonaDB Guide: programming-guide.ipynb
      - CLI Quickstart: quickstart-cli.md
-     - Python Quickstart: quickstart-python.ipynb
      - Development: development.md
    - SedonaDB Reference:
       - Python:
@@ -15,8 +16,10 @@ nav:
           - Spatial Joins: reference/sql-joins.md
           - Read Parquet Files: reference/read-parquet-files.md
    - Blog: "https://sedona.apache.org/latest/blog/"
+   - Community: "https://sedona.apache.org/latest/community/contact/"
    - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
-   - Return to Sedona Homepage: "https://sedona.apache.org/latest/"
+   - Sedona Homepage: "https://sedona.apache.org/latest/"
+
 repo_url: https://github.com/apache/sedona-db
 repo_name: apache/sedona-db
 theme:
@@ -49,7 +52,6 @@ extra:
     provider: mike
     default:
        - 0.1
-
 
 extra_css:
   - stylesheets/extra.css
