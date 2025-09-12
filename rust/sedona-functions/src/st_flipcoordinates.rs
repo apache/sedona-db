@@ -22,23 +22,16 @@ use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::{
-    CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
-    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
-};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
-    wkb_factory::{
-        write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
-        write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-        write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
-        write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
-    },
+    transform::{transform, CrsTransform},
+    wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
 
+use sedona_schema::datatypes::WKB_GEOGRAPHY;
 use sedona_schema::{
-    datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use wkb::reader::Wkb;
@@ -71,17 +64,15 @@ struct STFlipCoordinates {}
 
 impl SedonaScalarKernel for STFlipCoordinates {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        let geom_matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        let geog_matcher = ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY);
+        let matched_geom = geom_matcher.match_args(args)?;
+        let matched_geog = geog_matcher.match_args(args)?;
 
-        if matcher.match_args(args).is_ok() {
-            match &args[0] {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
-                    Ok(Some(SedonaType::Wkb(Edges::Planar, crs.clone())))
-                }
-                _ => Ok(Some(WKB_GEOMETRY)),
-            }
-        } else {
-            Ok(None)
+        match (matched_geom, matched_geog) {
+            (Some(geom_result), _) => Ok(Some(geom_result)),
+            (_, Some(geog_result)) => Ok(Some(geog_result)),
+            _ => Ok(None),
         }
     }
 
@@ -96,10 +87,12 @@ impl SedonaScalarKernel for STFlipCoordinates {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
+        let mut transform = SwapXy {};
+
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar(&item, &mut builder)?;
+                    invoke_scalar(&item, &mut transform, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -111,105 +104,25 @@ impl SedonaScalarKernel for STFlipCoordinates {
     }
 }
 
-fn invoke_scalar(wkb: &Wkb, writer: &mut impl std::io::Write) -> Result<()> {
-    swap_yx(wkb, writer).map_err(|e| DataFusionError::External(e.into()))
-}
-
-fn swap_yx(
-    geom: impl GeometryTrait<T = f64>,
+fn invoke_scalar(
+    wkb: &Wkb,
+    swap_transform: &mut SwapXy,
     writer: &mut impl std::io::Write,
-) -> Result<(), SedonaGeometryError> {
-    let dims = geom.dim();
-
-    match geom.as_type() {
-        GeometryType::Point(pt) => {
-            if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)?;
-                swap_and_write(pt.coord().unwrap(), dims, writer)?;
-            } else {
-                write_wkb_empty_point(writer, dims)?;
-            }
-        }
-        GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(writer, ls.dim(), ls.coords().count())?;
-            for coord in ls.coords() {
-                swap_and_write(coord, dims, writer)?;
-            }
-        }
-        GeometryType::Polygon(pl) => {
-            let num_rings = pl.interiors().count() + pl.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, pl.dim(), num_rings)?;
-
-            if let Some(exterior) = pl.exterior() {
-                write_wkb_polygon_ring_header(writer, exterior.coords().count())?;
-                for coord in exterior.coords() {
-                    swap_and_write(coord, dims, writer)?;
-                }
-            }
-
-            for interior in pl.interiors() {
-                write_wkb_polygon_ring_header(writer, interior.coords().count())?;
-                for coord in interior.coords() {
-                    swap_and_write(coord, dims, writer)?;
-                }
-            }
-        }
-        GeometryType::MultiPoint(multi_pt) => {
-            write_wkb_multipoint_header(writer, dims, multi_pt.points().count())?;
-            for pt in multi_pt.points() {
-                swap_yx(pt, writer)?;
-            }
-        }
-        GeometryType::MultiLineString(multi_ls) => {
-            write_wkb_multilinestring_header(writer, dims, multi_ls.line_strings().count())?;
-            for ls in multi_ls.line_strings() {
-                swap_yx(ls, writer)?;
-            }
-        }
-        GeometryType::MultiPolygon(multi_pl) => {
-            write_wkb_multipolygon_header(writer, dims, multi_pl.polygons().count())?;
-            for pl in multi_pl.polygons() {
-                swap_yx(pl, writer)?;
-            }
-        }
-        GeometryType::GeometryCollection(collection) => {
-            write_wkb_geometrycollection_header(writer, dims, collection.geometries().count())?;
-            for geom in collection.geometries() {
-                swap_yx(geom, writer)?;
-            }
-        }
-        _ => {
-            return Err(SedonaGeometryError::Invalid(
-                "GeometryType not supported for transform".to_string(),
-            ))
-        }
-    };
-
+) -> Result<(), DataFusionError> {
+    transform(wkb, swap_transform, writer).map_err(|e| DataFusionError::External(e.into()))?;
     Ok(())
 }
 
-fn swap_and_write<C: CoordTrait<T = f64>>(
-    coord: C,
-    dims: Dimensions,
-    writer: &mut impl std::io::Write,
-) -> Result<(), SedonaGeometryError> {
-    match dims {
-        Dimensions::Xy => write_wkb_coord(writer, (coord.y(), coord.x())),
-        Dimensions::Xyz | Dimensions::Xym => {
-            write_wkb_coord(writer, (coord.y(), coord.x(), coord.nth_or_panic(2)))
-        }
-        Dimensions::Xyzm => write_wkb_coord(
-            writer,
-            (
-                coord.y(),
-                coord.x(),
-                coord.nth_or_panic(2),
-                coord.nth_or_panic(3),
-            ),
-        ),
-        _ => Err(SedonaGeometryError::Invalid(
-            "Unsupported geometry dimension".to_string(),
-        )),
+#[derive(Debug)]
+struct SwapXy {}
+impl CrsTransform for SwapXy {
+    fn transform_coord(
+        &self,
+        coord: &mut (f64, f64),
+    ) -> std::result::Result<(), SedonaGeometryError> {
+        let (x, y) = *coord;
+        *coord = (y, x);
+        Ok(())
     }
 }
 
@@ -218,7 +131,9 @@ mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::SedonaType::Wkb;
+    use sedona_schema::datatypes::{Edges, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -230,11 +145,30 @@ mod tests {
         assert!(udf.documentation().is_some());
     }
 
+    #[test]
+    fn udf_return_type() {
+        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_GEOGRAPHY]);
+        tester.assert_return_type(WKB_GEOGRAPHY);
+
+        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_VIEW_GEOMETRY]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let tester = ScalarUdfTester::new(
+            st_flipcoordinates_udf().into(),
+            vec![Wkb(Edges::Planar, lnglat())],
+        );
+        tester.assert_return_type(Wkb(Edges::Planar, lnglat()));
+    }
+
     #[rstest]
-    fn udf_invoke(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_invoke(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
+    ) {
         let tester =
             ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(WKB_GEOMETRY);
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (3 1)");
