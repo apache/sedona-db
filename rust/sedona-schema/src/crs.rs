@@ -293,9 +293,8 @@ impl CoordinateReferenceSystem for ProjJSON {
         let authority_code_opt = self.to_authority_code()?;
         if let Some(authority_code) = authority_code_opt {
             if LngLat::is_authority_code_lnglat(&authority_code) {
-                LngLat::srid();
-            }
-            if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
+                return Ok(LngLat::srid());
+            } else if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
                 return Ok(code.parse::<u32>().ok());
             }
         }
