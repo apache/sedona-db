@@ -18,9 +18,11 @@ import geoarrow.pyarrow as ga
 import geoarrow.types as gat
 import geopandas.testing
 import pandas as pd
+from pathlib import Path
 import pyarrow as pa
 import pytest
 import sedonadb
+import tempfile
 
 
 def test_dataframe_from_dataframe(con):
@@ -279,6 +281,55 @@ def test_dataframe_to_pandas(con):
     pd.testing.assert_frame_equal(
         df_without_geo.to_pandas(), pd.DataFrame({"one": [1]})
     )
+
+
+def test_dataframe_to_parquet(con):
+    df = con.sql(
+        "SELECT * FROM (VALUES ('one', 1), ('two', 2), ('three', 3)) AS t(a, b)"
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        # Defaults with a path that ends with .parquet (single file)
+        tmp_parquet_file = Path(td) / "tmp.parquet"
+        df.to_parquet(tmp_parquet_file)
+
+        assert tmp_parquet_file.exists()
+        assert tmp_parquet_file.is_file()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_file),
+            pd.DataFrame({"a": ["one", "two", "three"], "b": [1, 2, 3]}),
+        )
+
+        # Defaults with a path that doesn't end in .parquet (directory)
+        tmp_parquet_dir = Path(td) / "tmp"
+        df.to_parquet(tmp_parquet_dir)
+
+        assert tmp_parquet_dir.exists()
+        assert tmp_parquet_dir.is_dir()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_dir),
+            pd.DataFrame({"a": ["one", "two", "three"], "b": [1, 2, 3]}),
+        )
+
+        # With partition_by
+        tmp_parquet_dir = Path(td) / "tmp_partitioned"
+        df.to_parquet(tmp_parquet_dir, partition_by=["a"])
+        assert tmp_parquet_dir.exists()
+        assert tmp_parquet_dir.is_dir()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_dir).sort_values("b").reset_index(drop=True),
+            pd.DataFrame(
+                {"b": [1, 2, 3], "a": pd.Categorical(["one", "two", "three"])}
+            ),
+        )
+
+        # With order_by
+        tmp_parquet = Path(td) / "tmp_ordered.parquet"
+        df.to_parquet(tmp_parquet, sort_by=["a"])
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet),
+            pd.DataFrame({"a": ["one", "three", "two"], "b": [1, 3, 2]}),
+        )
 
 
 def test_show(con, capsys):

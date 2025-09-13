@@ -110,6 +110,7 @@ rstest = "0.24.0"
 serde = { version = "1" }
 serde_json = { version = "1" }
 serde_with = { version = "1" }
+tempfile = { version = "3"}
 thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"

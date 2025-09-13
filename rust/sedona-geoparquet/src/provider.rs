@@ -173,7 +173,8 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 
         let mut options = self.inner.to_listing_options(config, table_options);
         if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
-            options.format = Arc::new(GeoParquetFormat::new(parquet_format));
+            let geoparquet_options = parquet_format.options().clone().into();
+            options.format = Arc::new(GeoParquetFormat::new(geoparquet_options));
             return options;
         }
 

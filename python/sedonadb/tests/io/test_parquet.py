@@ -19,6 +19,7 @@ import pytest
 import tempfile
 import shapely
 import geopandas
+import geopandas.testing
 from pyarrow import parquet
 from pathlib import Path
 from sedonadb.testing import geom_or_null, SedonaDB, DuckDB, skip_if_not_exists
@@ -238,3 +239,39 @@ def test_read_geoparquet_prune_polygons(sedona_testing, predicate):
         """
         )
         eng.assert_result(result, gdf)
+
+
+@pytest.mark.parametrize("name", ["water-junc", "water-point"])
+def test_write_geoparquet_geometry(con, geoarrow_data, name):
+    # Checks a read and write of some non-trivial files and ensures we match GeoPandas
+    path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
+    skip_if_not_exists(path)
+
+    gdf = geopandas.read_parquet(path).sort_values(by="OBJECTID").reset_index(drop=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(gdf).to_parquet(tmp_parquet)
+
+        gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
+        geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
+
+
+def test_write_geoparquet_geography(con, geoarrow_data):
+    # Checks a read and write of geography (rounctrip, since nobody else can read/write)
+    path = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography_geo.parquet"
+    )
+    skip_if_not_exists(path)
+
+    table = con.read_parquet(path).to_arrow_table()
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(table).to_parquet(tmp_parquet)
+
+        table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
+        assert table_roundtrip == table

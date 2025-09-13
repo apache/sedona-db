@@ -22,7 +22,10 @@ use crate::{
     random_geometry_provider::RandomGeometryFunction,
     show::{show_batches, DisplayTableOptions},
 };
+use arrow_array::RecordBatch;
 use async_trait::async_trait;
+use datafusion::dataframe::DataFrameWriteOptions;
+use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
     common::{plan_datafusion_err, plan_err},
     error::{DataFusionError, Result},
@@ -30,11 +33,15 @@ use datafusion::{
     prelude::{DataFrame, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
+use datafusion_common::not_impl_err;
+use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
+use datafusion_expr::{LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::{function_set::FunctionSet, scalar_udf::ScalarKernelRef};
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
@@ -269,6 +276,14 @@ pub trait SedonaDataFrame {
         limit: Option<usize>,
         options: DisplayTableOptions<'a>,
     ) -> Result<String>;
+
+    async fn write_geoparquet(
+        self,
+        ctx: &SedonaContext,
+        path: &str,
+        options: SedonaWriteOptions,
+        writer_options: Option<TableGeoParquetOptions>,
+    ) -> Result<Vec<RecordBatch>>;
 }
 
 #[async_trait]
@@ -286,6 +301,120 @@ impl SedonaDataFrame for DataFrame {
         let mut out = Vec::new();
         show_batches(ctx, &mut out, schema, batches, options)?;
         String::from_utf8(out).map_err(|e| DataFusionError::External(Box::new(e)))
+    }
+
+    async fn write_geoparquet(
+        self,
+        ctx: &SedonaContext,
+        path: &str,
+        options: SedonaWriteOptions,
+        writer_options: Option<TableGeoParquetOptions>,
+    ) -> Result<Vec<RecordBatch>, DataFusionError> {
+        if options.insert_op != InsertOp::Append {
+            return not_impl_err!(
+                "{} is not implemented for DataFrame::write_geoparquet.",
+                options.insert_op
+            );
+        }
+
+        let format = if let Some(parquet_opts) = writer_options {
+            Arc::new(GeoParquetFormatFactory::new_with_options(parquet_opts))
+        } else {
+            Arc::new(GeoParquetFormatFactory::new())
+        };
+
+        let file_type = format_as_file_type(format);
+
+        let plan = if options.sort_by.is_empty() {
+            self.into_unoptimized_plan()
+        } else {
+            LogicalPlanBuilder::from(self.into_unoptimized_plan())
+                .sort(options.sort_by)?
+                .build()?
+        };
+
+        let plan = LogicalPlanBuilder::copy_to(
+            plan,
+            path.into(),
+            file_type,
+            Default::default(),
+            options.partition_by,
+        )?
+        .build()?;
+
+        DataFrame::new(ctx.ctx.state(), plan).collect().await
+    }
+}
+
+/// A Sedona-specific copy of [DataFrameWriteOptions]
+///
+/// This is needed because [DataFrameWriteOptions] has private fields, so we
+/// can't use it in our interfaces. This object can be converted to a
+/// [DataFrameWriteOptions] using `.into()`.
+pub struct SedonaWriteOptions {
+    /// Controls how new data should be written to the table, determining whether
+    /// to append, overwrite, or replace existing data.
+    pub insert_op: InsertOp,
+    /// Controls if all partitions should be coalesced into a single output file
+    /// Generally will have slower performance when set to true.
+    pub single_file_output: bool,
+    /// Sets which columns should be used for hive-style partitioned writes by name.
+    /// Can be set to empty vec![] for non-partitioned writes.
+    pub partition_by: Vec<String>,
+    /// Sets which columns should be used for sorting the output by name.
+    /// Can be set to empty vec![] for non-sorted writes.
+    pub sort_by: Vec<SortExpr>,
+}
+
+impl From<SedonaWriteOptions> for DataFrameWriteOptions {
+    fn from(value: SedonaWriteOptions) -> Self {
+        DataFrameWriteOptions::new()
+            .with_insert_operation(value.insert_op)
+            .with_single_file_output(value.single_file_output)
+            .with_partition_by(value.partition_by)
+            .with_sort_by(value.sort_by)
+    }
+}
+
+impl SedonaWriteOptions {
+    /// Create a new SedonaWriteOptions with default values
+    pub fn new() -> Self {
+        SedonaWriteOptions {
+            insert_op: InsertOp::Append,
+            single_file_output: false,
+            partition_by: vec![],
+            sort_by: vec![],
+        }
+    }
+
+    /// Set the insert operation
+    pub fn with_insert_operation(mut self, insert_op: InsertOp) -> Self {
+        self.insert_op = insert_op;
+        self
+    }
+
+    /// Set the single_file_output value to true or false
+    pub fn with_single_file_output(mut self, single_file_output: bool) -> Self {
+        self.single_file_output = single_file_output;
+        self
+    }
+
+    /// Sets the partition_by columns for output partitioning
+    pub fn with_partition_by(mut self, partition_by: Vec<String>) -> Self {
+        self.partition_by = partition_by;
+        self
+    }
+
+    /// Sets the sort_by columns for output sorting
+    pub fn with_sort_by(mut self, sort_by: Vec<SortExpr>) -> Self {
+        self.sort_by = sort_by;
+        self
+    }
+}
+
+impl Default for SedonaWriteOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -325,6 +454,7 @@ mod tests {
         datatypes::{Edges, SedonaType},
     };
     use sedona_testing::data::test_geoparquet;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -373,6 +503,23 @@ mod tests {
                 "+-----+"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn write_geoparquet() {
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("tmp.parquet");
+        let ctx = SedonaContext::new();
+        ctx.sql("SELECT 1 as one")
+            .await
+            .unwrap()
+            .write_parquet(
+                &tmp_parquet.to_string_lossy(),
+                DataFrameWriteOptions::default(),
+                None,
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

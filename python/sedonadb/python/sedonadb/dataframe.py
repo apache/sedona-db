@@ -14,7 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import TYPE_CHECKING, Union, Optional, Any
+
+from pathlib import Path
+from typing import TYPE_CHECKING, Union, Optional, Any, Iterable
 
 from sedonadb._options import global_options
 
@@ -262,6 +264,66 @@ class DataFrame:
             return GeoDataFrame.from_arrow(table, geometry=geometry)
         else:
             return table.to_pandas()
+
+    def to_parquet(
+        self,
+        path: Union[str, Path],
+        *,
+        partition_by: Optional[Union[str, Iterable[str]]] = None,
+        sort_by: Optional[Union[str, Iterable[str]]] = None,
+        single_file_output: Optional[bool] = None,
+    ):
+        """Write this DataFrame to one or more (Geo)Parquet files
+
+        For input that contains geometry columns, GeoParquet metadata is written
+        such that suitable readers can recreate Geometry/Geography types when
+        reading the output.
+
+
+        Args:
+            path: A filename or directory to which parquet file(s) should be written.
+            partition_by: A vector of column names to partition by. If non-empty,
+                applies hive-style partitioning to the output.
+            sort_by: A vector of column names to sort by. Currently only ascending
+                sort is supported.
+            single_file_output: Use True or False to force writing a single Parquet
+                file vs. writing one file per partition to a directory. By default,
+                a single file is written if `partition_by` is unspecified and
+                `path` ends with `.parquet`.
+
+        Examples:
+
+            >>> import sedonadb
+            >>> import tempfile
+            >>> con = sedonadb.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
+            >>> con.read_parquet(url).to_parquet(f"{td.name}/tmp.parquet")
+
+        """
+
+        path = Path(path)
+
+        if single_file_output is None:
+            single_file_output = partition_by is None and str(path).endswith(".parquet")
+
+        if isinstance(partition_by, str):
+            partition_by = [partition_by]
+        elif partition_by is not None:
+            partition_by = list(partition_by)
+        else:
+            partition_by = []
+
+        if isinstance(sort_by, str):
+            sort_by = [sort_by]
+        elif sort_by is not None:
+            sort_by = list(sort_by)
+        else:
+            sort_by = []
+
+        self._impl.to_parquet(
+            self._ctx, str(path), partition_by, sort_by, single_file_output
+        )
 
     def show(
         self,

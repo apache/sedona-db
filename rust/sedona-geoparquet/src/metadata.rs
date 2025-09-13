@@ -63,6 +63,12 @@ pub enum GeoParquetColumnEncoding {
     MultiPolygon,
 }
 
+impl Default for GeoParquetColumnEncoding {
+    fn default() -> Self {
+        Self::WKB
+    }
+}
+
 impl Display for GeoParquetColumnEncoding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use GeoParquetColumnEncoding::*;
@@ -276,8 +282,18 @@ pub struct GeoParquetMetadata {
     pub columns: HashMap<String, GeoParquetColumnMetadata>,
 }
 
+impl Default for GeoParquetMetadata {
+    fn default() -> Self {
+        Self {
+            version: "1.0.0".to_string(),
+            primary_column: Default::default(),
+            columns: Default::default(),
+        }
+    }
+}
+
 /// GeoParquet column metadata
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct GeoParquetColumnMetadata {
     /// Name of the geometry encoding format. As of GeoParquet 1.1, `"WKB"`, `"point"`,
     /// `"linestring"`, `"polygon"`, `"multipoint"`, `"multilinestring"`, and `"multipolygon"` are

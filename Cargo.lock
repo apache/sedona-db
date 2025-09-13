@@ -4810,6 +4810,7 @@ dependencies = [
  "sedona-tg",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "url",
 ]
@@ -4987,6 +4988,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "tempfile",
  "tokio",
  "url",
 ]
@@ -5167,6 +5169,7 @@ dependencies = [
  "async-trait",
  "datafusion",
  "datafusion-common",
+ "datafusion-expr",
  "datafusion-ffi",
  "futures",
  "libmimalloc-sys",

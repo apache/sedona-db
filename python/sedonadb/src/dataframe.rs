@@ -22,12 +22,16 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::RecordBatchReader;
 use arrow_schema::Schema;
 use datafusion::catalog::MemTable;
+use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
+use datafusion_common::Column;
+use datafusion_expr::Expr;
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona::context::SedonaDataFrame;
+use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
@@ -117,6 +121,41 @@ impl InternalDataFrame {
             ctx.inner.ctx.read_table(Arc::new(provider))?,
             self.runtime.clone(),
         ))
+    }
+
+    fn to_parquet<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+        path: String,
+        partition_by: Vec<String>,
+        sort_by: Vec<String>,
+        single_file_output: bool,
+    ) -> Result<(), PySedonaError> {
+        // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
+        // field names (ascending), but other types of expressions aren't supported here yet.
+        let sort_by_expr = sort_by
+            .into_iter()
+            .map(|name| {
+                let column = Expr::Column(Column::new_unqualified(name));
+                SortExpr::new(column, true, false)
+            })
+            .collect::<Vec<_>>();
+
+        let options = SedonaWriteOptions::new()
+            .with_partition_by(partition_by)
+            .with_sort_by(sort_by_expr)
+            .with_single_file_output(single_file_output);
+        let writer_options = TableGeoParquetOptions::default();
+
+        wait_for_future(
+            py,
+            &self.runtime,
+            self.inner
+                .clone()
+                .write_geoparquet(&ctx.inner, &path, options, Some(writer_options)),
+        )??;
+        Ok(())
     }
 
     fn show<'py>(

@@ -36,6 +36,7 @@ arrow-array = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }
 pyo3 = { version = "0.25.1" }

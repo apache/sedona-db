@@ -14,12 +14,13 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
-    config::{ConfigOptions, TableParquetOptions},
+    config::ConfigOptions,
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
@@ -32,7 +33,7 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{not_impl_err, plan_err, GetExt, Result, Statistics};
+use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
@@ -47,6 +48,8 @@ use sedona_schema::extension_type::ExtensionType;
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
+    options::{GeoParquetVersion, TableGeoParquetOptions},
+    writer::create_geoparquet_writer_physical_plan,
 };
 use datafusion::datasource::physical_plan::ParquetSource;
 use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
@@ -55,9 +58,10 @@ use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
 ///
 /// A DataFusion FormatFactory provides a means to allow creating a table
 /// or referencing one from a SQL context like COPY TO.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GeoParquetFormatFactory {
     inner: ParquetFormatFactory,
+    options: Option<TableGeoParquetOptions>,
 }
 
 impl GeoParquetFormatFactory {
@@ -66,13 +70,15 @@ impl GeoParquetFormatFactory {
     pub fn new() -> Self {
         Self {
             inner: ParquetFormatFactory::new(),
+            options: None,
         }
     }
 
     /// Creates an instance of [GeoParquetFormatFactory] with customized default options
-    pub fn new_with_options(options: TableParquetOptions) -> Self {
+    pub fn new_with_options(options: TableGeoParquetOptions) -> Self {
         Self {
-            inner: ParquetFormatFactory::new_with_options(options),
+            inner: ParquetFormatFactory::new_with_options(options.inner.clone()),
+            options: Some(options),
         }
     }
 }
@@ -83,9 +89,24 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         state: &dyn Session,
         format_options: &HashMap<String, String>,
     ) -> Result<Arc<dyn FileFormat>> {
-        let inner_format = self.inner.create(state, format_options)?;
+        let mut options_mut = self.options.clone().unwrap_or_default();
+        let mut format_options_mut = format_options.clone();
+        options_mut.geoparquet_version =
+            if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
+                match version_string.as_str() {
+                    "1.0" => GeoParquetVersion::V1_0,
+                    "1.1" => GeoParquetVersion::V1_1,
+                    "2.0" => GeoParquetVersion::V2_0,
+                    _ => GeoParquetVersion::default(),
+                }
+            } else {
+                GeoParquetVersion::default()
+            };
+
+        let inner_format = self.inner.create(state, &format_options_mut)?;
         if let Some(parquet_format) = inner_format.as_any().downcast_ref::<ParquetFormat>() {
-            Ok(Arc::new(GeoParquetFormat::new(parquet_format)))
+            options_mut.inner = parquet_format.options().clone();
+            Ok(Arc::new(GeoParquetFormat::new(options_mut)))
         } else {
             sedona_internal_err!(
                 "Unexpected format from ParquetFormatFactory: {:?}",
@@ -115,27 +136,19 @@ impl GetExt for GeoParquetFormatFactory {
 /// FileFormat is to be able to be used in a ListingTable (i.e., multi file table).
 /// Here we also use it to implement a basic `TableProvider` that give us most if
 /// not all of the features of the underlying Parquet reader.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GeoParquetFormat {
-    inner: ParquetFormat,
+    options: TableGeoParquetOptions,
 }
 
 impl GeoParquetFormat {
     /// Create a new instance of the file format
-    pub fn new(inner: &ParquetFormat) -> Self {
-        // For GeoParquet we currently inspect metadata at the Arrow level,
-        // so we need this to be exposed by the underlying reader. Depending on
-        // what exactly we're doing, we might need the underlying metadata or might
-        // need it to be omitted.
-        Self {
-            inner: ParquetFormat::new().with_options(inner.options().clone()),
-        }
+    pub fn new(options: TableGeoParquetOptions) -> Self {
+        Self { options }
     }
-}
 
-impl Default for GeoParquetFormat {
-    fn default() -> Self {
-        Self::new(&ParquetFormat::default())
+    fn inner(&self) -> ParquetFormat {
+        ParquetFormat::new().with_options(self.options.inner.clone())
     }
 }
 
@@ -146,18 +159,18 @@ impl FileFormat for GeoParquetFormat {
     }
 
     fn get_ext(&self) -> String {
-        self.inner.get_ext()
+        ParquetFormatFactory::new().get_ext()
     }
 
     fn get_ext_with_compression(
         &self,
         file_compression_type: &FileCompressionType,
     ) -> Result<String> {
-        self.inner.get_ext_with_compression(file_compression_type)
+        self.inner().get_ext_with_compression(file_compression_type)
     }
 
     fn compression_type(&self) -> Option<FileCompressionType> {
-        self.inner.compression_type()
+        self.inner().compression_type()
     }
 
     async fn infer_schema(
@@ -169,7 +182,8 @@ impl FileFormat for GeoParquetFormat {
         // First, try the underlying format without schema metadata. This should work
         // for regular Parquet reads and will at least ensure that the underlying schemas
         // are compatible.
-        let inner_schema_without_metadata = self.inner.infer_schema(state, store, objects).await?;
+        let inner_schema_without_metadata =
+            self.inner().infer_schema(state, store, objects).await?;
 
         // Collect metadata separately. We can in theory do our own schema
         // inference too to save an extra server request, but then we have to
@@ -180,7 +194,7 @@ impl FileFormat for GeoParquetFormat {
                 fetch_parquet_metadata(
                     store.as_ref(),
                     object,
-                    self.inner.metadata_size_hint(),
+                    self.inner().metadata_size_hint(),
                     None,
                 )
             })
@@ -252,7 +266,7 @@ impl FileFormat for GeoParquetFormat {
         // We don't do anything special here to insert GeoStatistics because pruning
         // happens elsewhere. These might be useful for a future optimizer or analyzer
         // pass that can insert optimizations based on geometry type.
-        self.inner
+        self.inner()
             .infer_stats(state, store, table_schema, object)
             .await
     }
@@ -266,11 +280,11 @@ impl FileFormat for GeoParquetFormat {
         // DataSourceExec is backed by a GeoParquetFileSource instead of a ParquetFileSource
         let mut metadata_size_hint = None;
 
-        if let Some(metadata) = self.inner.metadata_size_hint() {
+        if let Some(metadata) = self.inner().metadata_size_hint() {
             metadata_size_hint = Some(metadata);
         }
 
-        let mut source = GeoParquetFileSource::new(self.inner.options().clone());
+        let mut source = GeoParquetFileSource::new(self.options.clone());
 
         if let Some(metadata_size_hint) = metadata_size_hint {
             source = source.with_metadata_size_hint(metadata_size_hint)
@@ -287,17 +301,17 @@ impl FileFormat for GeoParquetFormat {
 
     async fn create_writer_physical_plan(
         &self,
-        _input: Arc<dyn ExecutionPlan>,
+        input: Arc<dyn ExecutionPlan>,
         _state: &dyn Session,
-        _conf: FileSinkConfig,
-        _order_requirements: Option<LexRequirement>,
+        conf: FileSinkConfig,
+        order_requirements: Option<LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        not_impl_err!("GeoParquet writer not implemented")
+        create_geoparquet_writer_physical_plan(input, conf, order_requirements, &self.options)
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
         Arc::new(
-            GeoParquetFileSource::try_from_file_source(self.inner.file_source(), None, None)
+            GeoParquetFileSource::try_from_file_source(self.inner().file_source(), None, None)
                 .unwrap(),
         )
     }
@@ -320,9 +334,9 @@ pub struct GeoParquetFileSource {
 
 impl GeoParquetFileSource {
     /// Create a new file source based on [TableParquetOptions]
-    pub fn new(options: TableParquetOptions) -> Self {
+    pub fn new(options: TableGeoParquetOptions) -> Self {
         Self {
-            inner: ParquetSource::new(options),
+            inner: ParquetSource::new(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
         }
@@ -351,7 +365,6 @@ impl GeoParquetFileSource {
     ) -> Result<Self> {
         if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
             let mut parquet_source = parquet_source.clone();
-
             // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.predicate().cloned(), predicate) {
                 (None, None) => None,
@@ -520,6 +533,7 @@ mod test {
 
     use arrow_array::RecordBatch;
     use arrow_schema::DataType;
+    use datafusion::config::TableParquetOptions;
     use datafusion::datasource::physical_plan::ParquetSource;
     use datafusion::datasource::schema_adapter::{SchemaAdapter, SchemaAdapterFactory};
     use datafusion::{
@@ -534,6 +548,7 @@ mod test {
     use rstest::rstest;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
+    use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
     use sedona_testing::data::{geoarrow_data_dir, test_geoparquet};
 
@@ -559,14 +574,11 @@ mod test {
             ["wkt", "geometry"]
         );
 
-        let sedona_types: Result<Vec<_>> = df
+        let sedona_types = df
             .schema()
-            .as_arrow()
-            .fields()
-            .iter()
-            .map(|f| SedonaType::from_storage_field(f))
-            .collect();
-        let sedona_types = sedona_types.unwrap();
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
         assert_eq!(
@@ -578,13 +590,11 @@ mod test {
         // the correct schema
         let batches = df.collect().await.unwrap();
         assert_eq!(batches.len(), 1);
-        let sedona_types: Result<Vec<_>> = batches[0]
+        let sedona_types = batches[0]
             .schema()
-            .fields()
-            .iter()
-            .map(|f| SedonaType::from_storage_field(f))
-            .collect();
-        let sedona_types = sedona_types.unwrap();
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
         assert_eq!(
@@ -632,14 +642,11 @@ mod test {
             .select(vec![col("wkt")])
             .unwrap();
 
-        let sedona_types: Result<Vec<_>> = df
+        let sedona_types = df
             .schema()
-            .as_arrow()
-            .fields()
-            .iter()
-            .map(|f| SedonaType::from_storage_field(f))
-            .collect();
-        let sedona_types = sedona_types.unwrap();
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(sedona_types.len(), 1);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
     }
@@ -653,14 +660,11 @@ mod test {
             .await
             .unwrap();
 
-        let sedona_types: Result<Vec<_>> = df
+        let sedona_types = df
             .schema()
-            .as_arrow()
-            .fields()
-            .iter()
-            .map(|f| SedonaType::from_storage_field(f))
-            .collect();
-        let sedona_types = sedona_types.unwrap();
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
         assert_eq!(
