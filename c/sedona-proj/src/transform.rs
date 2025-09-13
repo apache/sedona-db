@@ -16,7 +16,6 @@
 // under the License.
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
-use proj_sys::PJ_LOG_LEVEL_PJ_LOG_NONE;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
@@ -126,7 +125,7 @@ impl ProjCrsEngineBuilder {
             ctx.set_log_level(*log_level)?;
         } else {
             // Default log level to none
-            ctx.set_log_level(PJ_LOG_LEVEL_PJ_LOG_NONE)?;
+            ctx.set_log_level(0)?;
         }
 
         Ok(ProjCrsEngine { ctx: Rc::new(ctx) })
