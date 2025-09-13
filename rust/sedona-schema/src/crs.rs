@@ -213,6 +213,8 @@ impl CoordinateReferenceSystem for AuthorityCode {
     fn srid(&self) -> Result<Option<u32>> {
         if self.authority.eq_ignore_ascii_case("EPSG") {
             Ok(self.code.parse::<u32>().ok())
+        } else if LngLat::is_authority_code_lnglat(&format!("{}:{}", self.authority, self.code)) {
+            Ok(Some(4326))
         } else {
             Ok(None)
         }
@@ -391,5 +393,9 @@ mod test {
             Some("EPSG:4269".to_string())
         );
         assert_eq!(new_crs.unwrap().srid().unwrap(), Some(4269));
+
+        let value: Value = serde_json::from_str("\"EPSG:4326\"").unwrap();
+        let new_crs = deserialize_crs(&value).unwrap();
+        assert_eq!(new_crs.clone().unwrap().srid().unwrap(), Some(4326));
     }
 }
