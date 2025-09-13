@@ -53,8 +53,14 @@ if [ -n "${SAVVY_FEATURES}" ]; then
   FEATURE_FLAGS="--features '${SAVVY_FEATURES}'"
 fi
 
+# It seems pkg-config requires this envvar to be explicitly set in case of cross-compilation.
+# 
+# cf. https://stackoverflow.com/a/68979087
+PKG_CONFIG_SYSROOT_DIR="$(${R_HOME}/bin/Rscript tools/get_rtools_posix_dir.R)"
+
 sed \
   -e "s/@TARGET@/x86_64-pc-windows-gnu/" \
   -e "s/@PROFILE@/${PROFILE}/" \
   -e "s/@FEATURE_FLAGS@/${FEATURE_FLAGS}/" \
+  -e "s|@PKG_CONFIG_SYSROOT_DIR@|${PKG_CONFIG_SYSROOT_DIR}|" \
   src/Makevars.win.in > src/Makevars.win
