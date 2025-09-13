@@ -130,6 +130,21 @@ impl ProjContext {
         }
     }
 
+    /// Set the logging level for PROJ operations
+    ///
+    /// `level` - Unsigned Integer value representing the log level:
+    /// - PJ_LOG_LEVEL_PJ_LOG_NONE (0): No logging
+    /// - PJ_LOG_LEVEL_PJ_LOG_ERROR (1): Error messages
+    /// - PJ_LOG_LEVEL_PJ_LOG_DEBUG (2): Debug messages
+    /// - PJ_LOG_LEVEL_PJ_LOG_TRACE (3): Trace
+    /// - PJ_LOG_LEVEL_PJ_LOG_TELL (4): Tell
+    pub(crate) fn set_log_level(&self, level: u32) -> Result<(), SedonaProjError> {
+        unsafe {
+            call_proj_api!(self.api, proj_log_level, self.inner, level);
+        }
+        Ok(())
+    }
+
     /// Set the path in which to look for PROJ data files
     ///
     /// Most PROJ distributions come with a few small data files installed to a /share directory

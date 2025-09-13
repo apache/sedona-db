@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use crate::error::SedonaProjError;
+use crate::proj::{Proj, ProjContext};
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
@@ -21,9 +23,6 @@ use sedona_geometry::transform::{CrsEngine, CrsTransform};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-use crate::error::SedonaProjError;
-use crate::proj::{Proj, ProjContext};
 
 /// Builder for a [ProjCrsEngine]
 ///
@@ -34,6 +33,7 @@ pub struct ProjCrsEngineBuilder {
     shared_library: Option<PathBuf>,
     database_path: Option<PathBuf>,
     search_paths: Option<Vec<PathBuf>>,
+    log_level: Option<u32>,
 }
 
 impl ProjCrsEngineBuilder {
@@ -82,6 +82,25 @@ impl ProjCrsEngineBuilder {
         }
     }
 
+    /// Set the PROJ log level
+    ///
+    /// Set the verbosity of PROJ logging. The default is no logging,
+    /// however errors will still be propagated through the error
+    /// handling.
+    ///
+    /// Log level constants are defined in proj_sys:
+    /// - PJ_LOG_LEVEL_PJ_LOG_NONE (0): No logging
+    /// - PJ_LOG_LEVEL_PJ_LOG_ERROR (1): Error messages
+    /// - PJ_LOG_LEVEL_PJ_LOG_DEBUG (2): Debug messages
+    /// - PJ_LOG_LEVEL_PJ_LOG_TRACE (3): Trace
+    /// - PJ_LOG_LEVEL_PJ_LOG_TELL (4): Tell
+    pub fn with_log_level(self, log_level: u32) -> Self {
+        Self {
+            log_level: Some(log_level),
+            ..self
+        }
+    }
+
     /// Build a [ProjCrsEngine] with the specified options
     pub fn build(&self) -> Result<ProjCrsEngine, SedonaProjError> {
         let mut ctx = if let Some(shared_library) = self.shared_library.clone() {
@@ -100,6 +119,13 @@ impl ProjCrsEngineBuilder {
                 .map(|path| path.to_string_lossy().to_string())
                 .collect::<Vec<_>>();
             ctx.set_search_paths(&string_vec)?;
+        }
+
+        if let Some(log_level) = &self.log_level {
+            ctx.set_log_level(*log_level)?;
+        } else {
+            // Default log level to none
+            ctx.set_log_level(0)?;
         }
 
         Ok(ProjCrsEngine { ctx: Rc::new(ctx) })
