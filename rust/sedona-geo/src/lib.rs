@@ -24,5 +24,6 @@ mod st_intersection_aggr;
 mod st_intersects;
 mod st_length;
 mod st_line_interpolate_point;
+mod st_perimeter;
 mod st_union_aggr;
 pub mod to_geo;
