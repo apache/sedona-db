@@ -122,6 +122,10 @@ impl LngLat {
     pub fn is_authority_code_lnglat(string_value: &str) -> bool {
         string_value == "OGC:CRS84" || string_value == "EPSG:4326"
     }
+
+    pub fn srid() -> Option<u32> {
+        Some(4326)
+    }
 }
 
 /// Implementation of an authority:code CoordinateReferenceSystem
@@ -214,7 +218,7 @@ impl CoordinateReferenceSystem for AuthorityCode {
         if self.authority.eq_ignore_ascii_case("EPSG") {
             Ok(self.code.parse::<u32>().ok())
         } else if LngLat::is_lnglat(self) {
-            Ok(Some(4326))
+            Ok(LngLat::srid())
         } else {
             Ok(None)
         }
@@ -289,7 +293,7 @@ impl CoordinateReferenceSystem for ProjJSON {
         let authority_code_opt = self.to_authority_code()?;
         if let Some(authority_code) = authority_code_opt {
             if LngLat::is_authority_code_lnglat(&authority_code) {
-                return Ok(Some(4326));
+                LngLat::srid();
             }
             if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
                 return Ok(code.parse::<u32>().ok());
