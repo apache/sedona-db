@@ -213,7 +213,7 @@ impl CoordinateReferenceSystem for AuthorityCode {
     fn srid(&self) -> Result<Option<u32>> {
         if self.authority.eq_ignore_ascii_case("EPSG") {
             Ok(self.code.parse::<u32>().ok())
-        } else if LngLat::is_authority_code_lnglat(&format!("{}:{}", self.authority, self.code)) {
+        } else if LngLat::is_lnglat(self) {
             Ok(Some(4326))
         } else {
             Ok(None)
