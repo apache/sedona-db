@@ -39,7 +39,7 @@ $(STATLIB):
 	  export CC="$(CC)" && \
 	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
-	  cargo build -j1 --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
+	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
 
 clean_intermediate: $(SHLIB)
 	rm -f $(STATLIB)
