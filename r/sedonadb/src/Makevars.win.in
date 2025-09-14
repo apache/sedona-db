@@ -15,6 +15,14 @@ PKG_LIBS = -L$(LIBDIR) -lsedonadb -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
 # to overwrite it via configuration.
 CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 
+# It seems pkg-config requires this envvar to be explicitly set in case of cross-compilation.
+#
+# cf. https://stackoverflow.com/a/68979087
+PKG_CONFIG_SYSROOT_DIR="/x86_64-w64-mingw32.static.posix/"
+
+# Do not pass -pedantic
+CFLAGS_TWEAKED = $(subst pedantic,,$(CFLAGS))
+
 all: $(SHLIB) clean_intermediate
 
 $(SHLIB): $(STATLIB)
@@ -27,11 +35,11 @@ $(STATLIB):
 
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
-	  export PKG_CONFIG_SYSROOT_DIR="@PKG_CONFIG_SYSROOT_DIR@" && \
+	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
 	  export CC="$(CC)" && \
-	  export CFLAGS="$(CFLAGS)" && \
+	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
-	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
+	  cargo build -j1 --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
 
 clean_intermediate: $(SHLIB)
 	rm -f $(STATLIB)
