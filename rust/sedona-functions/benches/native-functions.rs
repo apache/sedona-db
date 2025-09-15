@@ -123,6 +123,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    benchmark::scalar(c, &f, "native", "st_srid", Point);
+    benchmark::scalar(c, &f, "native", "st_crs", Point);
+
     benchmark::scalar(c, &f, "native", "st_x", Point);
     benchmark::scalar(c, &f, "native", "st_y", Point);
     benchmark::scalar(c, &f, "native", "st_z", Point);

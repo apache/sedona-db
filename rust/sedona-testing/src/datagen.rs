@@ -37,7 +37,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
-use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use sedona_schema::crs::lnglat;
+use sedona_schema::datatypes::{Edges, SedonaType};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -106,7 +107,7 @@ impl Default for RandomPartitionedDataBuilder {
             num_partitions: 1,
             batches_per_partition: 1,
             rows_per_batch: 10,
-            sedona_type: WKB_GEOMETRY,
+            sedona_type: SedonaType::Wkb(Edges::Planar, lnglat()),
             null_rate: 0.0,
             options,
         }
