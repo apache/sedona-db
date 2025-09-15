@@ -324,7 +324,7 @@ class SedonaDB(DBEngine):
         return cls(*args, **kwargs)
 
     def create_table_parquet(self, name, paths) -> "SedonaDB":
-        self.con.read_parquet(paths).collect().to_view(name, overwrite=True)
+        self.con.read_parquet(paths).to_memtable().to_view(name, overwrite=True)
         return self
 
     def create_view_parquet(self, name, paths) -> "SedonaDB":

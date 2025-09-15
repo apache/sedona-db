@@ -111,7 +111,11 @@ impl InternalDataFrame {
         Ok(())
     }
 
-    fn collect<'py>(&self, py: Python<'py>, ctx: &InternalContext) -> Result<Self, PySedonaError> {
+    fn to_memtable<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+    ) -> Result<Self, PySedonaError> {
         let schema = self.inner.schema();
         let partitions =
             wait_for_future(py, &self.runtime, self.inner.clone().collect_partitioned())??;

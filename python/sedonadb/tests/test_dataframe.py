@@ -165,9 +165,9 @@ def test_schema_non_null_crs(con):
     assert df.schema.field("geom").type.crs == gat.OGC_CRS84
 
 
-def test_collect(con):
+def test_to_memtable(con):
     df = con.sql("SELECT 1 as one")
-    pd.testing.assert_frame_equal(df.collect().to_pandas(), df.to_pandas())
+    pd.testing.assert_frame_equal(df.to_memtable().to_pandas(), df.to_pandas())
 
 
 def test_to_view(con):

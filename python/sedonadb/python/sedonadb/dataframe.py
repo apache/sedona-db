@@ -176,17 +176,20 @@ class DataFrame:
         """
         self._impl.to_view(self._ctx, name, overwrite)
 
-    def collect(self) -> "DataFrame":
-        """Collect a data frame into memory
+    def to_memtable(self) -> "DataFrame":
+        """Collect a data frame into a memtable
 
         Executes the logical plan represented by this object and returns a
         DataFrame representing it.
+
+        Does not guarantee ordering of rows.  Use `to_arrow_table()` if
+        ordering is needed.
 
         Examples:
 
             >>> import sedonadb
             >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geom").collect().show()
+            >>> con.sql("SELECT ST_Point(0, 1) as geom").to_memtable().show()
             ┌────────────┐
             │    geom    │
             │  geometry  │
@@ -195,7 +198,7 @@ class DataFrame:
             └────────────┘
 
         """
-        return DataFrame(self._ctx, self._impl.collect(self._ctx))
+        return DataFrame(self._ctx, self._impl.to_memtable(self._ctx))
 
     def __datafusion_table_provider__(self):
         return self._impl.__datafusion_table_provider__()
@@ -412,7 +415,7 @@ def _scan_default(ctx_impl, obj, schema):
 
 
 def _scan_collected_default(ctx_impl, obj, schema):
-    return _scan_default(ctx_impl, obj, schema).collect()
+    return _scan_default(ctx_impl, obj, schema).to_memtable()
 
 
 def _scan_geopandas(ctx_impl, obj, schema):
