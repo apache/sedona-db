@@ -140,3 +140,51 @@ def test_spatial_join_geography(join_type, on):
 
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
         eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+def test_query_window_in_subquery():
+    with (
+        SedonaDB.create_or_skip() as eng_sedonadb,
+        PostGIS.create_or_skip() as eng_postgis,
+    ):
+        options = json.dumps(
+            {
+                "geom_type": "Point",
+                "seed": 42,
+            }
+        )
+        df_point = eng_sedonadb.execute_and_collect(
+            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
+        )
+        options = json.dumps(
+            {
+                "geom_type": "Polygon",
+                "polygon_hole_rate": 0.5,
+                "num_parts_range": [2, 10],
+                "vertices_per_linestring_range": [2, 10],
+                "size_range": [50, 60],
+                "seed": 43,
+            }
+        )
+        df_polygon = eng_sedonadb.execute_and_collect(
+            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
+        )
+        eng_sedonadb.create_table_arrow("sjoin_point", df_point)
+        eng_sedonadb.create_table_arrow("sjoin_polygon", df_polygon)
+        eng_postgis.create_table_arrow("sjoin_point", df_point)
+        eng_postgis.create_table_arrow("sjoin_polygon", df_polygon)
+
+        # This should be optimized to a spatial join
+        sql = """
+               SELECT id FROM sjoin_point AS L
+               WHERE ST_Intersects(L.geometry, (SELECT R.geometry FROM sjoin_polygon AS R WHERE R.id = 1))
+               ORDER BY id
+               """
+
+        # Verify that the physical query plan should contain a SpatialJoinExec
+        query_plan = eng_sedonadb.execute_and_collect(f"EXPLAIN {sql}").to_pandas()
+        assert "SpatialJoinExec" in query_plan.iloc[1, 1]
+
+        sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
+        assert len(sedonadb_results) > 0
+        eng_postgis.assert_query_result(sql, sedonadb_results)

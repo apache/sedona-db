@@ -132,8 +132,6 @@ impl OptimizerRule for SpatialJoinOptimizer {
         plan: LogicalPlan,
         _config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
-        println!("Rewrite plan: {}", plan.display_indent());
-
         let LogicalPlan::Filter(Filter {
             predicate, input, ..
         }) = &plan
@@ -167,11 +165,6 @@ impl OptimizerRule for SpatialJoinOptimizer {
         {
             return Ok(Transformed::no(plan));
         }
-
-        println!(
-            "Found plan suitable for rewriting: {}",
-            plan.display_indent()
-        );
 
         let rewritten_plan = Join::try_new(
             Arc::clone(left),
