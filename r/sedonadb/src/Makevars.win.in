@@ -21,7 +21,7 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
 # Do not pass -pedantic
-CFLAGS_TWEAKED = $(subst -pedantic,,$(CFLAGS))
+CFLAGS_TWEAKED = $(subst -pedantic,,$(ALL_CPPFLAGS))
 
 all: $(SHLIB) clean_intermediate
 
