@@ -17,20 +17,26 @@
 
 use std::sync::Arc;
 
+use arrow_array::builder::Float32Builder;
 use datafusion::{
     config::TableParquetOptions,
     datasource::{
         file_format::parquet::ParquetSink, physical_plan::FileSinkConfig, sink::DataSinkExec,
     },
 };
-use datafusion_common::{exec_datafusion_err, exec_err, not_impl_err, Result};
-use datafusion_expr::dml::InsertOp;
+use datafusion_common::{exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result};
+use datafusion_expr::{dml::InsertOp, expr::FieldMetadata, ColumnarValue};
 use datafusion_physical_expr::LexRequirement;
 use datafusion_physical_plan::ExecutionPlan;
+use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
+use sedona_expr::scalar_udf::SedonaScalarKernel;
+use sedona_functions::executor::WkbExecutor;
+use sedona_geometry::bounds::geo_traits_bounds_xy;
 use sedona_schema::{
     crs::lnglat,
-    datatypes::{Edges, SedonaType},
+    datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
     schema::SedonaSchema,
 };
 
@@ -149,6 +155,56 @@ fn create_inner_writer(
     // Create the sink
     let sink = Arc::new(ParquetSink::new(conf, options));
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
+}
+
+#[derive(Debug)]
+struct GeoParquetBbox {}
+
+impl SedonaScalarKernel for GeoParquetBbox {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+
+        let mut builders = (0..4)
+            .map(|_| Vec::with_capacity(executor.num_iterations()))
+            .collect::<Vec<_>>();
+
+        executor.execute_wkb_void(|maybe_item| {
+            match maybe_item {
+                Some(item) => {
+                    invoke_scalar(&item, &mut builders)?;
+                }
+                None => {
+                    // These
+                    for vec in builders {
+                        vec.push(0.0);
+                    }
+                },
+            }
+            Ok(())
+        })?;
+
+        FieldMetadata
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Vec<f32>]) -> Result<()> {
+    let bounds = geo_traits_bounds_xy(wkb).map_err(|e| DataFusionError::External(e.into()))?;
+
+    // TODO: Use float_next_after::NextAfter; to properly round float32s
+    builders[]
+
+    Ok(())
 }
 
 #[cfg(test)]
