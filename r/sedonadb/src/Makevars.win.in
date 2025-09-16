@@ -20,6 +20,7 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # cf. https://stackoverflow.com/a/68979087
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
+# TODO: should $(CFLAGS) be included here?
 # Do not pass -pedantic
 CFLAGS_TWEAKED = $(subst -pedantic,,$(ALL_CPPFLAGS))
 
