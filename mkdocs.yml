@@ -48,7 +48,7 @@ extra:
   version:
     provider: mike
     default:
-       - 0.1
+      - latest
 
 
 extra_css:
@@ -97,7 +97,8 @@ plugins:
         type: datetime
    - mkdocs-jupyter
    - mike:
-        version_selector: false
+        version_selector: true
+        canonical_version: 'latest'
    - glightbox:
         touchNavigation: true
         loop: false
