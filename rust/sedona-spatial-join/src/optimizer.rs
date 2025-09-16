@@ -2512,4 +2512,62 @@ mod tests {
         )
         .unwrap());
     }
+
+    #[test]
+    fn test_is_knn_predicate_supported() {
+        // ST_KNN(left, right)
+        let left_schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
+            .to_storage_field("geom", false)
+            .unwrap()]));
+        let right_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
+        ]));
+        let left_col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+        let right_col_expr = Arc::new(Column::new("geom", 1)) as Arc<dyn PhysicalExpr>;
+        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
+            left_col_expr.clone(),
+            right_col_expr.clone(),
+            5,
+            false,
+            JoinSide::Left,
+        ));
+        assert!(
+            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
+        );
+
+        // ST_KNN(right, left)
+        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
+            right_col_expr.clone(),
+            left_col_expr.clone(),
+            5,
+            false,
+            JoinSide::Right,
+        ));
+        assert!(
+            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
+        );
+
+        // ST_KNN with geography (should NOT be supported)
+        let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
+            .to_storage_field("geog", false)
+            .unwrap()]));
+        assert!(!super::is_spatial_predicate_supported(
+            &knn_pred,
+            &left_geog_schema,
+            &right_schema
+        )
+        .unwrap());
+
+        let right_geog_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
+        ]));
+        assert!(!super::is_spatial_predicate_supported(
+            &knn_pred,
+            &left_schema,
+            &right_geog_schema
+        )
+        .unwrap());
+    }
 }
