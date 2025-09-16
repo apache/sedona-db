@@ -21,6 +21,7 @@ use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
 use arrow_schema::{Schema, SchemaRef};
+use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
 use datafusion::{
     config::ConfigOptions, execution::session_state::SessionStateBuilder,
@@ -32,7 +33,7 @@ use datafusion_common::{
     JoinSide,
 };
 use datafusion_common::{HashMap, Result};
-use datafusion_expr::Operator;
+use datafusion_expr::{Expr, Filter, Join, JoinType, LogicalPlan, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
 use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
@@ -86,6 +87,130 @@ impl PhysicalOptimizerRule for SpatialJoinOptimizer {
     /// and should disable the schema check.
     fn schema_check(&self) -> bool {
         true
+    }
+}
+
+impl OptimizerRule for SpatialJoinOptimizer {
+    fn name(&self) -> &str {
+        "spatial_join_optimizer"
+    }
+
+    fn apply_order(&self) -> Option<ApplyOrder> {
+        Some(ApplyOrder::BottomUp)
+    }
+
+    /// Try to rewrite the plan containing a spatial Filter on top of a cross join without on or filter
+    /// to a theta-join with filter. For instance, the following query plan:
+    ///
+    /// ```text
+    /// Filter: st_intersects(l.geom, _scalar_sq_1.geom)
+    ///   Left Join (no on, no filter):
+    ///     TableScan: l projection=[id, geom]
+    ///     SubqueryAlias: __scalar_sq_1
+    ///       Projection: r.geom
+    ///         Filter: r.id = Int32(1)
+    ///           TableScan: r projection=[id, geom]
+    /// ```
+    ///
+    /// will be rewritten to
+    ///
+    /// ```text
+    /// Inner Join: Filter: st_intersects(l.geom, _scalar_sq_1.geom)
+    ///   TableScan: l projection=[id, geom]
+    ///   SubqueryAlias: __scalar_sq_1
+    ///     Projection: r.geom
+    ///       Filter: r.id = Int32(1)
+    ///         TableScan: r projection=[id, geom]
+    /// ```
+    ///
+    /// This is for enabling this logical join operator to be converted to a NestedLoopJoin physical
+    /// node with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
+    /// physical node. Please refer to the `PhysicalOptimizerRule` implementation of this struct
+    /// and [SpatialJoinOptimizer::try_optimize_join] for details.
+    fn rewrite(
+        &self,
+        plan: LogicalPlan,
+        _config: &dyn OptimizerConfig,
+    ) -> Result<Transformed<LogicalPlan>> {
+        println!("Rewrite plan: {}", plan.display_indent());
+
+        let LogicalPlan::Filter(Filter {
+            predicate, input, ..
+        }) = &plan
+        else {
+            return Ok(Transformed::no(plan));
+        };
+        if !is_spatial_predicate(predicate) {
+            return Ok(Transformed::no(plan));
+        }
+
+        let LogicalPlan::Join(Join {
+            ref left,
+            ref right,
+            ref on,
+            ref filter,
+            join_type,
+            ref join_constraint,
+            ref null_equality,
+            ..
+        }) = input.as_ref()
+        else {
+            return Ok(Transformed::no(plan));
+        };
+
+        // Check if this is a suitable join for rewriting
+        if !matches!(
+            join_type,
+            JoinType::Inner | JoinType::Left | JoinType::Right
+        ) || !on.is_empty()
+            || filter.is_some()
+        {
+            return Ok(Transformed::no(plan));
+        }
+
+        println!(
+            "Found plan suitable for rewriting: {}",
+            plan.display_indent()
+        );
+
+        let rewritten_plan = Join::try_new(
+            Arc::clone(left),
+            Arc::clone(right),
+            on.clone(),
+            Some(predicate.clone()),
+            JoinType::Inner,
+            *join_constraint,
+            *null_equality,
+        )?;
+
+        Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
+    }
+}
+
+/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
+/// `expr` evaluates to a boolean value and originates from a filter logical node.
+fn is_spatial_predicate(expr: &Expr) -> bool {
+    fn is_distance_expr(expr: &Expr) -> bool {
+        let Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) = expr else {
+            return false;
+        };
+        func.name().to_lowercase() == "st_distance"
+    }
+
+    match expr {
+        Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left, right, op, ..
+        }) => match op {
+            Operator::And => is_spatial_predicate(left) || is_spatial_predicate(right),
+            Operator::Lt | Operator::LtEq => is_distance_expr(left),
+            Operator::Gt | Operator::GtEq => is_distance_expr(right),
+            _ => false,
+        },
+        Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
+            let func_name = func.name().to_lowercase();
+            func_name.starts_with("st_")
+        }
+        _ => false,
     }
 }
 
@@ -419,6 +544,7 @@ pub fn register_spatial_join_optimizer(
     session_state_builder: SessionStateBuilder,
 ) -> SessionStateBuilder {
     session_state_builder
+        .with_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
         .with_physical_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
         .with_physical_optimizer_rule(Arc::new(SanityCheckPlan::new()))
 }
@@ -2569,5 +2695,75 @@ mod tests {
             &right_geog_schema
         )
         .unwrap());
+    }
+
+    #[test]
+    fn test_is_spatial_predicate() {
+        use datafusion_expr::ColumnarValue;
+        use datafusion_expr::{col, lit, Expr, ScalarUDF, SimpleScalarUDF};
+
+        // Test 1: ST_ functions should return true
+        let st_intersects_udf = create_dummy_st_intersects_udf();
+        let st_intersects_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
+            func: st_intersects_udf,
+            args: vec![col("geom1"), col("geom2")],
+        });
+        assert!(super::is_spatial_predicate(&st_intersects_expr));
+
+        // ST_Distance(geom1, geom2) < 100 should return true
+        let st_distance_udf = create_dummy_st_distance_udf();
+        let st_distance_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
+            func: st_distance_udf,
+            args: vec![col("geom1"), col("geom2")],
+        });
+        let distance_lt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(st_distance_expr.clone()),
+            op: Operator::Lt,
+            right: Box::new(lit(100.0)),
+        });
+        assert!(super::is_spatial_predicate(&distance_lt_expr));
+
+        // ST_Distance(geom1, geom2) > 100 should return false
+        let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(st_distance_expr.clone()),
+            op: Operator::Gt, // Should be Lt/LtEq for left side
+            right: Box::new(lit(100.0)),
+        });
+        assert!(!super::is_spatial_predicate(&distance_gt_expr));
+
+        // AND expressions with spatial predicates should return true
+        let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(st_intersects_expr.clone()),
+            op: Operator::And,
+            right: Box::new(col("id").eq(lit(1))),
+        });
+        assert!(super::is_spatial_predicate(&and_expr));
+
+        // Non-spatial expressions should return false
+
+        // Simple column comparison
+        let non_spatial_expr = col("id").eq(lit(1));
+        assert!(!super::is_spatial_predicate(&non_spatial_expr));
+
+        // Non-ST function
+        let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
+            func: Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
+                "regular_function",
+                vec![DataType::Int32],
+                DataType::Boolean,
+                datafusion_expr::Volatility::Immutable,
+                Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))),
+            ))),
+            args: vec![col("id")],
+        });
+        assert!(!super::is_spatial_predicate(&non_st_func));
+
+        // AND expression with no spatial predicates
+        let non_spatial_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(col("id").eq(lit(1))),
+            op: Operator::And,
+            right: Box::new(col("name").eq(lit("test"))),
+        });
+        assert!(!super::is_spatial_predicate(&non_spatial_and));
     }
 }

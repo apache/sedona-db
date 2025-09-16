@@ -1028,6 +1028,16 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_query_window_in_subquery() -> Result<()> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_test_data_with_size_range((50.0, 60.0), WKB_GEOMETRY)?;
+        let options = SpatialJoinOptions::default();
+        test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, 10,
+                "SELECT id FROM L WHERE ST_Intersects(L.geometry, (SELECT R.geometry FROM R WHERE R.id = 1))").await?;
+        Ok(())
+    }
+
     async fn test_with_join_types(join_type: JoinType) -> Result<RecordBatch> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_empty_partitions()?;
