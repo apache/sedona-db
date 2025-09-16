@@ -119,6 +119,40 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
         }
     }
 
+    /// Execute a function by iterating over [Wkb]'s raw binary representation.
+    /// The provided `func` can assume its input bytes is a valid [Wkb] binary.
+    ///
+    /// This function assumes the first argument from the executor is either a [SedonaType::Wkb]
+    /// or [SedonaType::WkbView] type. If other type is provided, an error will be
+    /// thrown.
+    pub fn execute_wkb_bytes_void<F: FnMut(Option<&'b [u8]>) -> Result<()>>(
+        &self,
+        mut func: F,
+    ) -> Result<()> {
+        // Ensure the first argument of the executor is either Wkb or WkbView
+        match &self.arg_types[0] {
+            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {}
+            other => {
+                return sedona_internal_err!(
+                    "Expected SedonaType::Wkb or SedonaType::WkbView for the first arg, got {}",
+                    other
+                )
+            }
+        }
+
+        // We can assume the storage type for Wkb is Binary, and also BinaryView for
+        // WkbView
+        match &self.args[0] {
+            ColumnarValue::Array(array) => {
+                array.iter_as_wkb_bytes(&self.arg_types[0], self.num_iterations, func)
+            }
+            ColumnarValue::Scalar(scalar_value) => {
+                let maybe_bytes = scalar_value.scalar_as_wkb_bytes()?;
+                func(maybe_bytes)
+            }
+        }
+    }
+
     /// Execute a binary geometry function by iterating over [Wkb] scalars in the
     /// first two arguments
     ///
