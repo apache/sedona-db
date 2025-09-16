@@ -405,7 +405,7 @@ class DataFrame:
             │               ┆   PlaceholderRowExec            │
             │               ┆                                 │
             └───────────────┴─────────────────────────────────┘
-
+            <BLANKLINE>
         """
         width = _out_width(width)
         return self._impl.explain(self._ctx, verbose, analyze, format, width, ascii)
