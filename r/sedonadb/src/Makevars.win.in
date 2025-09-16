@@ -18,7 +18,7 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # It seems pkg-config requires this envvar to be explicitly set in case of cross-compilation.
 #
 # cf. https://stackoverflow.com/a/68979087
-PKG_CONFIG_SYSROOT_DIR="/x86_64-w64-mingw32.static.posix/"
+PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
 # Do not pass -pedantic
 CFLAGS_TWEAKED = $(subst -pedantic,,$(CFLAGS))
