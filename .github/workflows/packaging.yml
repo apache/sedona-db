@@ -26,6 +26,12 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Git tag name to deploy documentation for a specific release version (e.g., 0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -138,36 +144,25 @@ jobs:
         with:
           name: docs
 
-      - name: Clone asf-site branch
-        uses: actions/checkout@v4
-        with:
-          ref: asf-site
-          path: pages-clone
-
-      - name: Update development documentation
+      - name: Deploy documentation with mike
         env:
-          DOC_TAG: "dev-snapshot-main"
-
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
-
-          cd pages-clone
-          if [ -d "$DOC_TAG" ]; then
-            git rm -rf "$DOC_TAG"
+          
+          # Extract docs
+          tar -xf docs.tgz
+          
+          # Deploy based on trigger type
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Deploy tagged version and set as latest and default
+            mike deploy --update-aliases $TAG_NAME latest -b asf-site -p
+            mike set-default latest -b asf-site -p
+          else
+            # Deploy development snapshot
+            mike deploy latest-snapshot -b asf-site -p
           fi
-
-          tar -xf ../docs.tgz
-          mv sedona-db-docs "$DOC_TAG"
-
-          git add *
-          git commit --allow-empty -m"update documentation for tag $DOC_TAG"
-
-      - name: Push development documentation to asf-site
-        if: success() && github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
-        run: |
-          cd pages-clone
-          git push
 
   create-release:
     runs-on: ubuntu-latest
