@@ -1,0 +1,57 @@
+/* ==========================================================================
+   Global Color and Font Variables
+   ========================================================================== */
+:root {
+  --color-red: #CA463A;
+  --color-white: #fff;
+  --color-dark: #1C1C1C;
+  --font-inter: "Inter",
+  sans-serif;
+}
+
+/* ==========================================================================
+   Header Styles
+   ========================================================================== */
+
+/* Main header container (the top black bar) */
+.md-header {
+  box-shadow: none;
+  background-color: var(--color-dark);
+}
+
+/* Inner content of the header */
+.md-header .md-header__inner {
+  background-color: var(--color-dark);
+  min-height: 80px;
+}
+
+/* Styles for the logo image */
+.md-header .md-header__inner .header-logo img,
+.md-header .md-header__inner .header-logo svg {
+  height: 42px;
+  width: auto;
+}
+
+/* ==========================================================================
+   Navigation Tabs Styles
+   ========================================================================== */
+
+/* The main navigation bar container (the red bar) */
+.md-tabs {
+  background-color: var(--color-red);
+}
+
+/* This ensures the navigation links are centered */
+.md-tabs .md-tabs__list {
+  justify-content: center;
+}
+
+/* Styles for each link in the navigation bar */
+.md-tabs__link {
+  font-family: var(--font-inter);
+  color: var(--color-white);
+
+  /* You can adjust the padding here to control spacing */
+  /* The first value is top/bottom, the second is left/right. */
+  padding: .5rem .6rem;
+}
