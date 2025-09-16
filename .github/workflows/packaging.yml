@@ -21,17 +21,12 @@ on:
   push:
     branches:
       - main
+      - 'branch-*'
     tags:
         - 'apache-sedona-db-*-rc*'
   pull_request:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Git tag name to deploy documentation for a specific release version (e.g., 0.1.0)'
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -78,10 +73,12 @@ jobs:
           path: |
             apache-sedona-db-${{ env.VERSION }}.tar.gz
 
-  docs:
+  docs-and-deploy:
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -132,42 +129,28 @@ jobs:
           path: |
             docs.tgz
 
-  update-asf-site:
-    runs-on: ubuntu-latest
-    needs:
-      - docs
-    permissions:
-      contents: write
-
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: docs
-
       - name: Deploy documentation with mike
-        env:
-          TAG_NAME: ${{ github.event.inputs.tag_name }}
+        if: github.event_name == 'push'
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
-          # Extract docs
-          tar -xf docs.tgz
-
-          # Deploy based on trigger type
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Deploy tagged version and set as latest and default
-            mike deploy --update-aliases $TAG_NAME latest -b asf-site -p
-            mike set-default latest -b asf-site -p
-          else
-            # Deploy development snapshot
+          # Deploy based on branch
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            # Deploy development snapshot for main branch
             mike deploy latest-snapshot -b asf-site -p
+          elif [[ "${{ github.ref_name }}" =~ ^branch-(.+)$ ]]; then
+            # Extract version from branch name (e.g., branch-0.1.0 -> 0.1.0)
+            VERSION=${BASH_REMATCH[1]}
+            # Deploy version and set as latest and default
+            mike deploy --update-aliases $VERSION latest -b asf-site -p
+            mike set-default latest -b asf-site -p
           fi
 
   create-release:
     runs-on: ubuntu-latest
     needs:
-      - docs
+      - docs-and-deploy
       - source
     permissions:
       contents: write
