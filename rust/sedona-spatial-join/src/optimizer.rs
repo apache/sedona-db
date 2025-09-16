@@ -2719,7 +2719,7 @@ mod tests {
         // ST_Distance(geom1, geom2) > 100 should return false
         let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
             left: Box::new(st_distance_expr.clone()),
-            op: Operator::Gt, // Should be Lt/LtEq for left side
+            op: Operator::Gt,
             right: Box::new(lit(100.0)),
         });
         assert!(!super::is_spatial_predicate(&distance_gt_expr));
