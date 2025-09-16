@@ -69,18 +69,6 @@ impl SedonaScalarKernel for STGeometryType {
         let min_output_size = "POINT".len() * executor.num_iterations();
         let mut builder = StringBuilder::with_capacity(executor.num_iterations(), min_output_size);
 
-        // // We can do quite a lot better than this with some vectorized WKB processing,
-        // // but for now we just do a slow iteration
-        // executor.execute_wkb_void(|maybe_item| {
-        //     match maybe_item {
-        //         Some(item) => {
-        //             builder.append_option(invoke_scalar(&item)?);
-        //         }
-        //         None => builder.append_null(),
-        //     }
-        //     Ok(())
-        // })?;
-
         // Iterate over raw WKB bytes for faster type inference
         executor.execute_wkb_bytes_void(|maybe_bytes| {
             match maybe_bytes {
