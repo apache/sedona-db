@@ -147,7 +147,7 @@ impl SpatialJoinOptimizer {
                     &spatial_predicate,
                     &left.schema(),
                     &right.schema(),
-                ) {
+                )? {
                     return Ok(None);
                 }
 
@@ -190,7 +190,7 @@ impl SpatialJoinOptimizer {
                     &spatial_predicate,
                     &hash_join.left().schema(),
                     &hash_join.right().schema(),
-                ) {
+                )? {
                     return Ok(None);
                 }
 
@@ -877,26 +877,40 @@ fn is_spatial_predicate_supported(
     spatial_predicate: &SpatialPredicate,
     left_schema: &Schema,
     right_schema: &Schema,
-) -> bool {
+) -> Result<bool> {
     /// Only spatial predicates working with planar geometry are supported for optimization.
     /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
-    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> bool {
-        let Ok(left_return_field) = expr.return_field(schema) else {
-            return false;
-        };
-        let Ok(sedona_type) = SedonaType::from_storage_field(&left_return_field) else {
-            return false;
-        };
+    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
+        let left_return_field = expr.return_field(schema)?;
+        let sedona_type = SedonaType::from_storage_field(&left_return_field)?;
         let matcher = ArgMatcher::is_geometry();
-        matcher.match_type(&sedona_type)
+        Ok(matcher.match_type(&sedona_type))
     }
 
     match spatial_predicate {
         SpatialPredicate::Relation(RelationPredicate { left, right, .. })
-        | SpatialPredicate::Distance(DistancePredicate { left, right, .. })
-        | SpatialPredicate::KNearestNeighbors(KNNPredicate { left, right, .. }) => {
-            is_geometry_type_supported(left, left_schema)
-                && is_geometry_type_supported(right, right_schema)
+        | SpatialPredicate::Distance(DistancePredicate { left, right, .. }) => {
+            Ok(is_geometry_type_supported(left, left_schema)?
+                && is_geometry_type_supported(right, right_schema)?)
+        }
+        SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left,
+            right,
+            probe_side,
+            ..
+        }) => {
+            let (left, right) = match probe_side {
+                JoinSide::Left => (left, right),
+                JoinSide::Right => (right, left),
+                _ => {
+                    return sedona_internal_err!(
+                        "Invalid probe side in KNN predicate: {:?}",
+                        probe_side
+                    )
+                }
+            };
+            Ok(is_geometry_type_supported(left, left_schema)?
+                && is_geometry_type_supported(right, right_schema)?)
         }
     }
 }
@@ -2479,11 +2493,7 @@ mod tests {
             SpatialRelationType::Intersects,
         );
         let spatial_pred = SpatialPredicate::Relation(rel_pred);
-        assert!(super::is_spatial_predicate_supported(
-            &spatial_pred,
-            &schema,
-            &schema
-        ));
+        assert!(super::is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
 
         // Geography field (should NOT be supported)
         let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
@@ -2499,6 +2509,7 @@ mod tests {
             &spatial_pred_geog,
             &geog_schema,
             &geog_schema
-        ));
+        )
+        .unwrap());
     }
 }
