@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::ffi::CString;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow_array::ffi::FFI_ArrowSchema;
@@ -25,7 +26,7 @@ use datafusion::catalog::MemTable;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
-use datafusion_expr::Expr;
+use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
@@ -181,6 +182,41 @@ impl InternalDataFrame {
             py,
             &self.runtime,
             self.inner.clone().show_sedona(&ctx.inner, limit, options),
+        )??;
+
+        Ok(content)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn explain<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+        verbose: bool,
+        analyze: bool,
+        format: &str,
+        width_chars: usize,
+        ascii: bool,
+    ) -> Result<String, PySedonaError> {
+        let format = ExplainFormat::from_str(format)?;
+        let explain_option = ExplainOption::default()
+            .with_analyze(analyze)
+            .with_verbose(verbose)
+            .with_format(format);
+        let explain_df = self.inner.clone().explain_with_options(explain_option)?;
+
+        let mut options = DisplayTableOptions::new();
+        options.table_width = width_chars.try_into().unwrap_or(u16::MAX);
+        options.arrow_options = options.arrow_options.with_types_info(true);
+        options.max_row_height = usize::MAX;
+        if !ascii {
+            options.display_mode = DisplayMode::Utf8;
+        }
+
+        let content = wait_for_future(
+            py,
+            &self.runtime,
+            explain_df.clone().show_sedona(&ctx.inner, None, options),
         )??;
 
         Ok(content)

@@ -361,6 +361,55 @@ class DataFrame:
         width = _out_width(width)
         print(self._impl.show(self._ctx, limit, width, ascii), end="")
 
+    def explain(
+        self,
+        verbose: bool = False,
+        analyze: bool = False,
+        format: str = "indent",
+        width: Optional[int] = None,
+        ascii: bool = False,
+    ) -> str:
+        """Print the execution plan for this DataFrame
+
+        Shows the logical and physical execution plans that will be used to
+        compute this DataFrame. This is useful for understanding query
+        performance and optimization.
+
+        Args:
+            verbose: Use True to show additional details in the plan output.
+            analyze: Use True to actually execute the plan and report metrics.
+            format: The format to use for displaying the plan. Supported formats are
+                "indent", "tree", "pgjson" and "graphviz"
+            width: The number of characters to use to display the output.
+                If None, uses `Options.width` or detects the value from the
+                current terminal if available.
+            ascii: Use True to disable UTF-8 characters in the output.
+
+        Returns:
+            A string representation of the execution plan.
+
+        Examples:
+
+            >>> import sedonadb
+            >>> con = sedonadb.connect()
+            >>> df = con.sql("SELECT 1 as one")
+            >>> print(df.explain())
+            ┌───────────────┬─────────────────────────────────┐
+            │   plan_type   ┆               plan              │
+            │      utf8     ┆               utf8              │
+            ╞═══════════════╪═════════════════════════════════╡
+            │ logical_plan  ┆ Projection: Int64(1) AS one     │
+            │               ┆   EmptyRelation                 │
+            ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+            │ physical_plan ┆ ProjectionExec: expr=[1 as one] │
+            │               ┆   PlaceholderRowExec            │
+            │               ┆                                 │
+            └───────────────┴─────────────────────────────────┘
+
+        """
+        width = _out_width(width)
+        return self._impl.explain(self._ctx, verbose, analyze, format, width, ascii)
+
     def __repr__(self) -> str:
         if global_options().interactive:
             width = _out_width()

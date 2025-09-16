@@ -36,7 +36,7 @@ use datafusion::{
 use datafusion_common::not_impl_err;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
-use datafusion_expr::{LogicalPlanBuilder, SortExpr};
+use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
@@ -292,9 +292,23 @@ impl SedonaDataFrame for DataFrame {
         self,
         ctx: &SedonaContext,
         limit: Option<usize>,
-        options: DisplayTableOptions<'a>,
+        mut options: DisplayTableOptions<'a>,
     ) -> Result<String> {
-        let df = self.limit(0, limit)?;
+        let df = if matches!(
+            self.logical_plan(),
+            LogicalPlan::Explain(_) | LogicalPlan::DescribeTable(_) | LogicalPlan::Analyze(_)
+        ) {
+            // Show multi-line output without truncation for plans like `EXPLAIN`
+            options.max_row_height = usize::MAX;
+
+            // We don't want to apply an additional .limit() to plans like `Explain`
+            // as that will trigger an internal error: Unsupported logical plan: Explain must be root of the plan
+            self
+        } else {
+            // Apply limit if specified
+            self.limit(0, limit)?
+        };
+
         let schema_without_qualifiers = df.schema().clone().strip_qualifiers();
         let schema = schema_without_qualifiers.as_arrow();
         let batches = df.collect().await?;
@@ -503,6 +517,36 @@ mod tests {
                 "+-----+"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn show_explain() {
+        let ctx = SedonaContext::new();
+        for limit in [None, Some(10)] {
+            let tbl = ctx
+                .sql("EXPLAIN SELECT 1 as one")
+                .await
+                .unwrap()
+                .show_sedona(&ctx, limit, DisplayTableOptions::default())
+                .await
+                .unwrap();
+
+            #[rustfmt::skip]
+            assert_eq!(
+                tbl.lines().collect::<Vec<_>>(),
+                vec![
+                    "+---------------+---------------------------------+",
+                    "|   plan_type   |               plan              |",
+                    "+---------------+---------------------------------+",
+                    "| logical_plan  | Projection: Int64(1) AS one     |",
+                    "|               |   EmptyRelation                 |",
+                    "| physical_plan | ProjectionExec: expr=[1 as one] |",
+                    "|               |   PlaceholderRowExec            |",
+                    "|               |                                 |",
+                    "+---------------+---------------------------------+",
+                ]
+            );
+        }
     }
 
     #[tokio::test]
