@@ -1758,39 +1758,6 @@ for more details.</p>
 <div class="doc doc-object doc-function">
 
 
-<h4 id="sedonadb.dataframe.DataFrame.collect" class="doc doc-heading">
-            <span class="doc doc-object-name doc-function-name">collect</span>
-
-
-<a href="#sedonadb.dataframe.DataFrame.collect" class="headerlink" title="Permanent link">¶</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">collect</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
-</code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>Collect a data frame into memory</p>
-<p>Executes the logical plan represented by this object and returns a
-DataFrame representing it.</p>
-<p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌────────────┐</span>
-<span class="err">│</span>    <span class="n">geom</span>    <span class="err">│</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">╞════════════╡</span>
-<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
-<span class="err">└────────────┘</span>
-</code></pre></div>
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
 <h4 id="sedonadb.dataframe.DataFrame.count" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">count</span>
 
@@ -2039,6 +2006,41 @@ schema.</p>
 <span class="n">geometry</span><span class="p">:</span> <span class="n">extension</span><span class="o">&lt;</span><span class="n">geoarrow</span><span class="o">.</span><span class="n">wkb</span><span class="o">&lt;</span><span class="n">WkbType</span><span class="o">&gt;&gt;</span> <span class="ow">not</span> <span class="n">null</span>
 <span class="o">----</span>
 <span class="n">geometry</span><span class="p">:</span> <span class="p">[[</span><span class="mi">01010000000000000000000000000000000000</span><span class="n">F03F</span><span class="p">]]</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.to_memtable" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">to_memtable</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.to_memtable" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">to_memtable</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Collect a data frame into a memtable</p>
+<p>Executes the logical plan represented by this object and returns a
+DataFrame representing it.</p>
+<p>Does not guarantee ordering of rows.  Use <code>to_arrow_table()</code> if
+ordering is needed.</p>
+<p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">to_memtable</span><span class="p">()</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌────────────┐</span>
+<span class="err">│</span>    <span class="n">geom</span>    <span class="err">│</span>
+<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
+<span class="err">╞════════════╡</span>
+<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
+<span class="err">└────────────┘</span>
 </code></pre></div>
 
 
