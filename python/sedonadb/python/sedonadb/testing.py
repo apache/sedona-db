@@ -14,11 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import os
 import math
+import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Literal, Optional, Tuple, Union
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
@@ -27,6 +27,85 @@ if TYPE_CHECKING:
     import pandas
 
     import sedonadb
+
+
+def random_geometry(
+    n: int = 1024,
+    geometry_type: Literal[
+        "Point",
+        "LineString",
+        "Polygon",
+        "MultiPoint",
+        "MultiLineString",
+        "MultiPolygon",
+        "GeometryCollection",
+    ] = "Point",
+    *,
+    num_vertices: Union[int, Tuple[int, int]] = 4,
+    num_parts: Union[int, Tuple[int, int]] = (1, 3),
+    size: Union[float, Tuple[float, float]] = (5.0, 20.0),
+    bounds: Iterable[float] = (-170, -80, 170, 80),
+    hole_rate: float = 0.0,
+    empty_rate: float = 0.0,
+    null_rate: float = 0.0,
+    seed: Optional[int] = None,
+) -> "sedonadb.dataframe.DataFrame":
+    import json
+    import time
+
+    import sedonadb
+
+    if isinstance(num_vertices, tuple):
+        num_vertices_min, num_vertices_max = num_vertices
+    else:
+        num_vertices_min = num_vertices_max = num_vertices
+
+    if isinstance(num_parts, tuple):
+        num_parts_min, num_parts_max = num_parts
+    else:
+        num_parts_min = num_parts_max = num_parts
+
+    if isinstance(size, tuple):
+        size_min, size_max = size
+    else:
+        size_min = size
+        size_max = size + size / 1e3
+
+    if num_vertices_min > num_vertices_max:
+        raise ValueError("num_vertices_min > num_vertices_max")
+    if num_parts_min > num_parts_max:
+        raise ValueError("num_parts_min > num_parts_max")
+    if size_min > size_max:
+        raise ValueError("size_min > size_max")
+
+    bounds = [float(b) for b in bounds]
+    if len(bounds) != 4:
+        raise ValueError(
+            f"Expected bounds as [xmin, ymin, xmax, ymax] but got {bounds}"
+        )
+
+    width = bounds[2] - bounds[0]
+    height = bounds[3] - bounds[1]
+    if size_min > width or size_min > height:
+        raise ValueError("size > height / 2 or width / 2 of bounds")
+
+    args = {
+        "bounds": bounds,
+        "empty_rate": max(min(empty_rate, 1.0), 0.0),
+        "geom_type": geometry_type,
+        "null_rate": max(min(null_rate, 1.0), 0.0),
+        "num_parts_range": [num_parts_min, num_parts_max],
+        "polygon_hole_rate": max(min(hole_rate, 1.0), 0.0),
+        "seed": int(seed) if seed is not None else round(time.time() * 1000),
+        "size_range": [size_min, size_max],
+        "target_rows": int(n),
+        "vertices_per_linestring_range": [num_vertices_min, num_vertices_max],
+    }
+
+    sd = sedonadb.connect()
+    return sd.sql(
+        f"SELECT id, geometry FROM sd_random_geometry('{json.dumps(args)}')"
+    ).limit(int(n))
 
 
 def skip_if_not_exists(path: Path):
