@@ -129,12 +129,15 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
         &self,
         mut func: F,
     ) -> Result<()> {
-        // Ensure the first argument of the executor is either Wkb or WkbView
+        // Ensure the first argument of the executor is either Wkb, WkbView, or
+        // a Null type (to support columns of all-null values)
         match &self.arg_types[0] {
-            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {}
+            SedonaType::Wkb(_, _)
+            | SedonaType::WkbView(_, _)
+            | SedonaType::Arrow(DataType::Null) => {}
             other => {
                 return sedona_internal_err!(
-                    "Expected SedonaType::Wkb or SedonaType::WkbView for the first arg, got {}",
+                    "Expected SedonaType::Wkb or SedonaType::WkbView or SedonaType::Arrow(DataType::Null) for the first arg, got {}",
                     other
                 )
             }
