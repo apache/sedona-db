@@ -16,7 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
@@ -65,8 +65,8 @@ impl SedonaScalarKernel for STGeometryType {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
-        let min_output_size = "POINT".len() * executor.num_iterations();
+        let executor = WkbBytesExecutor::new(arg_types, args);
+        let min_output_size = "ST_POINT".len() * executor.num_iterations();
         let mut builder = StringBuilder::with_capacity(executor.num_iterations(), min_output_size);
 
         // Iterate over raw WKB bytes for faster type inference

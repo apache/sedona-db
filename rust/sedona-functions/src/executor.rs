@@ -119,43 +119,6 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
         }
     }
 
-    /// Execute a function by iterating over [Wkb]'s raw binary representation.
-    /// The provided `func` can assume its input bytes is a valid [Wkb] binary.
-    ///
-    /// This function assumes the first argument from the executor is either a [SedonaType::Wkb]
-    /// or [SedonaType::WkbView] type. If other type is provided, an error will be
-    /// thrown.
-    pub fn execute_wkb_bytes_void<F: FnMut(Option<&'b [u8]>) -> Result<()>>(
-        &self,
-        mut func: F,
-    ) -> Result<()> {
-        // Ensure the first argument of the executor is either Wkb, WkbView, or
-        // a Null type (to support columns of all-null values)
-        match &self.arg_types[0] {
-            SedonaType::Wkb(_, _)
-            | SedonaType::WkbView(_, _)
-            | SedonaType::Arrow(DataType::Null) => {}
-            other => {
-                return sedona_internal_err!(
-                    "Expected SedonaType::Wkb or SedonaType::WkbView or SedonaType::Arrow(DataType::Null) for the first arg, got {}",
-                    other
-                )
-            }
-        }
-
-        // We can assume the storage type for Wkb is Binary, and also BinaryView for
-        // WkbView
-        match &self.args[0] {
-            ColumnarValue::Array(array) => {
-                array.iter_as_wkb_bytes(&self.arg_types[0], self.num_iterations, func)
-            }
-            ColumnarValue::Scalar(scalar_value) => {
-                let maybe_bytes = scalar_value.scalar_as_wkb_bytes()?;
-                func(maybe_bytes)
-            }
-        }
-    }
-
     /// Execute a binary geometry function by iterating over [Wkb] scalars in the
     /// first two arguments
     ///
@@ -280,6 +243,58 @@ impl GeometryFactory for WkbGeometryFactory {
 
     fn try_from_wkb<'a>(&self, wkb_bytes: &'a [u8]) -> Result<Self::Geom<'a>> {
         wkb::reader::read_wkb(wkb_bytes).map_err(|e| DataFusionError::External(Box::new(e)))
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct WkbBytesFactory {}
+
+impl GeometryFactory for WkbBytesFactory {
+    type Geom<'a> = &'a [u8];
+
+    fn try_from_wkb<'a>(&self, wkb_bytes: &'a [u8]) -> Result<Self::Geom<'a>> {
+        Ok(wkb_bytes)
+    }
+}
+
+/// Alias for an executor that iterates over geometries in their raw [Wkb] bytes.
+///
+/// This [GenericExecutor] implementation provides more optimization opportunities,
+/// but it requires additional manual processing of the raw [Wkb] bytes compared to
+/// the [WkbExecutor].
+pub(crate) type WkbBytesExecutor<'a, 'b> =
+    GenericExecutor<'a, 'b, WkbBytesFactory, WkbBytesFactory>;
+
+impl<'b> GenericExecutor<'_, 'b, WkbBytesFactory, WkbBytesFactory> {
+    /// Execute a function by iterating over [Wkb]'s raw binary representation.
+    /// The provided `func` can assume its input bytes is a valid [Wkb] binary.
+    pub fn execute_wkb_bytes_void<F: FnMut(Option<&'b [u8]>) -> Result<()>>(
+        &self,
+        mut func: F,
+    ) -> Result<()> {
+        // Ensure the first argument of the executor is either Wkb, WkbView, or
+        // a Null type (to support columns of all-null values)
+        match &self.arg_types[0] {
+            SedonaType::Wkb(_, _)
+            | SedonaType::WkbView(_, _)
+            | SedonaType::Arrow(DataType::Null) => {}
+            other => {
+                return sedona_internal_err!(
+                    "Expected SedonaType::Wkb or SedonaType::WkbView or SedonaType::Arrow(DataType::Null) for the first arg, got {}",
+                    other
+                )
+            }
+        }
+
+        match &self.args[0] {
+            ColumnarValue::Array(array) => {
+                array.iter_as_wkb_bytes(&self.arg_types[0], self.num_iterations, func)
+            }
+            ColumnarValue::Scalar(scalar_value) => {
+                let maybe_bytes = scalar_value.scalar_as_wkb_bytes()?;
+                func(maybe_bytes)
+            }
+        }
     }
 }
 
