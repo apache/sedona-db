@@ -1,11 +1,9 @@
-jupyter
 mike
 mkdocs-git-revision-date-localized-plugin
 mkdocs-glightbox
-mkdocs-jupyter
 mkdocs-macros-plugin
 mkdocs-material
 mkdocstrings[python]
 nbconvert
-ruff
 pyproj
+ruff
