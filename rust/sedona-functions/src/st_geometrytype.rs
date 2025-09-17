@@ -89,6 +89,8 @@ impl SedonaScalarKernel for STGeometryType {
 /// An error will be thrown for invalid WKB bytes input
 ///
 /// Spec: https://libgeos.org/specifications/wkb/
+///
+/// TODO: Move it to `Wkb` crate
 #[inline]
 fn infer_geometry_type_name(buf: &[u8]) -> Result<&'static str> {
     if buf.len() < 5 {
