@@ -1241,9 +1241,9 @@ can run SQL and spatial operations on them.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span><span class="o">,</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"x"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]}))</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"x"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]}))</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌───────┐</span>
 <span class="err">│</span>   <span class="n">x</span>   <span class="err">│</span>
 <span class="err">│</span> <span class="n">int64</span> <span class="err">│</span>
@@ -1285,10 +1285,9 @@ can run SQL and spatial operations on them.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">drop_view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+&gt;&gt;&gt; sd.drop_view("foofy")
 </code></pre></div>
 
 
@@ -1339,10 +1338,10 @@ For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for a
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">url</span> <span class="o">=</span> <span class="s2">"https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-<span class="o">&lt;</span><span class="n">sedonadb</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">DataFrame</span> <span class="nb">object</span> <span class="n">at</span> <span class="o">...&gt;</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
+&gt;&gt;&gt; sd.read_parquet(url)
+&lt;sedonadb.dataframe.DataFrame object at ...&gt;
 </code></pre></div>
 
 
@@ -1380,9 +1379,9 @@ that can be used to request results or further modify the query.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span>
-<span class="o">&lt;</span><span class="n">sedonadb</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">DataFrame</span> <span class="nb">object</span> <span class="n">at</span> <span class="o">...&gt;</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geom")
+&lt;sedonadb.dataframe.DataFrame object at ...&gt;
 </code></pre></div>
 
 
@@ -1419,17 +1418,16 @@ that can be used to request results or further modify the query.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌────────────┐</span>
-<span class="err">│</span>    <span class="n">geom</span>    <span class="err">│</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">╞════════════╡</span>
-<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
-<span class="err">└────────────┘</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">drop_view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+&gt;&gt;&gt; sd.view("foofy").show()
+┌────────────┐
+│    geom    │
+│  geometry  │
+╞════════════╡
+│ POINT(0 1) │
+└────────────┘
+&gt;&gt;&gt; sd.drop_view("foofy")
 </code></pre></div>
 
 
@@ -1548,8 +1546,7 @@ been called, subsequent configuration has no effect.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">configure_proj</span><span class="p">(</span><span class="s2">"auto"</span><span class="p">)</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sedona.db.configure_proj("auto")
 </code></pre></div>
 
 
@@ -1673,16 +1670,15 @@ reading a file, or executing SQL.</p>
 
         <p>Return the column names and data types</p>
 <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT 1 as one"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">schema</span>
-<span class="n">SedonaSchema</span> <span class="k">with</span> <span class="mi">1</span> <span class="n">field</span><span class="p">:</span>
-  <span class="n">one</span><span class="p">:</span> <span class="n">non</span><span class="o">-</span><span class="n">nullable</span> <span class="n">Int64</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-<span class="n">SedonaField</span> <span class="n">one</span><span class="p">:</span> <span class="n">non</span><span class="o">-</span><span class="n">nullable</span> <span class="n">Int64</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">type</span>
-<span class="p">(</span><span class="s1">'one'</span><span class="p">,</span> <span class="n">SedonaType</span> <span class="n">Int64</span><span class="p">)</span>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">sd</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sedona</span><span class="p">.</span><span class="nx">db</span><span class="p">.</span><span class="nx">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">df</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sd</span><span class="p">.</span><span class="nx">sql</span><span class="p">(</span><span class="s">"SELECT 1 as one"</span><span class="p">)</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">df</span><span class="p">.</span><span class="nx">schema</span>
+<span class="nx">SedonaSchema</span><span class="w"> </span><span class="nx">with</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="nx">field</span><span class="p">:</span>
+<span class="w">  </span><span class="nx">one</span><span class="p">:</span><span class="w"> </span><span class="nx">non</span><span class="o">-</span><span class="nx">nullable</span><span class="w"> </span><span class="nx">Int64</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">df</span><span class="p">.</span><span class="nx">schema</span><span class="p">.</span><span class="nx">field</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="nx">SedonaField</span><span class="w"> </span><span class="nx">one</span><span class="p">:</span><span class="w"> </span><span class="nx">non</span><span class="o">-</span><span class="nx">nullable</span><span class="w"> </span><span class="nx">Int64</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">df</span><span class="p">.</span><span class="nx">schema</span><span class="p">.</span><span class="nx">field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">df</span><span class="p">.</span><span class="nx">schema</span><span class="p">.</span><span class="nx">field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="k">type</span>
+<span class="p">(</span><span class="err">'</span><span class="nx">one</span><span class="err">'</span><span class="p">,</span><span class="w"> </span><span class="nx">SedonaType</span><span class="w"> </span><span class="nx">Int64</span><span class="p">)</span>
 </code></pre></div>
 
     </div>
@@ -1770,11 +1766,10 @@ for more details.</p>
 
         <p>Compute the number of rows in this DataFrame</p>
 <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
-<span class="mi">3</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+&gt;&gt;&gt; df.count()
+3
 </code></pre></div>
 
 
@@ -1813,16 +1808,15 @@ for more details.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌──────┐</span>
-<span class="err">│</span>  <span class="n">val</span> <span class="err">│</span>
-<span class="err">│</span> <span class="n">utf8</span> <span class="err">│</span>
-<span class="err">╞══════╡</span>
-<span class="err">│</span> <span class="n">one</span>  <span class="err">│</span>
-<span class="err">└──────┘</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+&gt;&gt;&gt; df.head(1).show()
+┌──────┐
+│  val │
+│ utf8 │
+╞══════╡
+│ one  │
+└──────┘
 </code></pre></div>
 
 
@@ -1869,24 +1863,23 @@ for more details.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">limit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌──────┐</span>
-<span class="err">│</span>  <span class="n">val</span> <span class="err">│</span>
-<span class="err">│</span> <span class="n">utf8</span> <span class="err">│</span>
-<span class="err">╞══════╡</span>
-<span class="err">│</span> <span class="n">one</span>  <span class="err">│</span>
-<span class="err">└──────┘</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+&gt;&gt;&gt; df.limit(1).show()
+┌──────┐
+│  val │
+│ utf8 │
+╞══════╡
+│ one  │
+└──────┘
 
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">limit</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌───────┐</span>
-<span class="err">│</span>  <span class="n">val</span>  <span class="err">│</span>
-<span class="err">│</span>  <span class="n">utf8</span> <span class="err">│</span>
-<span class="err">╞═══════╡</span>
-<span class="err">│</span> <span class="n">three</span> <span class="err">│</span>
-<span class="err">└───────┘</span>
+&gt;&gt;&gt; df.limit(1, offset=2).show()
+┌───────┐
+│  val  │
+│  utf8 │
+╞═══════╡
+│ three │
+└───────┘
 </code></pre></div>
 
 
@@ -1950,15 +1943,14 @@ if a width is not set by another mechanism.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geometry"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌────────────┐</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">╞════════════╡</span>
-<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
-<span class="err">└────────────┘</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geometry").show()
+┌────────────┐
+│  geometry  │
+│  geometry  │
+╞════════════╡
+│ POINT(0 1) │
+└────────────┘
 </code></pre></div>
 
 
@@ -1999,13 +1991,12 @@ schema.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geometry"</span><span class="p">)</span><span class="o">.</span><span class="n">to_arrow_table</span><span class="p">()</span>
-<span class="n">pyarrow</span><span class="o">.</span><span class="n">Table</span>
-<span class="n">geometry</span><span class="p">:</span> <span class="n">extension</span><span class="o">&lt;</span><span class="n">geoarrow</span><span class="o">.</span><span class="n">wkb</span><span class="o">&lt;</span><span class="n">WkbType</span><span class="o">&gt;&gt;</span> <span class="ow">not</span> <span class="n">null</span>
-<span class="o">----</span>
-<span class="n">geometry</span><span class="p">:</span> <span class="p">[[</span><span class="mi">01010000000000000000000000000000000000</span><span class="n">F03F</span><span class="p">]]</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geometry").to_arrow_table()
+pyarrow.Table
+geometry: extension&lt;geoarrow.wkb&lt;WkbType&gt;&gt; not null
+----
+geometry: [[01010000000000000000000000000000000000F03F]]
 </code></pre></div>
 
 
@@ -2032,15 +2023,14 @@ DataFrame representing it.</p>
 <p>Does not guarantee ordering of rows.  Use <code>to_arrow_table()</code> if
 ordering is needed.</p>
 <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">to_memtable</span><span class="p">()</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌────────────┐</span>
-<span class="err">│</span>    <span class="n">geom</span>    <span class="err">│</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">╞════════════╡</span>
-<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
-<span class="err">└────────────┘</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geom").to_memtable().show()
+┌────────────┐
+│    geom    │
+│  geometry  │
+╞════════════╡
+│ POINT(0 1) │
+└────────────┘
 </code></pre></div>
 
 
@@ -2084,11 +2074,10 @@ column with a spatial data type (in that order).</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geometry"</span><span class="p">)</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">()</span>
-      <span class="n">geometry</span>
-<span class="mi">0</span>  <span class="n">POINT</span> <span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geometry").to_pandas()
+      geometry
+0  POINT (0 1)
 </code></pre></div>
 
 
@@ -2168,12 +2157,11 @@ a single file is written if <code>partition_by</code> is unspecified and
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">td</span> <span class="o">=</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">url</span> <span class="o">=</span> <span class="s2">"https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">to_parquet</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">td</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">/tmp.parquet"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">to_parquet</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">td</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">/tmp.parquet"</span><span class="p">)</span>
 </code></pre></div>
 
 
@@ -2221,16 +2209,15 @@ such that it can be referred to in SQL.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"foofy"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-<span class="err">┌────────────┐</span>
-<span class="err">│</span>    <span class="n">geom</span>    <span class="err">│</span>
-<span class="err">│</span>  <span class="n">geometry</span>  <span class="err">│</span>
-<span class="err">╞════════════╡</span>
-<span class="err">│</span> <span class="n">POINT</span><span class="p">(</span><span class="mi">0</span> <span class="mi">1</span><span class="p">)</span> <span class="err">│</span>
-<span class="err">└────────────┘</span>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+&gt;&gt;&gt; sd.view("foofy").show()
+┌────────────┐
+│    geom    │
+│  geometry  │
+╞════════════╡
+│ POINT(0 1) │
+└────────────┘
 </code></pre></div>
 
 
