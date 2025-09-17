@@ -70,7 +70,7 @@ impl SedonaScalarKernel for STGeometryType {
         let mut builder = StringBuilder::with_capacity(executor.num_iterations(), min_output_size);
 
         // Iterate over raw WKB bytes for faster type inference
-        executor.execute_wkb_bytes_void(|maybe_bytes| {
+        executor.execute_wkb_void(|maybe_bytes| {
             match maybe_bytes {
                 Some(bytes) => {
                     let name = infer_geometry_type_name(bytes)?;
@@ -89,8 +89,6 @@ impl SedonaScalarKernel for STGeometryType {
 /// An error will be thrown for invalid WKB bytes input
 ///
 /// Spec: https://libgeos.org/specifications/wkb/
-///
-/// TODO: Move it to `Wkb` crate
 #[inline]
 fn infer_geometry_type_name(buf: &[u8]) -> Result<&'static str> {
     if buf.len() < 5 {

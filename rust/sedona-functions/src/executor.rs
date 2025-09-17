@@ -246,8 +246,13 @@ impl GeometryFactory for WkbGeometryFactory {
     }
 }
 
+/// A [GeometryFactory] whose geometry type are raw WKB bytes
+///
+/// Using this geometry factory iterates over items as references to the raw underlying
+/// bytes, which is useful for writing optimized kernels that do not need the full buffer to
+/// be validated and/or parsed.
 #[derive(Default)]
-pub(crate) struct WkbBytesFactory {}
+pub struct WkbBytesFactory {}
 
 impl GeometryFactory for WkbBytesFactory {
     type Geom<'a> = &'a [u8];
@@ -264,39 +269,6 @@ impl GeometryFactory for WkbBytesFactory {
 /// the [WkbExecutor].
 pub(crate) type WkbBytesExecutor<'a, 'b> =
     GenericExecutor<'a, 'b, WkbBytesFactory, WkbBytesFactory>;
-
-impl<'b> GenericExecutor<'_, 'b, WkbBytesFactory, WkbBytesFactory> {
-    /// Execute a function by iterating over [Wkb]'s raw binary representation.
-    /// The provided `func` can assume its input bytes is a valid [Wkb] binary.
-    pub fn execute_wkb_bytes_void<F: FnMut(Option<&'b [u8]>) -> Result<()>>(
-        &self,
-        mut func: F,
-    ) -> Result<()> {
-        // Ensure the first argument of the executor is either Wkb, WkbView, or
-        // a Null type (to support columns of all-null values)
-        match &self.arg_types[0] {
-            SedonaType::Wkb(_, _)
-            | SedonaType::WkbView(_, _)
-            | SedonaType::Arrow(DataType::Null) => {}
-            other => {
-                return sedona_internal_err!(
-                    "Expected SedonaType::Wkb or SedonaType::WkbView or SedonaType::Arrow(DataType::Null) for the first arg, got {}",
-                    other
-                )
-            }
-        }
-
-        match &self.args[0] {
-            ColumnarValue::Array(array) => {
-                array.iter_as_wkb_bytes(&self.arg_types[0], self.num_iterations, func)
-            }
-            ColumnarValue::Scalar(scalar_value) => {
-                let maybe_bytes = scalar_value.scalar_as_wkb_bytes()?;
-                func(maybe_bytes)
-            }
-        }
-    }
-}
 
 /// Trait for iterating over a container type as geometry scalars
 ///
