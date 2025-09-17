@@ -1800,6 +1800,94 @@ for more details.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.explain" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">explain</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.explain" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">explain</span><span class="p">(</span><span class="nb">type</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s1">'standard'</span><span class="p">,</span> <span class="nb">format</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s1">'indent'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return the execution plan for this DataFrame as a DataFrame</p>
+<p>Retrieves the logical and physical execution plans that will be used to
+compute this DataFrame. This is useful for understanding query
+performance and optimization.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>type</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></code>, default:
+                  <code>'standard'</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The type of explain plan to generate. Supported values are:
+"standard" (default) - shows logical and physical plans,
+"extended" - includes additional query optimization details,
+"analyze" - executes the plan and reports actual metrics.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>format</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></code>, default:
+                  <code>'indent'</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The format to use for displaying the plan. Supported formats are
+"indent" (default), "tree", "pgjson" and "graphviz".</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>
+          –
+          <div class="doc-md-description">
+            <p>A DataFrame containing the execution plan information with columns</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>
+          –
+          <div class="doc-md-description">
+            <p>'plan_type' and 'plan'.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">con</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">con</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT 1 as one"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">explain</span><span class="p">()</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌───────────────┬─────────────────────────────────┐</span>
+<span class="err">│</span>   <span class="n">plan_type</span>   <span class="err">┆</span>               <span class="n">plan</span>              <span class="err">│</span>
+<span class="err">│</span>      <span class="n">utf8</span>     <span class="err">┆</span>               <span class="n">utf8</span>              <span class="err">│</span>
+<span class="err">╞═══════════════╪═════════════════════════════════╡</span>
+<span class="err">│</span> <span class="n">logical_plan</span>  <span class="err">┆</span> <span class="n">Projection</span><span class="p">:</span> <span class="n">Int64</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="n">AS</span> <span class="n">one</span>     <span class="err">│</span>
+<span class="err">│</span>               <span class="err">┆</span>   <span class="n">EmptyRelation</span>                 <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span> <span class="n">physical_plan</span> <span class="err">┆</span> <span class="n">ProjectionExec</span><span class="p">:</span> <span class="n">expr</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span> <span class="k">as</span> <span class="n">one</span><span class="p">]</span> <span class="err">│</span>
+<span class="err">│</span>               <span class="err">┆</span>   <span class="n">PlaceholderRowExec</span>            <span class="err">│</span>
+<span class="err">│</span>               <span class="err">┆</span>                                 <span class="err">│</span>
+<span class="err">└───────────────┴─────────────────────────────────┘</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.head" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">head</span>
 
