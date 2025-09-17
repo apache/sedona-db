@@ -363,37 +363,33 @@ class DataFrame:
 
     def explain(
         self,
-        verbose: bool = False,
-        analyze: bool = False,
+        type: str = "standard",
         format: str = "indent",
-        width: Optional[int] = None,
-        ascii: bool = False,
-    ) -> str:
-        """Print the execution plan for this DataFrame
+    ) -> "DataFrame":
+        """Return the execution plan for this DataFrame as a DataFrame
 
-        Shows the logical and physical execution plans that will be used to
+        Retrieves the logical and physical execution plans that will be used to
         compute this DataFrame. This is useful for understanding query
         performance and optimization.
 
         Args:
-            verbose: Use True to show additional details in the plan output.
-            analyze: Use True to actually execute the plan and report metrics.
+            type: The type of explain plan to generate. Supported values are:
+                "standard" (default) - shows logical and physical plans,
+                "extended" - includes additional query optimization details,
+                "analyze" - executes the plan and reports actual metrics.
             format: The format to use for displaying the plan. Supported formats are
-                "indent", "tree", "pgjson" and "graphviz"
-            width: The number of characters to use to display the output.
-                If None, uses `Options.width` or detects the value from the
-                current terminal if available.
-            ascii: Use True to disable UTF-8 characters in the output.
+                "indent" (default), "tree", "pgjson" and "graphviz".
 
         Returns:
-            A string representation of the execution plan.
+            A DataFrame containing the execution plan information with columns
+            'plan_type' and 'plan'.
 
         Examples:
 
             >>> import sedonadb
             >>> con = sedonadb.connect()
             >>> df = con.sql("SELECT 1 as one")
-            >>> print(df.explain())
+            >>> df.explain().show()
             ┌───────────────┬─────────────────────────────────┐
             │   plan_type   ┆               plan              │
             │      utf8     ┆               utf8              │
@@ -405,10 +401,8 @@ class DataFrame:
             │               ┆   PlaceholderRowExec            │
             │               ┆                                 │
             └───────────────┴─────────────────────────────────┘
-            <BLANKLINE>
         """
-        width = _out_width(width)
-        return self._impl.explain(self._ctx, verbose, analyze, format, width, ascii)
+        return DataFrame(self._ctx, self._impl.explain(type, format))
 
     def __repr__(self) -> str:
         if global_options().interactive:

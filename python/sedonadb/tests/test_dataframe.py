@@ -386,8 +386,8 @@ def test_show_explained(con, capsys):
     assert capsys.readouterr().out.strip() == expected
 
 
-def test_explain(con):
-    query_plan = con.sql("SELECT 1 as one").explain()
+def test_explain(con, capsys):
+    con.sql("SELECT 1 as one").explain().show()
     expected = """
 ┌───────────────┬─────────────────────────────────┐
 │   plan_type   ┆               plan              │
@@ -401,9 +401,9 @@ def test_explain(con):
 │               ┆                                 │
 └───────────────┴─────────────────────────────────┘
     """.strip()
-    assert query_plan.strip() == expected
+    assert capsys.readouterr().out.strip() == expected
 
-    query_plan = con.sql("SELECT 1 as one").explain(format="tree")
+    con.sql("SELECT 1 as one").explain(format="tree").show()
     expected = """
 ┌───────────────┬───────────────────────────────┐
 │   plan_type   ┆              plan             │
@@ -420,7 +420,14 @@ def test_explain(con):
 │               ┆                               │
 └───────────────┴───────────────────────────────┘
     """.strip()
-    assert query_plan.strip() == expected
+    assert capsys.readouterr().out.strip() == expected
+
+    query_plan = con.sql("SELECT 1 as one").explain(type="analyze").to_pandas()
+    assert query_plan.iloc[0, 0] == "Plan with Metrics"
+
+    query_plan = con.sql("SELECT 1 as one").explain(type="extended").to_pandas()
+    assert query_plan.iloc[0, 0] == "initial_logical_plan"
+    assert len(query_plan) > 10
 
 
 def test_repr(con):

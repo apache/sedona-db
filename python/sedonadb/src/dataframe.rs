@@ -187,39 +187,24 @@ impl InternalDataFrame {
         Ok(content)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn explain<'py>(
-        &self,
-        py: Python<'py>,
-        ctx: &InternalContext,
-        verbose: bool,
-        analyze: bool,
-        format: &str,
-        width_chars: usize,
-        ascii: bool,
-    ) -> Result<String, PySedonaError> {
+    fn explain(&self, explain_type: &str, format: &str) -> Result<Self, PySedonaError> {
         let format = ExplainFormat::from_str(format)?;
+        let (analyze, verbose) = match explain_type {
+            "standard" => (false, false),
+            "extended" => (false, true),
+            "analyze" => (true, false),
+            _ => {
+                return Err(PySedonaError::SedonaPython(
+                    "explain type must be one of 'standard', 'extended', or 'analyze'".to_string(),
+                ))
+            }
+        };
         let explain_option = ExplainOption::default()
             .with_analyze(analyze)
             .with_verbose(verbose)
             .with_format(format);
         let explain_df = self.inner.clone().explain_with_options(explain_option)?;
-
-        let mut options = DisplayTableOptions::new();
-        options.table_width = width_chars.try_into().unwrap_or(u16::MAX);
-        options.arrow_options = options.arrow_options.with_types_info(true);
-        options.max_row_height = usize::MAX;
-        if !ascii {
-            options.display_mode = DisplayMode::Utf8;
-        }
-
-        let content = wait_for_future(
-            py,
-            &self.runtime,
-            explain_df.clone().show_sedona(&ctx.inner, None, options),
-        )??;
-
-        Ok(content)
+        Ok(Self::new(explain_df, self.runtime.clone()))
     }
 
     fn __datafusion_table_provider__<'py>(
