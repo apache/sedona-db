@@ -7,11 +7,13 @@
       
       
       
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/programming-guide/">
       
-        <link rel="prev" href="..">
+      
+        <link rel="prev" href="../quickstart-python/">
       
       
-        <link rel="next" href="../quickstart-cli/">
+        <link rel="next" href="../development/">
       
       
       <link rel="icon" href="../image/sedona_logo_symbol.png">
@@ -215,7 +217,7 @@
   
     
   
-  Home
+  SedonaDB
 
       </a>
     </li>
@@ -232,7 +234,7 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+        <a href="../quickstart-python/" class="md-tabs__link">
           
   
   
@@ -299,6 +301,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="https://sedona.apache.org/latest/community/contact/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="https://sedona.apache.org/latest/asf/asf/" class="md-tabs__link">
         
   
@@ -324,7 +345,7 @@
   
     
   
-  Return to Sedona Homepage
+  Sedona Homepage
 
       </a>
     </li>
@@ -393,7 +414,7 @@
   
   
   <span class="md-ellipsis">
-    Home
+    SedonaDB
     
   </span>
   
@@ -450,6 +471,29 @@
             SedonaDB Guides
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python Quickstart
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -535,9 +579,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#files" class="md-nav__link">
+  <a href="#geoparquet-support" class="md-nav__link">
     <span class="md-ellipsis">
-      Files
+      GeoParquet support
     </span>
   </a>
   
@@ -547,52 +591,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../quickstart-cli/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CLI Quickstart
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../quickstart-python/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Python Quickstart
-    
-  </span>
-  
-
-      </a>
     </li>
   
 
@@ -901,6 +899,28 @@
   
   
     <li class="md-nav__item">
+      <a href="https://sedona.apache.org/latest/community/contact/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Community
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="https://sedona.apache.org/latest/asf/asf/" class="md-nav__link">
         
   
@@ -928,7 +948,7 @@
   
   
   <span class="md-ellipsis">
-    Return to Sedona Homepage
+    Sedona Homepage
     
   </span>
   
@@ -992,9 +1012,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#files" class="md-nav__link">
+  <a href="#geoparquet-support" class="md-nav__link">
     <span class="md-ellipsis">
-      Files
+      GeoParquet support
     </span>
   </a>
   
@@ -1468,8 +1488,8 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h1 id="sedonadb-guide">SedonaDB Guide<a class="anchor-link" href="#sedonadb-guide">¶</a></h1><p>This page explains how to process vector data with SedonaDB.</p>
 <p>You will learn how to create SedonaDB DataFrames, run spatial queries, and perform I/O operations with various types of files.</p>
-<p>Let’s start by establishing a SedonaDB connection.</p>
-<h2 id="establish-sedonadb-connection">Establish SedonaDB connection<a class="anchor-link" href="#establish-sedonadb-connection">¶</a></h2><p>Here’s how to create the SedonaDB connection:</p>
+<p>Let's start by establishing a SedonaDB connection.</p>
+<h2 id="establish-sedonadb-connection">Establish SedonaDB connection<a class="anchor-link" href="#establish-sedonadb-connection">¶</a></h2><p>Here's how to create the SedonaDB connection:</p>
 </div>
 </div>
 </div>
@@ -1492,13 +1512,13 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
-<span class="n">sd</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">import sedonadb
+<div class="clipboard-copy-txt" id="cell-1">import sedona.db
 
-sd = sedonadb.connect()</div>
+sd = sedona.db.connect()</div>
 </div>
 </div>
 </div>
@@ -1511,9 +1531,9 @@ sd = sedonadb.connect()</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>Now let’s see how to create SedonaDB DataFrames.</p>
+<p>Now, let's see how to create SedonaDB dataframes.</p>
 <h2 id="create-sedonadb-dataframe">Create SedonaDB DataFrame<a class="anchor-link" href="#create-sedonadb-dataframe">¶</a></h2><p><strong>Manually creating SedonaDB DataFrame</strong></p>
-<p>Here’s how to manually create a SedonaDB DataFrame:</p>
+<p>Here's how to manually create a SedonaDB DataFrame:</p>
 </div>
 </div>
 </div>
@@ -1612,7 +1632,7 @@ AS t(val, point)""")</div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p><strong>Create SedonaDB DataFrame from files in S3</strong></p>
-<p>For most production applications, you will create SedonaDB DataFrames by reading data from a file.  Let’s see how to read GeoParquet files in AWS S3 into a SedonaDB DataFrame.</p>
+<p>For most production applications, you will create SedonaDB DataFrames by reading data from a file.  Let's see how to read GeoParquet files in AWS S3 into a SedonaDB DataFrame.</p>
 </div>
 </div>
 </div>
@@ -1656,7 +1676,7 @@ AS t(val, point)""")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p>Let’s now run some spatial queries.</p>
+<p>Now, let's run some spatial queries.</p>
 <p><strong>Read from GeoPandas DataFrame</strong></p>
 <p>This section shows how to convert a GeoPandas DataFrame into a SedonaDB DataFrame.</p>
 <p>Start by reading a FlatGeoBuf file into a GeoPandas DataFrame:</p>
@@ -1765,9 +1785,9 @@ df.show(3)</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="spatial-queries">Spatial queries<a class="anchor-link" href="#spatial-queries">¶</a></h2><p>Let’s see how to run spatial operations like filtering, joins, and clustering algorithms.</p>
-<p><em><strong>Spatial filtering</strong></em></p>
-<p>Let’s run a spatial filtering operation to fetch all the objects in the following polygon:</p>
+<h2 id="spatial-queries">Spatial queries<a class="anchor-link" href="#spatial-queries">¶</a></h2><p>Let's see how to run spatial operations like filtering, joins, and clustering algorithms.</p>
+<p><strong>Spatial filtering</strong></p>
+<p>Let's run a spatial filtering operation to fetch all the objects in the following polygon:</p>
 </div>
 </div>
 </div>
@@ -1848,7 +1868,7 @@ ns.show(3)</div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p>You can see it only includes the divisions in the Nova Scotia area.  Skip to the visualization section to see how this data can be graphed on a map.</p>
-<p><em><strong>K-nearest neighbors (KNN) joins</strong></em></p>
+<p><strong>K-nearest neighbors (KNN) joins</strong></p>
 <p>Create <code>restaurants</code> and <code>customers</code> tables so we can demonstrate the KNN join functionality.</p>
 </div>
 </div>
@@ -1859,7 +1879,7 @@ ns.show(3)</div>
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In&nbsp;[9]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="jp-InputPrompt jp-InputArea-prompt">In&nbsp;[&nbsp;]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
 <clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
@@ -1874,7 +1894,7 @@ ns.show(3)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">SELECT name, ST_Point(lng, lat) AS location</span>
-<span class="s2">FROM (VALUES </span>
+<span class="s2">FROM (VALUES</span>
 <span class="s2">    (101, -74.0, 40.7, 'Pizza Palace'),</span>
 <span class="s2">    (102, -73.99, 40.69, 'Burger Barn'),</span>
 <span class="s2">    (103, -74.02, 40.72, 'Taco Town'),</span>
@@ -1887,7 +1907,7 @@ ns.show(3)</div>
 
 <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">SELECT name, ST_Point(lng, lat) AS location</span>
-<span class="s2">FROM (VALUES </span>
+<span class="s2">FROM (VALUES</span>
 <span class="s2">    (1, -74.0, 40.7, 'Alice'),</span>
 <span class="s2">    (2, -73.9, 40.8, 'Bob'),</span>
 <span class="s2">    (3, -74.1, 40.6, 'Carol')</span>
@@ -1898,7 +1918,7 @@ ns.show(3)</div>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-8">df = sd.sql("""
 SELECT name, ST_Point(lng, lat) AS location
-FROM (VALUES 
+FROM (VALUES
     (101, -74.0, 40.7, 'Pizza Palace'),
     (102, -73.99, 40.69, 'Burger Barn'),
     (103, -74.02, 40.72, 'Taco Town'),
@@ -1911,7 +1931,7 @@ df.to_view("restaurants")
 
 df = sd.sql("""
 SELECT name, ST_Point(lng, lat) AS location
-FROM (VALUES 
+FROM (VALUES
     (1, -74.0, 40.7, 'Alice'),
     (2, -73.9, 40.8, 'Bob'),
     (3, -74.1, 40.6, 'Carol')
@@ -2061,8 +2081,18 @@ ORDER BY c.name, r.name;
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p>Notice how each customer has two rows - one for each of the two closest restaurants.</p>
-<h2 id="files">Files<a class="anchor-link" href="#files">¶</a></h2><p>You can read GeoParquet files with SedonaDB, see the following example:</p>
-<div class="highlight"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">"some_file.parquet"</span><span class="p">)</span>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3cb1e53b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="geoparquet-support">GeoParquet support<a class="anchor-link" href="#geoparquet-support">¶</a></h2><p>You can also read GeoParquet files with SedonaDB with <code>read_parquet()</code></p>
+<div class="highlight"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">"DATA_FILE.parquet"</span><span class="p">)</span>
 </pre></div>
 <p>Once you read the file, you can easily expose it as a view and query it with spatial SQL, as we demonstrated in the example above.</p>
 </div>
@@ -2096,7 +2126,7 @@ ORDER BY c.name, r.name;
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 12, 2025 18:17:17 UTC">September 12, 2025 18:17:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 17, 2025 05:01:18 UTC">September 17, 2025 05:01:18</span>
   </span>
 
     
@@ -2132,7 +2162,7 @@ ORDER BY c.name, r.name;
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href=".." class="md-footer__link md-footer__link--prev" aria-label="Previous: Home">
+          <a href="../quickstart-python/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Python Quickstart">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -2142,20 +2172,20 @@ ORDER BY c.name, r.name;
                 Previous
               </span>
               <div class="md-ellipsis">
-                Home
+                Python Quickstart
               </div>
             </div>
           </a>
         
         
           
-          <a href="../quickstart-cli/" class="md-footer__link md-footer__link--next" aria-label="Next: CLI Quickstart">
+          <a href="../development/" class="md-footer__link md-footer__link--next" aria-label="Next: Development">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                CLI Quickstart
+                Development
               </div>
             </div>
             <div class="md-footer__button md-icon">

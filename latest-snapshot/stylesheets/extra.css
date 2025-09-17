@@ -32,26 +32,27 @@
   width: auto;
 }
 
-/* ==========================================================================
-   Navigation Tabs Styles
-   ========================================================================== */
+/* --- Definitive Navigation CSS (Final Version) --- */
 
-/* The main navigation bar container (the red bar) */
+/* 1. Set the height of the main navigation bar */
 .md-tabs {
   background-color: var(--color-red);
+  height: 2.5rem; /* Set an explicit, predictable height for the bar */
 }
 
-/* This ensures the navigation links are centered */
+/* 2. Control the alignment of the links within the bar */
 .md-tabs .md-tabs__list {
-  justify-content: center;
+  height: 100%; /* Make the link container fill the bar's height */
+  justify-content: center; /* Center links horizontally */
+  align-items: center;   /* NEW: Center links vertically */
+  flex-wrap: wrap;       /* Allow wrapping on small screens */
 }
 
-/* Styles for each link in the navigation bar */
+/* 3. Style the individual navigation links */
 .md-tabs__link {
-  font-family: var(--font-inter);
-  color: var(--color-white);
-
-  /* You can adjust the padding here to control spacing */
-  /* The first value is top/bottom, the second is left/right. */
-  padding: .5rem .6rem;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.85);
+  /* We no longer need vertical padding for spacing */
+  padding: 0 0.9rem;
+  font-size: 0.65rem; /* NEW: Adjust font size */
 }
