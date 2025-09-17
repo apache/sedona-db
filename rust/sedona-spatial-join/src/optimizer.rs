@@ -130,8 +130,15 @@ impl OptimizerRule for SpatialJoinOptimizer {
     fn rewrite(
         &self,
         plan: LogicalPlan,
-        _config: &dyn OptimizerConfig,
+        config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
+        let Some(extension) = config.options().extensions.get::<SedonaOptions>() else {
+            return Ok(Transformed::no(plan));
+        };
+        if !extension.spatial_join.enable {
+            return Ok(Transformed::no(plan));
+        }
+
         let LogicalPlan::Filter(Filter {
             predicate, input, ..
         }) = &plan
@@ -201,7 +208,21 @@ fn is_spatial_predicate(expr: &Expr) -> bool {
         },
         Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
             let func_name = func.name().to_lowercase();
-            func_name.starts_with("st_")
+            matches!(
+                func_name.as_str(),
+                "st_intersects"
+                    | "st_contains"
+                    | "st_within"
+                    | "st_covers"
+                    | "st_covered_by"
+                    | "st_coveredby"
+                    | "st_touches"
+                    | "st_crosses"
+                    | "st_overlaps"
+                    | "st_equals"
+                    | "st_dwithin"
+                    | "st_knn"
+            )
         }
         _ => false,
     }
@@ -2738,10 +2759,10 @@ mod tests {
         let non_spatial_expr = col("id").eq(lit(1));
         assert!(!super::is_spatial_predicate(&non_spatial_expr));
 
-        // Non-ST function
+        // Not a spatial relationship function
         let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
             func: Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
-                "regular_function",
+                "st_non_spatial_relation_func",
                 vec![DataType::Int32],
                 DataType::Boolean,
                 datafusion_expr::Volatility::Immutable,

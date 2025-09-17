@@ -188,3 +188,42 @@ def test_query_window_in_subquery():
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
         assert len(sedonadb_results) > 0
         eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+def test_non_optimizable_subquery():
+    with (
+        SedonaDB.create_or_skip() as eng_sedonadb,
+        PostGIS.create_or_skip() as eng_postgis,
+    ):
+        options = json.dumps(
+            {
+                "geom_type": "Point",
+                "seed": 42,
+            }
+        )
+        df_main = eng_sedonadb.execute_and_collect(
+            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
+        )
+        options = json.dumps(
+            {
+                "geom_type": "Point",
+                "seed": 43,
+            }
+        )
+        df_subquery = eng_sedonadb.execute_and_collect(
+            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
+        )
+        eng_sedonadb.create_table_arrow("sjoin_main", df_main)
+        eng_sedonadb.create_table_arrow("sjoin_subquery", df_subquery)
+        eng_postgis.create_table_arrow("sjoin_main", df_main)
+        eng_postgis.create_table_arrow("sjoin_subquery", df_subquery)
+
+        # This cannot be optimized to a spatial join, but the query result should still be correct
+        sql = """
+               SELECT id FROM sjoin_main AS L
+               WHERE ST_DWithin(L.geometry, ST_Point(10, 10), (SELECT R.dist FROM sjoin_subquery AS R WHERE R.id = 1))
+               ORDER BY id
+               """
+        sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
+        assert len(sedonadb_results) > 0
+        eng_postgis.assert_query_result(sql, sedonadb_results)
