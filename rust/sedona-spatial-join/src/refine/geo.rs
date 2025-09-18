@@ -17,7 +17,9 @@
 use std::sync::{Arc, OnceLock};
 
 use datafusion_common::Result;
-use geo_generic_alg::{Contains, Distance, Euclidean, Intersects, Relate, Within};
+use geo_generic_alg::{
+    line_measures::DistanceExt, Contains, Distance, Euclidean, Intersects, Relate, Within,
+};
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
@@ -311,16 +313,7 @@ impl GeoPredicateEvaluator for GeoDistance {
         let Some(distance) = distance else {
             return Ok(false);
         };
-        let build_geom = match item_to_geometry(build) {
-            Ok(geom) => geom,
-            Err(_) => return Ok(false),
-        };
-        let probe_geom = match item_to_geometry(probe) {
-            Ok(geom) => geom,
-            Err(_) => return Ok(false),
-        };
-        let euc = Euclidean;
-        let dist = euc.distance(&build_geom, &probe_geom);
+        let dist = build.distance_ext(probe);
         Ok(dist <= distance)
     }
 
