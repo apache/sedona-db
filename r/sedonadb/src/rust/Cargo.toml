@@ -37,3 +37,6 @@ sedona-geoparquet = { path = "../../../../rust/sedona-geoparquet" }
 sedona-schema = { path = "../../../../rust/sedona-schema" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+# Do not use bindgen in order to avoid troubles (cf. https://github.com/apache/sedona-db/pull/78#issuecomment-3289180614)
+sedona-proj = { path = "../../../../c/sedona-proj", default-features = false, features = ["proj-sys"] }
+sedona-tg = { path = "../../../../c/sedona-tg", default-features = false, features = [] }

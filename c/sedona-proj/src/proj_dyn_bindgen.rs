@@ -18,4 +18,12 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
+#[cfg(feature = "bindgen")]
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+#[cfg(all(
+    not(feature = "bindgen"),
+    target_os = "windows",
+    target_arch = "x86_64"
+))]
+include!("bindings/windows-x86_64.rs");

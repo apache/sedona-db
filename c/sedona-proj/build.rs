@@ -14,10 +14,21 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#[cfg(feature = "bindgen")]
 use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/proj_dyn.c");
+    generate_bindings();
+}
+
+#[cfg(not(feature = "bindgen"))]
+fn generate_bindings() {
+    // Do nothing
+}
+
+#[cfg(feature = "bindgen")]
+fn generate_bindings() {
     cc::Build::new().file("src/proj_dyn.c").compile("proj_dyn");
 
     let bindings = bindgen::Builder::default()
@@ -27,8 +38,13 @@ fn main() {
         .expect("Unable to generate bindings");
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let bindings_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file(&bindings_path)
         .expect("Couldn't write bindings!");
+
+    // If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is set, copy the output binding.
+    if let Ok(dst) = env::var("SEDONA_PROJ_BINDINGS_OUTPUT_PATH") {
+        std::fs::copy(bindings_path, dst).expect("Failed to copy bindings");
+    }
 }

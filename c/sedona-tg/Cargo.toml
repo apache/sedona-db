@@ -27,7 +27,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-bindgen = "0.71.0"
+bindgen = { version = "0.71.0", optional = true }
 cc = { version = "1" }
 
 [dev-dependencies]
@@ -37,6 +37,10 @@ sedona = { path = "../../rust/sedona" }
 sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
 wkb = { workspace = true }
 geo = { workspace = true }
+
+[features]
+default = ["bindgen"]
+bindgen = ["dep:bindgen"]
 
 [dependencies]
 arrow-schema = { workspace = true }
