@@ -1451,6 +1451,17 @@
 <p>This object keeps track of state such as registered functions,
 registered tables, and available memory. This is similar to a
 Spark SessionContext or a database connection.</p>
+<p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">sedona</span>.<span class="nv">db</span>.<span class="k">connect</span><span class="ss">()</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span>.<span class="nv">options</span>.<span class="nv">interactive</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">True</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span>.<span class="nv">sql</span><span class="ss">(</span><span class="s2">"SELECT 1 as one"</span><span class="ss">)</span>
+┌───────┐
+│<span class="w">  </span><span class="nv">one</span><span class="w">  </span>│
+│<span class="w"> </span><span class="nv">int64</span><span class="w"> </span>│
+╞═══════╡
+│<span class="w">     </span><span class="mi">1</span><span class="w"> </span>│
+└───────┘
+</code></pre></div>
 
 
 
