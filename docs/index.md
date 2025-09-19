@@ -58,15 +58,9 @@ Here's how to install SedonaDB with various build tools:
 	install.packages("sedonadb", repos = "https://community.r-multiverse.org")
 	```
 
-## Run a query in SQL, Python, Rust, or R
+## Run a query
 
 SedonaDB offers a flexible query interface.
-
-=== "SQL"
-
-	```sql
-	SELECT ST_Point(0, 1) as geom
-	```
 
 === "Python"
 
@@ -77,20 +71,6 @@ SedonaDB offers a flexible query interface.
 	sd.sql("SELECT ST_Point(0, 1) as geom")
 	```
 
-=== "Rust"
-
-	```Rust
-	use datafusion::prelude::*
-	use sedona::context{SedonaContext, SedonaDataFrame};
-
-	let ctx = SedonaContext::new_local_interactive().await?;
-        let batches = ctx
-            .sql("SELECT ST_Point(0, 1) as geom")
-            .await?
-            .show_sedona(&cts, None, Default::default())
-            .await?;
-	```
-
 === "R"
 
 	```r
@@ -99,9 +79,8 @@ SedonaDB offers a flexible query interface.
         sd_sql("SELECT ST_Point(0, 1) as geom")
 	```
 
-
 ## Have questions?
 
-Start a [GitHub Discussion](https://github.com/apache/sedona-db/issues) or join the [Discord community](https://discord.com/invite/9A3k5dEBsY) and ask the developers any questions you may have.
+Start a [GitHub Discussion](https://github.com/apache/sedona/discussions) or join the [Discord community](https://discord.com/invite/9A3k5dEBsY) and ask the developers any questions you may have.
 
 We look forward to collaborating with you!
