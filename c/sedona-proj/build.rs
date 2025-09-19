@@ -14,22 +14,58 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#[cfg(feature = "bindgen")]
 use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/proj_dyn.c");
-    generate_bindings();
-}
-
-#[cfg(not(feature = "bindgen"))]
-fn generate_bindings() {
-    // Do nothing
-}
-
-#[cfg(feature = "bindgen")]
-fn generate_bindings() {
     cc::Build::new().file("src/proj_dyn.c").compile("proj_dyn");
+
+    println!("cargo:rerun-if-env-changed=SEDONA_PROJ_BINDINGS_OUTPUT_PATH");
+
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let prebuilt_bindings_path =
+        std::path::absolute(PathBuf::from(format!("src/bindings/{os}-{arch}.rs")))
+            .expect("Failed to get absolute path");
+
+    let bindings_path = match (
+        env::var("SEDONA_PROJ_BINDINGS_OUTPUT_PATH"),
+        PathBuf::from(&prebuilt_bindings_path).exists(),
+    ) {
+        // case 1) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is set, generate new bindings to the path and use it.
+        (Ok(output_path), _) => {
+            let output_path = std::path::absolute(PathBuf::from(output_path))
+                .expect("Failed to get absolute path");
+            if let Some(output_dir) = output_path.parent() {
+                std::fs::create_dir_all(output_dir).expect("Failed to create parent dirs");
+            }
+            println!(
+                "cargo::rustc-env=BINDINGS_PATH={}",
+                output_path.to_string_lossy()
+            );
+            output_path
+        }
+        // case 2) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is not set and the prebuilt bindings exists, use it without running bindgen
+        (Err(_), true) => {
+            println!(
+                "cargo::rustc-env=BINDINGS_PATH={}",
+                prebuilt_bindings_path.to_string_lossy()
+            );
+            return;
+        }
+        // case 3) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is not set and the prebuilt bindings doesn't exists, generate new bindings to the default path.
+        (Err(_), false) => {
+            let output_dir = env::var("OUT_DIR").unwrap();
+            let output_path =
+                std::path::absolute(PathBuf::from(format!("{output_dir}/bindings.rs")))
+                    .expect("Failed to get absolute path");
+            println!(
+                "cargo::rustc-env=BINDINGS_PATH={}",
+                output_path.to_string_lossy()
+            );
+            PathBuf::from(output_path)
+        }
+    };
 
     let bindings = bindgen::Builder::default()
         .header("src/proj_dyn.h")
@@ -38,13 +74,7 @@ fn generate_bindings() {
         .expect("Unable to generate bindings");
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let bindings_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
     bindings
         .write_to_file(&bindings_path)
         .expect("Couldn't write bindings!");
-
-    // If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is set, copy the output binding.
-    if let Ok(dst) = env::var("SEDONA_PROJ_BINDINGS_OUTPUT_PATH") {
-        std::fs::copy(bindings_path, dst).expect("Failed to copy bindings");
-    }
 }
