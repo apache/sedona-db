@@ -16,6 +16,35 @@
 // under the License.
 use std::{env, path::PathBuf};
 
+// Since relative path differs between build.rs and a file under `src/`, use the
+// absolute path.
+fn get_absolute_path(path: String) -> PathBuf {
+    std::path::absolute(PathBuf::from(path)).expect("Failed to get absolute path")
+}
+
+fn configure_bindings_path(prebuilt_bindings_path: String) -> (PathBuf, bool) {
+    // If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is set, honor the explicit output
+    // path to regenerate bindings.
+    if let Ok(output_path) = env::var("SEDONA_PROJ_BINDINGS_OUTPUT_PATH") {
+        let output_path = get_absolute_path(output_path);
+        if let Some(output_dir) = output_path.parent() {
+            std::fs::create_dir_all(output_dir).expect("Failed to create parent dirs");
+        }
+        return (output_path, true);
+    }
+
+    // If a prebuilt bindings exists, use it and skip bindgen.
+    let prebuilt_bindings_path = get_absolute_path(prebuilt_bindings_path);
+    if prebuilt_bindings_path.exists() {
+        return (prebuilt_bindings_path, false);
+    }
+
+    let output_dir = env::var("OUT_DIR").unwrap();
+    let output_path = get_absolute_path(format!("{output_dir}/bindings.rs"));
+
+    (output_path, true)
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=src/proj_dyn.c");
     cc::Build::new().file("src/proj_dyn.c").compile("proj_dyn");
@@ -24,48 +53,18 @@ fn main() {
 
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    let prebuilt_bindings_path =
-        std::path::absolute(PathBuf::from(format!("src/bindings/{os}-{arch}.rs")))
-            .expect("Failed to get absolute path");
+    let prebuilt_bindings_path = format!("src/bindings/{os}-{arch}.rs");
 
-    let bindings_path = match (
-        env::var("SEDONA_PROJ_BINDINGS_OUTPUT_PATH"),
-        PathBuf::from(&prebuilt_bindings_path).exists(),
-    ) {
-        // case 1) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is set, generate new bindings to the path and use it.
-        (Ok(output_path), _) => {
-            let output_path = std::path::absolute(PathBuf::from(output_path))
-                .expect("Failed to get absolute path");
-            if let Some(output_dir) = output_path.parent() {
-                std::fs::create_dir_all(output_dir).expect("Failed to create parent dirs");
-            }
-            println!(
-                "cargo::rustc-env=BINDINGS_PATH={}",
-                output_path.to_string_lossy()
-            );
-            output_path
-        }
-        // case 2) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is not set and the prebuilt bindings exists, use it without running bindgen
-        (Err(_), true) => {
-            println!(
-                "cargo::rustc-env=BINDINGS_PATH={}",
-                prebuilt_bindings_path.to_string_lossy()
-            );
-            return;
-        }
-        // case 3) If SEDONA_PROJ_BINDINGS_OUTPUT_PATH is not set and the prebuilt bindings doesn't exists, generate new bindings to the default path.
-        (Err(_), false) => {
-            let output_dir = env::var("OUT_DIR").unwrap();
-            let output_path =
-                std::path::absolute(PathBuf::from(format!("{output_dir}/bindings.rs")))
-                    .expect("Failed to get absolute path");
-            println!(
-                "cargo::rustc-env=BINDINGS_PATH={}",
-                output_path.to_string_lossy()
-            );
-            PathBuf::from(output_path)
-        }
-    };
+    let (bindings_path, generate_bindings) = configure_bindings_path(prebuilt_bindings_path);
+
+    println!(
+        "cargo::rustc-env=BINDINGS_PATH={}",
+        bindings_path.to_string_lossy()
+    );
+
+    if !generate_bindings {
+        return;
+    }
 
     let bindings = bindgen::Builder::default()
         .header("src/proj_dyn.h")
