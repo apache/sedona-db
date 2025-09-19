@@ -20,7 +20,7 @@ site_description: "Documentation for Apache SedonaDB"
 site_url: https://sedona.apache.org/sedonadb/
 nav:
    - SedonaDB: index.md
-   - Python Quickstart: quickstart-python.md
+   - Quickstart: quickstart-python.md
    - SedonaDB Guides:
      - Working with Vector Data: programming-guide.md
      - Working with GeoPandas: geopandas-interop.md

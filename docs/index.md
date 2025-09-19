@@ -1,5 +1,4 @@
 ---
-hide:
 
 title: Introducing SedonaDB
 ---
