@@ -7,26 +7,28 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/read-parquet-files/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/working-with-parquet-files/">
       
       
-        <link rel="prev" href="../sql-joins/">
+        <link rel="prev" href="../overture-examples/">
       
       
+        <link rel="next" href="../contributors-guide/">
       
-      <link rel="icon" href="../../image/sedona_logo_symbol.png">
+      
+      <link rel="icon" href="../image/sedona_logo_symbol.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.20">
     
     
       
-        <title>Read Parquet Files - SedonaDB</title>
+        <title>Working with Parquet Files - SedonaDB</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.e53b48f4.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.e53b48f4.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -45,18 +47,18 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
     
-  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -84,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#reading-parquet-files" class="md-skip">
+        <a href="#working-with-parquet-files" class="md-skip">
           Skip to content
         </a>
       
@@ -104,9 +106,9 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="SedonaDB" class="md-header__button md-logo" aria-label="SedonaDB" data-md-component="logo">
+    <a href=".." title="SedonaDB" class="md-header__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -123,7 +125,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Read Parquet Files
+              Working with Parquet Files
             
           </span>
         </div>
@@ -209,7 +211,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -227,10 +229,31 @@
   
   
   
+    <li class="md-tabs__item">
+      <a href="../quickstart-python/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Python Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
     
     
-      <li class="md-tabs__item">
-        <a href="../../quickstart-python/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../programming-guide/" class="md-tabs__link">
           
   
   
@@ -246,8 +269,6 @@
   
   
   
-    
-  
   
     
     
@@ -255,13 +276,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../python/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../reference/python/" class="md-tabs__link">
           
   
   
@@ -380,9 +399,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="SedonaDB" class="md-nav__button md-logo" aria-label="SedonaDB" data-md-component="logo">
+    <a href=".." title="SedonaDB" class="md-nav__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     SedonaDB
@@ -409,7 +428,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -430,51 +449,8 @@
   
   
   
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
-        
-          
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    SedonaDB Guides
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2">
-            <span class="md-nav__icon md-icon"></span>
-            SedonaDB Guides
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
     <li class="md-nav__item">
-      <a href="../../quickstart-python/" class="md-nav__link">
+      <a href="../quickstart-python/" class="md-nav__link">
         
   
   
@@ -485,106 +461,6 @@
   
 
       </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../programming-guide/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    SedonaDB Guide
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../geopandas-interop/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Working with GeoPandas
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../overture-examples/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Working with Overture
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../development/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Development
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
     </li>
   
 
@@ -622,7 +498,7 @@
   
   
   <span class="md-ellipsis">
-    SedonaDB Reference
+    SedonaDB Guides
     
   </span>
   
@@ -633,53 +509,7 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
-            SedonaDB Reference
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-          
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1">
-        
-          
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
-            
-  
-  
-  <span class="md-ellipsis">
-    Python
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_1">
-            <span class="md-nav__icon md-icon"></span>
-            Python
+            SedonaDB Guides
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -690,91 +520,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../python/" class="md-nav__link">
+      <a href="../programming-guide/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Python Functions
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-          
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
-            
-  
-  
-  <span class="md-ellipsis">
-    SQL
-    
-  </span>
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3_2">
-            <span class="md-nav__icon md-icon"></span>
-            SQL
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sql/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    SQL Functions
+    Working with Vector Data
     
   </span>
   
@@ -792,12 +543,35 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql-joins/" class="md-nav__link">
+      <a href="../geopandas-interop/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Spatial Joins
+    Working with GeoPandas
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../overture-examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Working with Overture
     
   </span>
   
@@ -829,7 +603,7 @@
   
   
   <span class="md-ellipsis">
-    Read Parquet Files
+    Working with Parquet Files
     
   </span>
   
@@ -842,7 +616,7 @@
   
   
   <span class="md-ellipsis">
-    Read Parquet Files
+    Working with Parquet Files
     
   </span>
   
@@ -865,26 +639,20 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#install-sedonadb" class="md-nav__link">
     <span class="md-ellipsis">
-      Usage
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#common-errors" class="md-nav__link">
-    <span class="md-ellipsis">
-      Common Errors
+      Install SedonaDB
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
+      
+        <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation
+    </span>
+  </a>
   
 </li>
       
@@ -892,6 +660,242 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributors-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributors Guide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    SedonaDB Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            SedonaDB Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1">
+        
+          
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Python
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
+            <span class="md-nav__icon md-icon"></span>
+            Python
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python Functions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2">
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    SQL
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            SQL
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/sql/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SQL Functions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/sql-joins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Spatial Joins
+    
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -1027,26 +1031,20 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#install-sedonadb" class="md-nav__link">
     <span class="md-ellipsis">
-      Usage
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#common-errors" class="md-nav__link">
-    <span class="md-ellipsis">
-      Common Errors
+      Install SedonaDB
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
+      
+        <li class="md-nav__item">
+  <a href="#implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Implementation
+    </span>
+  </a>
   
 </li>
       
@@ -1066,7 +1064,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/read-parquet-files.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/working-with-parquet-files.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1074,75 +1072,89 @@
   
 
 
-<!---
-  Licensed to the Apache Software Foundation (ASF) under one
-  or more contributor license agreements.  See the NOTICE file
-  distributed with this work for additional information
-  regarding copyright ownership.  The ASF licenses this file
-  to you under the Apache License, Version 2.0 (the
-  "License"); you may not use this file except in compliance
-  with the License.  You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing,
-  software distributed under the License is distributed on an
-  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-  KIND, either express or implied.  See the License for the
-  specific language governing permissions and limitations
-  under the License.
---><h1 id="reading-parquet-files">Reading Parquet Files<a class="headerlink" href="#reading-parquet-files" title="Permanent link">¶</a></h1>
-<p>To read a Parquet file, you must use the dedicated <code>sd.read_parquet()</code> method. You cannot query a file path directly within the <code>sd.sql()</code> <code>FROM</code> clause.</p>
-<p>The <code>sd.sql()</code> function is designed to query tables that have already been registered in the session. When you pass a path like <code>'s3://...'</code> to <code>FROM</code>, the SQL engine searches for a registered table with that literal name and fails when it's not found, producing a <code>table not found</code> error.</p>
-<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<p>The correct process is a two-step approach:</p>
+<h1 id="working-with-parquet-files">Working with Parquet Files<a class="headerlink" href="#working-with-parquet-files" title="Permanent link">¶</a></h1>
+<p>The easiest way to read a GeoParquet or Parquet file is to use <code>sd.read_parquet()</code>. Alternatively, you can query these files directly by their path in SQL.</p>
+<h2 id="install-sedonadb">Install SedonaDB<a class="headerlink" href="#install-sedonadb" title="Permanent link">¶</a></h2>
+<p>Use pip to install SedonaDB from the Python Package Index (PyPI).</p>
+<blockquote>
+<p><strong>Note</strong>: Before running this notebook on your local machine, you must have SedonaDB installed in your environment. You can install SedonaDB with the following command: <code>pip install "apache-sedona[db]"</code></p>
+</blockquote>
+<h2 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">¶</a></h2>
+<p>A common workflow for working with GeoParquet and/or Parquet files is:</p>
 <ol>
 <li><strong>Load</strong> the Parquet file into a data frame using <code>sd.read_parquet()</code>.</li>
-<li><strong>Register</strong> the data frame view with <code>to_view()</code>.</li>
+<li><strong>Register</strong> the data frame as a view with <code>to_view()</code>.</li>
 <li><strong>Query</strong> the view using <code>sd.sql()</code>.</li>
+<li><strong>Write</strong> your results to a Parquet file with <code>.to_parquet()</code> or use <code>.to_pandas()</code> to export your results to a DataFrame or GeoDataFrame.</li>
 </ol>
-<div class="highlight"><table class="highlighttable"><tbody><tr><th colspan="2" class="filename"><span class="filename">Read a parquet file with SedonaDB</span></th></tr><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
-<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Import the sedona.db module and connect to SedonaDB</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Load the Parquet file</span>
 <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s1">'s3://wherobots-benchmark-prod/SpatialBench_sf=1_format=parquet/'</span>
-    <span class="s1">'building/building.parquet'</span>
+    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/"</span>
+    <span class="s2">"natural-earth/files/natural-earth_cities_geo.parquet"</span>
 <span class="p">)</span>
 
-<span class="c1"># Load the Parquet file, which creates a Pandas data frame</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s1">'s3://wherobots-benchmark-prod/SpatialBench_sf=1_format=parquet/building/building.parquet'</span><span class="p">)</span>
+<span class="c1"># 2. Register the data frame as a view</span>
+<span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"zone"</span><span class="p">)</span>
 
-<span class="c1"># Convert the Pandas data frame to a Spark data frame AND</span>
-<span class="c1">#    register it as a temporary view in a single line.</span>
-<span class="n">spark</span><span class="o">.</span><span class="n">createDataFrame</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"zone"</span><span class="p">)</span>
-
-<span class="c1"># Now, query the view using SQL</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM zone LIMIT 10"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div></td></tr></tbody></table></div>
-<h3 id="common-errors">Common Errors<a class="headerlink" href="#common-errors" title="Permanent link">¶</a></h3>
-<p>Directly using a file path within <code>sd.sql()</code> is a common mistake that will result in an error.</p>
-<p><strong>Incorrect Code:</strong></p>
-<div class="highlight"><pre><span></span><code><span class="c1"># This will fail because the SQL engine looks for a table named 's3://...'</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM 's3://wherobots-benchmark-prod/SpatialBench_sf=1_format=parquet/building/building.parquet'"</span><span class="p">)</span>
+<span class="c1"># 3. Query the view and store the result in a new DataFrame</span>
+<span class="n">query_result_df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM zone LIMIT 10"</span><span class="p">)</span>
+<span class="n">query_result_df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div>
-<p><strong>Resulting Error:</strong></p>
-<div class="highlight"><pre><span></span><code>sedonadb._lib.SedonaError:<span class="w"> </span>Error<span class="w"> </span>during<span class="w"> </span>planning:<span class="w"> </span>table<span class="w"> </span><span class="s1">'...s3://...'</span><span class="w"> </span>not<span class="w"> </span>found
+<div class="codehilite"><pre><span></span><code>┌──────────────┬───────────────────────────────┐
+│     name     ┆            geometry           │
+│     utf8     ┆            geometry           │
+╞══════════════╪═══════════════════════════════╡
+│ Vatican City ┆ POINT(12.4533865 41.9032822)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ San Marino   ┆ POINT(12.4417702 43.9360958)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Vaduz        ┆ POINT(9.5166695 47.1337238)   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Lobamba      ┆ POINT(31.1999971 -26.4666675) │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Luxembourg   ┆ POINT(6.1300028 49.6116604)   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Palikir      ┆ POINT(158.1499743 6.9166437)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Majuro       ┆ POINT(171.3800002 7.1030043)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Funafuti     ┆ POINT(179.2166471 -8.516652)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Melekeok     ┆ POINT(134.6265485 7.4873962)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Bir Lehlou   ┆ POINT(-9.6525222 26.1191667)  │
+└──────────────┴───────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="c1"># 4. Write the result to a new Parquet file</span>
+<span class="n">output_path</span> <span class="o">=</span> <span class="s2">"query_results.parquet"</span>
+<span class="n">query_result_df</span><span class="o">.</span><span class="n">to_parquet</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span>
+
+<span class="c1"># (Optional) Verify the written file</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">Verifying the written file at '</span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">'..."</span><span class="p">)</span>
+<span class="n">verified_df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span>
+<span class="n">verified_df</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>Verifying the written file at 'query_results.parquet'...
+┌──────────────┬───────────────────────────────┐
+│     name     ┆            geometry           │
+│     utf8     ┆            geometry           │
+╞══════════════╪═══════════════════════════════╡
+│ Vatican City ┆ POINT(12.4533865 41.9032822)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ San Marino   ┆ POINT(12.4417702 43.9360958)  │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Vaduz        ┆ POINT(9.5166695 47.1337238)   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Lobamba      ┆ POINT(31.1999971 -26.4666675) │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Luxembourg   ┆ POINT(6.1300028 49.6116604)   │
+└──────────────┴───────────────────────────────┘
 </code></pre></div>
 
 
@@ -1164,7 +1176,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 17, 2025 05:01:18 UTC">September 17, 2025 05:01:18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 19, 2025 07:13:30 UTC">September 19, 2025 07:13:30</span>
   </span>
 
     
@@ -1200,7 +1212,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href="../sql-joins/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Spatial Joins">
+          <a href="../overture-examples/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Working with Overture">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -1210,11 +1222,27 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Spatial Joins
+                Working with Overture
               </div>
             </div>
           </a>
         
+        
+          
+          <a href="../contributors-guide/" class="md-footer__link md-footer__link--next" aria-label="Next: Contributors Guide">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Contributors Guide
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"></path></svg>
+            </div>
+          </a>
         
       </nav>
     
@@ -1247,10 +1275,10 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
       
     
   

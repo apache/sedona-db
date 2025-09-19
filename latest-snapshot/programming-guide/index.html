@@ -21,7 +21,7 @@
     
     
       
-        <title>SedonaDB Guide - SedonaDB</title>
+        <title>Working with Vector Data - SedonaDB</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#sedonadb-guide" class="md-skip">
+        <a href="#working-with-vector-data" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="SedonaDB" class="md-header__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -125,7 +125,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              SedonaDB Guide
+              Working with Vector Data
             
           </span>
         </div>
@@ -228,13 +228,32 @@
   
   
   
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart-python/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Python Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
     
   
   
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../quickstart-python/" class="md-tabs__link">
+        <a href="./" class="md-tabs__link">
           
   
   
@@ -382,7 +401,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="SedonaDB" class="md-nav__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     SedonaDB
@@ -428,6 +447,28 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python Quickstart
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -449,10 +490,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -465,35 +506,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             SedonaDB Guides
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../quickstart-python/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Python Quickstart
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -516,7 +534,7 @@
   
   
   <span class="md-ellipsis">
-    SedonaDB Guide
+    Working with Vector Data
     
   </span>
   
@@ -529,7 +547,7 @@
   
   
   <span class="md-ellipsis">
-    SedonaDB Guide
+    Working with Vector Data
     
   </span>
   
@@ -567,6 +585,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Create SedonaDB DataFrame">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#read-from-geopandas-dataframe" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read from GeoPandas DataFrame
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -576,14 +609,29 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#geoparquet-support" class="md-nav__link">
+    <nav class="md-nav" aria-label="Spatial queries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spatial-filtering" class="md-nav__link">
     <span class="md-ellipsis">
-      GeoParquet support
+      Spatial filtering
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k-nearest-neighbors-knn-joins" class="md-nav__link">
+    <span class="md-ellipsis">
+      K-nearest neighbors (KNN) joins
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -649,12 +697,35 @@
   
   
     <li class="md-nav__item">
-      <a href="../development/" class="md-nav__link">
+      <a href="../working-with-parquet-files/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Development
+    Working with Parquet Files
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributors-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributors Guide
     
   </span>
   
@@ -692,10 +763,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -708,8 +779,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             SedonaDB Reference
           </label>
@@ -735,10 +806,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1">
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
             
   
   
@@ -751,8 +822,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_1">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
             <span class="md-nav__icon md-icon"></span>
             Python
           </label>
@@ -809,10 +880,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2">
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
             
   
   
@@ -825,8 +896,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_2">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
             <span class="md-nav__icon md-icon"></span>
             SQL
           </label>
@@ -868,29 +939,6 @@
   
   <span class="md-ellipsis">
     Spatial Joins
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../reference/read-parquet-files/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Read Parquet Files
     
   </span>
   
@@ -1046,6 +1094,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Create SedonaDB DataFrame">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#read-from-geopandas-dataframe" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read from GeoPandas DataFrame
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1055,14 +1118,29 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#geoparquet-support" class="md-nav__link">
+    <nav class="md-nav" aria-label="Spatial queries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spatial-filtering" class="md-nav__link">
     <span class="md-ellipsis">
-      GeoParquet support
+      Spatial filtering
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k-nearest-neighbors-knn-joins" class="md-nav__link">
+    <span class="md-ellipsis">
+      K-nearest neighbors (KNN) joins
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1107,9 +1185,8 @@
   KIND, either express or implied.  See the License for the
   specific language governing permissions and limitations
   under the License.
---><h1 id="sedonadb-guide">SedonaDB Guide<a class="headerlink" href="#sedonadb-guide" title="Permanent link">¶</a></h1>
-<p>This page explains how to process vector data with SedonaDB.</p>
-<p>You will learn how to create SedonaDB DataFrames, run spatial queries, and perform I/O operations with various types of files.</p>
+--><h1 id="working-with-vector-data">Working with Vector Data<a class="headerlink" href="#working-with-vector-data" title="Permanent link">¶</a></h1>
+<p>Process vector data using SedonaDB. You will learn to create DataFrames, run spatial queries, and manage file I/O. Let's begin by connecting to SedonaDB.</p>
 <p>Let's start by establishing a SedonaDB connection.</p>
 <h2 id="establish-sedonadb-connection">Establish SedonaDB connection<a class="headerlink" href="#establish-sedonadb-connection" title="Permanent link">¶</a></h2>
 <p>Here's how to create the SedonaDB connection:</p>
@@ -1142,7 +1219,7 @@
 <span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"division_area"</span><span class="p">)</span>
 </code></pre></div>
 <p>Now, let's run some spatial queries.</p>
-<p><strong>Read from GeoPandas DataFrame</strong></p>
+<h3 id="read-from-geopandas-dataframe">Read from GeoPandas DataFrame<a class="headerlink" href="#read-from-geopandas-dataframe" title="Permanent link">¶</a></h3>
 <p>This section shows how to convert a GeoPandas DataFrame into a SedonaDB DataFrame.</p>
 <p>Start by reading a FlatGeoBuf file into a GeoPandas DataFrame:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">geopandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">gpd</span>
@@ -1168,7 +1245,7 @@
 
 <h2 id="spatial-queries">Spatial queries<a class="headerlink" href="#spatial-queries" title="Permanent link">¶</a></h2>
 <p>Let's see how to run spatial operations like filtering, joins, and clustering algorithms.</p>
-<p><strong>Spatial filtering</strong></p>
+<h3 id="spatial-filtering">Spatial filtering<a class="headerlink" href="#spatial-filtering" title="Permanent link">¶</a></h3>
 <p>Let's run a spatial filtering operation to fetch all the objects in the following polygon:</p>
 <div class="highlight"><pre><span></span><code><span class="n">nova_scotia_bbox_wkt</span> <span class="o">=</span> <span class="p">(</span>
     <span class="s2">"POLYGON((-66.5 43.4, -66.5 47.1, -59.8 47.1, -59.8 43.4, -66.5 43.4))"</span>
@@ -1194,9 +1271,9 @@
 <span class="err">└──────────┴──────────┴────────────────────────────────────────────────────────────────────────────┘</span>
 </code></pre></div>
 
-<p>You can see it only includes the divisions in the Nova Scotia area.  Skip to the visualization section to see how this data can be graphed on a map.</p>
-<p><strong>K-nearest neighbors (KNN) joins</strong></p>
-<p>Create <code>restaurants</code> and <code>customers</code> tables so we can demonstrate the KNN join functionality.</p>
+<p>You can see it only includes the divisions in the Nova Scotia area.</p>
+<h3 id="k-nearest-neighbors-knn-joins">K-nearest neighbors (KNN) joins<a class="headerlink" href="#k-nearest-neighbors-knn-joins" title="Permanent link">¶</a></h3>
+<p>Create <code>restaurants</code> and <code>customers</code> views so we can demonstrate the KNN join functionality.</p>
 <div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">SELECT name, ST_Point(lng, lat) AS location</span>
 <span class="s2">FROM (VALUES</span>
@@ -1264,11 +1341,6 @@
 </code></pre></div>
 
 <p>Notice how each customer has two rows - one for each of the two closest restaurants.</p>
-<h2 id="geoparquet-support">GeoParquet support<a class="headerlink" href="#geoparquet-support" title="Permanent link">¶</a></h2>
-<p>You can also read GeoParquet files with SedonaDB with <code>read_parquet()</code></p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">"DATA_FILE.parquet"</span><span class="p">)</span>
-</code></pre></div>
-<p>Once you read the file, you can easily expose it as a view and query it with spatial SQL, as we demonstrated in the example above.</p>
 
 
 
@@ -1289,7 +1361,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 18, 2025 00:36:42 UTC">September 18, 2025 00:36:42</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 19, 2025 07:13:30 UTC">September 19, 2025 07:13:30</span>
   </span>
 
     

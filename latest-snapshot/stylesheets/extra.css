@@ -75,3 +75,14 @@
   padding: 0 0.9rem;
   font-size: 0.65rem; /* NEW: Adjust font size */
 }
+
+/* ==========================================================================
+   Mobile Navigation Styles
+   ========================================================================== */
+
+/* This targets the main container of the slide-out navigation on mobile */
+.md-nav--primary .md-nav__title,
+.md-nav__source {
+  background-color: var(--color-red); /* Use your red color */
+  box-shadow: none; /* Optional: removes the shadow */
+}

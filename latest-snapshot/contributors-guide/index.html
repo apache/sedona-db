@@ -7,10 +7,10 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/development/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/contributors-guide/">
       
       
-        <link rel="prev" href="../overture-examples/">
+        <link rel="prev" href="../working-with-parquet-files/">
       
       
         <link rel="next" href="../reference/python/">
@@ -21,7 +21,7 @@
     
     
       
-        <title>Development - SedonaDB</title>
+        <title>Contributors Guide - SedonaDB</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#development" class="md-skip">
+        <a href="#contributors-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="SedonaDB" class="md-header__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -125,7 +125,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Development
+              Contributors Guide
             
           </span>
         </div>
@@ -228,13 +228,32 @@
   
   
   
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart-python/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Python Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
     
   
   
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../quickstart-python/" class="md-tabs__link">
+        <a href="../programming-guide/" class="md-tabs__link">
           
   
   
@@ -382,7 +401,7 @@
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="SedonaDB" class="md-nav__button md-logo" aria-label="SedonaDB" data-md-component="logo">
       
-  <img src="../image/sedona_logo_symbol_white.svg" alt="logo">
+  <img src="../image/sedona_logo_symbol.png" alt="logo">
 
     </a>
     SedonaDB
@@ -428,6 +447,28 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Python Quickstart
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -449,10 +490,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -465,35 +506,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             SedonaDB Guides
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../quickstart-python/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Python Quickstart
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -507,7 +525,7 @@
   
   
   <span class="md-ellipsis">
-    SedonaDB Guide
+    Working with Vector Data
     
   </span>
   
@@ -568,6 +586,29 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../working-with-parquet-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Working with Parquet Files
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -585,7 +626,7 @@
   
   
   <span class="md-ellipsis">
-    Development
+    Contributors Guide
     
   </span>
   
@@ -598,7 +639,7 @@
   
   
   <span class="md-ellipsis">
-    Development
+    Contributors Guide
     
   </span>
   
@@ -621,11 +662,44 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#fork-and-clone-the-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fork and clone the repository
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rust" class="md-nav__link">
     <span class="md-ellipsis">
       Rust
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Rust">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-data-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test data setup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      System dependencies
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -645,6 +719,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Debugging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rust_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-c-and-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      Python, C, and C++
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -653,6 +751,30 @@
       Low-level benchmarking
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Low-level benchmarking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running benchmarks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managing-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing results
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -701,10 +823,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4">
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -717,8 +839,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             SedonaDB Reference
           </label>
@@ -744,10 +866,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1">
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
             
   
   
@@ -760,8 +882,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_1">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
             <span class="md-nav__icon md-icon"></span>
             Python
           </label>
@@ -818,10 +940,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2">
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
             
   
   
@@ -834,8 +956,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_2">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
             <span class="md-nav__icon md-icon"></span>
             SQL
           </label>
@@ -877,29 +999,6 @@
   
   <span class="md-ellipsis">
     Spatial Joins
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../reference/read-parquet-files/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Read Parquet Files
     
   </span>
   
@@ -1040,11 +1139,44 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#fork-and-clone-the-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fork and clone the repository
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rust" class="md-nav__link">
     <span class="md-ellipsis">
       Rust
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Rust">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-data-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test data setup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#system-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      System dependencies
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1064,6 +1196,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Debugging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rust_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-c-and-c" class="md-nav__link">
+    <span class="md-ellipsis">
+      Python, C, and C++
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1072,6 +1228,30 @@
       Low-level benchmarking
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Low-level benchmarking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Running benchmarks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managing-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      Managing results
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1100,7 +1280,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/development.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/contributors-guide.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1125,12 +1305,67 @@
   KIND, either express or implied.  See the License for the
   specific language governing permissions and limitations
   under the License.
---><h1 id="development">Development<a class="headerlink" href="#development" title="Permanent link">¶</a></h1>
+--><h1 id="contributors-guide">Contributors Guide<a class="headerlink" href="#contributors-guide" title="Permanent link">¶</a></h1>
+<p>This guide details how to set up your development environment as a SedonaDB Contributor.</p>
+<h2 id="fork-and-clone-the-repository">Fork and clone the repository<a class="headerlink" href="#fork-and-clone-the-repository" title="Permanent link">¶</a></h2>
+<p>Your first step is to create a personal copy of the repository and connect it to the main project.</p>
+<ol>
+<li>
+<p>Fork the repository</p>
+<ul>
+<li>Navigate to the official <a href="https://github.com/apache/sedona-db">Apache SedonaDB GitHub repository</a>.</li>
+<li>Click the <strong>Fork</strong> button in the top-right corner. This creates a complete copy of the project in your own GitHub account.</li>
+</ul>
+</li>
+<li>
+<p>Clone your fork</p>
+<ul>
+<li>Next, clone your newly created fork to your local machine. This command downloads the repository into a new folder named <code>sedona-db</code>.</li>
+<li>
+<p>Replace <code>YourUsername</code> with your actual GitHub username.</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/YourUsername/sedona-db.git
+<span class="nb">cd</span><span class="w"> </span>sedona-db
+</code></pre></div>
+</li>
+</ul>
+</li>
+<li>
+<p>Configure the remotes</p>
+<ul>
+<li>Your local repository needs to know where the original project is so you can pull in updates. You'll add a remote link, traditionally named <strong><code>upstream</code></strong>, to the main Apache SedonaDB repository.</li>
+<li>
+<p>Your fork is automatically configured as the <strong><code>origin</code></strong> remote.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Add the main repository as the "upstream" remote</span>
+git<span class="w"> </span>remote<span class="w"> </span>add<span class="w"> </span>upstream<span class="w"> </span>https://github.com/apache/sedona-db.git
+</code></pre></div>
+</li>
+</ul>
+</li>
+<li>
+<p>Verify the configuration</p>
+<ul>
+<li>
+<p>Run the following command to verify that you have two remotes configured correctly: <code>origin</code> (your fork) and <code>upstream</code> (the main repository).</p>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>remote<span class="w"> </span>-v
+</code></pre></div>
+</li>
+<li>
+<p>The output should look like this:</p>
+<div class="highlight"><pre><span></span><code>origin<span class="w">    </span>https://github.com/YourUsername/sedona-db.git<span class="w"> </span><span class="o">(</span>fetch<span class="o">)</span>
+origin<span class="w">    </span>https://github.com/YourUsername/sedona-db.git<span class="w"> </span><span class="o">(</span>push<span class="o">)</span>
+upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>fetch<span class="o">)</span>
+upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>push<span class="o">)</span>
+</code></pre></div>
+</li>
+</ul>
+</li>
+</ol>
 <h2 id="rust">Rust<a class="headerlink" href="#rust" title="Permanent link">¶</a></h2>
-<p>SedonaDB is written and Rust and is a standard <code>cargo</code> workspace. You can
-install a recent version of the Rust compiler and cargo from
-<a href="https://rustup.rs/">rustup.rs</a> and run tests using <code>cargo test</code>. A local
-development version of the CLI can be run with <code>cargo run --bin sedona-cli</code>.</p>
+<p>SedonaDB is written in Rust and is a standard <code>cargo</code> workspace.</p>
+<p>You can install a recent version of the Rust compiler and cargo from
+<a href="https://rustup.rs/">rustup.rs</a> and run tests using <code>cargo test</code>.</p>
+<p>A local development version of the CLI can be run with <code>cargo run --bin sedona-cli</code>.</p>
+<h3 id="test-data-setup">Test data setup<a class="headerlink" href="#test-data-setup" title="Permanent link">¶</a></h3>
 <p>Some tests require submodules that contain test data or pinned versions of
 external dependencies. These submodules can be initialized with:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>submodule<span class="w"> </span>init
@@ -1139,19 +1374,27 @@ git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w
 <p>Additionally, some of the data required in the tests can be downloaded by running the following script.</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>submodules/download-assets.py
 </code></pre></div>
+<h3 id="system-dependencies">System dependencies<a class="headerlink" href="#system-dependencies" title="Permanent link">¶</a></h3>
 <p>Some crates wrap external native libraries and require system dependencies
-to build. At this time the only crate that requires this is the sedona-s2geography
+to build.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>sedona-s2geography</code></p>
+<p>At this time, the only crate that requires this is the <code>sedona-s2geography</code>
 crate, which requires <a href="https://cmake.org">CMake</a>,
-<a href="https://github.com/abseil/abseil-cpp">Abseil</a> and OpenSSL. These can be installed
-on MacOS with <a href="https://brew.sh">Homebrew</a>:</p>
+<a href="https://github.com/abseil/abseil-cpp">Abseil</a> and OpenSSL.</p>
+</div>
+<h4 id="macos">macOS<a class="headerlink" href="#macos" title="Permanent link">¶</a></h4>
+<p>These can be installed on macOS with <a href="https://brew.sh">Homebrew</a>:</p>
 <div class="highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>abseil<span class="w"> </span>openssl<span class="w"> </span>cmake<span class="w"> </span>geos
 </code></pre></div>
+<h4 id="linux-and-windows">Linux and Windows<a class="headerlink" href="#linux-and-windows" title="Permanent link">¶</a></h4>
 <p>On Linux and Windows, it is recommended to use <a href="https://github.com/microsoft/vcpkg">vcpkg</a>
 to provide external dependencies. This can be done by setting the <code>CMAKE_TOOLCHAIN_FILE</code>
 environment variable:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CMAKE_TOOLCHAIN_FILE</span><span class="o">=</span>/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 </code></pre></div>
-<p>When using VSCode, it may be necessary to set this environment variable in settings.json
+<h4 id="visual-studio-code-vscode-configuration">Visual Studio Code (VSCode) Configuration<a class="headerlink" href="#visual-studio-code-vscode-configuration" title="Permanent link">¶</a></h4>
+<p>When using VSCode, it may be necessary to set this environment variable in <code>settings.json</code>
 such that it can be found by rust-analyzer when running build/run tasks:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">    </span><span class="nt">"rust-analyzer.runnables.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -1164,8 +1407,8 @@ such that it can be found by rust-analyzer when running build/run tasks:</p>
 </code></pre></div>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">¶</a></h2>
 <p>Python bindings to SedonaDB are built with the <a href="https://www.maturin.rs">Maturin</a> build
-backend. Installing a development version of the main Python bindings the first time
-can be done with:</p>
+backend.</p>
+<p>To install a development version of the main Python bindings for the first time, run the following commands:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>python/sedonadb
 pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[test]"</span>
 </code></pre></div>
@@ -1174,12 +1417,14 @@ native component with:</p>
 <div class="highlight"><pre><span></span><code>maturin<span class="w"> </span>develop
 </code></pre></div>
 <h2 id="debugging">Debugging<a class="headerlink" href="#debugging" title="Permanent link">¶</a></h2>
+<h3 id="rust_1">Rust<a class="headerlink" href="#rust_1" title="Permanent link">¶</a></h3>
 <p>Debugging Rust code is most easily done by writing or finding a test that triggers
 the desired behavior and running it using the <em>Debug</em> selection in
 <a href="https://code.visualstudio.com/">VSCode</a> with the
 <a href="https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer">rust-analyzer</a>
-extension. Rust code can also debugged using the CLI by finding the <code>main()</code> function in
-sedona-cli and choosing the <em>Debug</em> run option.</p>
+extension. Rust code can also be debugged using the CLI by finding the <code>main()</code> function in
+<code>sedona-cli</code> and choosing the <em>Debug</em> run option.</p>
+<h3 id="python-c-and-c">Python, C, and C++<a class="headerlink" href="#python-c-and-c" title="Permanent link">¶</a></h3>
 <p>Installation of Python bindings with <code>maturin develop</code> ensures a debug-friendly build for
 debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in
 any IDE that supports debugging an editable Python package installation (e.g., VSCode);
@@ -1192,7 +1437,8 @@ In general, there is at least one benchmark for every implementation of a functi
 (some functions have more than one implementation provided by different libraries),
 and a few other benchmarks for low-level iteration where work was done to optimize
 specific cases.</p>
-<p>Briefly, benchmarks for a specific crate can be run with <code>cargo bench</code>:</p>
+<h3 id="running-benchmarks">Running benchmarks<a class="headerlink" href="#running-benchmarks" title="Permanent link">¶</a></h3>
+<p>Benchmarks for a specific crate can be run with <code>cargo bench</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>rust/sedona-geo
 cargo<span class="w"> </span>bench
 </code></pre></div>
@@ -1201,24 +1447,42 @@ from the workspace or a specific crate (although the output is usually easier
 to read for a specific crate).</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>bench<span class="w"> </span>--<span class="w"> </span>st_area
 </code></pre></div>
+<h3 id="managing-results">Managing results<a class="headerlink" href="#managing-results" title="Permanent link">¶</a></h3>
 <p>By default, criterion saves the last run and will report the difference between the
 current benchmark and the last time it was run (although there are options to
-save and load various baselines). A report containing the last run for any
-benchmark that was ever run can be opened with:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># MacOS</span>
-open<span class="w"> </span>target/criterion/report/index.html
-<span class="c1"># Ubuntu</span>
-xdg-open<span class="w"> </span>target/criterion/report/index.html
+save and load various baselines).</p>
+<p>A report of the latest results for all benchmarks can be opened with the following command:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio"><input id="__tabbed_1_2" name="__tabbed_1" type="radio"><div class="tabbed-labels"><label for="__tabbed_1_1">macOS</label><label for="__tabbed_1_2">Ubuntu</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code>open<span class="w"> </span>target/criterion/report/index.html
 </code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code>xdg-open<span class="w"> </span>target/criterion/report/index.html
+</code></pre></div>
+</div>
+</div>
+</div>
 <p>All previous saved benchmark runs can be cleared with:</p>
 <div class="highlight"><pre><span></span><code>rm<span class="w"> </span>-rf<span class="w"> </span>target/criterion
 </code></pre></div>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">¶</a></h2>
-<ul>
+<p>To contribute to the SedonaDB documentation:</p>
+<ol>
+<li>Clone the repository and create a fork.</li>
+<li>Install the Documentation dependencies:
+    <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
+</code></pre></div></li>
+<li>Make your changes to the documentation files.</li>
+<li>Preview your changes locally using these commands:<ul>
 <li><code>mkdocs serve</code> - Start the live-reloading docs server.</li>
 <li><code>mkdocs build</code> - Build the documentation site.</li>
 <li><code>mkdocs -h</code> - Print help message and exit.</li>
 </ul>
+</li>
+<li>Push your changes and open a pull request.</li>
+</ol>
 
 
 
@@ -1239,7 +1503,7 @@ xdg-open<span class="w"> </span>target/criterion/report/index.html
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 11, 2025 01:49:37 UTC">September 11, 2025 01:49:37</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 19, 2025 07:13:30 UTC">September 19, 2025 07:13:30</span>
   </span>
 
     
@@ -1275,7 +1539,7 @@ xdg-open<span class="w"> </span>target/criterion/report/index.html
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href="../overture-examples/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Working with Overture">
+          <a href="../working-with-parquet-files/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Working with Parquet Files">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -1285,7 +1549,7 @@ xdg-open<span class="w"> </span>target/criterion/report/index.html
                 Previous
               </span>
               <div class="md-ellipsis">
-                Working with Overture
+                Working with Parquet Files
               </div>
             </div>
           </a>
