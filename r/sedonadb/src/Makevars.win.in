@@ -25,8 +25,8 @@ RUSTFLAGS =
 
 TARGET_DIR = $(CURDIR)/rust/target
 LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
-STATLIB = $(LIBDIR)/libsedonadb.a
-PKG_LIBS = -L$(LIBDIR) -lsedonadb -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
+STATLIB = $(LIBDIR)/libsedonadbr.a
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll  @PKG_LIBS@
 
 # Rtools doesn't have the linker in the location that cargo expects, so we need
 # to overwrite it via configuration.
