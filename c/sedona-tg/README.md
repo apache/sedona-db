@@ -35,7 +35,7 @@ to add it manually (hopefully, this will be automated).
 ### Windows
 
 On Windows, you might need to set `PATH` and `PKG_CONFIG_SYSROOT_DIR` for
-`pkg-config`. For example, when using Rtools45, you progbably need these
+`pkg-config`. For example, when using Rtools45, you probably need these
 envvars:
 
 ```ps1
