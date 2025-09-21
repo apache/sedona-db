@@ -86,14 +86,6 @@ jobs:
           # Update this key to force a new cache
           prefix-key: "r-v1"
 
-      - name: Install build dependencies
-        run: |
-            R -e 'install.packages(c("nanoarrow", "geoarrow"))'
-
-      - name: Install R Package
-        run: |
-          R CMD INSTALL r/sedonadb --preclean
-
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
