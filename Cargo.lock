@@ -5205,9 +5205,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-expr",
  "sedona-geoparquet",
- "sedona-proj",
  "sedona-schema",
- "sedona-tg",
  "thiserror 2.0.16",
  "tokio",
 ]
