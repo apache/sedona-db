@@ -36,6 +36,9 @@ jobs:
   test:
     runs-on: ${{ matrix.config.os }}
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+    defaults:
+      run:
+        shell: bash
 
     strategy:
       fail-fast: false
@@ -43,6 +46,7 @@ jobs:
         config:
           - {os: ubuntu-latest, r: 'release'}
           - {os: macos-latest, r: 'release'}
+          # - {os: windows-latest, r: 'release'}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -62,6 +66,12 @@ jobs:
         run: |
           rustup toolchain install stable --no-self-update
           rustup default stable
+
+      # GHA runnder installs GNU target by default, but --no-self-update might
+      # remove it, so run `target add` to ensure the GNU target installed.
+      - name: Setup Rust (Windows)
+        if: matrix.config.os == 'windows-latest'
+        run: rustup target add x86_64-pc-windows-gnu
 
       - name: Install dependencies (Linux)
         if: matrix.config.os == 'ubuntu-latest'
@@ -89,6 +99,10 @@ jobs:
           needs: check
           working-directory: r/sedonadb
 
+      - name: Install R Package
+        run: |
+          R CMD INSTALL r/sedonadb --preclean
+
       - name: Test R Package
         run: |
-            R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+          R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
