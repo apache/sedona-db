@@ -19,6 +19,50 @@
 
 # Releasing SedonaDB
 
+## Verifying a release candidate
+
+Release candidates are verified using the script `verify-release-candidate.sh <version> <rc_num>`.
+For example, to verify SedonaDB 0.1.0 RC0, run:
+
+```shell
+# git clone https://github.com/apache/sedona-db.git && cd sedona-db
+# or
+# cd existing/sedona-db && git fetch upstream && git switch main && git pull upstream main
+dev/release/verify-release-candidate.sh 0.1.0 0
+```
+
+Release verification requires a recent Rust toolchain. This toolchain can be installed
+by following instructions from <https://rustup.rs/>.
+
+MacOS users can use [Homebrew](https://brew.sh) to install the required dependencies.
+
+```shell
+brew install geos proj openssl abseil
+```
+
+Linux users (e.g., `docker run --rm -it condaforge/mambaforge`) can use `conda` to
+install the required dependencies:
+
+```shell
+conda create -y --name verify-sedona-db
+conda activate verify-sedona-db
+conda install -y curl gnupg geos proj openssl libabseil cmake pkg-config
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib"
+```
+
+Currently system libclang is required to generate C bindings at build time:
+
+```shell
+apt-get update && apt-get install -y libclang-dev
+```
+
+When verifying via Docker or on a smaller machine it may be necessary to limit the
+number of parallel jobs to avoid running out of memory:
+
+```shell
+export CARGO_BUILD_JOBS=4
+```
+
 ## Creating a release
 
 Create a release branch on the corresponding remote pointing to the official Apache
@@ -42,6 +86,13 @@ being verified. The Python wheels (and the tests that are run as they are create
 are considered a "packaging" step (i.e., the artifacts aren't uploaded to the
 release or voted on), although those CI jobs are important to ensuring
 the release is ready for a vote.
+
+Before creating a tag, download the tarball from the latest packaging run and
+check it locally:
+
+```shell
+dev/release/verify-release-candidate.sh path/to/tarball.tar.gz
+```
 
 When the state of the `branch-x.x.x` branch is clean and checks are complete,
 the release candidate tag can be created:

@@ -40,6 +40,21 @@ main() {
     rm -rf "${base_name}/"
     git archive "${revision}" --prefix "${base_name}/" | tar xf -
 
+    # Resolve all submodules for sedona-s2geography. In the future we probably
+    # want to improve the packaging of sedona-s2geography such that we don't need
+    # this step:
+    # https://github.com/apache/sedona-db/issues/109
+    while read SUBMODULE; do
+        SUBMODULE_REV=$(echo "${SUBMODULE}" | awk '{print $1}')
+        SUBMODULE_PATH=$(echo "${SUBMODULE}" | awk '{print $2}')
+        # Check if submodule path starts with "submodules/"
+        if [[ "${SUBMODULE_PATH}" == submodules/* ]]; then
+            echo "Skipping testing submodule ${SUBMODULE}"
+        else
+            git -C "${SUBMODULE_PATH}" archive --prefix="${base_name}/${SUBMODULE_PATH}/" "${SUBMODULE_REV}" | tar xf - -C "${source_top_dir}"
+        fi
+    done < <(git submodule status)
+
     # Create new tarball
     tar czf "${tar_ball}" "${base_name}/"
     rm -rf "${base_name}/"

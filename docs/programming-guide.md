@@ -17,11 +17,9 @@
   under the License.
 -->
 
-# SedonaDB Guide
+# Process Vector Data with SedonaDB
 
-This page explains how to process vector data with SedonaDB.
-
-You will learn how to create SedonaDB DataFrames, run spatial queries, and perform I/O operations with various types of files.
+Process vector data using SedonaDB. You will learn to create DataFrames, run spatial queries, and manage file I/O. Let's begin by connecting to SedonaDB.
 
 Let's start by establishing a SedonaDB connection.
 
@@ -82,7 +80,7 @@ sd.read_parquet(
 
 Now, let's run some spatial queries.
 
-**Read from GeoPandas DataFrame**
+### Read from GeoPandas DataFrame
 
 This section shows how to convert a GeoPandas DataFrame into a SedonaDB DataFrame.
 
@@ -120,7 +118,7 @@ df.show(3)
 
 Let's see how to run spatial operations like filtering, joins, and clustering algorithms.
 
-**Spatial filtering**
+### Spatial filtering
 
 Let's run a spatial filtering operation to fetch all the objects in the following polygon:
 
@@ -151,11 +149,11 @@ ns.show(3)
     └──────────┴──────────┴────────────────────────────────────────────────────────────────────────────┘
 
 
-You can see it only includes the divisions in the Nova Scotia area.  Skip to the visualization section to see how this data can be graphed on a map.
+You can see it only includes the divisions in the Nova Scotia area.
 
-**K-nearest neighbors (KNN) joins**
+### K-nearest neighbors (KNN) joins
 
-Create `restaurants` and `customers` tables so we can demonstrate the KNN join functionality.
+Create `restaurants` and `customers` views so we can demonstrate the KNN join functionality.
 
 
 ```python
@@ -234,13 +232,3 @@ ORDER BY c.name, r.name;
 
 
 Notice how each customer has two rows - one for each of the two closest restaurants.
-
-## GeoParquet support
-
-You can also read GeoParquet files with SedonaDB with `read_parquet()`
-
-```python
-df = sd.read_parquet("DATA_FILE.parquet")
-```
-
-Once you read the file, you can easily expose it as a view and query it with spatial SQL, as we demonstrated in the example above.

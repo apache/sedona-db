@@ -552,13 +552,7 @@ impl ProjApi {
             ));
             inner.proj_create_crs_to_crs_from_pj = Some(std::mem::transmute(
                 proj_create_crs_to_crs_from_pj
-                    as unsafe extern "C" fn(
-                        *mut _,
-                        *const _,
-                        *const _,
-                        *mut _,
-                        *const *const i8,
-                    ) -> _,
+                    as unsafe extern "C" fn(*mut _, *const _, *const _, *mut _, *const _) -> _,
             ));
             inner.proj_create = Some(std::mem::transmute(
                 proj_create as unsafe extern "C" fn(*mut _, *const _) -> _,

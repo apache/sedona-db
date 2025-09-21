@@ -268,7 +268,7 @@ impl Default for Visitor {
 impl From<&str> for GeoArrowStringView {
     fn from(value: &str) -> Self {
         Self {
-            data: value.as_ptr() as *const i8,
+            data: value.as_ptr() as *const _,
             size_bytes: value.len() as i64,
         }
     }
