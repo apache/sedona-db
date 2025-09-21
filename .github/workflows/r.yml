@@ -67,7 +67,7 @@ jobs:
           rustup toolchain install stable --no-self-update
           rustup default stable
 
-      # GHA runnder installs GNU target by default, but --no-self-update might
+      # GHA runner installs GNU target by default, but --no-self-update might
       # remove it, so run `target add` to ensure the GNU target installed.
       - name: Setup Rust (Windows)
         if: matrix.config.os == 'windows-latest'
