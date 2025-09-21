@@ -27,7 +27,7 @@ nav:
      - Working with Overture: overture-examples.md
      - Working with Parquet Files: working-with-parquet-files.md
      - Contributors Guide: contributors-guide.md
-
+     - CRS Examples: crs-examples.ipynb
    - SedonaDB Reference:
       - Python:
           - Python Functions: reference/python.md
