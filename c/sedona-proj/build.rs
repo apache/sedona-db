@@ -40,16 +40,16 @@ fn configure_bindings_path(prebuilt_bindings_path: String) -> (PathBuf, bool) {
     }
 
     let output_dir = env::var("OUT_DIR").unwrap();
-    let output_path = get_absolute_path(format!("{output_dir}/bindings.rs"));
+    let output_path = PathBuf::from(output_dir).join("bindings.rs");
 
     (output_path, true)
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=src/proj_dyn.c");
-    cc::Build::new().file("src/proj_dyn.c").compile("proj_dyn");
-
     println!("cargo:rerun-if-env-changed=SEDONA_PROJ_BINDINGS_OUTPUT_PATH");
+
+    cc::Build::new().file("src/proj_dyn.c").compile("proj_dyn");
 
     let target_triple = std::env::var("TARGET").unwrap();
     let prebuilt_bindings_path = format!("src/bindings/{target_triple}.rs");
@@ -67,6 +67,7 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header("src/proj_dyn.h")
+        .generate_comments(false)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");
