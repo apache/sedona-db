@@ -51,9 +51,8 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=SEDONA_PROJ_BINDINGS_OUTPUT_PATH");
 
-    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    let prebuilt_bindings_path = format!("src/bindings/{os}-{arch}.rs");
+    let target_triple = std::env::var("TARGET").unwrap();
+    let prebuilt_bindings_path = format!("src/bindings/{target_triple}.rs");
 
     let (bindings_path, generate_bindings) = configure_bindings_path(prebuilt_bindings_path);
 
