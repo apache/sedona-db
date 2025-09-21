@@ -118,10 +118,10 @@ where ST_Intersects(cities.geometry, countries.geometry)
 
     File /opt/miniconda3/lib/python3.12/site-packages/sedonadb/dataframe.py:297, in DataFrame.show(self, limit, width, ascii)
         272 """Print the first limit rows to the console
-        273 
+        273
         274 Args:
        (...)
-        294 
+        294
         295 """
         296 width = _out_width(width)
     --> 297 print(self._impl.show(self._ctx, limit, width, ascii), end="")
@@ -302,10 +302,10 @@ where ST_Intersects(buildings.geometry, vermont.geometry)
 
     File /opt/miniconda3/lib/python3.12/site-packages/sedonadb/dataframe.py:297, in DataFrame.show(self, limit, width, ascii)
         272 """Print the first limit rows to the console
-        273 
+        273
         274 Args:
        (...)
-        294 
+        294
         295 """
         296 width = _out_width(width)
     --> 297 print(self._impl.show(self._ctx, limit, width, ascii), end="")
@@ -332,4 +332,3 @@ where ST_Intersects(buildings.geometry, ST_Transform(vermont.geometry, 'EPSG:432
     ╞══════════╡
     │   361856 │
     └──────────┘
-
