@@ -7,13 +7,13 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/contributors-guide/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/crs-examples/">
       
       
-        <link rel="prev" href="../working-with-parquet-files/">
+        <link rel="prev" href="../contributors-guide/">
       
       
-        <link rel="next" href="../crs-examples/">
+        <link rel="next" href="../reference/python/">
       
       
       <link rel="icon" href="../image/sedona_logo_symbol.png">
@@ -21,7 +21,7 @@
     
     
       
-        <title>Contributors Guide - SedonaDB</title>
+        <title>CRS Examples - SedonaDB</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#contributors-guide" class="md-skip">
+        <a href="#coordinate-reference-system-crs-examples" class="md-skip">
           Skip to content
         </a>
       
@@ -125,7 +125,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Contributors Guide
+              CRS Examples
             
           </span>
         </div>
@@ -609,6 +609,29 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributors-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributors Guide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -626,7 +649,7 @@
   
   
   <span class="md-ellipsis">
-    Contributors Guide
+    CRS Examples
     
   </span>
   
@@ -639,7 +662,7 @@
   
   
   <span class="md-ellipsis">
-    Contributors Guide
+    CRS Examples
     
   </span>
   
@@ -662,126 +685,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#fork-and-clone-the-repository" class="md-nav__link">
+  <a href="#join-with-mismatched-crss" class="md-nav__link">
     <span class="md-ellipsis">
-      Fork and clone the repository
+      Join with mismatched CRSs
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust" class="md-nav__link">
+  <a href="#convert-crs-and-then-join" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Rust">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#test-data-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Test data setup
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#system-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      System dependencies
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#python" class="md-nav__link">
-    <span class="md-ellipsis">
-      Python
+      Convert CRS and then join
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#debugging" class="md-nav__link">
+  <a href="#example-2-joining-two-tables-with-different-crss" class="md-nav__link">
     <span class="md-ellipsis">
-      Debugging
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Debugging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rust_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Rust
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#python-c-and-c" class="md-nav__link">
-    <span class="md-ellipsis">
-      Python, C, and C++
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#low-level-benchmarking" class="md-nav__link">
-    <span class="md-ellipsis">
-      Low-level benchmarking
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Low-level benchmarking">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#running-benchmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Running benchmarks
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#managing-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Managing results
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation
+      Example #2: Joining two tables with different CRSs
     </span>
   </a>
   
@@ -791,29 +715,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../crs-examples/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    CRS Examples
-    
-  </span>
-  
-
-      </a>
     </li>
   
 
@@ -1162,126 +1063,27 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#fork-and-clone-the-repository" class="md-nav__link">
+  <a href="#join-with-mismatched-crss" class="md-nav__link">
     <span class="md-ellipsis">
-      Fork and clone the repository
+      Join with mismatched CRSs
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust" class="md-nav__link">
+  <a href="#convert-crs-and-then-join" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Rust">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#test-data-setup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Test data setup
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#system-dependencies" class="md-nav__link">
-    <span class="md-ellipsis">
-      System dependencies
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#python" class="md-nav__link">
-    <span class="md-ellipsis">
-      Python
+      Convert CRS and then join
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#debugging" class="md-nav__link">
+  <a href="#example-2-joining-two-tables-with-different-crss" class="md-nav__link">
     <span class="md-ellipsis">
-      Debugging
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Debugging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rust_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Rust
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#python-c-and-c" class="md-nav__link">
-    <span class="md-ellipsis">
-      Python, C, and C++
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#low-level-benchmarking" class="md-nav__link">
-    <span class="md-ellipsis">
-      Low-level benchmarking
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Low-level benchmarking">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#running-benchmarks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Running benchmarks
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#managing-results" class="md-nav__link">
-    <span class="md-ellipsis">
-      Managing results
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Documentation
+      Example #2: Joining two tables with different CRSs
     </span>
   </a>
   
@@ -1303,7 +1105,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/contributors-guide.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/crs-examples.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1311,201 +1113,221 @@
   
 
 
-<!---
-  Licensed to the Apache Software Foundation (ASF) under one
-  or more contributor license agreements.  See the NOTICE file
-  distributed with this work for additional information
-  regarding copyright ownership.  The ASF licenses this file
-  to you under the Apache License, Version 2.0 (the
-  "License"); you may not use this file except in compliance
-  with the License.  You may obtain a copy of the License at
+<h1 id="coordinate-reference-system-crs-examples">Coordinate Reference System (CRS) Examples<a class="headerlink" href="#coordinate-reference-system-crs-examples" title="Permanent link">¶</a></h1>
+<p>This example demonstrates how one table with an EPSG 4326 CRS cannot be joined with another table that uses EPSG 3857.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
 
-    http://www.apache.org/licenses/LICENSE-2.0
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+</code></pre></div>
+<p>Read a table with a geometry column that uses EPSG 4326.</p>
+<p>Note how SedonaDB reads the CRS specified in the Parquet file.</p>
+<div class="highlight"><pre><span></span><code><span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
+    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"</span>
+<span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">countries</span><span class="o">.</span><span class="n">schema</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 3 fields:
+  name: Utf8View
+  continent: Utf8View
+  geometry: wkb_view &lt;epsg:4326&gt;
+</code></pre></div>
 
-  Unless required by applicable law or agreed to in writing,
-  software distributed under the License is distributed on an
-  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-  KIND, either express or implied.  See the License for the
-  specific language governing permissions and limitations
-  under the License.
---><h1 id="contributors-guide">Contributors Guide<a class="headerlink" href="#contributors-guide" title="Permanent link">¶</a></h1>
-<p>This guide details how to set up your development environment as a SedonaDB Contributor.</p>
-<h2 id="fork-and-clone-the-repository">Fork and clone the repository<a class="headerlink" href="#fork-and-clone-the-repository" title="Permanent link">¶</a></h2>
-<p>Your first step is to create a personal copy of the repository and connect it to the main project.</p>
+<div class="highlight"><pre><span></span><code><span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">SELECT city, ST_SetSRID(ST_GeomFromText(wkt), 3857) AS geometry FROM (VALUES</span>
+<span class="s2">    ('New York', 'POINT(-8238310.24 4969803.34)'),</span>
+<span class="s2">    ('Los Angeles', 'POINT(-13153204.78 4037636.04)'),</span>
+<span class="s2">    ('Chicago', 'POINT(-9757148.04 5138517.44)'))</span>
+<span class="s2">AS t(city, wkt)"""</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">schema</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 2 fields:
+  city: Utf8
+  geometry: wkb &lt;epsg:3857&gt;
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">countries</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"countries"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="join-with-mismatched-crss">Join with mismatched CRSs<a class="headerlink" href="#join-with-mismatched-crss" title="Permanent link">¶</a></h2>
+<p>The cities and countries tables have different CRSs.</p>
+<p>The cities table uses EPSG:3857 and the countries table uses EPSG:4326.</p>
+<p>Let's confirm that the code errors out if we try to join the mismatched tables.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># join doesn't work when CRSs don't match</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">select * from cities</span>
+<span class="s2">join countries</span>
+<span class="s2">where ST_Intersects(cities.geometry, countries.geometry)</span>
+<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code><span class="o">---------------------------------------------------------------------------</span>
+
+<span class="nx">SedonaError</span><span class="w">                               </span><span class="nx">Traceback</span><span class="w"> </span><span class="p">(</span><span class="nx">most</span><span class="w"> </span><span class="nx">recent</span><span class="w"> </span><span class="nx">call</span><span class="w"> </span><span class="nx">last</span><span class="p">)</span>
+
+<span class="nx">Cell</span><span class="w"> </span><span class="nx">In</span><span class="p">[</span><span class="mi">7</span><span class="p">],</span><span class="w"> </span><span class="nx">line</span><span class="w"> </span><span class="mi">6</span>
+<span class="w">      </span><span class="mi">1</span><span class="w"> </span><span class="err">#</span><span class="w"> </span><span class="nx">join</span><span class="w"> </span><span class="nx">doesn</span><span class="err">'</span><span class="nx">t</span><span class="w"> </span><span class="nx">work</span><span class="w"> </span><span class="nx">when</span><span class="w"> </span><span class="nx">CRSs</span><span class="w"> </span><span class="nx">don</span><span class="err">'</span><span class="nx">t</span><span class="w"> </span><span class="k">match</span>
+<span class="w">      </span><span class="mi">2</span><span class="w"> </span><span class="nx">sd</span><span class="p">.</span><span class="nx">sql</span><span class="p">(</span><span class="s">"""</span>
+<span class="s">      3 select * from cities</span>
+<span class="s">      4 join countries</span>
+<span class="s">      5 where ST_Intersects(cities.geometry, countries.geometry)</span>
+<span class="s">----&gt; 6 """</span><span class="p">).</span><span class="nx">show</span><span class="p">()</span>
+
+
+<span class="nx">File</span><span class="w"> </span><span class="o">/</span><span class="nx">opt</span><span class="o">/</span><span class="nx">miniconda3</span><span class="o">/</span><span class="nx">lib</span><span class="o">/</span><span class="nx">python3</span><span class="m m-Double">.12</span><span class="o">/</span><span class="nx">site</span><span class="o">-</span><span class="nx">packages</span><span class="o">/</span><span class="nx">sedonadb</span><span class="o">/</span><span class="nx">dataframe</span><span class="p">.</span><span class="nx">py</span><span class="p">:</span><span class="mi">297</span><span class="p">,</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="nx">DataFrame</span><span class="p">.</span><span class="nx">show</span><span class="p">(</span><span class="kp">self</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="p">,</span><span class="w"> </span><span class="nx">width</span><span class="p">,</span><span class="w"> </span><span class="nx">ascii</span><span class="p">)</span>
+<span class="w">    </span><span class="mi">272</span><span class="w"> </span><span class="s">"""Print the first limit rows to the console</span>
+<span class="s">    273 </span>
+<span class="s">    274 Args:</span>
+<span class="s">   (...)</span>
+<span class="s">    294 </span>
+<span class="s">    295 """</span>
+<span class="w">    </span><span class="mi">296</span><span class="w"> </span><span class="nx">width</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">_out_width</span><span class="p">(</span><span class="nx">width</span><span class="p">)</span>
+<span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="mi">297</span><span class="w"> </span><span class="nx">print</span><span class="p">(</span><span class="kp">self</span><span class="p">.</span><span class="nx">_impl</span><span class="p">.</span><span class="nx">show</span><span class="p">(</span><span class="kp">self</span><span class="p">.</span><span class="nx">_ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="p">,</span><span class="w"> </span><span class="nx">width</span><span class="p">,</span><span class="w"> </span><span class="nx">ascii</span><span class="p">),</span><span class="w"> </span><span class="nx">end</span><span class="p">=</span><span class="s">""</span><span class="p">)</span>
+
+
+<span class="nx">SedonaError</span><span class="p">:</span><span class="w"> </span><span class="nx">type_coercion</span>
+<span class="nx">caused</span><span class="w"> </span><span class="nx">by</span>
+<span class="nx">Error</span><span class="w"> </span><span class="nx">during</span><span class="w"> </span><span class="nx">planning</span><span class="p">:</span><span class="w"> </span><span class="nx">Mismatched</span><span class="w"> </span><span class="nx">CRS</span><span class="w"> </span><span class="nx">arguments</span><span class="p">:</span><span class="w"> </span><span class="nx">epsg</span><span class="p">:</span><span class="mi">3857</span><span class="w"> </span><span class="nx">vs</span><span class="w"> </span><span class="nx">epsg</span><span class="p">:</span><span class="mi">4326</span>
+<span class="nx">Use</span><span class="w"> </span><span class="nx">ST_Transform</span><span class="p">()</span><span class="w"> </span><span class="k">or</span><span class="w"> </span><span class="nx">ST_SetSRID</span><span class="p">()</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="nx">ensure</span><span class="w"> </span><span class="nx">arguments</span><span class="w"> </span><span class="nx">are</span><span class="w"> </span><span class="nx">compatible</span><span class="p">.</span>
+</code></pre></div>
+
+<h2 id="convert-crs-and-then-join">Convert CRS and then join<a class="headerlink" href="#convert-crs-and-then-join" title="Permanent link">¶</a></h2>
+<p>Let's convert the cities table to use EPSG:4326 and then perform the join with the two tables once they have matching CRSs.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># update cities to use 4326</span>
+<span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">SELECT city, ST_Transform(geometry, 'EPSG:4326') as geometry</span>
+<span class="s2">FROM cities</span>
+<span class="s2">"""</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">schema</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 2 fields:
+  city: Utf8
+  geometry: wkb &lt;ogc:crs84&gt;
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="c1"># join works when CRSs match</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">select * from cities</span>
+<span class="s2">join countries</span>
+<span class="s2">where ST_Intersects(cities.geometry, countries.geometry)</span>
+<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌─────────────┬──────────────────────┬──────────────────────┬───────────────┬──────────────────────┐
+│     city    ┆       geometry       ┆         name         ┆   continent   ┆       geometry       │
+│     utf8    ┆       geometry       ┆       utf8view       ┆    utf8view   ┆       geometry       │
+╞═════════════╪══════════════════════╪══════════════════════╪═══════════════╪══════════════════════╡
+│ New York    ┆ POINT(-74.006000039… ┆ United States of Am… ┆ North America ┆ MULTIPOLYGON(((-122… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Los Angeles ┆ POINT(-118.15724889… ┆ United States of Am… ┆ North America ┆ MULTIPOLYGON(((-122… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Chicago     ┆ POINT(-87.649952137… ┆ United States of Am… ┆ North America ┆ MULTIPOLYGON(((-122… │
+└─────────────┴──────────────────────┴──────────────────────┴───────────────┴──────────────────────┘
+</code></pre></div>
+
+<h2 id="example-2-joining-two-tables-with-different-crss">Example #2: Joining two tables with different CRSs<a class="headerlink" href="#example-2-joining-two-tables-with-different-crss" title="Permanent link">¶</a></h2>
+<p>This example shows how to join a <code>vermont</code> table with an EPSG 32618 CRS with a <code>buildings</code> table that uses an EPSG 4326 CRS.</p>
+<p>The example highlights the following features:</p>
 <ol>
-<li>
-<p>Fork the repository</p>
-<ul>
-<li>Navigate to the official <a href="https://github.com/apache/sedona-db">Apache SedonaDB GitHub repository</a>.</li>
-<li>Click the <strong>Fork</strong> button in the top-right corner. This creates a complete copy of the project in your own GitHub account.</li>
-</ul>
-</li>
-<li>
-<p>Clone your fork</p>
-<ul>
-<li>Next, clone your newly created fork to your local machine. This command downloads the repository into a new folder named <code>sedona-db</code>.</li>
-<li>
-<p>Replace <code>YourUsername</code> with your actual GitHub username.</p>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/YourUsername/sedona-db.git
-<span class="nb">cd</span><span class="w"> </span>sedona-db
-</code></pre></div>
-</li>
-</ul>
-</li>
-<li>
-<p>Configure the remotes</p>
-<ul>
-<li>Your local repository needs to know where the original project is so you can pull in updates. You'll add a remote link, traditionally named <strong><code>upstream</code></strong>, to the main Apache SedonaDB repository.</li>
-<li>
-<p>Your fork is automatically configured as the <strong><code>origin</code></strong> remote.</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Add the main repository as the "upstream" remote</span>
-git<span class="w"> </span>remote<span class="w"> </span>add<span class="w"> </span>upstream<span class="w"> </span>https://github.com/apache/sedona-db.git
-</code></pre></div>
-</li>
-</ul>
-</li>
-<li>
-<p>Verify the configuration</p>
-<ul>
-<li>
-<p>Run the following command to verify that you have two remotes configured correctly: <code>origin</code> (your fork) and <code>upstream</code> (the main repository).</p>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>remote<span class="w"> </span>-v
-</code></pre></div>
-</li>
-<li>
-<p>The output should look like this:</p>
-<div class="highlight"><pre><span></span><code>origin<span class="w">    </span>https://github.com/YourUsername/sedona-db.git<span class="w"> </span><span class="o">(</span>fetch<span class="o">)</span>
-origin<span class="w">    </span>https://github.com/YourUsername/sedona-db.git<span class="w"> </span><span class="o">(</span>push<span class="o">)</span>
-upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>fetch<span class="o">)</span>
-upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>push<span class="o">)</span>
-</code></pre></div>
-</li>
-</ul>
-</li>
+<li>SedonaDB reads the CRS stored in the files</li>
+<li>SedonaDB protects you from accidentally joining files with mismatched CRSs</li>
+<li>It's easy to convert a GeoPandas DataFrame =&gt; a SedonaDB DataFrame and maintain the CRS</li>
 </ol>
-<h2 id="rust">Rust<a class="headerlink" href="#rust" title="Permanent link">¶</a></h2>
-<p>SedonaDB is written in Rust and is a standard <code>cargo</code> workspace.</p>
-<p>You can install a recent version of the Rust compiler and cargo from
-<a href="https://rustup.rs/">rustup.rs</a> and run tests using <code>cargo test</code>.</p>
-<p>A local development version of the CLI can be run with <code>cargo run --bin sedona-cli</code>.</p>
-<h3 id="test-data-setup">Test data setup<a class="headerlink" href="#test-data-setup" title="Permanent link">¶</a></h3>
-<p>Some tests require submodules that contain test data or pinned versions of
-external dependencies. These submodules can be initialized with:</p>
-<div class="highlight"><pre><span></span><code>git<span class="w"> </span>submodule<span class="w"> </span>init
-git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w"> </span>--recursive
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">geopandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">gpd</span>
+
+<span class="n">path</span> <span class="o">=</span> <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/example-crs/files/example-crs_vermont-utm.fgb"</span>
+<span class="n">gdf</span> <span class="o">=</span> <span class="n">gpd</span><span class="o">.</span><span class="n">read_file</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
 </code></pre></div>
-<p>Additionally, some of the data required in the tests can be downloaded by running the following script.</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>submodules/download-assets.py
+<div class="highlight"><pre><span></span><code><span class="n">vermont</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">gdf</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="system-dependencies">System dependencies<a class="headerlink" href="#system-dependencies" title="Permanent link">¶</a></h3>
-<p>Some crates wrap external native libraries and require system dependencies
-to build.</p>
-<div class="admonition note">
-<p class="admonition-title"><code>sedona-s2geography</code></p>
-<p>At this time, the only crate that requires this is the <code>sedona-s2geography</code>
-crate, which requires <a href="https://cmake.org">CMake</a>,
-<a href="https://github.com/abseil/abseil-cpp">Abseil</a> and OpenSSL.</p>
-</div>
-<h4 id="macos">macOS<a class="headerlink" href="#macos" title="Permanent link">¶</a></h4>
-<p>These can be installed on macOS with <a href="https://brew.sh">Homebrew</a>:</p>
-<div class="highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>abseil<span class="w"> </span>openssl<span class="w"> </span>cmake<span class="w"> </span>geos
+<div class="highlight"><pre><span></span><code><span class="n">vermont</span><span class="o">.</span><span class="n">schema</span>
 </code></pre></div>
-<h4 id="linux-and-windows">Linux and Windows<a class="headerlink" href="#linux-and-windows" title="Permanent link">¶</a></h4>
-<p>On Linux and Windows, it is recommended to use <a href="https://github.com/microsoft/vcpkg">vcpkg</a>
-to provide external dependencies. This can be done by setting the <code>CMAKE_TOOLCHAIN_FILE</code>
-environment variable:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CMAKE_TOOLCHAIN_FILE</span><span class="o">=</span>/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 1 field:
+  geometry: wkb &lt;epsg:32618&gt;
 </code></pre></div>
-<h4 id="visual-studio-code-vscode-configuration">Visual Studio Code (VSCode) Configuration<a class="headerlink" href="#visual-studio-code-vscode-configuration" title="Permanent link">¶</a></h4>
-<p>When using VSCode, it may be necessary to set this environment variable in <code>settings.json</code>
-such that it can be found by rust-analyzer when running build/run tasks:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">    </span><span class="nt">"rust-analyzer.runnables.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
-<span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">"rust-analyzer.cargo.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
+
+<div class="highlight"><pre><span></span><code><span class="n">buildings</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
+    <span class="s2">"https://github.com/geoarrow/geoarrow-data/releases/download/v0.2.0/microsoft-buildings_point_geo.parquet"</span>
+<span class="p">)</span>
 </code></pre></div>
-<h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">¶</a></h2>
-<p>Python bindings to SedonaDB are built with the <a href="https://www.maturin.rs">Maturin</a> build
-backend.</p>
-<p>To install a development version of the main Python bindings for the first time, run the following commands:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>python/sedonadb
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[test]"</span>
+<div class="highlight"><pre><span></span><code><span class="n">buildings</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 </code></pre></div>
-<p>If editing Rust code in either SedonaDB or the Python bindings, you can recompile the
-native component with:</p>
-<div class="highlight"><pre><span></span><code>maturin<span class="w"> </span>develop
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────┐
+│             geometry            │
+│             geometry            │
+╞═════════════════════════════════╡
+│ POINT(-77.10109681 42.53495524) │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ POINT(-77.10048552 42.53695011) │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ POINT(-77.10096508 42.53681338) │
+└─────────────────────────────────┘
 </code></pre></div>
-<h2 id="debugging">Debugging<a class="headerlink" href="#debugging" title="Permanent link">¶</a></h2>
-<h3 id="rust_1">Rust<a class="headerlink" href="#rust_1" title="Permanent link">¶</a></h3>
-<p>Debugging Rust code is most easily done by writing or finding a test that triggers
-the desired behavior and running it using the <em>Debug</em> selection in
-<a href="https://code.visualstudio.com/">VSCode</a> with the
-<a href="https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer">rust-analyzer</a>
-extension. Rust code can also be debugged using the CLI by finding the <code>main()</code> function in
-<code>sedona-cli</code> and choosing the <em>Debug</em> run option.</p>
-<h3 id="python-c-and-c">Python, C, and C++<a class="headerlink" href="#python-c-and-c" title="Permanent link">¶</a></h3>
-<p>Installation of Python bindings with <code>maturin develop</code> ensures a debug-friendly build for
-debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in
-any IDE that supports debugging an editable Python package installation (e.g., VSCode);
-Rust, C, or C++ code can be debugged using the
-<a href="https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb">CodeLLDB</a>
-<em>Attach to Process...</em> command from the command palette in VSCode.</p>
-<h2 id="low-level-benchmarking">Low-level benchmarking<a class="headerlink" href="#low-level-benchmarking" title="Permanent link">¶</a></h2>
-<p>Low-level Rust benchmarks use <a href="https://github.com/bheisler/criterion.rs">criterion</a>.
-In general, there is at least one benchmark for every implementation of a function
-(some functions have more than one implementation provided by different libraries),
-and a few other benchmarks for low-level iteration where work was done to optimize
-specific cases.</p>
-<h3 id="running-benchmarks">Running benchmarks<a class="headerlink" href="#running-benchmarks" title="Permanent link">¶</a></h3>
-<p>Benchmarks for a specific crate can be run with <code>cargo bench</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>rust/sedona-geo
-cargo<span class="w"> </span>bench
+
+<div class="highlight"><pre><span></span><code><span class="n">buildings</span><span class="o">.</span><span class="n">schema</span>
 </code></pre></div>
-<p>Benchmarks for a specific function can be run with a filter. These can be run
-from the workspace or a specific crate (although the output is usually easier
-to read for a specific crate).</p>
-<div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>bench<span class="w"> </span>--<span class="w"> </span>st_area
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 1 field:
+  geometry: wkb_view &lt;ogc:crs84&gt;
 </code></pre></div>
-<h3 id="managing-results">Managing results<a class="headerlink" href="#managing-results" title="Permanent link">¶</a></h3>
-<p>By default, criterion saves the last run and will report the difference between the
-current benchmark and the last time it was run (although there are options to
-save and load various baselines).</p>
-<p>A report of the latest results for all benchmarks can be opened with the following command:</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio"><input id="__tabbed_1_2" name="__tabbed_1" type="radio"><div class="tabbed-labels"><label for="__tabbed_1_1">macOS</label><label for="__tabbed_1_2">Ubuntu</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>open<span class="w"> </span>target/criterion/report/index.html
+
+<div class="highlight"><pre><span></span><code><span class="n">buildings</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
 </code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="highlight"><pre><span></span><code>xdg-open<span class="w"> </span>target/criterion/report/index.html
+<div class="codehilite"><pre><span></span><code><span class="mf">129735970</span>
 </code></pre></div>
-</div>
-</div>
-</div>
-<p>All previous saved benchmark runs can be cleared with:</p>
-<div class="highlight"><pre><span></span><code>rm<span class="w"> </span>-rf<span class="w"> </span>target/criterion
+
+<div class="highlight"><pre><span></span><code><span class="n">buildings</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"buildings"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">vermont</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"vermont"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">¶</a></h2>
-<p>To contribute to the SedonaDB documentation:</p>
-<ol>
-<li>Clone the repository and create a fork.</li>
-<li>Install the Documentation dependencies:
-    <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/requirements.txt
-</code></pre></div></li>
-<li>Make your changes to the documentation files.</li>
-<li>Preview your changes locally using these commands:<ul>
-<li><code>mkdocs serve</code> - Start the live-reloading docs server.</li>
-<li><code>mkdocs build</code> - Build the documentation site.</li>
-<li><code>mkdocs -h</code> - Print help message and exit.</li>
-</ul>
-</li>
-<li>Push your changes and open a pull request.</li>
-</ol>
+<div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">select count(*) from buildings</span>
+<span class="s2">join vermont</span>
+<span class="s2">where ST_Intersects(buildings.geometry, vermont.geometry)</span>
+<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code><span class="o">---------------------------------------------------------------------------</span>
+
+<span class="nx">SedonaError</span><span class="w">                               </span><span class="nx">Traceback</span><span class="w"> </span><span class="p">(</span><span class="nx">most</span><span class="w"> </span><span class="nx">recent</span><span class="w"> </span><span class="nx">call</span><span class="w"> </span><span class="nx">last</span><span class="p">)</span>
+
+<span class="nx">Cell</span><span class="w"> </span><span class="nx">In</span><span class="p">[</span><span class="mi">12</span><span class="p">],</span><span class="w"> </span><span class="nx">line</span><span class="w"> </span><span class="mi">5</span>
+<span class="w">      </span><span class="mi">1</span><span class="w"> </span><span class="nx">sd</span><span class="p">.</span><span class="nx">sql</span><span class="p">(</span><span class="s">"""</span>
+<span class="s">      2 select count(*) from buildings</span>
+<span class="s">      3 join vermont</span>
+<span class="s">      4 where ST_Intersects(buildings.geometry, vermont.geometry)</span>
+<span class="s">----&gt; 5 """</span><span class="p">).</span><span class="nx">show</span><span class="p">()</span>
+
+
+<span class="nx">File</span><span class="w"> </span><span class="o">/</span><span class="nx">opt</span><span class="o">/</span><span class="nx">miniconda3</span><span class="o">/</span><span class="nx">lib</span><span class="o">/</span><span class="nx">python3</span><span class="m m-Double">.12</span><span class="o">/</span><span class="nx">site</span><span class="o">-</span><span class="nx">packages</span><span class="o">/</span><span class="nx">sedonadb</span><span class="o">/</span><span class="nx">dataframe</span><span class="p">.</span><span class="nx">py</span><span class="p">:</span><span class="mi">297</span><span class="p">,</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="nx">DataFrame</span><span class="p">.</span><span class="nx">show</span><span class="p">(</span><span class="kp">self</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="p">,</span><span class="w"> </span><span class="nx">width</span><span class="p">,</span><span class="w"> </span><span class="nx">ascii</span><span class="p">)</span>
+<span class="w">    </span><span class="mi">272</span><span class="w"> </span><span class="s">"""Print the first limit rows to the console</span>
+<span class="s">    273 </span>
+<span class="s">    274 Args:</span>
+<span class="s">   (...)</span>
+<span class="s">    294 </span>
+<span class="s">    295 """</span>
+<span class="w">    </span><span class="mi">296</span><span class="w"> </span><span class="nx">width</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">_out_width</span><span class="p">(</span><span class="nx">width</span><span class="p">)</span>
+<span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="mi">297</span><span class="w"> </span><span class="nx">print</span><span class="p">(</span><span class="kp">self</span><span class="p">.</span><span class="nx">_impl</span><span class="p">.</span><span class="nx">show</span><span class="p">(</span><span class="kp">self</span><span class="p">.</span><span class="nx">_ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="p">,</span><span class="w"> </span><span class="nx">width</span><span class="p">,</span><span class="w"> </span><span class="nx">ascii</span><span class="p">),</span><span class="w"> </span><span class="nx">end</span><span class="p">=</span><span class="s">""</span><span class="p">)</span>
+
+
+<span class="nx">SedonaError</span><span class="p">:</span><span class="w"> </span><span class="nx">type_coercion</span>
+<span class="nx">caused</span><span class="w"> </span><span class="nx">by</span>
+<span class="nx">Error</span><span class="w"> </span><span class="nx">during</span><span class="w"> </span><span class="nx">planning</span><span class="p">:</span><span class="w"> </span><span class="nx">Mismatched</span><span class="w"> </span><span class="nx">CRS</span><span class="w"> </span><span class="nx">arguments</span><span class="p">:</span><span class="w"> </span><span class="nx">ogc</span><span class="p">:</span><span class="nx">crs84</span><span class="w"> </span><span class="nx">vs</span><span class="w"> </span><span class="nx">epsg</span><span class="p">:</span><span class="mi">32618</span>
+<span class="nx">Use</span><span class="w"> </span><span class="nx">ST_Transform</span><span class="p">()</span><span class="w"> </span><span class="k">or</span><span class="w"> </span><span class="nx">ST_SetSRID</span><span class="p">()</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="nx">ensure</span><span class="w"> </span><span class="nx">arguments</span><span class="w"> </span><span class="nx">are</span><span class="w"> </span><span class="nx">compatible</span><span class="p">.</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">select count(*) from buildings</span>
+<span class="s2">join vermont</span>
+<span class="s2">where ST_Intersects(buildings.geometry, ST_Transform(vermont.geometry, 'EPSG:4326'))</span>
+<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────┐
+│ count(*) │
+│   int64  │
+╞══════════╡
+│   361856 │
+└──────────┘
+</code></pre></div>
 
 
 
@@ -1526,7 +1348,7 @@ save and load various baselines).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 19, 2025 07:13:30 UTC">September 19, 2025 07:13:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 22, 2025 04:01:07 UTC">September 22, 2025 04:01:07</span>
   </span>
 
     
@@ -1562,7 +1384,7 @@ save and load various baselines).</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href="../working-with-parquet-files/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Working with Parquet Files">
+          <a href="../contributors-guide/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contributors Guide">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -1572,20 +1394,20 @@ save and load various baselines).</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Working with Parquet Files
+                Contributors Guide
               </div>
             </div>
           </a>
         
         
           
-          <a href="../crs-examples/" class="md-footer__link md-footer__link--next" aria-label="Next: CRS Examples">
+          <a href="../reference/python/" class="md-footer__link md-footer__link--next" aria-label="Next: Python Functions">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                CRS Examples
+                Python Functions
               </div>
             </div>
             <div class="md-footer__button md-icon">
