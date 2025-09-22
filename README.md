@@ -161,7 +161,7 @@ SedonaDB has several advantages:
 
 - 💬 **Discord:** Join our [Discord community](https://discord.com/invite/9A3k5dEBsY) for real-time chat and support
 - 💭 **GitHub Discussions:** Start a [GitHub Discussion](https://github.com/apache/sedona/discussions) with questions or ideas
-- 📚 **Documentation:** Check out our [comprehensive docs](https://sedona.apache.org/sedonadb/latest/)
+- 📚 **Documentation:** Check out our [comprehensive docs](https://sedona.apache.org/sedonadb)
 
 ### Contributing
 
