@@ -80,20 +80,20 @@ SedonaDB offers a flexible query interface.
 
 === "Python"
 
-	```python
-	import sedona.db
+    ```python
+    import sedona.db
 
-	sd = sedona.db.connect()
-	sd.sql("SELECT ST_Point(0, 1) as geom")
+    sd = sedona.db.connect()
+    sd.sql("SELECT ST_Point(0, 1) as geom")
 	```
 
 === "R"
 
-  ```r
-  library(sedonadb)
+    ```r
+    library(sedonadb)
 
-  sd_sql("SELECT ST_Point(0, 1) as geom")
-  ```
+    sd_sql("SELECT ST_Point(0, 1) as geom")
+    ```
 
 ## Have questions?
 
