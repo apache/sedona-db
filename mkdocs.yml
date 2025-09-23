@@ -26,8 +26,8 @@ nav:
      - Working with GeoPandas: geopandas-interop.md
      - Working with Overture: overture-examples.md
      - Working with Parquet Files: working-with-parquet-files.md
+     - Joining Geospatial Data with Different CRSs: crs-examples.md
      - Contributors Guide: contributors-guide.md
-     - CRS Examples: crs-examples.md
    - SedonaDB Reference:
       - Python:
           - Python Functions: reference/python.md
@@ -137,23 +137,23 @@ plugins:
         background: white
         shadow: false
         manual: false
-   - tags
    - mkdocstrings:
-          handlers:
-               python:
-                    inventories:
-                         - https://docs.python.org/3/objects.inv
-                         - https://geopandas.org/en/stable/objects.inv
-                         - https://pandas.pydata.org/docs/objects.inv
-                    options:
-                         docstring_section_style: list
-                         docstring_style: google
-                         line_length: 80
-                         separate_signature: true
-                         show_root_heading: true
-                         show_signature_annotations: true
-                         show_source: false
-                         show_symbol_type_toc: true
-                         signature_crossrefs: true
-                         extra:
-                              paths: ['python']
+        handlers:
+           python:
+              inventories:
+                 - https://docs.python.org/3/objects.inv
+                 - https://geopandas.org/en/stable/objects.inv
+                 - https://pandas.pydata.org/docs/objects.inv
+              options:
+                 docstring_section_style: list
+                 docstring_style: google
+                 line_length: 80
+                 separate_signature: true
+                 show_root_heading: true
+                 show_signature_annotations: true
+                 show_source: false
+                 show_symbol_type_toc: true
+                 signature_crossrefs: true
+                 preload_modules:
+                   - sedonadb
+                 search_paths: [python]

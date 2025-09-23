@@ -17,15 +17,27 @@
   under the License.
 -->
 
-# Coordinate Reference System (CRS) Examples
+# Joining Geospatial Data with Different CRSs.
+
+> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
 
 This example demonstrates how one table with an EPSG 4326 CRS cannot be joined with another table that uses EPSG 3857.
 
+A Coordinate Reference System (CRS) defines how the two-dimensional coordinates of a map relate to real locations on Earth. Operations like spatial joins, distance calculations, or overlays require all datasets to be in the same CRS to produce accurate results.
+
+This notebook demonstrates a key feature of SedonaDB: it protects users from generating incorrect results by raising an error if you attempt to join tables with mismatched coordinate reference systems.
+
+We will walk through two examples:
+
+- Joining countries (using EPSG:4326, a geographic CRS) and cities (using EPSG:3857, a projected CRS).
+
+- Finding the number of buildings in Vermont by joining two large datasets with different coordinate reference systems.
+
 
 ```python
-import sedonadb
+import sedona.db
 
-sd = sedonadb.connect()
+sd = sedona.db.connect()
 ```
 
 Read a table with a geometry column that uses EPSG 4326.
@@ -48,11 +60,21 @@ countries.schema
 
 
     SedonaSchema with 3 fields:
-      name: Utf8View
-      continent: Utf8View
-      geometry: wkb_view <epsg:4326>
+      name: utf8<Utf8View>
+      continent: utf8<Utf8View>
+      geometry: geometry<WkbView(epsg:4326)>
 
 
+
+## Example 1: Create a cities table with a Projected CRS
+
+We will now create a DataFrame containing several major US cities. The coordinates are provided in Web Mercator (EPSG:3857), which uses meters as its unit.
+
+We use the `ST_SetSRID` function to assign the correct CRS identifier to our geometry data. It's important to distinguish between these two key functions:
+
+`ST_SetSRID(geometry, srid)`: This function assigns an SRID to a geometry. It does not change the underlying coordinate values. You should only use this when your data has a CRS that SedonaDB was unable to infer.
+
+`ST_Transform(geometry, target_srid)`: This function transforms the geometry from its current CRS to a new one. It re-projects the coordinate values themselves.
 
 
 ```python
@@ -73,8 +95,8 @@ cities.schema
 
 
     SedonaSchema with 2 fields:
-      city: Utf8
-      geometry: wkb <epsg:3857>
+      city: utf8<Utf8>
+      geometry: geometry<Wkb(epsg:3857)>
 
 
 
@@ -84,7 +106,7 @@ cities.to_view("cities", overwrite=True)
 countries.to_view("countries", overwrite=True)
 ```
 
-## Join with mismatched CRSs
+### Join with mismatched CRSs
 
 The cities and countries tables have different CRSs.
 
@@ -116,15 +138,14 @@ where ST_Intersects(cities.geometry, countries.geometry)
     ----> 6 """).show()
 
 
-    File /opt/miniconda3/lib/python3.12/site-packages/sedonadb/dataframe.py:297, in DataFrame.show(self, limit, width, ascii)
-        272 """Print the first limit rows to the console
-        273
-        274 Args:
-       (...)
-        294
-        295 """
-        296 width = _out_width(width)
-    --> 297 print(self._impl.show(self._ctx, limit, width, ascii), end="")
+    File ~/sedona-db/python/sedonadb/python/sedonadb/dataframe.py:380, in DataFrame.show(self, limit, width, ascii)
+        356 """Print the first limit rows to the console
+        357
+        358 Args:
+       (...)    377
+        378 """
+        379 width = self._out_width(width)
+    --> 380 print(self._impl.show(self._ctx, limit, width, ascii), end="")
 
 
     SedonaError: type_coercion
@@ -133,7 +154,7 @@ where ST_Intersects(cities.geometry, countries.geometry)
     Use ST_Transform() or ST_SetSRID() to ensure arguments are compatible.
 
 
-## Convert CRS and then join
+### Convert CRS and then join
 
 Let's convert the cities table to use EPSG:4326 and then perform the join with the two tables once they have matching CRSs.
 
@@ -155,8 +176,8 @@ cities.schema
 
 
     SedonaSchema with 2 fields:
-      city: Utf8
-      geometry: wkb <ogc:crs84>
+      city: utf8<Utf8>
+      geometry: geometry<Wkb(ogc:crs84)>
 
 
 
@@ -177,7 +198,7 @@ where ST_Intersects(cities.geometry, countries.geometry)
 
     ┌─────────────┬──────────────────────┬──────────────────────┬───────────────┬──────────────────────┐
     │     city    ┆       geometry       ┆         name         ┆   continent   ┆       geometry       │
-    │     utf8    ┆       geometry       ┆       utf8view       ┆    utf8view   ┆       geometry       │
+    │     utf8    ┆       geometry       ┆         utf8         ┆      utf8     ┆       geometry       │
     ╞═════════════╪══════════════════════╪══════════════════════╪═══════════════╪══════════════════════╡
     │ New York    ┆ POINT(-74.006000039… ┆ United States of Am… ┆ North America ┆ MULTIPOLYGON(((-122… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -193,9 +214,9 @@ This example shows how to join a `vermont` table with an EPSG 32618 CRS with a `
 
 The example highlights the following features:
 
-1. SedonaDB reads the CRS stored in the files
-2. SedonaDB protects you from accidentally joining files with mismatched CRSs
-3. It's easy to convert a GeoPandas DataFrame => a SedonaDB DataFrame and maintain the CRS
+1. SedonaDB reads the CRS stored in the files/
+2. SedonaDB protects you from accidentally joining files with mismatched CRSs.
+3. It's easy to convert a GeoPandas DataFrame to a SedonaDB DataFrame and maintain the CRS.
 
 
 ```python
@@ -219,7 +240,7 @@ vermont.schema
 
 
     SedonaSchema with 1 field:
-      geometry: wkb <epsg:32618>
+      geometry: geometry<Wkb(epsg:32618)>
 
 
 
@@ -239,11 +260,11 @@ buildings.show(3)
     │             geometry            │
     │             geometry            │
     ╞═════════════════════════════════╡
-    │ POINT(-77.10109681 42.53495524) │
+    │ POINT(-97.16154292 26.08759861) │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT(-77.10048552 42.53695011) │
+    │ POINT(-97.1606625 26.08481)     │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT(-77.10096508 42.53681338) │
+    │ POINT(-97.16133375 26.08519809) │
     └─────────────────────────────────┘
 
 
@@ -256,7 +277,7 @@ buildings.schema
 
 
     SedonaSchema with 1 field:
-      geometry: wkb_view <ogc:crs84>
+      geometry: geometry<WkbView(ogc:crs84)>
 
 
 
@@ -280,10 +301,13 @@ vermont.to_view("vermont", overwrite=True)
 
 
 ```python
+# Again, SedonaDB prevents accidentally joining files with mismatched CRSs.
 sd.sql("""
-select count(*) from buildings
-join vermont
-where ST_Intersects(buildings.geometry, vermont.geometry)
+SELECT count(*) from buildings
+JOIN vermont
+WHERE ST_Intersects(
+       buildings.geometry,
+       vermont.geometry)
 """).show()
 ```
 
@@ -292,23 +316,25 @@ where ST_Intersects(buildings.geometry, vermont.geometry)
 
     SedonaError                               Traceback (most recent call last)
 
-    Cell In[12], line 5
-          1 sd.sql("""
-          2 select count(*) from buildings
-          3 join vermont
-          4 where ST_Intersects(buildings.geometry, vermont.geometry)
-    ----> 5 """).show()
+    Cell In[20], line 8
+          1 # Again, SedonaDB prevents accidentally joining files with mismatched CRSs.
+          2 sd.sql("""
+          3 SELECT count(*) from buildings
+          4 JOIN vermont
+          5 WHERE ST_Intersects(
+          6        buildings.geometry,
+          7        vermont.geometry)
+    ----> 8 """).show()
 
 
-    File /opt/miniconda3/lib/python3.12/site-packages/sedonadb/dataframe.py:297, in DataFrame.show(self, limit, width, ascii)
-        272 """Print the first limit rows to the console
-        273
-        274 Args:
-       (...)
-        294
-        295 """
-        296 width = _out_width(width)
-    --> 297 print(self._impl.show(self._ctx, limit, width, ascii), end="")
+    File ~/new-sedonadb/sedona-db/python/sedonadb/python/sedonadb/dataframe.py:380, in DataFrame.show(self, limit, width, ascii)
+        356 """Print the first limit rows to the console
+        357
+        358 Args:
+       (...)    377
+        378 """
+        379 width = self._out_width(width)
+    --> 380 print(self._impl.show(self._ctx, limit, width, ascii), end="")
 
 
     SedonaError: type_coercion
@@ -320,9 +346,13 @@ where ST_Intersects(buildings.geometry, vermont.geometry)
 
 ```python
 sd.sql("""
-select count(*) from buildings
-join vermont
-where ST_Intersects(buildings.geometry, ST_Transform(vermont.geometry, 'EPSG:4326'))
+SELECT count(*)
+FROM buildings
+JOIN vermont
+WHERE ST_Intersects(
+    buildings.geometry,
+    ST_Transform(vermont.geometry, 'EPSG:4326')
+)
 """).show()
 ```
 

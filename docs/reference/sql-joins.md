@@ -33,24 +33,30 @@ Assign a country to each city by checking which country polygon contains each ci
 SELECT
     cities.name as city,
     countries.name as country
-FROM cities
-INNER JOIN countries
-ON ST_Contains(countries.geometry, cities.geometry)
+FROM
+    cities
+INNER JOIN
+    countries
+    ON ST_Contains(countries.geometry, cities.geometry)
 ```
 
 ## K-Nearest Neighbor (KNN) Join
 
 Use the specialized `ST_KNN` function to find the *k* nearest neighbors from one table for each geometry in another. This is useful for proximity analysis.
 
-### Example For each city, find the 5 other closest cities.
+### Example
+
+For each city, find the 5 other closest cities.
 
 ```sql
 SELECT
     cities_l.name AS city,
     cities_r.name AS nearest_neighbor
-FROM cities AS cities_l
-INNER JOIN cities AS cities_r
-ON ST_KNN(cities_l.geometry, cities_r.geometry, 5, false)
+FROM
+    cities AS cities_l
+INNER JOIN
+    cities AS cities_r
+    ON ST_KNN(cities_l.geometry, cities_r.geometry, 5, false)
 ```
 
 ## Optimization Barrier
@@ -70,19 +76,22 @@ The placement of filters relative to KNN joins changes the semantic meaning of t
 
 ### Example
 
-Find the 3 nearest high-rated restaurants to luxury hotels, ensuring the KNN join completes before filtering.
+Find the 3 nearest restaurants for each luxury hotel, and then filter the results to only show pairs where the restaurant is also high-rated.
 
 ```sql
 SELECT
     h.name AS hotel,
     r.name AS restaurant,
     r.rating
-FROM hotels AS h
-INNER JOIN restaurants AS r
-ON ST_KNN(h.geometry, r.geometry, 3, false)
-WHERE barrier('rating > 4.0 AND stars >= 4',
-              'rating', r.rating,
-              'stars', h.stars)
+FROM
+    hotels AS h
+INNER JOIN
+    restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false)
+WHERE
+    barrier('rating > 4.0 AND stars >= 4',
+            'rating', r.rating,
+            'stars', h.stars)
 ```
 
 With the barrier function, this query first finds the 3 nearest restaurants to each hotel (regardless of rating), then filters to keep only those pairs where the restaurant has rating > 4.0 and the hotel has stars >= 4. Without the barrier, an optimizer might push the filters down, changing the query to first filter for high-rated restaurants and luxury hotels, then find the 3 nearest among those filtered sets.

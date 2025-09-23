@@ -16,7 +16,7 @@
 # under the License.
 
 github:
-  description: "A single-node analytical database engine with geospatial as the first-class citizen"
+  description: "A single-node analytical database engine with geospatial as a first-class citizen"
   homepage: https://sedona.apache.org/sedonadb
   enabled_merge_buttons:
     # enable squash button:

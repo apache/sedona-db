@@ -22,7 +22,7 @@ title: Introducing SedonaDB
   under the License.
 -->
 
-SedonaDB is an open-source single-node analytical database engine with **geospatial as the first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
+SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
 SedonaDB is perfect for processing smaller to medium datasets on local machines or cloud instances. For distributed workloads, you can leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
 
@@ -89,11 +89,11 @@ SedonaDB offers a flexible query interface.
 
 === "R"
 
-	```r
-	library(sedonadb)
+  ```r
+  library(sedonadb)
 
-    sd_sql("SELECT ST_Point(0, 1) as geom")
-	```
+  sd_sql("SELECT ST_Point(0, 1) as geom")
+  ```
 
 ## Have questions?
 

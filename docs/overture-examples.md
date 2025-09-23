@@ -19,7 +19,14 @@
 
 # SedonaDB Overture Examples
 
-This notebook shows how to query the Overture data with SedonaDB!
+> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
+
+This notebook demonstrates how to query and analyze the [Overture Maps](https://overturemaps.org/) dataset using SedonaDB.
+
+The notebook explains how to:
+* Load Overture data for the `buildings` and `divisions` themes directly from S3.
+* Perform spatial queries to find features within a specific geographic area.
+* Optimize subsequent query performance by caching a subset of data in memory.
 
 
 ```python
@@ -48,27 +55,27 @@ df.limit(10).show()
 
     ┌──────────────────────────────────────┬─────────────────────────────────────────┬───┬─────────────┐
     │                  id                  ┆                 geometry                ┆ … ┆ roof_height │
-    │               utf8view               ┆           wkb_view <ogc:crs84>          ┆   ┆   float64   │
+    │                 utf8                 ┆                 geometry                ┆   ┆   float64   │
     ╞══════════════════════════════════════╪═════════════════════════════════════════╪═══╪═════════════╡
-    │ 06533301-f2ec-42e0-8138-732ac25a7497 ┆ POLYGON((-58.4757066 -34.7389169,-58.4… ┆ … ┆             │
+    │ 76045c54-bd50-415b-9ac8-35cfc22fe80f ┆ POLYGON((-105.7936939 25.7460051,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ cc0c048c-088d-4cb3-9982-3961edfdf416 ┆ POLYGON((-58.4755777 -34.7389131,-58.4… ┆ … ┆             │
+    │ f1eb3f3e-c9b9-40af-b83e-7f2c09ef8e43 ┆ POLYGON((-105.7971397 25.7517374,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ e52a0dbc-fb93-40e2-b1df-03626855299c ┆ POLYGON((-58.4754112 -34.7394253,-58.4… ┆ … ┆             │
+    │ f6019f66-3137-4e62-9d84-e4f4febe2f6d ┆ POLYGON((-105.7928137 25.7493614,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 28526977-9920-4cec-9840-5dd409a7cded ┆ POLYGON((-58.4752088 -34.7394754,-58.4… ┆ … ┆             │
+    │ 37b96ac3-0093-47d4-a898-263f6550ef14 ┆ POLYGON((-105.7857365 25.7465883,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 0bc4c042-52ea-4ae7-9200-56221805fa2f ┆ POLYGON((-58.475273 -34.7394421,-58.47… ┆ … ┆             │
+    │ e686ab8d-7062-4c0a-a8da-32ab751f7212 ┆ POLYGON((-105.7579541 25.7150521,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ c21dfee1-f5d9-4e0a-91cf-796f117518d4 ┆ POLYGON((-58.4750977 -34.7394357,-58.4… ┆ … ┆             │
+    │ 767a736b-ac77-4427-89f0-3f9544b1e9e9 ┆ POLYGON((-105.7576387 25.7149905,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 3fe5efdd-1739-4088-8c8e-6f7f1b7cfcfe ┆ POLYGON((-58.4751684 -34.7394288,-58.4… ┆ … ┆             │
+    │ db3a2233-a7cb-425a-ac75-ad83cf868a32 ┆ POLYGON((-105.7589831 25.71648,-105.75… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ c144becc-fc8a-4bbc-aeef-359ac56a925a ┆ POLYGON((-58.4751787 -34.739396,-58.47… ┆ … ┆             │
+    │ 53866308-afc7-4ff1-88f6-b2af571238e3 ┆ POLYGON((-105.76268 25.7197151,-105.76… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 79d6c10a-2ff2-429d-a0e7-6eefc8939d14 ┆ POLYGON((-58.4753719 -34.7393189,-58.4… ┆ … ┆             │
+    │ 31d8f64e-b7f9-4b26-8c2a-2fd205fed995 ┆ POLYGON((-105.7626968 25.7197994,-105.… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ c1664c2d-2c0f-44c4-af08-58176e360613 ┆ POLYGON((-58.4753269 -34.7391919,-58.4… ┆ … ┆             │
+    │ 72ec6ed0-d33c-4e64-8c8f-28e7a6ac6310 ┆ POLYGON((-105.7578861 25.7190388,-105.… ┆ … ┆             │
     └──────────────────────────────────────┴─────────────────────────────────────────┴───┴─────────────┘
 
 
@@ -79,7 +86,7 @@ df.to_view("buildings")
 
 
 ```python
-# the buildings table is large and contains millions of rows
+# the buildings table is large and contains billions of rows
 sd.sql("""
 SELECT
     COUNT(*)
@@ -106,37 +113,40 @@ df.schema
 
 
     SedonaSchema with 24 fields:
-      id: Utf8View
-      geometry: wkb_view <ogc:crs84>
-      bbox: Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)
-      version: Int32
-      sources: List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })
-      level: Int32
-      subtype: Utf8View
-      class: Utf8View
-      height: Float64
-      names: Struct(primary Utf8, common Map(Field { name: "key_value", data_type: Struct([Field { name: "key", data_type: Utf8, nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, false), rules List(Field { name: "element", data_type: Struct([Field { name: "variant", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "language", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "perspectives", data_type: Struct([Field { name: "mode", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "countries", data_type: List(Field { name: "element", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "side", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }))
-      has_parts: Boolean
-      is_underground: Boolean
-      num_floors: Int32
-      num_floors_underground: Int32
-      min_height: Float64
-      min_floor: Int32
-      facade_color: Utf8View
-      facade_material: Utf8View
-      roof_material: Utf8View
-      roof_shape: Utf8View
-      roof_direction: Float64
-      roof_orientation: Utf8View
-      roof_color: Utf8View
-      roof_height: Float64
+      id: utf8<Utf8View>
+      geometry: geometry<WkbView(ogc:crs84)>
+      bbox: struct<Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)>
+      version: int32<Int32>
+      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
+      level: int32<Int32>
+      subtype: utf8<Utf8View>
+      class: utf8<Utf8View>
+      height: float64<Float64>
+      names: struct<Struct(primary Utf8, common Map(Field { name: "key_value", data_type: Struct([Field { name: "key", data_type: Utf8, nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, false), rules List(Field { name: "element", data_type: Struct([Field { name: "variant", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "language", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "perspectives", data_type: Struct([Field { name: "mode", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "countries", data_type: List(Field { name: "element", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "side", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }))>
+      has_parts: boolean<Boolean>
+      is_underground: boolean<Boolean>
+      num_floors: int32<Int32>
+      num_floors_underground: int32<Int32>
+      min_height: float64<Float64>
+      min_floor: int32<Int32>
+      facade_color: utf8<Utf8View>
+      facade_material: utf8<Utf8View>
+      roof_material: utf8<Utf8View>
+      roof_shape: utf8<Utf8View>
+      roof_direction: float64<Float64>
+      roof_orientation: utf8<Utf8View>
+      roof_color: utf8<Utf8View>
+      roof_height: float64<Float64>
 
 
 
 
 ```python
-# find all the buildings in New York city that are taller than 20 meters
-nyc_bbox_wkt = "POLYGON((-74.2591 40.4774, -74.2591 40.9176, -73.7004 40.9176, -73.7004 40.4774, -74.2591 40.4774))"
+# find all the buildings in New York City that are taller than 20 meters
+nyc_bbox_wkt = (
+    "POLYGON((-74.2591 40.4774, -74.2591 40.9176, -73.7004 40.9176, "
+    "-73.7004 40.4774, -74.2591 40.4774))"
+)
 sd.sql(f"""
 SELECT
     id,
@@ -150,14 +160,17 @@ WHERE
     is_underground = FALSE
     AND height IS NOT NULL
     AND height > 20
-    AND ST_Intersects(geometry, ST_SetSRID(ST_GeomFromText('{nyc_bbox_wkt}'), 4326))
+    AND ST_Intersects(
+        geometry,
+        ST_SetSRID(ST_GeomFromText('{nyc_bbox_wkt}'), 4326)
+    )
 LIMIT 5;
 """).show()
 ```
 
     ┌─────────────────────────┬────────────────────┬────────────┬────────────┬─────────────────────────┐
     │            id           ┆       height       ┆ num_floors ┆ roof_shape ┆         centroid        │
-    │         utf8view        ┆       float64      ┆    int32   ┆  utf8view  ┆     wkb <ogc:crs84>     │
+    │           utf8          ┆       float64      ┆    int32   ┆    utf8    ┆         geometry        │
     ╞═════════════════════════╪════════════════════╪════════════╪════════════╪═════════════════════════╡
     │ 1b9040c2-2e79-4f56-aba… ┆               22.4 ┆            ┆            ┆ POINT(-74.230407502993… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -182,34 +195,34 @@ df = sd.read_parquet(
 
 
 ```python
-# take a look at a few rows of data
+# inspect a few rows of the data
 df.show(10)
 ```
 
-    ┌────────────────┬────────────────┬────────────────┬───┬────────────────┬──────────┬───────────────┐
-    │       id       ┆    geometry    ┆      bbox      ┆ … ┆ is_territorial ┆  region  ┆  division_id  │
-    │    utf8view    ┆ wkb_view <ogc… ┆ struct(xmin f… ┆   ┆     boolean    ┆ utf8view ┆    utf8view   │
-    ╞════════════════╪════════════════╪════════════════╪═══╪════════════════╪══════════╪═══════════════╡
-    │ 61912ffd-060b… ┆ POLYGON((23.3… ┆ {xmin: 22.735… ┆ … ┆ true           ┆ ZA-EC    ┆ 2711d6ca-ac1… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 7647b992-e0d6… ┆ POLYGON((26.5… ┆ {xmin: 26.521… ┆ … ┆ true           ┆ ZA-EC    ┆ 0e8a08eb-6f2… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 4058785b-82c9… ┆ MULTIPOLYGON(… ┆ {xmin: 22.735… ┆ … ┆ false          ┆ ZA-EC    ┆ 2711d6ca-ac1… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ cd9389b7-3451… ┆ POLYGON((26.5… ┆ {xmin: 26.373… ┆ … ┆ true           ┆ ZA-EC    ┆ 9d59ea5e-408… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ a60ae908-e6fa… ┆ POLYGON((26.6… ┆ {xmin: 26.541… ┆ … ┆ true           ┆ ZA-EC    ┆ f49ef082-3c2… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ fd070cbb-4aaa… ┆ POLYGON((26.1… ┆ {xmin: 26.084… ┆ … ┆ true           ┆ ZA-EC    ┆ 513b5a9c-c29… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 70479601-dc12… ┆ POLYGON((26.4… ┆ {xmin: 26.222… ┆ … ┆ true           ┆ ZA-EC    ┆ 2ade34e5-955… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 3a294b23-f674… ┆ POLYGON((24.5… ┆ {xmin: 24.503… ┆ … ┆ true           ┆ ZA-EC    ┆ 4f63d19f-2ca… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 48b3e344-10a4… ┆ POLYGON((26.6… ┆ {xmin: 26.557… ┆ … ┆ true           ┆ ZA-EC    ┆ 20d890bb-1a4… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 92e71cf6-fa94… ┆ POLYGON((25.8… ┆ {xmin: 25.799… ┆ … ┆ true           ┆ ZA-EC    ┆ 4202ec06-188… │
-    └────────────────┴────────────────┴────────────────┴───┴────────────────┴──────────┴───────────────┘
+    ┌─────────────────┬────────────────┬────────────────┬───┬────────────────┬────────┬────────────────┐
+    │        id       ┆    geometry    ┆      bbox      ┆ … ┆ is_territorial ┆ region ┆   division_id  │
+    │       utf8      ┆    geometry    ┆     struct     ┆   ┆     boolean    ┆  utf8  ┆      utf8      │
+    ╞═════════════════╪════════════════╪════════════════╪═══╪════════════════╪════════╪════════════════╡
+    │ 6dd2a4d4-542f-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 4b010ede-3285… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ 5eef9108-6811-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 4aa05d3a-0300… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ fe123780-bf85-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 63c6570b-70fd… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ c0f0c861-a3bc-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ c3fc4642-f97b… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ a57076cb-c74d-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 5d206247-f4b2… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ d86411e8-02a1-… ┆ POLYGON((-82.… ┆ {xmin: -82.40… ┆ … ┆ true           ┆ PA-4   ┆ c5564623-b42e… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ d13f593f-7fde-… ┆ POLYGON((-82.… ┆ {xmin: -82.39… ┆ … ┆ true           ┆ PA-4   ┆ b02aa2a3-3889… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ 3598138e-788a-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 6700edfc-96e5… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ a5cecb4f-d6d1-… ┆ POLYGON((-82.… ┆ {xmin: -82.38… ┆ … ┆ true           ┆ PA-4   ┆ 9f24a80b-355d… │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ a4d912fc-69d9-… ┆ POLYGON((-82.… ┆ {xmin: -82.37… ┆ … ┆ true           ┆ PA-4   ┆ 65786eba-d8fd… │
+    └─────────────────┴────────────────┴────────────────┴───┴────────────────┴────────┴────────────────┘
 
 
 
@@ -243,19 +256,19 @@ df.schema
 
 
     SedonaSchema with 13 fields:
-      id: Utf8View
-      geometry: wkb_view <ogc:crs84>
-      bbox: Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)
-      country: Utf8View
-      version: Int32
-      sources: List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })
-      subtype: Utf8View
-      class: Utf8View
-      names: Struct(primary Utf8, common Map(Field { name: "key_value", data_type: Struct([Field { name: "key", data_type: Utf8, nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, false), rules List(Field { name: "element", data_type: Struct([Field { name: "variant", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "language", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "perspectives", data_type: Struct([Field { name: "mode", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "countries", data_type: List(Field { name: "element", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "side", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }))
-      is_land: Boolean
-      is_territorial: Boolean
-      region: Utf8View
-      division_id: Utf8View
+      id: utf8<Utf8View>
+      geometry: geometry<WkbView(ogc:crs84)>
+      bbox: struct<Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)>
+      country: utf8<Utf8View>
+      version: int32<Int32>
+      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
+      subtype: utf8<Utf8View>
+      class: utf8<Utf8View>
+      names: struct<Struct(primary Utf8, common Map(Field { name: "key_value", data_type: Struct([Field { name: "key", data_type: Utf8, nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, false), rules List(Field { name: "element", data_type: Struct([Field { name: "variant", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "language", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "perspectives", data_type: Struct([Field { name: "mode", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "countries", data_type: List(Field { name: "element", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "side", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }))>
+      is_land: boolean<Boolean>
+      is_territorial: boolean<Boolean>
+      region: utf8<Utf8View>
+      division_id: utf8<Utf8View>
 
 
 
@@ -270,7 +283,10 @@ SELECT
     country, region, names, geometry
 FROM division_area
 WHERE
-    ST_Intersects(geometry, ST_SetSRID(ST_GeomFromText('{nova_scotia_bbox_wkt}'), 4326))
+    ST_Intersects(
+        geometry,
+        ST_SetSRID(ST_GeomFromText('{nova_scotia_bbox_wkt}'), 4326)
+    )
 """).to_memtable()
 ```
 
@@ -291,17 +307,17 @@ WHERE region = 'CA-NS'
 
 ```python
 %%time
-# this executes quickly because the Nova Scotia data was persisted in memory with to_memtable()
+# this executes quickly because the Nova Scotia data was persisted in memory with `to_memtable()`
 df.show(2)
 ```
 
     ┌────────────────────────┬────────────────────────┬────────────────────────┬───────────────────────┐
     │ __unnest_placeholder(n ┆ __unnest_placeholder(n ┆ __unnest_placeholder(n ┆        geometry       │
-    │ s_divisions.names).pr… ┆ s_divisions.names).co… ┆ s_divisions.names).ru… ┆  wkb_view <ogc:crs84> │
+    │ s_divisions.names).pr… ┆ s_divisions.names).co… ┆ s_divisions.names).ru… ┆        geometry       │
     ╞════════════════════════╪════════════════════════╪════════════════════════╪═══════════════════════╡
     │ Seal Island            ┆                        ┆                        ┆ POLYGON((-66.0528452… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ Mud Island             ┆                        ┆                        ┆ POLYGON((-66.0222822… │
     └────────────────────────┴────────────────────────┴────────────────────────┴───────────────────────┘
-    CPU times: user 8.75 ms, sys: 2.41 ms, total: 11.2 ms
-    Wall time: 8.47 ms
+    CPU times: user 1.2 ms, sys: 844 μs, total: 2.04 ms
+    Wall time: 2.03 ms

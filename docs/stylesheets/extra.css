@@ -77,12 +77,48 @@
 }
 
 /* ==========================================================================
+   Logo Size Adjustment
+   ========================================================================== */
+
+/*
+  Targets the logo in the header, whether it's an SVG or a standard image file.
+  Adjust the height value as needed to get the perfect size.
+*/
+.md-header .md-logo img,
+.md-header .md-logo svg {
+  height: 42px; /* This should match the Apache Sedona logo size */
+  width: auto;  /* Ensures the width scales proportionally */
+}
+
+
+/* ==========================================================================
    Mobile Navigation Styles
    ========================================================================== */
 
-/* This targets the main container of the slide-out navigation on mobile */
+/*
+  Force the entire mobile navigation header to be black, overriding theme defaults.
+*/
 .md-nav--primary .md-nav__title,
-.md-nav__source {
-  background-color: var(--color-red); /* Use your red color */
-  box-shadow: none; /* Optional: removes the shadow */
+.md-nav--primary .md-nav__source {
+  background-color: var(--color-dark) !important;
+}
+
+/* ==========================================================================
+   Swap Logo ONLY in Mobile Navigation
+   ========================================================================== */
+
+/* 1. Hide the default logo image inside the mobile nav */
+.md-nav--primary .md-nav__title .md-logo img {
+  display: none;
+}
+
+/* 2. Apply the new mobile logo as a background image */
+.md-nav--primary .md-nav__title .md-logo {
+  display: block;
+  height: 48px; /* Adjust size as needed */
+  width: 100%;
+  background-image: url('../image/sedona_logo_symbol_white.svg'); /* IMPORTANT: Update this path */
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center left;
 }

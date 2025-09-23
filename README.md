@@ -19,7 +19,7 @@
 
 # SedonaDB
 
-SedonaDB is an open-source single-node analytical database engine with **geospatial as the first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
+SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
 SedonaDB is perfect for processing smaller to medium datasets on local machines or cloud instances. For distributed workloads, you can leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
 
@@ -69,6 +69,7 @@ result.show()
 ### Supported File Formats
 
 SedonaDB supports a wide range of geospatial file formats:
+
 - **Vector:** GeoParquet, WKT, WKB, all formats supported by GeoPandas
 - **Raster:** Coming soon with full SedonaSpark compatibility
 
@@ -80,6 +81,7 @@ Start by establishing a connection:
 
 ```python
 import sedona.db
+import os
 sd = sedona.db.connect()
 ```
 

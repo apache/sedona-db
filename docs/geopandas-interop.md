@@ -17,9 +17,16 @@
   under the License.
 -->
 
-# GeoPandas interoperability
+# GeoPandas Interoperability
 
-This example shows how to read a GeoJSON file with GeoPandas and then convert the GeoPandas DataFrame to a SedonaDB DataFrame.
+> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
+
+This notebook shows how to leverage GeoPandas with SedonaDB for large-scale geospatial analysis.
+
+You'll learn how to:
+
+- Read common geospatial file formats like GeoJSON and FlatGeobuf into a GeoPandas GeoDataFrame
+- Convert these data from these input formats into a SedonaDB DataFrame for large-scale analysis.
 
 Any file type that can be read by GeoPandas can also be read into a SedonaDB DataFrame!
 
@@ -35,7 +42,7 @@ sd = sedona.db.connect()
 
 
 ```python
-gdf = gpd.read_file("some_data.json")
+gdf = gpd.read_file("sample_geometries.json")
 ```
 
 
@@ -141,12 +148,14 @@ This code demonstrates how to read a FlatGeobuf file with GeoPandas and then con
 
 
 ```python
+# Read a FlatGeobuf file with GeoPandas
 path = "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities.fgb"
 gdf = gpd.read_file(path)
 ```
 
 
 ```python
+# Convert the GeoPandas DataFrame to a SedonaDB DataFrame
 df = sd.create_data_frame(gdf)
 ```
 
