@@ -47,6 +47,7 @@ sd = sedona.db.connect()
 Set some AWS environment variables to access the data:
 
 ```python
+import os
 os.environ["AWS_SKIP_SIGNATURE"] = "true"
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 ```
@@ -57,6 +58,7 @@ Read the dataset into a Python SedonaDB `DataFrame`. This is lazy: even though t
 df = sd.read_parquet(
     "s3://overturemaps-us-west-2/release/2025-08-20.0/theme=buildings/type=building/"
 )
+df.to_view("buildings")
 ```
 
 Now run a query to compute the centroids of tall buildings (above 20 meters) in New York City:
@@ -89,7 +91,7 @@ Here's the query output:
 ```
 ┌─────────────────────────┬────────────────────┬────────────┬────────────┬─────────────────────────┐
 │            id           ┆       height       ┆ num_floors ┆ roof_shape ┆         centroid        │
-│         utf8view        ┆       float64      ┆    int32   ┆  utf8view  ┆     wkb <ogc:crs84>     │
+│           utf8          ┆       float64      ┆    int32   ┆    utf8    ┆         geometry        │
 ╞═════════════════════════╪════════════════════╪════════════╪════════════╪═════════════════════════╡
 │ 1b9040c2-2e79-4f56-aba… ┆               22.4 ┆            ┆            ┆ POINT(-74.230407502993… │
 ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
