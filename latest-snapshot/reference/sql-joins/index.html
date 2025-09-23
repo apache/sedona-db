@@ -607,12 +607,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributors-guide/" class="md-nav__link">
+      <a href="../../crs-examples/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Contributors Guide
+    Joining Geospatial Data with Different CRSs
     
   </span>
   
@@ -630,12 +630,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../crs-examples/" class="md-nav__link">
+      <a href="../../contributors-guide/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    CRS Examples
+    Contributors Guide
     
   </span>
   
@@ -940,9 +940,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-for-each-city-find-the-5-other-closest-cities" class="md-nav__link">
+  <a href="#example_1" class="md-nav__link">
     <span class="md-ellipsis">
-      Example For each city, find the 5 other closest cities.
+      Example
     </span>
   </a>
   
@@ -964,7 +964,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example_1" class="md-nav__link">
+  <a href="#example_2" class="md-nav__link">
     <span class="md-ellipsis">
       Example
     </span>
@@ -1150,9 +1150,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example-for-each-city-find-the-5-other-closest-cities" class="md-nav__link">
+  <a href="#example_1" class="md-nav__link">
     <span class="md-ellipsis">
-      Example For each city, find the 5 other closest cities.
+      Example
     </span>
   </a>
   
@@ -1174,7 +1174,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#example_1" class="md-nav__link">
+  <a href="#example_2" class="md-nav__link">
     <span class="md-ellipsis">
       Example
     </span>
@@ -1237,19 +1237,24 @@
 <div class="highlight"><pre><span></span><code><span class="k">SELECT</span>
 <span class="w">    </span><span class="n">cities</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">city</span><span class="p">,</span>
 <span class="w">    </span><span class="n">countries</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">country</span>
-<span class="k">FROM</span><span class="w"> </span><span class="n">cities</span>
-<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">countries</span>
-<span class="k">ON</span><span class="w"> </span><span class="n">ST_Contains</span><span class="p">(</span><span class="n">countries</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">cities</span><span class="p">.</span><span class="n">geometry</span><span class="p">)</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="n">cities</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">countries</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_Contains</span><span class="p">(</span><span class="n">countries</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">cities</span><span class="p">.</span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="k-nearest-neighbor-knn-join">K-Nearest Neighbor (KNN) Join<a class="headerlink" href="#k-nearest-neighbor-knn-join" title="Permanent link">¶</a></h2>
 <p>Use the specialized <code>ST_KNN</code> function to find the <em>k</em> nearest neighbors from one table for each geometry in another. This is useful for proximity analysis.</p>
-<h3 id="example-for-each-city-find-the-5-other-closest-cities">Example For each city, find the 5 other closest cities.<a class="headerlink" href="#example-for-each-city-find-the-5-other-closest-cities" title="Permanent link">¶</a></h3>
+<h3 id="example_1">Example<a class="headerlink" href="#example_1" title="Permanent link">¶</a></h3>
+<p>For each city, find the 5 other closest cities.</p>
 <div class="highlight"><pre><span></span><code><span class="k">SELECT</span>
 <span class="w">    </span><span class="n">cities_l</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">city</span><span class="p">,</span>
 <span class="w">    </span><span class="n">cities_r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">nearest_neighbor</span>
-<span class="k">FROM</span><span class="w"> </span><span class="n">cities</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cities_l</span>
-<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">cities</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cities_r</span>
-<span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">cities_l</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">cities_r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="n">cities</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cities_l</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">cities</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cities_r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">cities_l</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">cities_r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="optimization-barrier">Optimization Barrier<a class="headerlink" href="#optimization-barrier" title="Permanent link">¶</a></h2>
 <p>Use the <code>barrier</code> function to prevent filter pushdown and control predicate evaluation order in complex spatial joins. This function creates an optimization barrier by evaluating boolean expressions at runtime.</p>
@@ -1261,18 +1266,21 @@
 <li><strong>Filter before KNN</strong>: First filters the data, then finds K nearest neighbors from the filtered subset. This answers "What are the K nearest high-rated restaurants?"</li>
 <li><strong>Filter after KNN</strong>: First finds K nearest neighbors from all data, then filters those results. This answers "Of the K nearest restaurants, which ones are high-rated?"</li>
 </ul>
-<h3 id="example_1">Example<a class="headerlink" href="#example_1" title="Permanent link">¶</a></h3>
-<p>Find the 3 nearest high-rated restaurants to luxury hotels, ensuring the KNN join completes before filtering.</p>
+<h3 id="example_2">Example<a class="headerlink" href="#example_2" title="Permanent link">¶</a></h3>
+<p>Find the 3 nearest restaurants for each luxury hotel, and then filter the results to only show pairs where the restaurant is also high-rated.</p>
 <div class="highlight"><pre><span></span><code><span class="k">SELECT</span>
 <span class="w">    </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span>
 <span class="w">    </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span><span class="p">,</span>
 <span class="w">    </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span>
-<span class="k">FROM</span><span class="w"> </span><span class="n">hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
-<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
-<span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
-<span class="k">WHERE</span><span class="w"> </span><span class="n">barrier</span><span class="p">(</span><span class="s1">'rating &gt; 4.0 AND stars &gt;= 4'</span><span class="p">,</span>
-<span class="w">              </span><span class="s1">'rating'</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="p">,</span>
-<span class="w">              </span><span class="s1">'stars'</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">stars</span><span class="p">)</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="n">hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+<span class="k">WHERE</span>
+<span class="w">    </span><span class="n">barrier</span><span class="p">(</span><span class="s1">'rating &gt; 4.0 AND stars &gt;= 4'</span><span class="p">,</span>
+<span class="w">            </span><span class="s1">'rating'</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="p">,</span>
+<span class="w">            </span><span class="s1">'stars'</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">stars</span><span class="p">)</span>
 </code></pre></div>
 <p>With the barrier function, this query first finds the 3 nearest restaurants to each hotel (regardless of rating), then filters to keep only those pairs where the restaurant has rating &gt; 4.0 and the hotel has stars &gt;= 4. Without the barrier, an optimizer might push the filters down, changing the query to first filter for high-rated restaurants and luxury hotels, then find the 3 nearest among those filtered sets.</p>
 
@@ -1295,7 +1303,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 12, 2025 16:13:42 UTC">September 12, 2025 16:13:42</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 23, 2025 03:55:58 UTC">September 23, 2025 03:55:58</span>
   </span>
 
     
