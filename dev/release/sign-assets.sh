@@ -50,7 +50,7 @@ main() {
         echo "Waiting for run to start..."
         run_id=$(gh run list \
                     --repo "${REPOSITORY}" \
-                    --workflow=packaging.yaml \
+                    --workflow=packaging \
                     --json 'databaseId,event,headBranch,status' \
                     --jq ".[] | select(.event == \"push\" and .headBranch == \"${tag}\") | .databaseId" | \
                     head -n 1)

@@ -107,13 +107,14 @@ pre-release at <https://github.com/apache/sedona-db/releases> with the release
 artifacts uploaded from the CI run.
 
 After the release has been created with the appropriate artifacts, the assets
-need to be signed with signatures uploaded as release assets. The GPG_KEY_ID
-must have its public component listed in the
+need to be signed with signatures uploaded as release assets. Please create
+dev/release/.env from dev/release/.env.example and set the GPG_KEY_ID variable.
+The GPG_KEY_ID in dev/release/.env must have its public component listed in the
 [Apache Sedona KEYS file](https://dist.apache.org/repos/dist/dev/sedona/KEYS).
 
 ```shell
 # sign-assets.sh <version> <rc_number>
-GPG_KEY_ID=your_gpg_key_id dev/release/sign-assets.sh 0.1.0 0
+dev/release/sign-assets.sh 0.1.0 0
 ```
 
 After the assets are signed, they can be committed and uploaded to the
