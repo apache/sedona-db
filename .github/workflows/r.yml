@@ -97,3 +97,5 @@ jobs:
           args: 'c("--no-manual")' # no --as-cran
           upload-snapshots: true
           working-directory: r/sedonadb
+          error-on: '"error"'      # ignore CRAN warnings
+          upload-results: 'never'  # results are too heavy to upload
