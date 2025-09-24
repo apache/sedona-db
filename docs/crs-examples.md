@@ -19,7 +19,7 @@
 
 # Joining Spatial Data with Different Coordinate Systems
 
-> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
+> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "apache-sedona[db]"`
 
 This example demonstrates how one table with an EPSG 4326 CRS cannot be joined with another table that uses EPSG 3857.
 

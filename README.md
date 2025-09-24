@@ -43,6 +43,28 @@ SedonaDB is perfect for processing smaller to medium datasets on local machines 
 
 Raster functions are coming soon. We expect SedonaDB Raster will match all raster functions provided in [SedonaSpark](https://sedona.apache.org/latest/api/sql/Raster-operators/).
 
+## Features of SedonaDB
+
+SedonaDB has several advantages:
+
+* **🚀 High Performance:** Built in Rust for exceptional speed and memory efficiency
+* **🗺️ Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
+* **🌍 CRS Propagation:** Always maintains coordinate reference system information
+* **📁 Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
+* **⚡ Dual APIs:** Python and SQL interfaces for seamless workflow integration
+* **🔧 Extensible:** Easily customizable and extensible architecture
+* **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
+* **👥 Active Community:** Great maintainers and contributors who encourage external contributions
+
+## Performance Benchmarks
+
+This is a performance benchmark done on SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/).
+
+<div align="center">
+  <img src="docs/image/sf1.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="docs/image/sf10.png" alt="SF10 Benchmark Results" width="45%" />
+</div>
+
 ## Install
 
 You can install Python SedonaDB with PyPI:
@@ -146,19 +168,6 @@ Here's the query output:
 └─────────────────────────┴────────────────────┴────────────┴────────────┴─────────────────────────┘
 ```
 
-## Features of SedonaDB
-
-SedonaDB has several advantages:
-
-* **🚀 High Performance:** Built in Rust for exceptional speed and memory efficiency
-* **🗺️ Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
-* **🌍 CRS Propagation:** Always maintains coordinate reference system information
-* **📁 Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
-* **⚡ Dual APIs:** Python and SQL interfaces for seamless workflow integration
-* **🔧 Extensible:** Easily customizable and extensible architecture
-* **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
-* **👥 Active Community:** Great maintainers and contributors who encourage external contributions
-
 ## Community & Support
 
 ### Get Help
@@ -179,7 +188,7 @@ We welcome contributions! Here's how you can get involved:
 
 ### About SedonaDB
 
-SedonaDB is a subproject of **Apache Sedona**, an Apache Software Foundation project. The project is governed by the Apache Software Foundation and subject to all the rules and oversight requirements.
+SedonaDB is a subproject of **Apache Sedona**, an Apache Software Foundation project. The project is governed by the Apache Software Foundation and subject to all the rules and oversight requirements. SedonaDB is built on top of **Apache Arrow** and **Apache DataFusion** for fast query processing.
 
 ### Related Projects
 
