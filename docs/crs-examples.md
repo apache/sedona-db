@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Joining Geospatial Data with Different CRSs.
+# Joining Spatial Data with Different Coordinate Systems
 
 > Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
 
@@ -106,7 +106,7 @@ cities.to_view("cities", overwrite=True)
 countries.to_view("countries", overwrite=True)
 ```
 
-### Join with mismatched CRSs
+### Join with mismatched Coordinate Reference Systems
 
 The cities and countries tables have different CRSs.
 
@@ -138,7 +138,7 @@ where ST_Intersects(cities.geometry, countries.geometry)
     ----> 6 """).show()
 
 
-    File ~/sedona-db/python/sedonadb/python/sedonadb/dataframe.py:380, in DataFrame.show(self, limit, width, ascii)
+    File ~/sedona-db/sedona-db/python/sedonadb/python/sedonadb/dataframe.py:380, in DataFrame.show(self, limit, width, ascii)
         356 """Print the first limit rows to the console
         357
         358 Args:
@@ -214,7 +214,7 @@ This example shows how to join a `vermont` table with an EPSG 32618 CRS with a `
 
 The example highlights the following features:
 
-1. SedonaDB reads the CRS stored in the files/
+1. SedonaDB reads the CRS stored in the files.
 2. SedonaDB protects you from accidentally joining files with mismatched CRSs.
 3. It's easy to convert a GeoPandas DataFrame to a SedonaDB DataFrame and maintain the CRS.
 

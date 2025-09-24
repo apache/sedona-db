@@ -15,29 +15,58 @@
 # specific language governing permissions and limitations
 # under the License.
 
+extra:
+  version:
+    provider: mike
+    default:
+      - latest
+  social:
+    - icon: fontawesome/brands/github
+      link: 'https://github.com/apache/sedona-db/'
+    - icon: fontawesome/brands/twitter
+      link: 'https://twitter.com/ApacheSedona'
+    - icon: fontawesome/brands/discord
+      link: 'https://discord.gg/9A3k5dEBsY'
+  community_links: &community_links
+    - Get Involved:
+        - Sedona OSS Blog: "https://sedona.apache.org/latest/blog/"
+        - Community: "https://sedona.apache.org/latest/community/contact/"
+        - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
+
 site_name: SedonaDB
-site_description: "Documentation for Apache SedonaDB"
+site_description: "Documentation for SedonaDB"
 site_url: https://sedona.apache.org/sedonadb/
 nav:
-   - SedonaDB: index.md
-   - Quickstart: quickstart-python.md
-   - SedonaDB Guides:
-     - Working with Vector Data: programming-guide.md
-     - Working with GeoPandas: geopandas-interop.md
-     - Working with Overture: overture-examples.md
-     - Working with Parquet Files: working-with-parquet-files.md
-     - Joining Geospatial Data with Different CRSs: crs-examples.md
-     - Contributors Guide: contributors-guide.md
-   - SedonaDB Reference:
+  # This becomes the 'SedonaDB' tab
+  - SedonaDB:
+      - Home: index.md
+      # The alias (*) works perfectly from the 'extra' block
+      - <<: *community_links
+
+  # This becomes the 'Quickstart' tab
+  - Python Quickstart:
+      - quickstart-python.md
+      - <<: *community_links
+
+  # This becomes the 'SedonaDB Guides' tab
+  - SedonaDB Guides:
+      - Working with Vector Data: programming-guide.md
+      - Working with GeoPandas: geopandas-interop.md
+      - Working with Overture: overture-examples.md
+      - Working with Parquet Files: working-with-parquet-files.md
+      - Contributors Guide: contributors-guide.md
+      - Joining Spatial Data with Different Coordinate Systems: crs-examples.md
+      - <<: *community_links
+
+  # This becomes the 'SedonaDB Reference' tab
+  - SedonaDB Reference:
       - Python:
           - Python Functions: reference/python.md
       - SQL:
           - SQL Functions: reference/sql.md
           - Spatial Joins: reference/sql-joins.md
-   - Blog: "https://sedona.apache.org/latest/blog/"
-   - Community: "https://sedona.apache.org/latest/community/contact/"
-   - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
-   - Sedona Homepage: "https://sedona.apache.org/latest/"
+      - <<: *community_links
+  - Sedona Homepage: "https://sedona.apache.org/"
 
 repo_url: https://github.com/apache/sedona-db
 edit_uri: https://github.com/apache/sedona-db/blob/main/docs/
@@ -67,11 +96,7 @@ theme:
     - navigation.sections
     - navigation.tabs
     - navigation.tabs.sticky
-extra:
-  version:
-    provider: mike
-    default:
-      - latest
+
 
 extra_css:
   - stylesheets/extra.css
