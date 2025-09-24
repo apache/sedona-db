@@ -10,3 +10,4 @@
 ^compile_commands\.json$
 ^\.vscode$
 ^README\.Rmd$
+^bootstrap\.R$
