@@ -88,6 +88,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          extra-packages: any::rcmdcheck
           needs: check
           working-directory: r/sedonadb
 
