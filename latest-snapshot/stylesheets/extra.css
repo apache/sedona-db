@@ -107,18 +107,22 @@
    Swap Logo ONLY in Mobile Navigation
    ========================================================================== */
 
-/* 1. Hide the default logo image inside the mobile nav */
-.md-nav--primary .md-nav__title .md-logo img {
-  display: none;
-}
-
-/* 2. Apply the new mobile logo as a background image */
-.md-nav--primary .md-nav__title .md-logo {
-  display: block;
-  height: 48px; /* Adjust size as needed */
-  width: 100%;
-  background-image: url('../image/sedona_logo_symbol_white.svg'); /* IMPORTANT: Update this path */
+/*
+  Target the logo link (<a> tag) directly and apply the new logo
+  as a background image, overriding the theme's default icon.
+*/
+.md-sidebar--primary .md-nav__title a.md-nav__button.md-logo {
+  background-image: url('/docs/image/sedona_logo_symbol.svg');
   background-size: contain;
   background-repeat: no-repeat;
-  background-position: center left;
+  background-position: center;
+
+  /* Hide the theme's default icon which is applied via a mask */
+  -webkit-mask: none;
+  mask: none;
+}
+
+/* Change the mobile nav header label text to white */
+label.md-nav__title {
+  color: #FFFFFF !important;
 }
