@@ -58,11 +58,11 @@ SedonaDB has several advantages:
 
 ## Performance Benchmarks
 
-This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/).
+This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/single-node-benchmarks/).
 
 <div align="center">
-  <img src="docs/image/sf1.png" alt="SF1 Benchmark Results" width="45%" />
-  <img src="docs/image/sf10.png" alt="SF10 Benchmark Results" width="45%" />
+  <img src="docs/image/sf1-09242025.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="docs/image/sf10-09242025.png" alt="SF10 Benchmark Results" width="45%" />
 </div>
 
 ## Install
