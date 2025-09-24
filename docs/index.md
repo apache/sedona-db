@@ -58,6 +58,15 @@ SedonaDB has several advantages:
 * **🔧 Extensible:** Easily customizable and extensible architecture
 * **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
 
+## Performance Benchmarks
+
+This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/).
+
+<div align="center">
+  <img src="image/sf1.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="image/sf10.png" alt="SF10 Benchmark Results" width="45%" />
+</div>
+
 ## Install SedonaDB
 
 Here's how to install SedonaDB with various build tools:
