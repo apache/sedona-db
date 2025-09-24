@@ -91,10 +91,8 @@ jobs:
           needs: check
           working-directory: r/sedonadb
 
-      - name: Install R Package
-        run: |
-          R CMD INSTALL r/sedonadb --preclean
-
-      - name: Test R Package
-        run: |
-          R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          args: 'c("--no-manual")' # no --as-cran
+          upload-snapshots: true
+          working-directory: r/sedonadb

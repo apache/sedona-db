@@ -17,7 +17,8 @@ Suggests:
     testthat (>= 3.0.0),
     withr,
     wk
-Config/testthat/edition: 3
 Imports:
     geoarrow,
     nanoarrow
+Config/testthat/edition: 3
+Config/build/bootstrap: TRUE
