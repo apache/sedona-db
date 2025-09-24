@@ -54,8 +54,10 @@ nav:
       - Working with GeoPandas: geopandas-interop.md
       - Working with Overture: overture-examples.md
       - Working with Parquet Files: working-with-parquet-files.md
-      - Contributors Guide: contributors-guide.md
       - Joining Spatial Data with Different Coordinate Systems: crs-examples.md
+      - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
+      - Contributors Guide: contributors-guide.md
+
       - <<: *community_links
 
   # This becomes the 'SedonaDB Reference' tab
