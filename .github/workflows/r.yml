@@ -88,14 +88,13 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
           needs: check
           working-directory: r/sedonadb
 
-      - uses: r-lib/actions/check-r-package@v2
-        with:
-          args: 'c("--no-manual")' # no --as-cran
-          upload-snapshots: true
-          working-directory: r/sedonadb
-          error-on: '"error"'      # ignore CRAN warnings
-          upload-results: 'never'  # results are too heavy to upload
+      - name: Install R Package
+        run: |
+          R CMD INSTALL r/sedonadb --preclean
+
+      - name: Test R Package
+        run: |
+          R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
