@@ -7,13 +7,13 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/quickstart-python/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/working-with-sql-sedonadb/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../crs-examples/">
       
       
-        <link rel="next" href="../programming-guide/">
+        <link rel="next" href="../contributors-guide/">
       
       
       <link rel="icon" href="../image/sedona_logo_symbol.png">
@@ -21,7 +21,7 @@
     
     
       
-        <title>Quickstart python - SedonaDB</title>
+        <title>Working with SQL in SedonaDB - SedonaDB</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#python-quickstart" class="md-skip">
+        <a href="#working-with-sql-in-sedonadb" class="md-skip">
           Skip to content
         </a>
       
@@ -125,7 +125,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Quickstart python
+              Working with SQL in SedonaDB
             
           </span>
         </div>
@@ -229,13 +229,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="./" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../quickstart-python/" class="md-tabs__link">
           
   
   
@@ -251,10 +249,12 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../programming-guide/" class="md-tabs__link">
           
   
@@ -563,31 +563,26 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -600,7 +595,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             Python Quickstart
@@ -611,32 +606,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Quickstart python
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../quickstart-python/" class="md-nav__link">
         
   
   
@@ -647,44 +620,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#point-in-polygon-join" class="md-nav__link">
-    <span class="md-ellipsis">
-      Point in polygon join
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#manually-create-sedonadb-dataframes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Manually create SedonaDB DataFrames
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -703,20 +638,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2">
         
           
-          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
             
   
   
@@ -824,26 +756,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -856,7 +793,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             SedonaDB Guides
@@ -982,10 +919,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../working-with-sql-sedonadb/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Working with SQL in SedonaDB
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -996,6 +955,83 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#creating-arrays-of-spatial-types-in-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      Creating Arrays of Spatial Types in SQL
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating Arrays of Spatial Types in SQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-incorrect-method-array" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Incorrect Method: ARRAY()
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-correct-method-brackets" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Correct Method: Brackets
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporary-views-not-supported-in-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      Temporary Views Not Supported in SQL
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Temporary Views Not Supported in SQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-alternative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Recommended Alternative
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1037,17 +1073,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8">
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="">
             
   
   
@@ -1541,20 +1580,59 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#point-in-polygon-join" class="md-nav__link">
+  <a href="#creating-arrays-of-spatial-types-in-sql" class="md-nav__link">
     <span class="md-ellipsis">
-      Point in polygon join
+      Creating Arrays of Spatial Types in SQL
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating Arrays of Spatial Types in SQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-incorrect-method-array" class="md-nav__link">
+    <span class="md-ellipsis">
+      The Incorrect Method: ARRAY()
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#manually-create-sedonadb-dataframes" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#the-correct-method-brackets" class="md-nav__link">
     <span class="md-ellipsis">
-      Manually create SedonaDB DataFrames
+      The Correct Method: Brackets
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporary-views-not-supported-in-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      Temporary Views Not Supported in SQL
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Temporary Views Not Supported in SQL">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-alternative" class="md-nav__link">
+    <span class="md-ellipsis">
+      Recommended Alternative
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1574,7 +1652,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/quickstart-python.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/working-with-sql-sedonadb.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1599,191 +1677,47 @@
   KIND, either express or implied.  See the License for the
   specific language governing permissions and limitations
   under the License.
---><h1 id="python-quickstart">Python Quickstart<a class="headerlink" href="#python-quickstart" title="Permanent link">¶</a></h1>
-<p>First, install SedonaDB:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"apache-sedona[db]"</span>
+--><h1 id="working-with-sql-in-sedonadb">Working with SQL in SedonaDB<a class="headerlink" href="#working-with-sql-in-sedonadb" title="Permanent link">¶</a></h1>
+<p>This page details several nuances of using SQL in SedonaDB.</p>
+<h2 id="creating-arrays-of-spatial-types-in-sql">Creating Arrays of Spatial Types in SQL<a class="headerlink" href="#creating-arrays-of-spatial-types-in-sql" title="Permanent link">¶</a></h2>
+<p>When constructing an array of spatial objects (like <code>ST_POINT</code>) in SedonaDB, you must use bracket notation <code>[...]</code> instead of the standard <code>ARRAY()</code> function.</p>
+<h3 id="the-incorrect-method-array">The Incorrect Method: <code>ARRAY()</code><a class="headerlink" href="#the-incorrect-method-array" title="Permanent link">¶</a></h3>
+<p>Attempting to use the <code>ARRAY()</code> function to create an array of spatial types is not supported and will result in a planning error. SedonaDB will not recognize <code>ARRAY</code> as a valid function for this operation.</p>
+<div class="highlight"><span class="filename">Example (Fails)</span><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ARRAY(ST_POINT(1,2), ST_POINT(3,4))"</span><span class="p">)</span>
+<span class="o">...</span>
+<span class="n">Error</span> <span class="n">during</span> <span class="n">planning</span><span class="p">:</span> <span class="n">Invalid</span> <span class="n">function</span> <span class="s1">'array'</span>
 </code></pre></div>
-<p>If the import and connection are successful, your installation is complete.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+<h3 id="the-correct-method-brackets">The Correct Method: Brackets<a class="headerlink" href="#the-correct-method-brackets" title="Permanent link">¶</a></h3>
+<p>To correctly build an array, enclose your comma-separated spatial objects in <strong>square brackets <code>[]</code></strong>. This syntax
+successfully creates a list containing the spatial data structures.</p>
+<div class="highlight"><span class="filename">Example (Works)</span><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT [ST_POINT(1,2), ST_POINT(3,4)]"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌──────────────────────────────────────────────────────────────────────────────────────────┐</span>
+<span class="err">│</span>            <span class="n">make_array</span><span class="p">(</span><span class="n">st_point</span><span class="p">(</span><span class="n">Int64</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span><span class="n">Int64</span><span class="p">(</span><span class="mi">2</span><span class="p">)),</span><span class="n">st_point</span><span class="p">(</span><span class="n">Int64</span><span class="p">(</span><span class="mi">3</span><span class="p">),</span><span class="n">Int64</span><span class="p">(</span><span class="mi">4</span><span class="p">)))</span>           <span class="err">│</span>
+<span class="err">│</span>                                           <span class="nb">list</span>                                           <span class="err">│</span>
+<span class="err">╞══════════════════════════════════════════════════════════════════════════════════════════╡</span>
+<span class="err">│</span> <span class="p">[</span><span class="mi">0101000000000000000000</span><span class="n">f03f0000000000000040</span><span class="p">,</span> <span class="mi">010100000000000000000008400000000000001040</span><span class="p">]</span> <span class="err">│</span>
+<span class="err">└──────────────────────────────────────────────────────────────────────────────────────────┘</span>
+</code></pre></div>
+<p>This approach correctly instructs SedonaDB to construct an array containing the two <code>ST_POINT</code> objects.</p>
+<h2 id="temporary-views-not-supported-in-sql">Temporary Views Not Supported in SQL<a class="headerlink" href="#temporary-views-not-supported-in-sql" title="Permanent link">¶</a></h2>
+<p>SedonaDB does not support the <code>CREATE TEMP VIEW</code> or <code>CREATE TEMPORARY VIEW</code> SQL commands. Executing these statements will result in an error.</p>
+<p>Attempting to create a temporary view directly with <code>sd.sql()</code> will fail, as shown below.</p>
+<div class="highlight"><span class="filename">Unsupported Example</span><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"CREATE TEMP VIEW b AS SELECT * FROM '/path/to/building.parquet'"</span><span class="p">)</span>
+<span class="n">Traceback</span> <span class="p">(</span><span class="n">most</span> <span class="n">recent</span> <span class="n">call</span> <span class="n">last</span><span class="p">):</span>
+  <span class="o">...</span>
+<span class="n">sedonadb</span><span class="o">.</span><span class="n">_lib</span><span class="o">.</span><span class="n">SedonaError</span><span class="p">:</span> <span class="n">Temporary</span> <span class="n">views</span> <span class="ow">not</span> <span class="n">supported</span>
+</code></pre></div>
+<h3 id="recommended-alternative">Recommended Alternative<a class="headerlink" href="#recommended-alternative" title="Permanent link">¶</a></h3>
+<p>The correct way to create a view is to load your data and use <code>to_view()</code>.</p>
+<p>This approach provides the same functionality and is the standard practice in Spark-based environments.</p>
+<div class="highlight"><span class="filename">Working Example</span><pre><span></span><code><span class="c1"># Step 1: Load your data into a DataFrame first</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">building_df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">"/path/to/building.parquet"</span><span class="p">)</span>
 
-<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_Point(0, 1) as geom"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────┐
-│    geom    │
-│  geometry  │
-╞════════════╡
-│ POINT(0 1) │
-└────────────┘
-</code></pre></div>
+<span class="c1"># Step 2: Register the DataFrame as a temporary view</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">building_df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"b"</span><span class="p">)</span>
 
-<h2 id="point-in-polygon-join">Point in polygon join<a class="headerlink" href="#point-in-polygon-join" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"</span>
-<span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────┬───────────────────────────────┐
-│     name     ┆            geometry           │
-│     utf8     ┆            geometry           │
-╞══════════════╪═══════════════════════════════╡
-│ Vatican City ┆ POINT(12.4533865 41.9032822)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ San Marino   ┆ POINT(12.4417702 43.9360958)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Vaduz        ┆ POINT(9.5166695 47.1337238)   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Lobamba      ┆ POINT(31.1999971 -26.4666675) │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Luxembourg   ┆ POINT(6.1300028 49.6116604)   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Palikir      ┆ POINT(158.1499743 6.9166437)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Majuro       ┆ POINT(171.3800002 7.1030043)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Funafuti     ┆ POINT(179.2166471 -8.516652)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Melekeok     ┆ POINT(134.6265485 7.4873962)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Bir Lehlou   ┆ POINT(-9.6525222 26.1191667)  │
-└──────────────┴───────────────────────────────┘
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"</span>
-<span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">countries</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────┬───────────────┬────────────────────────────────────────────────────┐
-│             name            ┆   continent   ┆                      geometry                      │
-│             utf8            ┆      utf8     ┆                      geometry                      │
-╞═════════════════════════════╪═══════════════╪════════════════════════════════════════════════════╡
-│ Fiji                        ┆ Oceania       ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.55… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United Republic of Tanzania ┆ Africa        ┆ POLYGON((33.90371119710453 -0.9500000000000001,34… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Western Sahara              ┆ Africa        ┆ POLYGON((-8.665589565454809 27.656425889592356,-8… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Canada                      ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United States of America    ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Kazakhstan                  ┆ Asia          ┆ POLYGON((87.35997033076265 49.21498078062912,86.5… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Uzbekistan                  ┆ Asia          ┆ POLYGON((55.96819135928291 41.30864166926936,55.9… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Papua New Guinea            ┆ Oceania       ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Indonesia                   ┆ Asia          ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Argentina                   ┆ South America ┆ MULTIPOLYGON(((-68.63401022758323 -52.63637045887… │
-└─────────────────────────────┴───────────────┴────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">)</span>
-<span class="n">countries</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"countries"</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># join the cities and countries tables</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">select * from cities</span>
-<span class="s2">join countries</span>
-<span class="s2">where ST_Intersects(cities.geometry, countries.geometry)</span>
-<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────────────┬──────────────────────┬─────────────────────┬───────────────┬─────────────────────┐
-│      name     ┆       geometry       ┆         name        ┆   continent   ┆       geometry      │
-│      utf8     ┆       geometry       ┆         utf8        ┆      utf8     ┆       geometry      │
-╞═══════════════╪══════════════════════╪═════════════════════╪═══════════════╪═════════════════════╡
-│ Suva          ┆ POINT(178.4417073 -… ┆ Fiji                ┆ Oceania       ┆ MULTIPOLYGON(((180… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Dodoma        ┆ POINT(35.7500036 -6… ┆ United Republic of… ┆ Africa        ┆ POLYGON((33.903711… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Dar es Salaam ┆ POINT(39.266396 -6.… ┆ United Republic of… ┆ Africa        ┆ POLYGON((33.903711… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Bir Lehlou    ┆ POINT(-9.6525222 26… ┆ Western Sahara      ┆ Africa        ┆ POLYGON((-8.665589… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Ottawa        ┆ POINT(-75.7019612 4… ┆ Canada              ┆ North America ┆ MULTIPOLYGON(((-12… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Vancouver     ┆ POINT(-123.1235901 … ┆ Canada              ┆ North America ┆ MULTIPOLYGON(((-12… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Toronto       ┆ POINT(-79.389458554… ┆ Canada              ┆ North America ┆ MULTIPOLYGON(((-12… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ San Francisco ┆ POINT(-122.39959956… ┆ United States of A… ┆ North America ┆ MULTIPOLYGON(((-12… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Denver        ┆ POINT(-104.9859618 … ┆ United States of A… ┆ North America ┆ MULTIPOLYGON(((-12… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Houston       ┆ POINT(-95.348436256… ┆ United States of A… ┆ North America ┆ MULTIPOLYGON(((-12… │
-└───────────────┴──────────────────────┴─────────────────────┴───────────────┴─────────────────────┘
-</code></pre></div>
-
-<h2 id="manually-create-sedonadb-dataframes">Manually create SedonaDB DataFrames<a class="headerlink" href="#manually-create-sedonadb-dataframes" title="Permanent link">¶</a></h2>
-<p>Let's create a DataFrame with one string column and one geometry column to show some of the functionality of the SedonaDB Python interface.</p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">    SELECT * FROM (VALUES</span>
-<span class="s2">        ('one', ST_GeomFromWkt('POINT(1 2)')),</span>
-<span class="s2">        ('two', ST_GeomFromWkt('POLYGON((</span>
-<span class="s2">            -74.0 40.7, -74.0 40.8, -73.9 40.8,</span>
-<span class="s2">            -73.9 40.7, -74.0 40.7</span>
-<span class="s2">        ))')),</span>
-<span class="s2">        ('three', ST_GeomFromWkt('LINESTRING(</span>
-<span class="s2">            -74.0060 40.7128, -73.9352 40.7306,</span>
-<span class="s2">            -73.8561 40.8484</span>
-<span class="s2">        )'))</span>
-<span class="s2">    ) AS t(val, point)</span>
-<span class="s2">"""</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────┬──────────────────────────────────────────────────────────────────────────────────────────┐
-│  val  ┆                                           point                                          │
-│  utf8 ┆                                          binary                                          │
-╞═══════╪══════════════════════════════════════════════════════════════════════════════════════════╡
-│ one   ┆ 0101000000000000000000f03f0000000000000040                                               │
-├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ two   ┆ 0103000000010000000500000000000000008052c09a9999999959444000000000008052c06666666666664… │
-├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ three ┆ 010200000003000000aaf1d24d628052c05e4bc8073d5b444007ce1951da7b52c0933a014d845d4440c286a… │
-└───────┴──────────────────────────────────────────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<p>Verify that this object is a SedonaDB DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="nb">type</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>sedonadb.dataframe.DataFrame
-</code></pre></div>
-
-<p>Expose the DataFrame as a view and run a SQL operation on the geometry data.</p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"fun_table"</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"DESCRIBE fun_table"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code><span class="err">┌─────────────┬───────────┬─────────────┐</span>
-<span class="err">│</span><span class="w"> </span><span class="nx">column_name</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="nx">data_type</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="nx">is_nullable</span><span class="w"> </span><span class="err">│</span>
-<span class="err">│</span><span class="w">     </span><span class="nx">utf8</span><span class="w">    </span><span class="err">┆</span><span class="w">    </span><span class="nx">utf8</span><span class="w">   </span><span class="err">┆</span><span class="w">     </span><span class="nx">utf8</span><span class="w">    </span><span class="err">│</span>
-<span class="err">╞═════════════╪═══════════╪═════════════╡</span>
-<span class="err">│</span><span class="w"> </span><span class="nx">val</span><span class="w">         </span><span class="err">┆</span><span class="w"> </span><span class="nx">Utf8</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="nx">YES</span><span class="w">         </span><span class="err">│</span>
-<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
-<span class="err">│</span><span class="w"> </span><span class="nx">point</span><span class="w">       </span><span class="err">┆</span><span class="w"> </span><span class="nx">Binary</span><span class="w">    </span><span class="err">┆</span><span class="w"> </span><span class="nx">YES</span><span class="w">         </span><span class="err">│</span>
-<span class="err">└─────────────┴───────────┴─────────────┘</span>
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">    SELECT *, ST_Centroid(ST_GeomFromWKB(point)) as centroid</span>
-<span class="s2">    FROM fun_table</span>
-<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────┬─────────────────────────────────────────────┬────────────────────────────────────────────┐
-│  val  ┆                    point                    ┆                  centroid                  │
-│  utf8 ┆                    binary                   ┆                  geometry                  │
-╞═══════╪═════════════════════════════════════════════╪════════════════════════════════════════════╡
-│ one   ┆ 0101000000000000000000f03f0000000000000040  ┆ POINT(1 2)                                 │
-├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ two   ┆ 0103000000010000000500000000000000008052c0… ┆ POINT(-73.95 40.75)                        │
-├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ three ┆ 010200000003000000aaf1d24d628052c05e4bc807… ┆ POINT(-73.92111155675562 40.7664673976246… │
-└───────┴─────────────────────────────────────────────┴────────────────────────────────────────────┘
+<span class="c1"># Step 3: You can now successfully query the view using SQL</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM b LIMIT 5"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div>
 
 
@@ -1805,7 +1739,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 23, 2025 03:55:58 UTC">September 23, 2025 03:55:58</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 24, 2025 06:28:47 UTC">September 24, 2025 06:28:47</span>
   </span>
 
     
@@ -1841,7 +1775,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href=".." class="md-footer__link md-footer__link--prev" aria-label="Previous: Home">
+          <a href="../crs-examples/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Joining Spatial Data with Different Coordinate Systems">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -1851,20 +1785,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Home
+                Joining Spatial Data with Different Coordinate Systems
               </div>
             </div>
           </a>
         
         
           
-          <a href="../programming-guide/" class="md-footer__link md-footer__link--next" aria-label="Next: Working with Vector Data">
+          <a href="../contributors-guide/" class="md-footer__link md-footer__link--next" aria-label="Next: Contributors Guide">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Working with Vector Data
+                Contributors Guide
               </div>
             </div>
             <div class="md-footer__button md-icon">
