@@ -19,7 +19,7 @@
 
 # GeoPandas Interoperability
 
-> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "sedona[db]"`
+> Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "apache-sedona[db]"`
 
 This notebook shows how to leverage GeoPandas with SedonaDB for large-scale geospatial analysis.
 
