@@ -587,7 +587,7 @@ impl SpatialIndex {
                 let max_distance = distances_with_indices[k_idx].0;
 
                 // For tie-breakers, create spatial envelope around probe centroid and use rtree.search()
-                use geo_generic_alg::algorithm::Centroid;
+                use sedona_geo_generic_alg::algorithm::Centroid;
                 let probe_centroid = probe_geom.centroid().unwrap_or(Point::new(0.0, 0.0));
                 let probe_x = probe_centroid.x() as f32;
                 let probe_y = probe_centroid.y() as f32;

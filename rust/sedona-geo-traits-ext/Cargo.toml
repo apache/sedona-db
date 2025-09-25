@@ -16,27 +16,21 @@
 # under the License.
 [package]
 name = "sedona-geo-traits-ext"
-version = "0.2.0"
-authors = ["Apache Sedona <dev@sedona.apache.org>"]
-license = "Apache-2.0"
-homepage = "https://github.com/apache/sedona-db"
-repository = "https://github.com/apache/sedona-db"
-description = "geo-traits extended for implementing generic algorithms"
-readme = "README.md"
-edition = "2021"
-
-[workspace]
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-geo-traits = "0.3.0"
-geo-types = "0.7.17"
-num-traits = { version = "0.2", default-features = false, features = ["libm"] }
-wkb = "0.9.1"
-byteorder = "1"
+geo-traits = { workspace = true }
+geo-types = { workspace = true }
+num-traits = { workspace = true }
+wkb = { workspace = true }
+byteorder ={ workspace = true }
 
 [dev-dependencies]
-wkt = "0.14.0"
-rstest = "0.24.0"
-
-[patch.crates-io]
-wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
+wkt = { workspace = true }
+rstest = { workspace = true }

@@ -27,14 +27,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     wkb::writer::write_geometry(
         &mut large_geom_wkb_big_endian,
         &large_geom,
-        wkb::Endianness::BigEndian,
+        &wkb::writer::WriteOptions {
+            endianness: wkb::Endianness::BigEndian,
+        },
     )
     .unwrap();
     let mut large_geom_wkb_little_endian = Vec::new();
     wkb::writer::write_geometry(
         &mut large_geom_wkb_little_endian,
         &large_geom,
-        wkb::Endianness::LittleEndian,
+        &wkb::writer::WriteOptions {
+            endianness: wkb::Endianness::LittleEndian,
+        },
     )
     .unwrap();
 

@@ -32,7 +32,7 @@ criterion = { workspace = true }
 rstest = { workspace = true }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
+sedona-testing = { path = "../sedona-testing", features = ["criterion", "geo"] }
 wkt = { workspace = true }
 
 [dependencies]
@@ -40,7 +40,7 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
-geo-generic-alg = { workspace = true }
+sedona-geo-generic-alg = { path = "../sedona-geo-generic-alg" }
 geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 geo = { workspace = true }

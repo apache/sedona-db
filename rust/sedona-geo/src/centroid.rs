@@ -17,11 +17,11 @@
 //! Centroid extraction functionality for WKB geometries
 
 use datafusion_common::{error::DataFusionError, Result};
-use geo_generic_alg::Centroid;
-use geo_generic_alg::HasDimensions;
 use geo_traits::CoordTrait;
 use geo_traits::GeometryTrait;
 use geo_traits::PointTrait;
+use sedona_geo_generic_alg::Centroid;
+use sedona_geo_generic_alg::HasDimensions;
 
 use crate::to_geo::item_to_geometry;
 

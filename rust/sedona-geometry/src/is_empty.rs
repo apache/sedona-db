@@ -51,13 +51,21 @@ mod tests {
     use super::*;
     use std::str::FromStr;
     use wkb::reader::read_wkb;
-    use wkb::writer::write_geometry;
+    use wkb::writer::{write_geometry, WriteOptions};
+    use wkb::Endianness;
     use wkt::Wkt;
 
     fn create_wkb_bytes_from_wkt(wkt_str: &str) -> Vec<u8> {
         let wkt: Wkt = Wkt::from_str(wkt_str).unwrap();
         let mut wkb_bytes = vec![];
-        write_geometry(&mut wkb_bytes, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb_bytes,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         wkb_bytes
     }
 

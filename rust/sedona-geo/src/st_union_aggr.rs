@@ -31,9 +31,9 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::Wkb;
 use wkb::writer::write_geometry;
 use wkb::Endianness;
+use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Union_Aggr() implementation
 pub fn st_union_aggr_impl() -> SedonaAccumulatorRef {
@@ -127,7 +127,13 @@ impl UnionAccumulator {
 
     fn geometry_to_wkb(&self, geom: &geo::Geometry) -> Option<Vec<u8>> {
         let mut wkb_bytes = Vec::new();
-        match write_geometry(&mut wkb_bytes, geom, Endianness::LittleEndian) {
+        match write_geometry(
+            &mut wkb_bytes,
+            geom,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        ) {
             Ok(_) => Some(wkb_bytes),
             Err(_) => None,
         }
@@ -217,7 +223,9 @@ mod test {
     use rstest::rstest;
     use sedona_functions::st_union_aggr::st_union_aggr_udf;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_testing::{
+        compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
+    };
 
     #[rstest]
     fn polygon_polygon_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
@@ -233,16 +241,16 @@ mod test {
             vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))")],
         ];
 
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(batches).unwrap(),
             Some("MULTIPOLYGON(((0 0, 2 0, 2 1, 3 1, 3 3, 1 3, 1 2, 0 2, 0 0)))"),
         );
 
         // Empty input
-        assert_scalar_equal_wkb_geometry(&tester.aggregate(&vec![]).unwrap(), None);
+        assert_scalar_equal_wkb_geometry_topologically(&tester.aggregate(&vec![]).unwrap(), None);
 
         // Single polygon input
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester
                 .aggregate_wkt(vec![vec![Some("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")]])
                 .unwrap(),
@@ -254,7 +262,7 @@ mod test {
             vec![Some("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")],
             vec![Some("POLYGON((2 2, 3 2, 3 3, 2 3, 2 2))")],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(non_intersecting).unwrap(),
             Some("MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)),((2 2, 3 2, 3 3, 2 3, 2 2)))"),
         );
@@ -264,7 +272,7 @@ mod test {
             vec![Some("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))"), None],
             vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))"), None],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(nulls_input).unwrap(),
             Some("MULTIPOLYGON(((0 0, 2 0, 2 1, 3 1, 3 3, 1 3, 1 2, 0 2, 0 0)))"),
         );
@@ -274,7 +282,7 @@ mod test {
             vec![Some("POLYGON((0 0, 3 0, 3 3, 0 3, 0 0))")],
             vec![Some("POLYGON((1 1, 2 1, 2 2, 1 2, 1 1))")],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(contained).unwrap(),
             Some("MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)))"),
         );
@@ -296,7 +304,7 @@ mod test {
                 "MULTIPOLYGON(((1 1, 2 1, 2 2, 1 2, 1 1)), ((4 4, 5 4, 5 5, 4 5, 4 4)))",
             )],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(poly_and_multi).unwrap(),
             Some("MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)),((4 4, 5 4, 5 5, 4 5, 4 4)))"),
         );
@@ -308,7 +316,7 @@ mod test {
                 "MULTIPOLYGON(((2 2, 3 2, 3 3, 2 3, 2 2)), ((4 4, 5 4, 5 5, 4 5, 4 4)))",
             )],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(poly_and_nonoverlap_multi).unwrap(),
             Some("MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)),((2 2, 3 2, 3 3, 2 3, 2 2)),((4 4, 5 4, 5 5, 4 5, 4 4)))"),
         );
@@ -322,7 +330,7 @@ mod test {
                 "MULTIPOLYGON(((1 1, 2 1, 2 2, 1 2, 1 1)), ((11 11, 13 11, 13 13, 11 13, 11 11)))",
             )],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_and_multi).unwrap(),
             Some("MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)),((10 10, 12 10, 12 11, 13 11, 13 13, 11 13, 11 12, 10 12, 10 10)))"),
         );
@@ -346,7 +354,7 @@ mod test {
                 "MULTIPOLYGON(((2 2, 5 2, 5 5, 2 5, 2 2)), ((7 7, 10 7, 10 10, 7 10, 7 7)))",
             )],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case1).unwrap(),
             Some("MULTIPOLYGON(((0 0, 3 0, 3 2, 5 2, 5 5, 2 5, 2 3, 0 3, 0 0)),((5 5, 8 5, 8 7, 10 7, 10 10, 7 10, 7 8, 5 8, 5 5)))"),
         );
@@ -360,7 +368,7 @@ mod test {
                 "MULTIPOLYGON(((2 2, 3 2, 3 3, 2 3, 2 2)), ((7 7, 8 7, 8 8, 7 8, 7 7)))",
             )],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case2).unwrap(),
             Some("MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((2 2,3 2,3 3,2 3,2 2)),((5 5,6 5,6 6,5 6,5 5)),((7 7,8 7,8 8,7 8,7 7)))"),
         );
@@ -371,7 +379,7 @@ mod test {
             vec![Some("MULTIPOLYGON(((3 3, 7 3, 7 7, 3 7, 3 3)), ((13 13, 17 13, 17 17, 13 17, 13 13)))")],
             vec![Some("MULTIPOLYGON(((6 6, 10 6, 10 10, 6 10, 6 6)), ((16 16, 20 16, 20 20, 16 20, 16 16)))")],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case3).unwrap(),
             Some("MULTIPOLYGON(((0 0, 4 0, 4 3, 7 3, 7 6, 10 6, 10 10, 6 10, 6 7, 3 7, 3 4, 0 4, 0 0)),((10 10, 14 10, 14 13, 17 13, 17 16, 20 16, 20 20, 16 20, 16 17, 13 17, 13 14, 10 14, 10 10)))"),
         );

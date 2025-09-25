@@ -31,6 +31,7 @@ criterion = { workspace = true }
 sedona = { path = "../../rust/sedona" }
 sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
 rstest = { workspace = true }
+geo-types = { workspace = true }
 
 [dependencies]
 arrow-schema = { workspace = true }
@@ -42,8 +43,14 @@ sedona-expr = { path = "../../rust/sedona-expr" }
 sedona-functions = { path = "../../rust/sedona-functions" }
 sedona-geometry = { path = "../../rust/sedona-geometry" }
 sedona-schema = { path = "../../rust/sedona-schema" }
-wkb = { workspace = true, features = ["geos"] }
+geo-traits = { workspace = true }
+wkb = { workspace = true }
+byteorder = { workspace = true }
 
 [[bench]]
 harness = false
 name = "geos-functions"
+
+[[bench]]
+harness = false
+name = "wkb_to_geos"

@@ -69,8 +69,10 @@ pub fn item_to_geometry(geo: impl GeometryTrait<T = f64>) -> Result<Geometry> {
 }
 
 // GeometryCollection causes issues because it has a recursive definition and won't work
-// with cargo run --release. Thus, we need our own version of this that limits the
-// recursion supported in a GeometryCollection.
+// with cargo run --release. Thus, we need our own version of this that works around this
+// problem by processing GeometryCollection using a free function instead of relying
+// on trait resolver.
+// See also https://github.com/geoarrow/geoarrow-rs/pull/956.
 fn to_geometry(item: impl GeometryTrait<T = f64>) -> Option<Geometry> {
     match item.as_type() {
         Point(geom) => geom.try_to_point().map(Geometry::Point),
@@ -79,33 +81,36 @@ fn to_geometry(item: impl GeometryTrait<T = f64>) -> Option<Geometry> {
         MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
         MultiLineString(geom) => Some(Geometry::MultiLineString(geom.to_multi_line_string())),
         MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
-        GeometryCollection(geom) => {
-            let geometries = geom
-                .geometries()
-                .filter_map(|child| match child.as_type() {
-                    Point(geom) => geom.try_to_point().map(Geometry::Point),
-                    LineString(geom) => Some(Geometry::LineString(geom.to_line_string())),
-                    Polygon(geom) => Some(Geometry::Polygon(geom.to_polygon())),
-                    MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
-                    MultiLineString(geom) => {
-                        Some(Geometry::MultiLineString(geom.to_multi_line_string()))
-                    }
-                    MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            // If any child conversions failed, also return None
-            if geometries.len() != geom.num_geometries() {
-                return None;
-            }
-
-            Some(Geometry::GeometryCollection(geo_types::GeometryCollection(
-                geometries,
-            )))
-        }
+        GeometryCollection(geom) => geometry_collection_to_geometry(geom),
         _ => None,
     }
+}
+
+fn geometry_collection_to_geometry<GC: GeometryCollectionTrait<T = f64>>(
+    geom: &GC,
+) -> Option<Geometry> {
+    let geometries = geom
+        .geometries()
+        .filter_map(|child| match child.as_type() {
+            Point(geom) => geom.try_to_point().map(Geometry::Point),
+            LineString(geom) => Some(Geometry::LineString(geom.to_line_string())),
+            Polygon(geom) => Some(Geometry::Polygon(geom.to_polygon())),
+            MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
+            MultiLineString(geom) => Some(Geometry::MultiLineString(geom.to_multi_line_string())),
+            MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
+            GeometryCollection(geom) => geometry_collection_to_geometry(geom),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    // If any child conversions failed, also return None
+    if geometries.len() != geom.num_geometries() {
+        return None;
+    }
+
+    Some(Geometry::GeometryCollection(geo_types::GeometryCollection(
+        geometries,
+    )))
 }
 
 #[cfg(test)]
@@ -126,11 +131,6 @@ mod tests {
         let err = item_to_geometry(unsupported).unwrap_err();
         assert!(err.message().starts_with("geo kernel implementation"));
 
-        let unsupported =
-            Wkt::from_str("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))").unwrap();
-        let err = item_to_geometry(unsupported).unwrap_err();
-        assert!(err.message().starts_with("geo kernel implementation"));
-
         let unsupported = Wkt::from_str("GEOMETRYCOLLECTION (POINT EMPTY)").unwrap();
         let err = item_to_geometry(unsupported).unwrap_err();
         assert!(err.message().starts_with("geo kernel implementation"));
@@ -145,7 +145,8 @@ mod tests {
             "MULTIPOINT (1 2, 3 4)",
             "MULTILINESTRING ((1 2, 3 4))",
             "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))",
-            "GEOMETRYCOLLECTION(POINT (1 2))"
+            "GEOMETRYCOLLECTION(POINT (1 2))",
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))"
         )]
         wkt_value: &str,
     ) {
@@ -163,6 +164,7 @@ mod tests {
             Some("MULTILINESTRING ((1 2, 3 4))"),
             Some("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))"),
             Some("GEOMETRYCOLLECTION(POINT (1 2))"),
+            Some("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))"),
             None,
         ];
         let args = vec![ColumnarValue::Array(create_array_storage(

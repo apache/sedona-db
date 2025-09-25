@@ -27,3 +27,4 @@ mod st_convexhull;
 mod st_dwithin;
 mod st_length;
 mod st_perimeter;
+pub mod wkb_to_geos;

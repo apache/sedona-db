@@ -16,40 +16,35 @@
 # under the License.
 [package]
 name = "sedona-geo-generic-alg"
-version = "0.2.0"
-authors = ["Apache Sedona <dev@sedona.apache.org>"]
-license = "Apache-2.0"
-homepage = "https://github.com/apache/sedona-db"
-repository = "https://github.com/apache/sedona-db"
-description = "geo algorithms refactored to work with sedona-geo-traits-ext"
-readme = "README.md"
-edition = "2021"
-
-[workspace]
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-float_next_after = "1"
-geo-traits = { version = "0.3.0" }
-geo-types = { version = "0.7.17", features = ["approx", "use-rstar_0_12"] }
+float_next_after = { workspace = true }
+geo-traits = { workspace = true }
+geo-types = { workspace = true, features = ["approx", "use-rstar_0_12"] }
 sedona-geo-traits-ext = { path = "../sedona-geo-traits-ext" }
 log = "0.4.11"
-num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+num-traits = { workspace = true }
 robust = "1.1.0"
 rstar = "0.12.0"
 i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
 
 [dev-dependencies]
-approx = "0.5"
-criterion = { version = "0.5", features = ["html_reports"] }
+sedona-testing = { path = "../sedona-testing" }
+approx = { workspace = true }
+criterion = { workspace = true }
 pretty_env_logger = "0.4"
-rand = "0.8"
+rand = { workspace = true }
 rand_distr = "0.4.3"
-geo = "0.31.0"
-wkb = "0.9.1"
-wkt = "0.14.0"
-
-[patch.crates-io]
-wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
+geo = { workspace = true }
+wkb = { workspace = true }
+wkt = { workspace = true }
 
 [[bench]]
 name = "area"
