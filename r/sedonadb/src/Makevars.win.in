@@ -37,10 +37,6 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # cf. https://stackoverflow.com/a/68979087
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
-# TODO: should $(CFLAGS) be included here?
-# Do not pass -pedantic
-CFLAGS_TWEAKED = $(subst -pedantic,,$(ALL_CPPFLAGS))
-
 all: $(SHLIB) clean_intermediate
 
 $(SHLIB): $(STATLIB)
@@ -55,7 +51,6 @@ $(STATLIB):
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
 	  export CC="$(CC)" && \
-	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
 	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
 
