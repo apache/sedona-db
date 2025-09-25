@@ -40,7 +40,7 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
-geo-generic-alg = { workspace = true }
+geo-generic-alg = { path = "../geo-generic-alg" }
 geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 geo = { workspace = true }

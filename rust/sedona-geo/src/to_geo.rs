@@ -79,33 +79,36 @@ fn to_geometry(item: impl GeometryTrait<T = f64>) -> Option<Geometry> {
         MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
         MultiLineString(geom) => Some(Geometry::MultiLineString(geom.to_multi_line_string())),
         MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
-        GeometryCollection(geom) => {
-            let geometries = geom
-                .geometries()
-                .filter_map(|child| match child.as_type() {
-                    Point(geom) => geom.try_to_point().map(Geometry::Point),
-                    LineString(geom) => Some(Geometry::LineString(geom.to_line_string())),
-                    Polygon(geom) => Some(Geometry::Polygon(geom.to_polygon())),
-                    MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
-                    MultiLineString(geom) => {
-                        Some(Geometry::MultiLineString(geom.to_multi_line_string()))
-                    }
-                    MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            // If any child conversions failed, also return None
-            if geometries.len() != geom.num_geometries() {
-                return None;
-            }
-
-            Some(Geometry::GeometryCollection(geo_types::GeometryCollection(
-                geometries,
-            )))
-        }
+        GeometryCollection(geom) => geometry_collection_to_geometry(geom),
         _ => None,
     }
+}
+
+fn geometry_collection_to_geometry<GC: GeometryCollectionTrait<T = f64>>(
+    geom: &GC,
+) -> Option<Geometry> {
+    let geometries = geom
+        .geometries()
+        .filter_map(|child| match child.as_type() {
+            Point(geom) => geom.try_to_point().map(Geometry::Point),
+            LineString(geom) => Some(Geometry::LineString(geom.to_line_string())),
+            Polygon(geom) => Some(Geometry::Polygon(geom.to_polygon())),
+            MultiPoint(geom) => geom.try_to_multi_point().map(Geometry::MultiPoint),
+            MultiLineString(geom) => Some(Geometry::MultiLineString(geom.to_multi_line_string())),
+            MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
+            GeometryCollection(geom) => geometry_collection_to_geometry(geom),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    // If any child conversions failed, also return None
+    if geometries.len() != geom.num_geometries() {
+        return None;
+    }
+
+    Some(Geometry::GeometryCollection(geo_types::GeometryCollection(
+        geometries,
+    )))
 }
 
 #[cfg(test)]

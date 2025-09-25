@@ -15,10 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-geos"
+name = "geo-traits-ext"
 version.workspace = true
-authors.workspace = true
-license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -26,24 +24,7 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[dev-dependencies]
-criterion = { workspace = true }
-sedona = { path = "../../rust/sedona" }
-sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
-rstest = { workspace = true }
-
 [dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
-geos = { workspace = true }
-sedona-expr = { path = "../../rust/sedona-expr" }
-sedona-functions = { path = "../../rust/sedona-functions" }
-sedona-geometry = { path = "../../rust/sedona-geometry" }
-sedona-schema = { path = "../../rust/sedona-schema" }
-wkb = { workspace = true }
-
-[[bench]]
-harness = false
-name = "geos-functions"
+geo-traits = { workspace = true }
+geo-types = { workspace = true }
+num-traits = { workspace = true }

@@ -52,8 +52,9 @@ dependencies = [
 
 [[package]]
 name = "adbc_core"
-version = "0.18.0"
-source = "git+https://github.com/apache/arrow-adbc?rev=1ba248290cd299c4969b679463bcd54c217cf2e4#1ba248290cd299c4969b679463bcd54c217cf2e4"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b891479797b5588e320f7fd3caf15faba311cf8f8a76911195b6a3d55304eb"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -524,6 +525,17 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "atty"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
+dependencies = [
+ "hermit-abi 0.1.19",
+ "libc",
+ "winapi",
+]
 
 [[package]]
 name = "autocfg"
@@ -2322,6 +2334,19 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44533bbbb3bb3c1fa17d9f2e4e38bbbaf8396ba82193c4cb1b6445d711445d36"
+dependencies = [
+ "atty",
+ "humantime 1.3.0",
+ "log",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
@@ -2566,9 +2591,9 @@ dependencies = [
 
 [[package]]
 name = "geo"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4416397671d8997e9a3e7ad99714f4f00a22e9eaa9b966a5985d2194fc9e02e1"
+checksum = "2fc1a1678e54befc9b4bcab6cd43b8e7f834ae8ea121118b0fd8c42747675b4a"
 dependencies = [
  "earcutr",
  "float_next_after",
@@ -2584,32 +2609,37 @@ dependencies = [
 
 [[package]]
 name = "geo-generic-alg"
-version = "0.1.0"
-source = "git+https://github.com/wherobots/geo.git?branch=generic-alg#66ff85949a82549b0d28fb2d4fae01e3ea19ca83"
+version = "0.2.0"
 dependencies = [
- "earcutr",
+ "approx",
+ "criterion",
  "float_next_after",
- "geo-traits 0.2.0",
+ "geo",
+ "geo-test-fixtures",
+ "geo-traits",
  "geo-traits-ext",
  "geo-types",
- "geographiclib-rs",
+ "geos",
  "i_overlay",
  "log",
  "num-traits",
+ "pretty_env_logger",
+ "rand 0.8.5",
+ "rand_distr",
  "robust",
  "rstar",
- "spade",
+ "serde",
+ "wkt 0.14.0",
 ]
 
 [[package]]
 name = "geo-index"
 version = "0.3.1"
-source = "git+https://github.com/wherobots/geo-index.git?branch=main#f7d5bef2044831e78b2deb095f1af932128d74e4"
 dependencies = [
  "bytemuck",
  "float_next_after",
  "geo",
- "geo-traits 0.3.0",
+ "geo-traits",
  "geo-types",
  "num-traits",
  "thiserror 1.0.69",
@@ -2618,11 +2648,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "geo-traits"
+name = "geo-test-fixtures"
 version = "0.2.0"
-source = "git+https://github.com/wherobots/geo.git?branch=generic-alg#66ff85949a82549b0d28fb2d4fae01e3ea19ca83"
 dependencies = [
  "geo-types",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -2636,20 +2666,18 @@ dependencies = [
 
 [[package]]
 name = "geo-traits-ext"
-version = "0.1.0"
-source = "git+https://github.com/wherobots/geo.git?branch=generic-alg#66ff85949a82549b0d28fb2d4fae01e3ea19ca83"
+version = "0.2.0"
 dependencies = [
- "approx",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "num-traits",
- "serde",
 ]
 
 [[package]]
 name = "geo-types"
-version = "0.7.16"
-source = "git+https://github.com/wherobots/geo.git?branch=generic-alg#66ff85949a82549b0d28fb2d4fae01e3ea19ca83"
+version = "0.7.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75a4dcd69d35b2c87a7c83bce9af69fd65c9d68d3833a0ded568983928f3fc99"
 dependencies = [
  "approx",
  "num-traits",
@@ -2815,6 +2843,15 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
@@ -2907,6 +2944,15 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "humantime"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df004cfca50ef23c36850aaaa59ad52cc70d0e90243c3c7737a4dd32dc7a3c4f"
+dependencies = [
+ "quick-error",
+]
+
+[[package]]
+name = "humantime"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
@@ -2976,24 +3022,24 @@ dependencies = [
 
 [[package]]
 name = "i_float"
-version = "1.7.0"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85df3a416829bb955fdc2416c7b73680c8dcea8d731f2c7aa23e1042fe1b8343"
+checksum = "010025c2c532c8d82e42d0b8bb5184afa449fa6f06c709ea9adcb16c49ae405b"
 dependencies = [
- "serde",
+ "libm",
 ]
 
 [[package]]
 name = "i_key_sort"
-version = "0.2.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "347c253b4748a1a28baf94c9ce133b6b166f08573157e05afe718812bc599fcd"
+checksum = "9190f86706ca38ac8add223b2aed8b1330002b5cdbbce28fb58b10914d38fc27"
 
 [[package]]
 name = "i_overlay"
-version = "2.0.5"
+version = "4.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0542dfef184afdd42174a03dcc0625b6147fb73e1b974b1a08a2a42ac35cee49"
+checksum = "0fcccbd4e4274e0f80697f5fbc6540fdac533cce02f2081b328e68629cce24f9"
 dependencies = [
  "i_float",
  "i_key_sort",
@@ -3004,19 +3050,18 @@ dependencies = [
 
 [[package]]
 name = "i_shape"
-version = "1.7.0"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a38f5a42678726718ff924f6d4a0e79b129776aeed298f71de4ceedbd091bce"
+checksum = "1ea154b742f7d43dae2897fcd5ead86bc7b5eefcedd305a7ebf9f69d44d61082"
 dependencies = [
  "i_float",
- "serde",
 ]
 
 [[package]]
 name = "i_tree"
-version = "0.8.3"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155181bc97d770181cf9477da51218a19ee92a8e5be642e796661aee2b601139"
+checksum = "35e6d558e6d4c7b82bc51d9c771e7a927862a161a7d87bf2b0541450e0e20915"
 
 [[package]]
 name = "iana-time-zone"
@@ -3210,7 +3255,7 @@ version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
- "hermit-abi",
+ "hermit-abi 0.5.2",
  "libc",
  "windows-sys 0.59.0",
 ]
@@ -3761,7 +3806,7 @@ dependencies = [
  "futures",
  "http 1.3.1",
  "http-body-util",
- "humantime",
+ "humantime 2.3.0",
  "hyper",
  "itertools 0.14.0",
  "md-5",
@@ -4017,6 +4062,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pretty_env_logger"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "926d36b9553851b8b0005f1275891b392ee4d2d833852c417ed025477350fb9d"
+dependencies = [
+ "env_logger 0.7.1",
+ "log",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4157,6 +4212,12 @@ name = "quad-rand"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a651516ddc9168ebd67b24afd085a718be02f8858fe406591b013d101ce2f40"
+
+[[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quick-xml"
@@ -4305,6 +4366,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.3",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -4757,7 +4828,7 @@ dependencies = [
  "datafusion-ffi",
  "dirs",
  "futures",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "object_store",
  "parking_lot",
@@ -4803,7 +4874,7 @@ dependencies = [
  "async-trait",
  "clap",
  "datafusion",
- "env_logger",
+ "env_logger 0.11.8",
  "futures",
  "libmimalloc-sys",
  "mimalloc",
@@ -4832,7 +4903,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
- "geo-traits 0.2.0",
+ "geo-traits",
  "rstest",
  "sedona-common",
  "sedona-geometry",
@@ -4853,7 +4924,7 @@ dependencies = [
  "datafusion",
  "datafusion-common",
  "datafusion-expr",
- "geo-traits 0.2.0",
+ "geo-traits",
  "rstest",
  "sedona-common",
  "sedona-expr",
@@ -4863,7 +4934,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "wkb",
- "wkt 0.13.0",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -4877,7 +4948,7 @@ dependencies = [
  "datafusion-expr",
  "geo",
  "geo-generic-alg",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "rstest",
  "sedona-expr",
@@ -4886,7 +4957,7 @@ dependencies = [
  "sedona-schema",
  "sedona-testing",
  "wkb",
- "wkt 0.13.0",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -4914,7 +4985,7 @@ dependencies = [
 name = "sedona-geometry"
 version = "0.2.0"
 dependencies = [
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "lru",
  "rstest",
@@ -4923,7 +4994,7 @@ dependencies = [
  "serde_with",
  "thiserror 2.0.16",
  "wkb",
- "wkt 0.13.0",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -4943,7 +5014,7 @@ dependencies = [
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "futures",
- "geo-traits 0.2.0",
+ "geo-traits",
  "object_store",
  "parquet",
  "rstest",
@@ -4991,7 +5062,7 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "datafusion-expr",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "proj-sys",
  "rstest",
@@ -5058,7 +5129,7 @@ dependencies = [
  "futures",
  "geo-generic-alg",
  "geo-index",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-traits-ext",
  "geo-types",
  "geos",
@@ -5076,7 +5147,7 @@ dependencies = [
  "sedona-tg",
  "tokio",
  "wkb",
- "wkt 0.13.0",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -5090,7 +5161,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
- "geo-traits 0.2.0",
+ "geo-traits",
  "geo-types",
  "parquet",
  "rand 0.8.5",
@@ -5100,7 +5171,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-schema",
  "wkb",
- "wkt 0.13.0",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -5495,6 +5566,15 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.1",
+]
+
+[[package]]
+name = "termcolor"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
+dependencies = [
+ "winapi-util",
 ]
 
 [[package]]
@@ -6357,14 +6437,12 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wkb"
-version = "0.8.0"
-source = "git+https://github.com/wherobots/wkb.git?branch=generic-alg#5496c33919e9193edcde6ccf7dd51a9093782277"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff9eff6aebac4c64f9c7c057a68f6359284e2a80acf102dffe041fe219b3a082"
 dependencies = [
  "byteorder",
- "geo-traits 0.2.0",
- "geo-traits-ext",
- "geo-types",
- "geos",
+ "geo-traits",
  "num_enum",
  "thiserror 1.0.69",
 ]
@@ -6383,23 +6461,11 @@ dependencies = [
 
 [[package]]
 name = "wkt"
-version = "0.13.0"
-source = "git+https://github.com/wherobots/wkt.git?branch=generic-alg#ec26b050ec1718ee08e4d8a911e99f1039b60c8b"
-dependencies = [
- "geo-traits 0.2.0",
- "geo-types",
- "log",
- "num-traits",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "wkt"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efb2b923ccc882312e559ffaa832a055ba9d1ac0cc8e86b3e25453247e4b81d7"
 dependencies = [
- "geo-traits 0.3.0",
+ "geo-traits",
  "geo-types",
  "log",
  "num-traits",

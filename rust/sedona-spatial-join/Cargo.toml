@@ -43,9 +43,9 @@ datafusion-execution = { workspace = true }
 datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
-geo-generic-alg = { workspace = true }
+geo-generic-alg = { path = "../geo-generic-alg" }
 geo-traits = { workspace = true, features = ["geo-types"] }
-geo-traits-ext = { workspace = true }
+geo-traits-ext = { path = "../geo-traits-ext" }
 geo-types = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-expr = { path = "../sedona-expr" }
