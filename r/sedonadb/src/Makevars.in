@@ -40,6 +40,8 @@ $(STATLIB):
 	# therefore is only used if cargo is absent from the user's PATH.
 	export PATH="$(PATH):$(HOME)/.cargo/bin" && \
 	  export CC="$(CC)" && \
+	  export CFLAGS="$(CFLAGS)" && \
+	  export AWS_LC_SYS_CMAKE_BUILDER=1 && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
 	  if [ "$(TARGET)" != "wasm32-unknown-emscripten" ]; then \
 	    cargo build $(CARGO_BUILD_ARGS); \
