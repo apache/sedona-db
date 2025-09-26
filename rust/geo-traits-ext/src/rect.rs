@@ -19,22 +19,27 @@ where
     fn min_ext(&self) -> Self::CoordTypeExt<'_>;
     fn max_ext(&self) -> Self::CoordTypeExt<'_>;
 
+    #[inline]
     fn min_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.min_ext().geo_coord()
     }
 
+    #[inline]
     fn max_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.max_ext().geo_coord()
     }
 
+    #[inline]
     fn geo_rect(&self) -> Rect<<Self as GeometryTrait>::T> {
         Rect::new(self.min_coord(), self.max_coord())
     }
 
+    #[inline]
     fn width(&self) -> <Self as GeometryTrait>::T {
         self.max().x() - self.min().x()
     }
 
+    #[inline]
     fn height(&self) -> <Self as GeometryTrait>::T {
         self.max().y() - self.min().y()
     }
@@ -130,18 +135,21 @@ where
         ])
     }
 
+    #[inline]
     fn has_valid_bounds(&self) -> bool {
         let min_coord = self.min_coord();
         let max_coord = self.max_coord();
         min_coord.x <= max_coord.x && min_coord.y <= max_coord.y
     }
 
+    #[inline]
     fn assert_valid_bounds(&self) {
         if !self.has_valid_bounds() {
             panic!("{}", RECT_INVALID_BOUNDS_ERROR);
         }
     }
 
+    #[inline]
     fn contains_point(&self, coord: &Coord<<Self as GeometryTrait>::T>) -> bool
     where
         <Self as GeometryTrait>::T: PartialOrd,
@@ -157,6 +165,7 @@ where
         (min_x <= coord.x && coord.x <= max_x) && (min_y <= coord.y && coord.y <= max_y)
     }
 
+    #[inline]
     fn contains_rect(&self, rect: &Self) -> bool
     where
         <Self as GeometryTrait>::T: PartialOrd,
@@ -180,6 +189,7 @@ where
             && (self_min_y <= other_min_y && other_max_y <= self_max_y)
     }
 
+    #[inline]
     fn center(&self) -> Coord<<Self as GeometryTrait>::T>
     where
         <Self as GeometryTrait>::T: CoordFloat,

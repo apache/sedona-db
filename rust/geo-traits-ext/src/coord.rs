@@ -9,6 +9,7 @@ pub trait CoordTraitExt: CoordTrait + GeoTraitExtWithTypeTag<Tag = CoordTag>
 where
     <Self as CoordTrait>::T: CoordNum,
 {
+    #[inline]
     fn geo_coord(&self) -> Coord<Self::T> {
         Coord {
             x: self.x(),

@@ -17,14 +17,17 @@ where
     fn end_ext(&self) -> Self::CoordTypeExt<'_>;
     fn coords_ext(&self) -> [Self::CoordTypeExt<'_>; 2];
 
+    #[inline]
     fn start_coord(&self) -> geo_types::Coord<<Self as GeometryTrait>::T> {
         self.start_ext().geo_coord()
     }
 
+    #[inline]
     fn end_coord(&self) -> geo_types::Coord<<Self as GeometryTrait>::T> {
         self.end_ext().geo_coord()
     }
 
+    #[inline]
     fn geo_line(&self) -> Line<<Self as GeometryTrait>::T> {
         Line::new(self.start_coord(), self.end_coord())
     }
@@ -38,14 +41,17 @@ macro_rules! forward_line_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn start_ext(&self) -> Self::CoordTypeExt<'_> {
             <Self as LineTrait>::start(self)
         }
 
+        #[inline]
         fn end_ext(&self) -> Self::CoordTypeExt<'_> {
             <Self as LineTrait>::end(self)
         }
 
+        #[inline]
         fn coords_ext(&self) -> [Self::CoordTypeExt<'_>; 2] {
             [self.start_ext(), self.end_ext()]
         }

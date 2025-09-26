@@ -5,7 +5,7 @@ use crate::geometry::*;
 use crate::intersects::{point_in_rect, value_in_between};
 use crate::kernels::*;
 use crate::{BoundingRect, HasDimensions, Intersects};
-use crate::{GeoNum, GeometryCow};
+use crate::GeoNum;
 use geo_traits_ext::*;
 
 /// The position of a `Coord` relative to a `Geometry`
@@ -495,18 +495,6 @@ where
         boundary_count: &mut usize,
     ) {
         geometry_calculate_coordinate_position(self, coord, is_inside, boundary_count);
-    }
-}
-
-impl<T: GeoNum> CoordinatePosition for GeometryCow<'_, T> {
-    type Scalar = T;
-
-    crate::geometry_cow_delegate_impl! {
-        fn calculate_coordinate_position(
-            &self,
-            coord: &Coord<T>,
-            is_inside: &mut bool,
-            boundary_count: &mut usize) -> ();
     }
 }
 

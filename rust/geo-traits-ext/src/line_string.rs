@@ -30,12 +30,14 @@ where
     /// # Safety
     /// The caller must ensure that `i` is a valid index less than the number of coordinates.
     /// Otherwise, this function may cause undefined behavior.
+    #[inline]
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Coord<Self::T> {
         self.coord_unchecked_ext(i).geo_coord()
     }
 
     /// Return an iterator yielding one [`Line`] for each line segment
     /// in the [`LineString`][`geo_types::LineString`].
+    #[inline]
     fn lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
         (0..num_coords.saturating_sub(1)).map(|i| unsafe {
@@ -50,6 +52,7 @@ where
     ///
     /// Note: This is like [`Self::lines`], but the sequence **and** the orientation of
     /// segments are reversed.
+    #[inline]
     fn rev_lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
         (num_coords - 1..0).map(|i| unsafe {
@@ -60,6 +63,7 @@ where
     }
 
     /// An iterator which yields the coordinates of a [`LineString`][`geo_types::LineString`] as [Triangle]s
+    #[inline]
     fn triangles(
         &'_ self,
     ) -> impl ExactSizeIterator<Item = Triangle<<Self as GeometryTrait>::T>> + '_ {
@@ -73,10 +77,12 @@ where
     }
 
     // Returns an iterator yielding the coordinates of this line string as `geo_types::Coord`s.
+    #[inline]
     fn coord_iter(&self) -> impl Iterator<Item = Coord<<Self as GeometryTrait>::T>> {
         self.coords_ext().map(|c| c.geo_coord())
     }
 
+    #[inline]
     fn is_closed(&self) -> bool {
         match (self.coords_ext().next(), self.coords_ext().last()) {
             (Some(first), Some(last)) => first.geo_coord() == last.geo_coord(),
@@ -94,14 +100,17 @@ macro_rules! forward_line_string_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn coord_ext(&self, i: usize) -> Option<Self::CoordTypeExt<'_>> {
             <Self as LineStringTrait>::coord(self, i)
         }
 
+        #[inline]
         unsafe fn coord_unchecked_ext(&self, i: usize) -> Self::CoordTypeExt<'_> {
             <Self as LineStringTrait>::coord_unchecked(self, i)
         }
 
+        #[inline]
         fn coords_ext(&self) -> impl Iterator<Item = Self::CoordTypeExt<'_>> {
             <Self as LineStringTrait>::coords(self)
         }

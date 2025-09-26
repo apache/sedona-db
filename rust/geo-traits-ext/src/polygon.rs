@@ -35,20 +35,24 @@ macro_rules! forward_polygon_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn exterior_ext(&self) -> Option<Self::RingTypeExt<'_>> {
             <Self as PolygonTrait>::exterior(self)
         }
 
+        #[inline]
         fn interiors_ext(
             &self,
         ) -> impl DoubleEndedIterator + ExactSizeIterator<Item = Self::RingTypeExt<'_>> {
             <Self as PolygonTrait>::interiors(self)
         }
 
+        #[inline]
         fn interior_ext(&self, i: usize) -> Option<Self::RingTypeExt<'_>> {
             <Self as PolygonTrait>::interior(self, i)
         }
 
+        #[inline]
         unsafe fn interior_unchecked_ext(&self, i: usize) -> Self::RingTypeExt<'_> {
             <Self as PolygonTrait>::interior_unchecked(self, i)
         }

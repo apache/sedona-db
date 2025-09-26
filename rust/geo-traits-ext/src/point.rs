@@ -15,11 +15,13 @@ where
 
     fn coord_ext(&self) -> Option<Self::CoordTypeExt<'_>>;
 
+    #[inline]
     fn geo_point(&self) -> Option<Point<<Self as GeometryTrait>::T>> {
         self.coord_ext()
             .map(|coord| Point::new(coord.x(), coord.y()))
     }
 
+    #[inline]
     fn geo_coord(&self) -> Option<Coord<<Self as GeometryTrait>::T>> {
         self.coord_ext().map(|coord| coord.geo_coord())
     }
@@ -33,6 +35,7 @@ macro_rules! forward_point_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn coord_ext(&self) -> Option<Self::CoordTypeExt<'_>> {
             <Self as PointTrait>::coord(self)
         }

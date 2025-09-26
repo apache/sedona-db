@@ -1,5 +1,5 @@
 use crate::utils::{partial_max, partial_min};
-use crate::{coord, geometry::*, CoordNum, GeometryCow};
+use crate::{coord, geometry::*, CoordNum};
 use core::borrow::Borrow;
 use geo_traits_ext::*;
 use geo_types::private_utils::get_bounding_rect;
@@ -249,17 +249,6 @@ where
                 GeometryTypeExt::Triangle(g) => g.bounding_rect_trait().into(),
             }
         }
-    }
-}
-
-impl<T> BoundingRect<T> for GeometryCow<'_, T>
-where
-    T: CoordNum,
-{
-    type Output = Option<Rect<T>>;
-
-    crate::geometry_cow_delegate_impl! {
-       fn bounding_rect(&self) -> Self::Output;
     }
 }
 

@@ -34,14 +34,17 @@ macro_rules! forward_multi_polygon_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn polygon_ext(&self, i: usize) -> Option<Self::PolygonTypeExt<'_>> {
             <Self as MultiPolygonTrait>::polygon(self, i)
         }
 
+        #[inline]
         unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
             <Self as MultiPolygonTrait>::polygon_unchecked(self, i)
         }
 
+        #[inline]
         fn polygons_ext(&self) -> impl Iterator<Item = Self::PolygonTypeExt<'_>> {
             <Self as MultiPolygonTrait>::polygons(self)
         }

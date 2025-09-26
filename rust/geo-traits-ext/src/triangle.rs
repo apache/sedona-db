@@ -18,22 +18,27 @@ where
     fn third_ext(&self) -> Self::CoordTypeExt<'_>;
     fn coords_ext(&self) -> [Self::CoordTypeExt<'_>; 3];
 
+    #[inline]
     fn first_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.first_ext().geo_coord()
     }
 
+    #[inline]
     fn second_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.second_ext().geo_coord()
     }
 
+    #[inline]
     fn third_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.third_ext().geo_coord()
     }
 
+    #[inline]
     fn to_array(&self) -> [Coord<<Self as GeometryTrait>::T>; 3] {
         [self.first_coord(), self.second_coord(), self.third_coord()]
     }
 
+    #[inline]
     fn to_lines(&self) -> [Line<<Self as GeometryTrait>::T>; 3] {
         [
             Line::new(self.first_coord(), self.second_coord()),
@@ -42,6 +47,7 @@ where
         ]
     }
 
+    #[inline]
     fn to_polygon(&self) -> Polygon<<Self as GeometryTrait>::T> {
         polygon![
             self.first_coord(),
@@ -51,6 +57,7 @@ where
         ]
     }
 
+    #[inline]
     fn coord_iter(&self) -> impl Iterator<Item = Coord<<Self as GeometryTrait>::T>> {
         [self.first_coord(), self.second_coord(), self.third_coord()].into_iter()
     }
@@ -64,18 +71,22 @@ macro_rules! forward_triangle_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn first_ext(&self) -> Self::CoordTypeExt<'_> {
             <Self as TriangleTrait>::first(self)
         }
 
+        #[inline]
         fn second_ext(&self) -> Self::CoordTypeExt<'_> {
             <Self as TriangleTrait>::second(self)
         }
 
+        #[inline]
         fn third_ext(&self) -> Self::CoordTypeExt<'_> {
             <Self as TriangleTrait>::third(self)
         }
 
+        #[inline]
         fn coords_ext(&self) -> [Self::CoordTypeExt<'_>; 3] {
             [self.first_ext(), self.second_ext(), self.third_ext()]
         }
