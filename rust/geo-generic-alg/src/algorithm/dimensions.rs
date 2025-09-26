@@ -334,7 +334,7 @@ where
 {
     fn is_empty_trait(&self) -> bool {
         self.exterior_ext()
-            .map_or(true, |exterior| exterior.is_empty_trait())
+            .is_none_or(|exterior| exterior.is_empty_trait())
     }
 
     fn dimensions_trait(&self) -> Dimensions {
