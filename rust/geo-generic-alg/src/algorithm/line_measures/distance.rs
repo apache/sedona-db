@@ -2,7 +2,7 @@
 pub trait Distance<F, Origin, Destination> {
     /// Note that not all implementations support all geometry combinations, but at least `Point` to `Point`
     /// is supported.
-    /// See [specific implementations](#implementors) for details.
+    /// See [specific implementations](#implementers) for details.
     ///
     /// # Units
     ///

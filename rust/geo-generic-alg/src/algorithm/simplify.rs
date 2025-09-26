@@ -130,7 +130,7 @@ where
     }
 
     // The farthest index was less than or equal to epsilon, so we will retain only the first
-    // and last indices, resulting in the indices inbetween getting culled.
+    // and last indices, resulting in the indices in between getting culled.
 
     // Update `simplified_len` to reflect the new number of indices by subtracting the number
     // of indices we're culling.
