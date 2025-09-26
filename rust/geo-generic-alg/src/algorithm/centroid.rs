@@ -20,8 +20,8 @@ use crate::GeoFloat;
 /// # Examples
 ///
 /// ```
-/// use geo::Centroid;
-/// use geo::{point, polygon};
+/// use geo_generic_alg::Centroid;
+/// use geo_generic_alg::{point, polygon};
 ///
 /// // rhombus shaped polygon
 /// let polygon = polygon![
@@ -45,8 +45,8 @@ pub trait Centroid {
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{line_string, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{line_string, point};
     ///
     /// let line_string = line_string![
     ///     (x: 40.02f64, y: 116.34),
@@ -90,8 +90,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{Line, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{Line, point};
     ///
     /// let line = Line::new(
     ///     point!(x: 1.0f64, y: 3.0),
@@ -125,8 +125,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{line_string, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{line_string, point};
     ///
     /// let line_string = line_string![
     ///   (x: 1.0f32, y: 1.0),
@@ -160,8 +160,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{MultiLineString, line_string, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{MultiLineString, line_string, point};
     ///
     /// let multi_line_string = MultiLineString::new(vec![
     ///     // centroid: (2.5, 2.5)
@@ -195,8 +195,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{polygon, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{polygon, point};
     ///
     /// let polygon = polygon![
     ///     (x: 0.0f32, y: 0.0),
@@ -230,8 +230,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{MultiPolygon, polygon, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{MultiPolygon, polygon, point};
     ///
     /// let multi_polygon = MultiPolygon::new(vec![
     ///   // centroid (1.0, 0.5)
@@ -275,8 +275,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{Rect, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{Rect, point};
     ///
     /// let rect = Rect::new(
     ///   point!(x: 0.0f32, y: 0.0),
@@ -305,8 +305,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{Triangle, coord, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{Triangle, coord, point};
     ///
     /// let triangle = Triangle::new(
     ///   coord!(x: 0.0f32, y: -1.0),
@@ -340,8 +340,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::point;
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::point;
     ///
     /// let point = point!(x: 1.0f32, y: 2.0);
     ///
@@ -368,8 +368,8 @@ where
     /// # Example
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{MultiPoint, Point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{MultiPoint, Point};
     ///
     /// let empty: Vec<Point> = Vec::new();
     /// let empty_multi_points: MultiPoint<_> = empty.into();
@@ -397,8 +397,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{Geometry, Rect, point};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{Geometry, Rect, point};
     ///
     /// let rect = Rect::new(
     ///   point!(x: 0.0f32, y: 0.0),
@@ -456,8 +456,8 @@ where
     /// # Examples
     ///
     /// ```
-    /// use geo::Centroid;
-    /// use geo::{Geometry, GeometryCollection, Rect, Triangle, point, coord};
+    /// use geo_generic_alg::Centroid;
+    /// use geo_generic_alg::{Geometry, GeometryCollection, Rect, Triangle, point, coord};
     ///
     /// let rect_geometry = Geometry::from(Rect::new(
     ///   point!(x: 0.0f32, y: 0.0),

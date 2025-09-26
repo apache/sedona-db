@@ -5,7 +5,7 @@ use crate::{Coord, CoordNum, MapCoords};
 /// # Examples
 ///
 /// ```rust
-/// use geo::{Convert, LineString, line_string};
+/// use geo_generic_alg::{Convert, LineString, line_string};
 ///
 /// let line_string_32: LineString<f32> = line_string![
 ///     (x: 5., y: 10.),
@@ -41,7 +41,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use geo::{TryConvert, LineString, line_string};
+/// use geo_generic_alg::{TryConvert, LineString, line_string};
 ///
 /// let line_string_64: LineString<i64> = line_string![
 ///     (x: 5, y: 10),

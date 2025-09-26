@@ -20,8 +20,8 @@ pub trait Skew<T: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Skew;
-    /// use geo::{Polygon, polygon};
+    /// use geo_generic_alg::Skew;
+    /// use geo_generic_alg::{Polygon, polygon};
     ///
     /// let square: Polygon = polygon![
     ///     (x: 0., y: 0.),
@@ -48,8 +48,8 @@ pub trait Skew<T: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Skew;
-    /// use geo::{Polygon, polygon};
+    /// use geo_generic_alg::Skew;
+    /// use geo_generic_alg::{Polygon, polygon};
     ///
     /// let square: Polygon = polygon![
     ///     (x: 0., y: 0.),
@@ -81,8 +81,8 @@ pub trait Skew<T: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Skew;
-    /// use geo::{Polygon, polygon, point};
+    /// use geo_generic_alg::Skew;
+    /// use geo_generic_alg::{Polygon, polygon, point};
     ///
     /// let square: Polygon = polygon![
     ///     (x: 0., y: 0.),

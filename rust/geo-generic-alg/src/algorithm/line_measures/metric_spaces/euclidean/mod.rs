@@ -49,8 +49,8 @@ impl<F: CoordFloat> Distance<F, Point<F>, Point<F>> for Euclidean {
     ///
     /// # Example
     /// ```
-    /// use geo::{Euclidean, Distance};
-    /// use geo::Point;
+    /// use geo_generic_alg::{Euclidean, Distance};
+    /// use geo_generic_alg::Point;
     /// // web mercator
     /// let new_york_city = Point::new(-8238310.24, 4942194.78);
     /// // web mercator

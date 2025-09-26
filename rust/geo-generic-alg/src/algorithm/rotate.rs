@@ -24,8 +24,8 @@ pub trait Rotate<T: CoordFloat> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Rotate;
-    /// use geo::line_string;
+    /// use geo_generic_alg::Rotate;
+    /// use geo_generic_alg::line_string;
     /// use approx::assert_relative_eq;
     ///
     /// let line_string = line_string![
@@ -62,8 +62,8 @@ pub trait Rotate<T: CoordFloat> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Rotate;
-    /// use geo::{line_string, point};
+    /// use geo_generic_alg::Rotate;
+    /// use geo_generic_alg::{line_string, point};
     ///
     /// let ls = line_string![
     ///     (x: 0.0, y: 0.0),

@@ -6,8 +6,8 @@ use crate::{Coord, CoordNum};
 /// # Examples
 ///
 /// ```
-/// use geo::extremes::Extremes;
-/// use geo::polygon;
+/// use geo_generic_alg::extremes::Extremes;
+/// use geo_generic_alg::polygon;
 ///
 /// // a diamond shape
 /// let polygon = polygon![

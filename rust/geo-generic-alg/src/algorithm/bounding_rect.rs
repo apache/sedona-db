@@ -13,8 +13,8 @@ pub trait BoundingRect<T: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::BoundingRect;
-    /// use geo::line_string;
+    /// use geo_generic_alg::BoundingRect;
+    /// use geo_generic_alg::line_string;
     ///
     /// let line_string = line_string![
     ///     (x: 40.02f64, y: 116.34),

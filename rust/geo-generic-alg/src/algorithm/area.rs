@@ -48,8 +48,8 @@ pub(crate) fn twice_signed_ring_area<T: CoordNum, LS: LineStringTraitExt<T = T>>
 /// # Examples
 ///
 /// ```
-/// use geo::polygon;
-/// use geo::Area;
+/// use geo_generic_alg::polygon;
+/// use geo_generic_alg::Area;
 ///
 /// let mut polygon = polygon![
 ///     (x: 0., y: 0.),
