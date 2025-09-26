@@ -5039,9 +5039,11 @@ version = "0.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "byteorder",
  "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "geo-traits",
  "geos",
  "rstest",
  "sedona",

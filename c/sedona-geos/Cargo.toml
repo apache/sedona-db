@@ -42,7 +42,9 @@ sedona-expr = { path = "../../rust/sedona-expr" }
 sedona-functions = { path = "../../rust/sedona-functions" }
 sedona-geometry = { path = "../../rust/sedona-geometry" }
 sedona-schema = { path = "../../rust/sedona-schema" }
+geo-traits = { workspace = true }
 wkb = { workspace = true }
+byteorder = { workspace = true }
 
 [[bench]]
 harness = false
