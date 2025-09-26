@@ -51,9 +51,7 @@ pub use intersects::Intersects;
 pub mod line_measures;
 pub use line_measures::metric_spaces::Euclidean;
 
-pub use line_measures::{
-    Distance, DistanceExt, LengthMeasurableExt,
-};
+pub use line_measures::{Distance, DistanceExt, LengthMeasurableExt};
 
 /// Apply a function to all `Coord`s of a `Geometry`.
 pub mod map_coords;

@@ -18,8 +18,8 @@ use std::{fmt, ops::Mul, ops::Neg};
 /// # Examples
 /// ## Build up transforms by beginning with a constructor, then chaining mutation operations
 /// ```
-/// use geo::{AffineOps, AffineTransform};
-/// use geo::{point, line_string, BoundingRect};
+/// use geo_generic_alg::{AffineOps, AffineTransform};
+/// use geo_generic_alg::{point, line_string, BoundingRect};
 /// use approx::assert_relative_eq;
 ///
 /// let line_string = line_string![(x: 0.0, y: 0.0),(x: 1.0, y: 1.0)];
@@ -108,8 +108,8 @@ impl<T: CoordNum, M: MapCoordsInPlace<T>> AffineOpsMut<T> for M {
 /// # Examples
 /// ## Build up transforms by beginning with a constructor, then chaining mutation operations
 /// ```
-/// use geo::{AffineOps, AffineTransform};
-/// use geo::{point, line_string, BoundingRect};
+/// use geo_generic_alg::{AffineOps, AffineTransform};
+/// use geo_generic_alg::{point, line_string, BoundingRect};
 /// use approx::assert_relative_eq;
 ///
 /// let line_string = line_string![(x: 0.0, y: 0.0),(x: 1.0, y: 1.0)];
@@ -126,7 +126,7 @@ impl<T: CoordNum, M: MapCoordsInPlace<T>> AffineOpsMut<T> for M {
 ///
 /// ## Create affine transform manually, and access elements using getter methods
 /// ```
-/// use geo::AffineTransform;
+/// use geo_generic_alg::AffineTransform;
 ///
 /// let transform = AffineTransform::new(10.0, 0.0, 400_000.0, 0.0, -10.0, 500_000.0);
 ///
@@ -198,7 +198,7 @@ impl<T: CoordNum> AffineTransform<T> {
     ///
     /// This is a **cumulative** operation; the new transform is *added* to the existing transform.
     /// ```
-    /// use geo::AffineTransform;
+    /// use geo_generic_alg::AffineTransform;
     /// let mut transform = AffineTransform::identity();
     ///
     /// // create two transforms that cancel each other
@@ -242,7 +242,7 @@ impl<T: CoordNum> AffineTransform<T> {
     /// that is, whether it's application will be a a no-op.
     ///
     /// ```
-    /// use geo::AffineTransform;
+    /// use geo_generic_alg::AffineTransform;
     /// let mut transform = AffineTransform::identity();
     /// assert!(transform.is_identity());
     ///

@@ -38,29 +38,6 @@ pub mod prelude {
 /// generic over all the numeric types supported by geo, you probably want to constrain
 /// your function input to `GeoFloat`. For methods which work for integers, and not just floating
 /// point, see [`GeoNum`].
-///
-/// # Examples
-///
-/// ```
-/// use geo::{GeoFloat, MultiPolygon, Polygon, Point};
-///
-/// // An admittedly silly method implementation, but the signature shows how to use the GeoFloat trait
-/// fn farthest_from<'a, T: GeoFloat>(point: &Point<T>, polygons: &'a MultiPolygon<T>) -> Option<&'a Polygon<T>> {
-///     polygons.iter().fold(None, |accum, next| {
-///         match accum {
-///             None => Some(next),
-///             Some(farthest) => {
-///                 use geo::{euclidean_distance::EuclideanDistance};
-///                 if next.euclidean_distance(point) > farthest.euclidean_distance(point) {
-///                     Some(next)
-///                 } else {
-///                     Some(farthest)
-///                 }
-///             }
-///         }
-///     })
-/// }
-/// ```
 pub trait GeoFloat:
     GeoNum + num_traits::Float + num_traits::Signed + num_traits::Bounded + float_next_after::NextAfter
 {

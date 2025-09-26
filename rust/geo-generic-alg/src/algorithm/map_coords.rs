@@ -14,8 +14,8 @@ pub trait MapCoords<T: CoordNum, NT: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::MapCoords;
-    /// use geo::{Coord, Point};
+    /// use geo_generic_alg::MapCoords;
+    /// use geo_generic_alg::{Coord, Point};
     /// use approx::assert_relative_eq;
     ///
     /// let p1 = Point::new(10., 20.);
@@ -57,8 +57,8 @@ pub trait MapCoords<T: CoordNum, NT: CoordNum> {
     ///
     /// ```
     /// use approx::assert_relative_eq;
-    /// use geo::MapCoords;
-    /// use geo::{Coord, Point};
+    /// use geo_generic_alg::MapCoords;
+    /// use geo_generic_alg::{Coord, Point};
     ///
     /// let p1 = Point::new(10., 20.);
     /// let p2 = p1
@@ -83,8 +83,8 @@ pub trait MapCoordsInPlace<T> {
     /// # Examples
     ///
     /// ```
-    /// use geo::MapCoordsInPlace;
-    /// use geo::{Coord, Point};
+    /// use geo_generic_alg::MapCoordsInPlace;
+    /// use geo_generic_alg::{Coord, Point};
     /// use approx::assert_relative_eq;
     ///
     /// let mut p = Point::new(10., 20.);
@@ -104,8 +104,8 @@ pub trait MapCoordsInPlace<T> {
     /// # Examples
     ///
     /// ```
-    /// use geo::MapCoordsInPlace;
-    /// use geo::Coord;
+    /// use geo_generic_alg::MapCoordsInPlace;
+    /// use geo_generic_alg::Coord;
     ///
     /// let mut p1 = geo::point!{x: 10u32, y: 20u32};
     ///

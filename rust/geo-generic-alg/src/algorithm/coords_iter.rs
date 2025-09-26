@@ -27,7 +27,7 @@ pub trait CoordsIter {
     /// # Examples
     ///
     /// ```
-    /// use geo::coords_iter::CoordsIter;
+    /// use geo_generic_alg::coords_iter::CoordsIter;
     ///
     /// let multi_point = geo::MultiPoint::new(vec![
     ///     geo::point!(x: -10., y: 0.),
@@ -48,8 +48,8 @@ pub trait CoordsIter {
     /// # Examples
     ///
     /// ```
-    /// use geo::coords_iter::CoordsIter;
-    /// use geo::line_string;
+    /// use geo_generic_alg::coords_iter::CoordsIter;
+    /// use geo_generic_alg::line_string;
     ///
     /// let ls = line_string![
     ///     (x: 1., y: 2.),
@@ -66,8 +66,8 @@ pub trait CoordsIter {
     /// # Examples
     ///
     /// ```
-    /// use geo::coords_iter::CoordsIter;
-    /// use geo::polygon;
+    /// use geo_generic_alg::coords_iter::CoordsIter;
+    /// use geo_generic_alg::polygon;
     ///
     /// // a diamond shape
     /// let polygon = polygon![

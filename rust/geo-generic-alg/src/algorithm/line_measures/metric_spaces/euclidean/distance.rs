@@ -1064,8 +1064,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::orient::{Direction, Orient};
     use crate::{Line, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
+    use geo::orient::{Direction, Orient};
     use geo_types::{coord, polygon, private_utils::line_segment_distance};
 
     mod distance_cross_validation_tests {

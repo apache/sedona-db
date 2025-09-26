@@ -4,8 +4,8 @@ use std::cmp::Ordering;
 use crate::geometry::*;
 use crate::intersects::{point_in_rect, value_in_between};
 use crate::kernels::*;
-use crate::{BoundingRect, HasDimensions, Intersects};
 use crate::GeoNum;
+use crate::{BoundingRect, HasDimensions, Intersects};
 use geo_traits_ext::*;
 
 /// The position of a `Coord` relative to a `Geometry`
@@ -21,8 +21,8 @@ pub enum CoordPos {
 /// # Examples
 ///
 /// ```rust
-/// use geo::{polygon, coord};
-/// use geo::coordinate_position::{CoordinatePosition, CoordPos};
+/// use geo_generic_alg::{polygon, coord};
+/// use geo_generic_alg::coordinate_position::{CoordinatePosition, CoordPos};
 ///
 /// let square_poly = polygon![(x: 0.0, y: 0.0), (x: 2.0, y: 0.0), (x: 2.0, y: 2.0), (x: 0.0, y: 2.0), (x: 0.0, y: 0.0)];
 ///

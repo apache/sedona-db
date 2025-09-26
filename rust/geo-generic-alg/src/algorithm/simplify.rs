@@ -172,8 +172,8 @@ pub trait Simplify<T, Epsilon = T> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Simplify;
-    /// use geo::line_string;
+    /// use geo_generic_alg::Simplify;
+    /// use geo_generic_alg::line_string;
     ///
     /// let line_string = line_string![
     ///     (x: 0.0, y: 0.0),
@@ -217,8 +217,8 @@ pub trait SimplifyIdx<T, Epsilon = T> {
     /// # Examples
     ///
     /// ```
-    /// use geo::SimplifyIdx;
-    /// use geo::line_string;
+    /// use geo_generic_alg::SimplifyIdx;
+    /// use geo_generic_alg::line_string;
     ///
     /// let line_string = line_string![
     ///     (x: 0.0, y: 0.0),

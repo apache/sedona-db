@@ -17,8 +17,8 @@ pub trait Translate<T: CoordNum> {
     /// # Examples
     ///
     /// ```
-    /// use geo::Translate;
-    /// use geo::line_string;
+    /// use geo_generic_alg::Translate;
+    /// use geo_generic_alg::line_string;
     ///
     /// let ls = line_string![
     ///     (x: 0.0, y: 0.0),

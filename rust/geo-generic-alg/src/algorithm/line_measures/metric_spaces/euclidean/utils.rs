@@ -716,9 +716,9 @@ symmetric_distance_generic_impl!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::algorithm::line_measures::{Distance, Euclidean};
     use crate::{coord, Line, LineString, Point, Polygon, Triangle};
     use approx::assert_relative_eq;
+    use geo::algorithm::line_measures::{Distance, Euclidean};
 
     // ┌────────────────────────────────────────────────────────────┐
     // │ Tests for point_distance_generic function                  │
