@@ -67,6 +67,7 @@ arrow-json = { version = "55.1.0" }
 arrow-schema = { version = "55.1.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
+byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
 comfy-table = { version = "7.0" }
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -96,7 +97,7 @@ geo = "0.31.0"
 
 geo-index = { version = "0.3.1" }
 
-wkb = { version = "0.9.0" }
+wkb = { version = "0.9.1" }
 wkt = "0.14.0"
 
 parking_lot = "0.12"
@@ -130,3 +131,4 @@ datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.gi
 
 # geo-index = { git = "https://github.com/Kontinuation/geo-index.git", branch = "geo-0.31.0" }
 geo-index = { path = "/Users/bopeng/workspace/github/geo-index" }
+wkb = { path = "/Users/bopeng/workspace/github/wkb.worktrees/main" }

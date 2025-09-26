@@ -44,3 +44,5 @@ mod triangle;
 
 pub use type_tag::*;
 mod type_tag;
+
+pub mod wkb_ext;

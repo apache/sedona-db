@@ -2668,9 +2668,11 @@ dependencies = [
 name = "geo-traits-ext"
 version = "0.2.0"
 dependencies = [
+ "byteorder",
  "geo-traits",
  "geo-types",
  "num-traits",
+ "wkb",
 ]
 
 [[package]]
@@ -6437,9 +6439,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wkb"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff9eff6aebac4c64f9c7c057a68f6359284e2a80acf102dffe041fe219b3a082"
+version = "0.9.1"
 dependencies = [
  "byteorder",
  "geo-traits",
