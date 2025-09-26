@@ -29,7 +29,8 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::writer::write_geometry;
+use wkb::writer::{write_geometry, WriteOptions};
+use wkb::Endianness;
 use wkt::Wkt;
 
 use crate::executor::WkbExecutor;
@@ -128,8 +129,14 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
     let geometry: Wkt<f64> = Wkt::from_str(wkt_bytes)
         .map_err(|err| DataFusionError::Internal(format!("WKT parse error: {err}")))?;
 
-    write_geometry(builder, &geometry, wkb::Endianness::LittleEndian)
-        .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
+    write_geometry(
+        builder,
+        &geometry,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
 }
 
 #[cfg(test)]
