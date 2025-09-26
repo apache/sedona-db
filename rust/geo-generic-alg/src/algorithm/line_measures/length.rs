@@ -1,5 +1,5 @@
 use super::Distance;
-use crate::{CoordFloat, Line, LineString, MultiLineString, Point};
+use crate::{CoordFloat, Point};
 use geo_traits::{CoordTrait, PolygonTrait};
 use geo_traits_ext::*;
 use std::borrow::Borrow;
@@ -359,6 +359,8 @@ mod tests {
 
     // Tests for LengthMeasurableExt - adapted from euclidean_length.rs
     mod length_measurable_ext_tests {
+        use geo::LineString;
+
         use super::*;
         use crate::{
             coord, line_string, polygon, Geometry, GeometryCollection, Line, MultiLineString,

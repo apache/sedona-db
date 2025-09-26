@@ -34,14 +34,17 @@ macro_rules! forward_geometry_collection_trait_ext_funcs {
         where
             Self: '__gc_inner;
 
+        #[inline]
         fn geometry_ext(&self, i: usize) -> Option<Self::GeometryTypeExt<'_>> {
             <Self as GeometryCollectionTrait>::geometry(self, i)
         }
 
+        #[inline]
         unsafe fn geometry_unchecked_ext(&self, i: usize) -> Self::GeometryTypeExt<'_> {
             unsafe { <Self as GeometryCollectionTrait>::geometry_unchecked(self, i) }
         }
 
+        #[inline]
         fn geometries_ext(&self) -> impl Iterator<Item = Self::GeometryTypeExt<'_>> {
             <Self as GeometryCollectionTrait>::geometries(self)
         }

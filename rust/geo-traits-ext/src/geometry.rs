@@ -63,11 +63,13 @@ where
         Self: 'a;
 
     /// Returns true if this geometry is a GeometryCollection
+    #[inline]
     fn is_collection(&self) -> bool {
         matches!(self.as_type(), GeometryType::GeometryCollection(_))
     }
 
     /// Returns the number of geometries inside this GeometryCollection
+    #[inline]
     fn num_geometries_ext(&self) -> usize {
         let GeometryType::GeometryCollection(gc) = self.as_type() else {
             panic!("Not a GeometryCollection");

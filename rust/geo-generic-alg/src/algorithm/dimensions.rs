@@ -2,7 +2,7 @@ use core::borrow::Borrow;
 use geo_traits_ext::*;
 
 use crate::Orientation::Collinear;
-use crate::{CoordNum, GeoNum, GeometryCow};
+use crate::{CoordNum, GeoNum};
 
 /// Geometries can have 0, 1, or two dimensions. Or, in the case of an [`empty`](#is_empty)
 /// geometry, a special `Empty` dimensionality.
@@ -130,14 +130,6 @@ pub trait HasDimensions {
     /// assert_eq!(Dimensions::Empty, geometry_collection.boundary_dimensions());
     /// ```
     fn boundary_dimensions(&self) -> Dimensions;
-}
-
-impl<C: GeoNum> HasDimensions for GeometryCow<'_, C> {
-    crate::geometry_cow_delegate_impl! {
-        fn is_empty(&self) -> bool;
-        fn dimensions(&self) -> Dimensions;
-        fn boundary_dimensions(&self) -> Dimensions;
-    }
 }
 
 impl<G> HasDimensions for G

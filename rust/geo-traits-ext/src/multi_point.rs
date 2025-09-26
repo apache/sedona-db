@@ -28,6 +28,7 @@ where
     /// # Safety
     /// The caller must ensure that `i` is a valid index less than the number of points.
     /// Otherwise, this function may cause undefined behavior.
+    #[inline]
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<<Self as GeometryTrait>::T>> {
         let point = unsafe { self.point_unchecked_ext(i) };
         point.coord_ext().map(|c| c.geo_coord())
@@ -35,6 +36,7 @@ where
 
     fn points_ext(&self) -> impl DoubleEndedIterator<Item = Self::PointTypeExt<'_>>;
 
+    #[inline]
     fn coord_iter(&self) -> impl DoubleEndedIterator<Item = Coord<<Self as GeometryTrait>::T>> {
         self.points_ext().flat_map(|p| p.geo_coord())
     }
@@ -48,14 +50,17 @@ macro_rules! forward_multi_point_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn point_ext(&self, i: usize) -> Option<Self::PointTypeExt<'_>> {
             <Self as MultiPointTrait>::point(self, i)
         }
 
+        #[inline]
         unsafe fn point_unchecked_ext(&self, i: usize) -> Self::PointTypeExt<'_> {
             <Self as MultiPointTrait>::point_unchecked(self, i)
         }
 
+        #[inline]
         fn points_ext(&self) -> impl DoubleEndedIterator<Item = Self::PointTypeExt<'_>> {
             <Self as MultiPointTrait>::points(self)
         }

@@ -26,6 +26,7 @@ where
     fn line_strings_ext(&self) -> impl Iterator<Item = Self::LineStringTypeExt<'_>>;
 
     /// True if the MultiLineString is empty or if all of its LineStrings are closed
+    #[inline]
     fn is_closed(&self) -> bool {
         // Note: Unlike JTS et al, we consider an empty MultiLineString as closed.
         self.line_strings_ext().all(|ls| ls.is_closed())
@@ -40,14 +41,17 @@ macro_rules! forward_multi_line_string_trait_ext_funcs {
         where
             Self: '__l_inner;
 
+        #[inline]
         fn line_string_ext(&self, i: usize) -> Option<Self::LineStringTypeExt<'_>> {
             <Self as MultiLineStringTrait>::line_string(self, i)
         }
 
+        #[inline]
         unsafe fn line_string_unchecked_ext(&self, i: usize) -> Self::LineStringTypeExt<'_> {
             <Self as MultiLineStringTrait>::line_string_unchecked(self, i)
         }
 
+        #[inline]
         fn line_strings_ext(&self) -> impl Iterator<Item = Self::LineStringTypeExt<'_>> {
             <Self as MultiLineStringTrait>::line_strings(self)
         }
