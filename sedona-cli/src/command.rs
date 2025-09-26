@@ -70,15 +70,9 @@ impl Command {
             Self::QuietMode(quiet) => {
                 if let Some(quiet) = quiet {
                     print_options.quiet = *quiet;
-                    println!(
-                        "Quiet mode set to {}",
-                        if print_options.quiet { "true" } else { "false" }
-                    );
+                    println!("Quiet mode set to {}", print_options.quiet);
                 } else {
-                    println!(
-                        "Quiet mode is {}",
-                        if print_options.quiet { "true" } else { "false" }
-                    );
+                    println!("Quiet mode is {}", print_options.quiet);
                 }
                 Ok(())
             }
@@ -101,7 +95,7 @@ impl Command {
 
     fn get_name_and_description(&self) -> (&'static str, &'static str) {
         match self {
-            Self::Quit => ("\\q", "quit datafusion-cli"),
+            Self::Quit => ("\\q", "quit sedonadb-cli"),
             Self::ListTables => ("\\d", "list tables"),
             Self::DescribeTableStmt(_) => ("\\d name", "describe table"),
             Self::Help => ("\\?", "help"),
