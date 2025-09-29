@@ -55,6 +55,11 @@ NULL
 }
 
 
+`configure_proj_shared` <- function(`shared_library_path` = NULL, `database_path` = NULL, `search_path` = NULL) {
+  invisible(.Call(savvy_configure_proj_shared__impl, `shared_library_path`, `database_path`, `search_path`))
+}
+
+
 `init_r_runtime_interrupts` <- function(`interrupts_call`, `pkg_env`) {
   invisible(.Call(savvy_init_r_runtime_interrupts__impl, `interrupts_call`, `pkg_env`))
 }
@@ -217,3 +222,4 @@ class(`InternalDataFrame`) <- c("InternalDataFrame__bundle", "savvy_sedonadb__se
 `print.InternalDataFrame__bundle` <- function(x, ...) {
   cat('InternalDataFrame\n')
 }
+
