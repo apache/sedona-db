@@ -15,10 +15,5 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Include the default toolchain if needed
-if(CMAKE_TOOLCHAIN_FILE)
-  include("${CMAKE_TOOLCHAIN_FILE}")
-endif()
-
 # Set the maximum object path length
 set(CMAKE_OBJECT_PATH_MAX 1024)
