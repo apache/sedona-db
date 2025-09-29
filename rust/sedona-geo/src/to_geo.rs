@@ -129,11 +129,6 @@ mod tests {
         let err = item_to_geometry(unsupported).unwrap_err();
         assert!(err.message().starts_with("geo kernel implementation"));
 
-        let unsupported =
-            Wkt::from_str("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))").unwrap();
-        let err = item_to_geometry(unsupported).unwrap_err();
-        assert!(err.message().starts_with("geo kernel implementation"));
-
         let unsupported = Wkt::from_str("GEOMETRYCOLLECTION (POINT EMPTY)").unwrap();
         let err = item_to_geometry(unsupported).unwrap_err();
         assert!(err.message().starts_with("geo kernel implementation"));
@@ -148,7 +143,8 @@ mod tests {
             "MULTIPOINT (1 2, 3 4)",
             "MULTILINESTRING ((1 2, 3 4))",
             "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))",
-            "GEOMETRYCOLLECTION(POINT (1 2))"
+            "GEOMETRYCOLLECTION(POINT (1 2))",
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))"
         )]
         wkt_value: &str,
     ) {
@@ -166,6 +162,7 @@ mod tests {
             Some("MULTILINESTRING ((1 2, 3 4))"),
             Some("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))"),
             Some("GEOMETRYCOLLECTION(POINT (1 2))"),
+            Some("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION(POINT (1 2)))"),
             None,
         ];
         let args = vec![ColumnarValue::Array(create_array_storage(

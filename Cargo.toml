@@ -58,6 +58,7 @@ rust-version = "1.82"
 approx = "0.5"
 abi_stable = "0.11.3"
 adbc_core = "0.20.0"
+adbc_ffi = "0.20.0"
 lru = "0.12"
 arrow = { version = "55.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "55.1.0" }
@@ -129,6 +130,7 @@ datafusion-ffi = { git = "https://github.com/paleolimbot/datafusion.git", branch
 datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-expr" }
 datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
 
-# geo-index = { git = "https://github.com/Kontinuation/geo-index.git", branch = "geo-0.31.0" }
-geo-index = { path = "/Users/bopeng/workspace/github/geo-index" }
-wkb = { path = "/Users/bopeng/workspace/github/wkb.worktrees/main" }
+geo-index = { git = "https://github.com/Kontinuation/geo-index.git", branch = "geo-0.31.0" }
+# geo-index = { path = "/Users/bopeng/workspace/github/geo-index" }
+wkb = { git = "https://github.com/Kontinuation/wkb", branch = "expose-more-apis" }
+# wkb = { path = "/Users/bopeng/workspace/github/wkb.worktrees/main" }

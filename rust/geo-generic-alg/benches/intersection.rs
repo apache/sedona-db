@@ -4,8 +4,8 @@ use geo_generic_alg::{intersects::Intersects, Centroid};
 use geo_traits::to_geo::ToGeoGeometry;
 use geo_types::Geometry;
 
-#[path = "utils/wkb.rs"]
-mod wkb;
+#[path = "utils/wkb_util.rs"]
+mod wkb_util;
 
 fn multi_polygon_intersection(c: &mut Criterion) {
     let plot_polygons: MultiPolygon = geo_test_fixtures::nl_plots_wgs84();
@@ -32,6 +32,26 @@ fn multi_polygon_intersection(c: &mut Criterion) {
             assert_eq!(non_intersects, 27782);
         });
     });
+
+    c.bench_function("MultiPolygon intersects geo", |bencher| {
+        bencher.iter(|| {
+            let mut intersects = 0;
+            let mut non_intersects = 0;
+
+            for a in &plot_geoms {
+                for b in &zone_geoms {
+                    if criterion::black_box(geo::Intersects::intersects(b, a)) {
+                        intersects += 1;
+                    } else {
+                        non_intersects += 1;
+                    }
+                }
+            }
+
+            assert_eq!(intersects, 974);
+            assert_eq!(non_intersects, 27782);
+        });
+    });
 }
 
 fn multi_polygon_intersection_wkb(c: &mut Criterion) {
@@ -41,11 +61,11 @@ fn multi_polygon_intersection_wkb(c: &mut Criterion) {
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
     let mut zone_polygon_wkbs = Vec::new();
-    for plot_polygon in &plot_polygons {
-        plot_polygon_wkbs.push(wkb::geo_to_wkb(plot_polygon));
+    for plot_polygon in plot_polygons {
+        plot_polygon_wkbs.push(wkb_util::geo_to_wkb(plot_polygon));
     }
-    for zone_polygon in &zone_polygons {
-        zone_polygon_wkbs.push(wkb::geo_to_wkb(zone_polygon));
+    for zone_polygon in zone_polygons {
+        zone_polygon_wkbs.push(wkb_util::geo_to_wkb(zone_polygon));
     }
 
     c.bench_function("MultiPolygon intersects wkb", |bencher| {
@@ -55,8 +75,8 @@ fn multi_polygon_intersection_wkb(c: &mut Criterion) {
 
             for a in &plot_polygon_wkbs {
                 for b in &zone_polygon_wkbs {
-                    let a_geom = geo_generic_tests::wkb::reader::read_wkb(a).unwrap(); // Skip padding
-                    let b_geom = geo_generic_tests::wkb::reader::read_wkb(b).unwrap(); // Skip padding
+                    let a_geom = wkb::reader::read_wkb(a).unwrap(); // Skip padding
+                    let b_geom = wkb::reader::read_wkb(b).unwrap(); // Skip padding
                     if criterion::black_box(b_geom.intersects(&a_geom)) {
                         intersects += 1;
                     } else {
@@ -78,14 +98,14 @@ fn multi_polygon_intersection_wkb_aligned(c: &mut Criterion) {
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
     let mut zone_polygon_wkbs = Vec::new();
-    for plot_polygon in &plot_polygons {
+    for plot_polygon in plot_polygons {
         let mut wkb = vec![0, 0, 0]; // Add 3-byte padding
-        wkb.extend_from_slice(&wkb::geo_to_wkb(plot_polygon));
+        wkb.extend_from_slice(&wkb_util::geo_to_wkb(plot_polygon));
         plot_polygon_wkbs.push(wkb);
     }
-    for zone_polygon in &zone_polygons {
+    for zone_polygon in zone_polygons {
         let mut wkb = vec![0, 0, 0]; // Add 3-byte padding
-        wkb.extend_from_slice(&wkb::geo_to_wkb(zone_polygon));
+        wkb.extend_from_slice(&wkb_util::geo_to_wkb(zone_polygon));
         zone_polygon_wkbs.push(wkb);
     }
 
@@ -96,8 +116,8 @@ fn multi_polygon_intersection_wkb_aligned(c: &mut Criterion) {
 
             for a in &plot_polygon_wkbs {
                 for b in &zone_polygon_wkbs {
-                    let a_geom = geo_generic_tests::wkb::reader::read_wkb(&a[3..]).unwrap(); // Skip padding
-                    let b_geom = geo_generic_tests::wkb::reader::read_wkb(&b[3..]).unwrap(); // Skip padding
+                    let a_geom = wkb::reader::read_wkb(&a[3..]).unwrap(); // Skip padding
+                    let b_geom = wkb::reader::read_wkb(&b[3..]).unwrap(); // Skip padding
                     if criterion::black_box(b_geom.intersects(&a_geom)) {
                         intersects += 1;
                     } else {
@@ -119,11 +139,11 @@ fn multi_polygon_intersection_wkb_conv(c: &mut Criterion) {
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
     let mut zone_polygon_wkbs = Vec::new();
-    for plot_polygon in &plot_polygons {
-        plot_polygon_wkbs.push(wkb::geo_to_wkb(plot_polygon));
+    for plot_polygon in plot_polygons {
+        plot_polygon_wkbs.push(wkb_util::geo_to_wkb(plot_polygon));
     }
-    for zone_polygon in &zone_polygons {
-        zone_polygon_wkbs.push(wkb::geo_to_wkb(zone_polygon));
+    for zone_polygon in zone_polygons {
+        zone_polygon_wkbs.push(wkb_util::geo_to_wkb(zone_polygon));
     }
 
     c.bench_function("MultiPolygon intersects wkb conv", |bencher| {
@@ -133,8 +153,8 @@ fn multi_polygon_intersection_wkb_conv(c: &mut Criterion) {
 
             for a in &plot_polygon_wkbs {
                 for b in &zone_polygon_wkbs {
-                    let a_geom = geo_generic_tests::wkb::reader::read_wkb(a).unwrap();
-                    let b_geom = geo_generic_tests::wkb::reader::read_wkb(b).unwrap();
+                    let a_geom = wkb::reader::read_wkb(a).unwrap();
+                    let b_geom = wkb::reader::read_wkb(b).unwrap();
                     let a_geom = a_geom.to_geometry();
                     let b_geom = b_geom.to_geometry();
                     if criterion::black_box(b_geom.intersects(&a_geom)) {
@@ -172,6 +192,16 @@ fn point_polygon_intersection(c: &mut Criterion) {
             }
         });
     });
+
+    c.bench_function("Point polygon intersects geo", |bencher| {
+        bencher.iter(|| {
+            for a in &plot_geoms {
+                for b in &zone_geoms {
+                    criterion::black_box(geo::Intersects::intersects(b, a));
+                }
+            }
+        });
+    });
 }
 
 fn point_polygon_intersection_wkb(c: &mut Criterion) {
@@ -181,20 +211,20 @@ fn point_polygon_intersection_wkb(c: &mut Criterion) {
     // Convert intersected polygons to WKB
     let mut plot_centroid_wkbs = Vec::new();
     let mut zone_polygon_wkbs = Vec::new();
-    for plot_polygon in &plot_polygons {
+    for plot_polygon in plot_polygons {
         let centroid = plot_polygon.centroid().unwrap();
-        plot_centroid_wkbs.push(wkb::geo_to_wkb(centroid));
+        plot_centroid_wkbs.push(wkb_util::geo_to_wkb(centroid));
     }
-    for zone_polygon in &zone_polygons {
-        zone_polygon_wkbs.push(wkb::geo_to_wkb(zone_polygon));
+    for zone_polygon in zone_polygons {
+        zone_polygon_wkbs.push(wkb_util::geo_to_wkb(zone_polygon));
     }
 
     c.bench_function("Point polygon intersects wkb", |bencher| {
         bencher.iter(|| {
             for a in &plot_centroid_wkbs {
                 for b in &zone_polygon_wkbs {
-                    let a_geom = geo_generic_tests::wkb::reader::read_wkb(a).unwrap();
-                    let b_geom = geo_generic_tests::wkb::reader::read_wkb(b).unwrap();
+                    let a_geom = wkb::reader::read_wkb(a).unwrap();
+                    let b_geom = wkb::reader::read_wkb(b).unwrap();
                     criterion::black_box(b_geom.intersects(&a_geom));
                 }
             }
@@ -209,20 +239,20 @@ fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
     // Convert intersected polygons to WKB
     let mut plot_centroid_wkbs = Vec::new();
     let mut zone_polygon_wkbs = Vec::new();
-    for plot_polygon in &plot_polygons {
+    for plot_polygon in plot_polygons {
         let centroid = plot_polygon.centroid().unwrap();
-        plot_centroid_wkbs.push(wkb::geo_to_wkb(centroid));
+        plot_centroid_wkbs.push(wkb_util::geo_to_wkb(centroid));
     }
-    for zone_polygon in &zone_polygons {
-        zone_polygon_wkbs.push(wkb::geo_to_wkb(zone_polygon));
+    for zone_polygon in zone_polygons {
+        zone_polygon_wkbs.push(wkb_util::geo_to_wkb(zone_polygon));
     }
 
     c.bench_function("Point polygon intersects wkb conv", |bencher| {
         bencher.iter(|| {
             for a in &plot_centroid_wkbs {
                 for b in &zone_polygon_wkbs {
-                    let a_geom = geo_generic_tests::wkb::reader::read_wkb(a).unwrap();
-                    let b_geom = geo_generic_tests::wkb::reader::read_wkb(b).unwrap();
+                    let a_geom = wkb::reader::read_wkb(a).unwrap();
+                    let b_geom = wkb::reader::read_wkb(b).unwrap();
                     let a_geom = a_geom.to_geometry();
                     let b_geom = b_geom.to_geometry();
                     criterion::black_box(b_geom.intersects(&a_geom));
@@ -299,7 +329,7 @@ fn point_rect_intersection(c: &mut Criterion) {
 }
 
 fn point_triangle_intersection(c: &mut Criterion) {
-    use geo_generic_alg::algorithm::{Centroid, TriangulateEarcut};
+    use geo::algorithm::TriangulateEarcut;
     use geo_generic_alg::{Point, Triangle};
     let plot_centroids: Vec<Point> = geo_test_fixtures::nl_plots_wgs84()
         .iter()
