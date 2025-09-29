@@ -206,6 +206,6 @@ void R_init_sedonadb(DllInfo *dll) {
   R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
   R_useDynamicSymbols(dll, FALSE);
 
-  // Functions for initialzation, if any.
+  // Functions for initialization, if any.
   savvy_init_r_runtime__impl(dll);
 }
