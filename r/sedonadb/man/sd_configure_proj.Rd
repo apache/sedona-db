@@ -18,7 +18,8 @@ sd_configure_proj(
 option on MacOS.
 \item \code{"system"}: Look for PROJ in the platform library load path (e.g.,
 after installing system proj on Linux).
-\item \code{"auto"}: Display a warning
+\item \code{"auto"}: Try all presets in the order listed above, issuing a warning
+if none can be configured.
 }}
 
 \item{shared_library}{An absolute or relative path to a shared library

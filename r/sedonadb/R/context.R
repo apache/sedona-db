@@ -107,7 +107,8 @@ global_ctx$ctx <- NULL
 #'     option on MacOS.
 #'   - `"system"`: Look for PROJ in the platform library load path (e.g.,
 #'     after installing system proj on Linux).
-#'   - `"auto"`: Display a warning
+#'   - `"auto"`: Try all presets in the order listed above, issuing a warning
+#'     if none can be configured.
 #' @param shared_library An absolute or relative path to a shared library
 #'   valid for the platform.
 #' @param database_path A path to proj.db
