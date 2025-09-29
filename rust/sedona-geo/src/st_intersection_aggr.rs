@@ -31,9 +31,9 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::Wkb;
 use wkb::writer::write_geometry;
 use wkb::Endianness;
+use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Intersection_Aggr() implementation
 pub fn st_intersection_aggr_impl() -> SedonaAccumulatorRef {
@@ -133,7 +133,13 @@ impl IntersectionAccumulator {
 
     fn geometry_to_wkb(&self, geom: &geo::Geometry) -> Option<Vec<u8>> {
         let mut wkb_bytes = Vec::new();
-        match write_geometry(&mut wkb_bytes, geom, Endianness::LittleEndian) {
+        match write_geometry(
+            &mut wkb_bytes,
+            geom,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        ) {
             Ok(_) => Some(wkb_bytes),
             Err(_) => None,
         }

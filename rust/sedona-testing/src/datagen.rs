@@ -40,6 +40,8 @@ use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 use std::f64::consts::PI;
 use std::sync::Arc;
+use wkb::writer::WriteOptions;
+use wkb::Endianness;
 
 /// Builder for generating test data partitions with random geometries.
 ///
@@ -502,7 +504,14 @@ fn generate_random_wkb<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOption
 
     // Convert geometry to WKB
     let mut out: Vec<u8> = vec![];
-    wkb::writer::write_geometry(&mut out, &geometry, Default::default()).unwrap();
+    wkb::writer::write_geometry(
+        &mut out,
+        &geometry,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .unwrap();
     out
 }
 

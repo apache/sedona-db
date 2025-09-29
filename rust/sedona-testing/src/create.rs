@@ -20,6 +20,7 @@ use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
 use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
 use sedona_schema::datatypes::SedonaType;
+use wkb::{writer::WriteOptions, Endianness};
 use wkt::Wkt;
 
 /// Create a [`ColumnarValue`] array from a sequence of WKT literals
@@ -86,7 +87,14 @@ where
 pub fn make_wkb(wkt_value: &str) -> Vec<u8> {
     let geom = Wkt::<f64>::from_str(wkt_value).unwrap();
     let mut out: Vec<u8> = vec![];
-    wkb::writer::write_geometry(&mut out, &geom, Default::default()).unwrap();
+    wkb::writer::write_geometry(
+        &mut out,
+        &geom,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .unwrap();
     out
 }
 

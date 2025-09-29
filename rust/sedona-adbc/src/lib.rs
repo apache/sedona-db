@@ -21,7 +21,6 @@ pub mod database;
 pub mod driver;
 pub mod statement;
 
-use adbc_core::error::{Error, Status};
 use driver::SedonaDriver;
 
-adbc_core::export_driver!(AdbcSedonadbDriverInit, SedonaDriver);
+adbc_ffi::export_driver!(AdbcSedonadbDriverInit, SedonaDriver);

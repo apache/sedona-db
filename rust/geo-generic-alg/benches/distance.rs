@@ -1,9 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use geo_generic_alg::algorithm::line_measures::{Distance, DistanceExt, Euclidean};
+use geo::{Distance as GeoDistance, Euclidean};
+use geo_generic_alg::algorithm::line_measures::DistanceExt;
 use geo_generic_alg::{coord, LineString, MultiPolygon, Point, Polygon};
 
-#[path = "utils/wkb.rs"]
-mod wkb;
+#[path = "utils/wkb_util.rs"]
+mod wkb_util;
 
 // Helper function to create complex polygons with many vertices for stress testing
 fn create_complex_polygon(
@@ -108,12 +109,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("distance_wkb_point_to_point", |bencher| {
         let p1 = Point::new(0.0, 0.0);
         let p2 = Point::new(100.0, 100.0);
-        let wkb_bytes1 = wkb::geo_to_wkb(p1);
-        let wkb_bytes2 = wkb::geo_to_wkb(p2);
+        let wkb_bytes1 = wkb_util::geo_to_wkb(p1);
+        let wkb_bytes2 = wkb_util::geo_to_wkb(p2);
 
         bencher.iter(|| {
-            let wkb_geom1 = geo_generic_tests::wkb::reader::read_wkb(&wkb_bytes1).unwrap();
-            let wkb_geom2 = geo_generic_tests::wkb::reader::read_wkb(&wkb_bytes2).unwrap();
+            let wkb_geom1 = wkb::reader::read_wkb(&wkb_bytes1).unwrap();
+            let wkb_geom2 = wkb::reader::read_wkb(&wkb_bytes2).unwrap();
             criterion::black_box(wkb_geom1.distance_ext(&wkb_geom2));
         });
     });
@@ -125,12 +126,12 @@ fn criterion_benchmark(c: &mut Criterion) {
             coord!(x: 200.0, y: 200.0),
             coord!(x: 300.0, y: 300.0),
         ]);
-        let wkb_bytes1 = wkb::geo_to_wkb(&ls1);
-        let wkb_bytes2 = wkb::geo_to_wkb(&ls2);
+        let wkb_bytes1 = wkb_util::geo_to_wkb(ls1);
+        let wkb_bytes2 = wkb_util::geo_to_wkb(ls2);
 
         bencher.iter(|| {
-            let wkb_geom1 = geo_generic_tests::wkb::reader::read_wkb(&wkb_bytes1).unwrap();
-            let wkb_geom2 = geo_generic_tests::wkb::reader::read_wkb(&wkb_bytes2).unwrap();
+            let wkb_geom1 = wkb::reader::read_wkb(&wkb_bytes1).unwrap();
+            let wkb_geom2 = wkb::reader::read_wkb(&wkb_bytes2).unwrap();
             criterion::black_box(wkb_geom1.distance_ext(&wkb_geom2));
         });
     });
@@ -187,7 +188,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         bencher.iter(|| {
             criterion::black_box(
-                Euclidean.distance(criterion::black_box(&ls1), criterion::black_box(&ls2)),
+                geo::Euclidean.distance(criterion::black_box(&ls1), criterion::black_box(&ls2)),
             );
         });
     });

@@ -61,6 +61,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "adbc_ffi"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c30e0f28a8363a76a8ec802934223ea5811ea658308c7403c8beb9aa86fa808f"
+dependencies = [
+ "adbc_core",
+ "arrow-array",
+ "arrow-schema",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2619,7 +2630,6 @@ dependencies = [
  "geo-traits",
  "geo-traits-ext",
  "geo-types",
- "geos",
  "i_overlay",
  "log",
  "num-traits",
@@ -2629,12 +2639,14 @@ dependencies = [
  "robust",
  "rstar",
  "serde",
+ "wkb",
  "wkt 0.14.0",
 ]
 
 [[package]]
 name = "geo-index"
 version = "0.3.1"
+source = "git+https://github.com/Kontinuation/geo-index.git?branch=geo-0.31.0#bb50e17c9bf921e147de72e826d4d924c4c298cf"
 dependencies = [
  "bytemuck",
  "float_next_after",
@@ -4860,6 +4872,7 @@ name = "sedona-adbc"
 version = "0.2.0"
 dependencies = [
  "adbc_core",
+ "adbc_ffi",
  "arrow-array",
  "arrow-schema",
  "datafusion",
@@ -5043,6 +5056,7 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "geo",
  "geo-traits",
  "geos",
  "rstest",
@@ -5131,6 +5145,7 @@ dependencies = [
  "datafusion-physical-plan",
  "float_next_after",
  "futures",
+ "geo",
  "geo-generic-alg",
  "geo-index",
  "geo-traits",
@@ -6442,6 +6457,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 [[package]]
 name = "wkb"
 version = "0.9.1"
+source = "git+https://github.com/Kontinuation/wkb?branch=expose-more-apis#6bf1a6bbe489f83f633f69cbef6a11ecce844381"
 dependencies = [
  "byteorder",
  "geo-traits",

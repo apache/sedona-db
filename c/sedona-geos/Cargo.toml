@@ -31,6 +31,7 @@ criterion = { workspace = true }
 sedona = { path = "../../rust/sedona" }
 sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
 rstest = { workspace = true }
+geo = { workspace = true }
 
 [dependencies]
 arrow-schema = { workspace = true }
@@ -49,3 +50,7 @@ byteorder = { workspace = true }
 [[bench]]
 harness = false
 name = "geos-functions"
+
+[[bench]]
+harness = false
+name = "wkb_to_geos"
