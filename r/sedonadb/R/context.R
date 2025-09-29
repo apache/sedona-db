@@ -118,12 +118,12 @@ global_ctx$ctx <- NULL
 #' @export
 #'
 #' @examples
-#' configure_proj("auto")
+#' sd_configure_proj("auto")
 #'
-configure_proj <- function(preset = NULL,
-                           shared_library = NULL,
-                           database_path = NULL,
-                           search_path = NULL) {
+sd_configure_proj <- function(preset = NULL,
+                              shared_library = NULL,
+                             database_path = NULL,
+                             search_path = NULL) {
   if (!is.null(preset)) {
     switch (preset,
       homebrew = {
@@ -138,7 +138,7 @@ configure_proj <- function(preset = NULL,
         presets <- c("homebrew", "system")
         errors <- c()
         for (preset in presets) {
-          maybe_err <- try(configure_proj(preset), silent = TRUE)
+          maybe_err <- try(sd_configure_proj(preset), silent = TRUE)
           if (inherits(maybe_err, "try-error")) {
             errors <- c(errors, sprintf("%s: %s", preset, maybe_err))
           }
@@ -183,7 +183,7 @@ configure_proj <- function(preset = NULL,
 }
 
 configure_proj_system <- function() {
-  configure_proj(shared_library = proj_dll_name())
+  sd_configure_proj(shared_library = proj_dll_name())
 }
 
 configure_proj_prefix <- function(prefix) {
@@ -191,7 +191,7 @@ configure_proj_prefix <- function(prefix) {
     stop(sprintf("Can't configure PROJ from prefix '%s': does not exist", prefix))
   }
 
-  configure_proj(
+  sd_configure_proj(
     shared_library = file.path(prefix, "lib", proj_dll_name()),
     database_path = file.path(prefix, "share", "proj", "proj.db"),
     search_path = file.path(prefix, "share", "proj")

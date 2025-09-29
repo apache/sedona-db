@@ -42,17 +42,17 @@ test_that("views can be created and dropped", {
 
 test_that("configure_proj() errors for invalid inputs", {
   expect_error(
-    configure_proj("not a preset"),
+    sd_configure_proj("not a preset"),
     "Unknown preset"
   )
 
   expect_error(
-    configure_proj(database_path = "file that does not exist"),
+    sd_configure_proj(database_path = "file that does not exist"),
     "Invalid database path"
   )
 
   expect_error(
-    configure_proj(search_path = "dir that does not exist"),
+    sd_configure_proj(search_path = "dir that does not exist"),
     "Invalid search path"
   )
 })
