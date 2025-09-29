@@ -34,6 +34,7 @@ sedona = { path = "../../../../rust/sedona" }
 sedona-adbc = { path = "../../../../rust/sedona-adbc" }
 sedona-expr = { path = "../../../../rust/sedona-expr" }
 sedona-geoparquet = { path = "../../../../rust/sedona-geoparquet" }
+sedona-proj = { path = "../../../../c/sedona-proj" }
 sedona-schema = { path = "../../../../rust/sedona-schema" }
 thiserror = { workspace = true }
 tokio = { workspace = true }
