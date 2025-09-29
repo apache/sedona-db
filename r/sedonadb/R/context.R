@@ -93,3 +93,116 @@ ctx <- function() {
 
 global_ctx <- new.env(parent = emptyenv())
 global_ctx$ctx <- NULL
+
+
+
+#' Configure PROJ
+#'
+#' Performs a runtime configuration of PROJ, which can be used in place of
+#' a build-time linked version of PROJ or to add in support if PROJ was
+#' not linked at build time.
+#'
+#' @param preset One of:
+#'   - `"homebrew"`: Look for PROJ installed by Homebrew. This is the easiest
+#'     option on MacOS.
+#'   - `"system"`: Look for PROJ in the platform library load path (e.g.,
+#'     after installing system proj on Linux).
+#'   - `"auto"`: Display a warning
+#' @param shared_library An absolute or relative path to a shared library
+#'   valid for the platform.
+#' @param database_path A path to proj.db
+#' @param search_path A path to the data files required by PROJ for some
+#'   transforms.
+#'
+#' @returns NULL, invisibly
+#' @export
+#'
+#' @examples
+#' configure_proj("auto")
+#'
+configure_proj <- function(preset = NULL,
+                           shared_library = NULL,
+                           database_path = NULL,
+                           search_path = NULL) {
+  if (!is.null(preset)) {
+    switch (preset,
+      homebrew = {
+        configure_proj_prefix(Sys.getenv("HOMEBREW_PREFIX", "/opt/homebrew"))
+        return(invisible(NULL))
+      },
+      system = {
+        configure_proj_system()
+        return(invisible(NULL))
+      },
+      auto = {
+        presets <- c("homebrew", "system")
+        errors <- c()
+        for (preset in presets) {
+          maybe_err <- try(configure_proj(preset), silent = TRUE)
+          if (inherits(maybe_err, "try-error")) {
+            errors <- c(errors, sprintf("%s: %s", preset, maybe_err))
+          }
+
+          return(invisible(NULL))
+        }
+
+        packageStartupMessage(
+          sprintf(
+            "Failed to configure PROJ (tried %s):\n%s",
+            paste0("'", presets, "'", collapse = ", "),
+            paste0(errors, collapse = "\n")
+          )
+        )
+
+        return(invisible(NULL))
+      },
+      stop(sprintf("Unknown preset: '%s'", preset))
+    )
+  }
+
+  # We could check a shared library with dyn.load(), but this may error for
+  # valid system PROJ that isn't an absolute filename.
+
+  if (!is.null(database_path)) {
+    if (!file.exists(database_path)) {
+      stop(sprintf("Invalid database path: '%s' does not exist", database_path))
+    }
+  }
+
+  if (!is.null(search_path)) {
+    if (!dir.exists(search_path)) {
+      stop(sprintf("Invalid search path: '%s' does not exist", search_path))
+    }
+  }
+
+  configure_proj_shared(
+    shared_library_path = shared_library,
+    database_path = database_path,
+    search_path = search_path
+  )
+}
+
+configure_proj_system <- function() {
+  configure_proj(shared_library = proj_dll_name())
+}
+
+configure_proj_prefix <- function(prefix) {
+  if (!dir.exists(prefix)) {
+    stop(sprintf("Can't configure PROJ from prefix '%s': does not exist", prefix))
+  }
+
+  configure_proj(
+    shared_library = file.path(prefix, "lib", proj_dll_name()),
+    database_path = file.path(prefix, "share", "proj", "proj.db"),
+    search_path = file.path(prefix, "share", "proj")
+  )
+}
+
+proj_dll_name <- function() {
+  switch(tolower(Sys.info()[["sysname"]]),
+    windows = "proj.dll",
+    darwin = "libproj.dylib",
+    linux = "libproj.so",
+    stop(sprintf("Can't determine system PROJ shared library name for OS"))
+  )
+}
