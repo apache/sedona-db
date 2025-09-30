@@ -130,7 +130,6 @@ datafusion-ffi = { git = "https://github.com/paleolimbot/datafusion.git", branch
 datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-expr" }
 datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
 
+# TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
 geo-index = { git = "https://github.com/Kontinuation/geo-index.git", branch = "geo-0.31.0" }
-# geo-index = { path = "/Users/bopeng/workspace/github/geo-index" }
 wkb = { git = "https://github.com/Kontinuation/wkb", branch = "expose-more-apis" }
-# wkb = { path = "/Users/bopeng/workspace/github/wkb.worktrees/main" }

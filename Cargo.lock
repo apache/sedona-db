@@ -6457,7 +6457,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 [[package]]
 name = "wkb"
 version = "0.9.1"
-source = "git+https://github.com/Kontinuation/wkb?branch=expose-more-apis#6bf1a6bbe489f83f633f69cbef6a11ecce844381"
+source = "git+https://github.com/Kontinuation/wkb?branch=expose-more-apis#4ac8980161aa8502154bfabf4012d7d5b6ac91ba"
 dependencies = [
  "byteorder",
  "geo-traits",
