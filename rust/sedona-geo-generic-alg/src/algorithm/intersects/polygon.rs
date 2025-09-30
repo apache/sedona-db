@@ -90,11 +90,49 @@ where
         if let (Some(self_exterior), Some(polygon_exterior)) =
             (self.exterior_ext(), polygon.exterior_ext())
         {
-            // self intersects (or contains) any line in polygon
-            self.intersects_trait(&polygon_exterior) ||
-            polygon.interiors_ext().any(|inner_line_string| self.intersects_trait(&inner_line_string)) ||
-            // self is contained inside polygon
-            polygon.intersects_trait(&self_exterior)
+            // if there are no line intersections among exteriors and interiors,
+            // then either one fully contains the other
+            // or they are disjoint
+
+            // check 1 point of each polygon being within the other
+            self_exterior.coord_iter().take(1).any(|p| polygon.intersects_trait(&p))
+                || polygon_exterior.coord_iter().take(1).any(|p| self.intersects_trait(&p))
+                // exterior exterior
+                || self_exterior
+                    .lines()
+                    .any(|self_line| polygon_exterior.lines().any(|poly_line| self_line.intersects_trait(&poly_line)))
+                // exterior interior
+                || self
+                    .interiors_ext()
+                    .any(|inner_line_string| polygon_exterior.intersects_trait(&inner_line_string))
+                || polygon
+                    .interiors_ext()
+                    .any(|inner_line_string| self_exterior.intersects_trait(&inner_line_string))
+
+            // interior interior (not needed)
+            /*
+            suppose interior-interior is a required check
+            this requires that there are no ext-ext intersections
+            and that there are no ext-int intersections
+            and that self-ext[0] not intersects other
+            and other-ext[0] not intersects self
+            and there is some intersection between self and other
+
+            if ext-ext disjoint, then one ext ring must be within the other ext ring
+
+            suppose self-ext is within other-ext and self-ext[0] is not intersects other
+            then self-ext[0] must be within an interior hole of other-ext
+            if self-ext does not intersect the interior ring which contains self-ext[0],
+            then self is contained within other interior hole
+            and hence self and other cannot intersect
+            therefore for self to intersect other, some part of the self-ext must intersect the other-int ring
+            However, this is a contradiction because one of the premises for requiring this check is that self-ext ring does not intersect any other-int ring
+
+            By symmetry, the mirror case of other-ext ring within self-ext ring is also true
+
+            therefore, if there cannot exist and int-int intersection when all the prior checks are false
+            and so we can skip the interior-interior check
+            */
         } else {
             false
         }
