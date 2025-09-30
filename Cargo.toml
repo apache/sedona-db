@@ -98,7 +98,7 @@ geo = "0.31.0"
 
 geo-index = { version = "0.3.1" }
 
-wkb = { version = "0.9.1" }
+wkb = "0.9.1"
 wkt = "0.14.0"
 
 parking_lot = "0.12"
