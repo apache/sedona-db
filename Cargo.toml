@@ -131,5 +131,5 @@ datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.gi
 datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
 
 # TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
-geo-index = { git = "https://github.com/Kontinuation/geo-index.git", branch = "geo-0.31.0" }
-wkb = { git = "https://github.com/Kontinuation/wkb", branch = "expose-more-apis" }
+geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "geo-0.31.0" }
+wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
