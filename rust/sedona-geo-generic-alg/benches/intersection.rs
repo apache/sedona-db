@@ -50,6 +50,26 @@ fn multi_polygon_intersection(c: &mut Criterion) {
         });
     });
 
+    c.bench_function("MultiPolygon intersects 2", |bencher| {
+        bencher.iter(|| {
+            let mut intersects = 0;
+            let mut non_intersects = 0;
+
+            for a in &plot_geoms {
+                for b in &zone_geoms {
+                    if criterion::black_box(a.intersects(b)) {
+                        intersects += 1;
+                    } else {
+                        non_intersects += 1;
+                    }
+                }
+            }
+
+            assert_eq!(intersects, 974);
+            assert_eq!(non_intersects, 27782);
+        });
+    });
+
     c.bench_function("MultiPolygon intersects geo", |bencher| {
         bencher.iter(|| {
             let mut intersects = 0;
@@ -58,6 +78,26 @@ fn multi_polygon_intersection(c: &mut Criterion) {
             for a in &plot_geoms {
                 for b in &zone_geoms {
                     if criterion::black_box(geo::Intersects::intersects(b, a)) {
+                        intersects += 1;
+                    } else {
+                        non_intersects += 1;
+                    }
+                }
+            }
+
+            assert_eq!(intersects, 974);
+            assert_eq!(non_intersects, 27782);
+        });
+    });
+
+    c.bench_function("MultiPolygon intersects geo 2", |bencher| {
+        bencher.iter(|| {
+            let mut intersects = 0;
+            let mut non_intersects = 0;
+
+            for a in &plot_geoms {
+                for b in &zone_geoms {
+                    if criterion::black_box(geo::Intersects::intersects(a, b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
