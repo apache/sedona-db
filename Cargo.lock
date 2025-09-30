@@ -2646,7 +2646,7 @@ dependencies = [
 [[package]]
 name = "geo-index"
 version = "0.3.1"
-source = "git+https://github.com/Kontinuation/geo-index.git?branch=geo-0.31.0#bb50e17c9bf921e147de72e826d4d924c4c298cf"
+source = "git+https://github.com/wherobots/geo-index.git?branch=geo-0.31.0#bb50e17c9bf921e147de72e826d4d924c4c298cf"
 dependencies = [
  "bytemuck",
  "float_next_after",
@@ -6458,7 +6458,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 [[package]]
 name = "wkb"
 version = "0.9.1"
-source = "git+https://github.com/Kontinuation/wkb?branch=expose-more-apis#4ac8980161aa8502154bfabf4012d7d5b6ac91ba"
+source = "git+https://github.com/georust/wkb.git?rev=130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a#130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a"
 dependencies = [
  "byteorder",
  "geo-traits",
