@@ -69,8 +69,10 @@ pub fn item_to_geometry(geo: impl GeometryTrait<T = f64>) -> Result<Geometry> {
 }
 
 // GeometryCollection causes issues because it has a recursive definition and won't work
-// with cargo run --release. Thus, we need our own version of this that limits the
-// recursion supported in a GeometryCollection.
+// with cargo run --release. Thus, we need our own version of this that works around this
+// problem by processing GeometryCollection using a free function instead of relying
+// on trait resolver.
+// See also https://github.com/geoarrow/geoarrow-rs/pull/956.
 fn to_geometry(item: impl GeometryTrait<T = f64>) -> Option<Geometry> {
     match item.as_type() {
         Point(geom) => geom.try_to_point().map(Geometry::Point),
