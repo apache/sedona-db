@@ -140,11 +140,11 @@ sd_configure_proj <- function(preset = NULL,
         errors <- c()
         for (preset in presets) {
           maybe_err <- try(sd_configure_proj(preset), silent = TRUE)
-          if (inherits(maybe_err, "try-error")) {
+          if (!inherits(maybe_err, "try-error")) {
+            return(invisible(NULL))
+          } else {
             errors <- c(errors, sprintf("%s: %s", preset, maybe_err))
           }
-
-          return(invisible(NULL))
         }
 
         packageStartupMessage(
