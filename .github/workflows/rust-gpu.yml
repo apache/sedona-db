@@ -222,3 +222,22 @@ jobs:
           mkdir build
           cmake --preset=default-with-tests -S . -B build
           cmake --build build --target all
+
+      - name: Build GPU spatial join (with GPU feature)
+        run: |
+          echo "=== Building GPU spatial join package WITH GPU feature ==="
+          echo "Building Rust GPU spatial join (depends on libgpuspatial)"
+          echo ""
+          # Build library only (skip tests - they require CUDA driver)
+          cargo build --locked --package sedona-spatial-join-gpu --lib --features gpu --verbose
+
+      - name: Build entire workspace with GPU features
+        run: |
+          echo "=== Building entire SedonaDB workspace WITH GPU features ==="
+          echo "Verifying GPU packages integrate with rest of codebase"
+          echo ""
+          # Build entire workspace with GPU features enabled
+          # Exclude sedonadb (Python extension, requires maturin)
+          # Exclude sedona-s2geography (has GCC 11 compatibility issues, unrelated to GPU)
+          # Build libs only (skip tests - they require CUDA driver)
+          cargo build --workspace --exclude sedonadb --exclude sedona-s2geography --lib --features gpu --verbose

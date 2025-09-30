@@ -15,11 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-spatial-join"
+name = "sedona-spatial-join-gpu"
 version.workspace = true
+authors.workspace = true
+license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description.workspace = true
+description = "GPU-accelerated spatial join for Apache SedonaDB"
 readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -29,51 +31,50 @@ result_large_err = "allow"
 
 [features]
 default = []
-backtrace = ["datafusion-common/backtrace"]
-gpu = ["sedona-spatial-join-gpu/gpu", "sedona-libgpuspatial/gpu"]
+# Enable GPU acceleration (requires CUDA toolkit and sedona-libgpuspatial with gpu feature)
+gpu = ["sedona-libgpuspatial/gpu"]
 
 [dependencies]
 arrow = { workspace = true }
-arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
-datafusion = { workspace = true, features = ["parquet"] }
-datafusion-catalog = { workspace = true }
+arrow-schema = { workspace = true }
+datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-execution = { workspace = true }
-datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
-once_cell = { workspace = true }
-parking_lot = { workspace = true }
-geo = { workspace = true }
-sedona-geo-generic-alg = { workspace = true }
-geo-traits = { workspace = true, features = ["geo-types"] }
-sedona-geo-traits-ext = { workspace = true }
-geo-types = { workspace = true }
-sedona-common = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-functions = { workspace = true }
-sedona-geo = { workspace = true }
-sedona-geometry = { workspace = true }
-sedona-schema = { workspace = true }
-sedona-tg = { workspace = true }
-sedona-geos = { workspace = true }
-wkb = { workspace = true }
-geo-index = { workspace = true }
-geos = { workspace = true }
-float_next_after = { workspace = true }
+thiserror = { workspace = true }
 log = "0.4"
+parking_lot = { workspace = true }
 
-# GPU spatial join (optional)
-sedona-spatial-join-gpu = { path = "../sedona-spatial-join-gpu", optional = true }
-sedona-libgpuspatial = { path = "../../c/sedona-libgpuspatial", optional = true }
+# Parquet and object store for direct file reading
+parquet = { workspace = true }
+object_store = { workspace = true }
+
+# GPU dependencies
+sedona-libgpuspatial = { path = "../../c/sedona-libgpuspatial" }
+
+# Sedona dependencies
+sedona-common = { path = "../sedona-common" }
 
 [dev-dependencies]
-criterion = { workspace = true }
-rstest = { workspace = true }
+env_logger = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 sedona-testing = { path = "../sedona-testing" }
-wkt = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
-rand = { workspace = true }
+sedona-geos = { path = "../../c/sedona-geos" }
+sedona-schema = { path = "../sedona-schema" }
+sedona-expr = { path = "../sedona-expr" }
+
+[[bench]]
+name = "gpu_spatial_join"
+harness = false
+required-features = ["gpu"]
+
+[dev-dependencies.criterion]
+version = "0.5"
+features = ["async_tokio"]
+
+[dev-dependencies.rand]
+version = "0.8"
