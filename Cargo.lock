@@ -5180,6 +5180,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "geo",
  "geo-traits",
  "geo-types",
  "parquet",
