@@ -204,6 +204,6 @@ proj_dll_name <- function() {
     windows = "proj.dll",
     darwin = "libproj.dylib",
     linux = "libproj.so",
-    stop(sprintf("Can't determine system PROJ shared library name for OS"))
+    stop(sprintf("Can't determine system PROJ shared library name for OS: %s", Sys.info()[["sysname"]]))
   )
 }
