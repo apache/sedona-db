@@ -2619,31 +2619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geo-generic-alg"
-version = "0.2.0"
-dependencies = [
- "approx",
- "criterion",
- "float_next_after",
- "geo",
- "geo-test-fixtures",
- "geo-traits",
- "geo-traits-ext",
- "geo-types",
- "i_overlay",
- "log",
- "num-traits",
- "pretty_env_logger",
- "rand 0.8.5",
- "rand_distr",
- "robust",
- "rstar",
- "serde",
- "wkb",
- "wkt 0.14.0",
-]
-
-[[package]]
 name = "geo-index"
 version = "0.3.1"
 source = "git+https://github.com/wherobots/geo-index.git?branch=geo-0.31.0#bb50e17c9bf921e147de72e826d4d924c4c298cf"
@@ -2660,31 +2635,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "geo-test-fixtures"
-version = "0.2.0"
-dependencies = [
- "geo-types",
- "wkt 0.14.0",
-]
-
-[[package]]
 name = "geo-traits"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e7c353d12a704ccfab1ba8bfb1a7fe6cb18b665bf89d37f4f7890edcd260206"
 dependencies = [
  "geo-types",
-]
-
-[[package]]
-name = "geo-traits-ext"
-version = "0.2.0"
-dependencies = [
- "byteorder",
- "geo-traits",
- "geo-types",
- "num-traits",
- "wkb",
 ]
 
 [[package]]
@@ -4962,17 +4918,61 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "geo",
- "geo-generic-alg",
  "geo-traits",
  "geo-types",
  "rstest",
  "sedona-expr",
  "sedona-functions",
+ "sedona-geo-generic-alg",
  "sedona-geometry",
  "sedona-schema",
  "sedona-testing",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geo-generic-alg"
+version = "0.2.0"
+dependencies = [
+ "approx",
+ "criterion",
+ "float_next_after",
+ "geo",
+ "geo-traits",
+ "geo-types",
+ "i_overlay",
+ "log",
+ "num-traits",
+ "pretty_env_logger",
+ "rand 0.8.5",
+ "rand_distr",
+ "robust",
+ "rstar",
+ "sedona-geo-test-fixtures",
+ "sedona-geo-traits-ext",
+ "serde",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geo-test-fixtures"
+version = "0.2.0"
+dependencies = [
+ "geo-types",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geo-traits-ext"
+version = "0.2.0"
+dependencies = [
+ "byteorder",
+ "geo-traits",
+ "geo-types",
+ "num-traits",
+ "wkb",
 ]
 
 [[package]]
@@ -5146,10 +5146,8 @@ dependencies = [
  "float_next_after",
  "futures",
  "geo",
- "geo-generic-alg",
  "geo-index",
  "geo-traits",
- "geo-traits-ext",
  "geo-types",
  "geos",
  "parking_lot",
@@ -5159,6 +5157,8 @@ dependencies = [
  "sedona-expr",
  "sedona-functions",
  "sedona-geo",
+ "sedona-geo-generic-alg",
+ "sedona-geo-traits-ext",
  "sedona-geometry",
  "sedona-geos",
  "sedona-schema",

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-geo"
+name = "sedona-geo-test-fixtures"
 version.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -24,32 +24,6 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[lints.clippy]
-result_large_err = "allow"
-
-[dev-dependencies]
-criterion = { workspace = true }
-rstest = { workspace = true }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
-wkt = { workspace = true }
-
 [dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
-sedona-geo-generic-alg = { path = "../sedona-geo-generic-alg" }
-geo-traits = { workspace = true, features = ["geo-types"] }
+wkt = { workspace = true }
 geo-types = { workspace = true }
-geo = { workspace = true }
-sedona-expr = { path = "../sedona-expr" }
-sedona-functions = { path = "../sedona-functions" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
-wkb = { workspace = true }
-
-[[bench]]
-name = "geo-functions"
-harness = false
