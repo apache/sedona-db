@@ -23,7 +23,10 @@ use datafusion_common::{
     ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
+use geo::Relate;
+use geo_traits::to_geo::ToGeoGeometry;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use wkb::reader::Dimension;
 
 use crate::create::create_scalar;
 
@@ -104,7 +107,9 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
 /// Panics if the values' are not equal, generating reasonable failure messages for geometry
 /// arrays where the default failure message would otherwise be uninformative.
 pub fn assert_scalar_equal_wkb_geometry(actual: &ScalarValue, expected_wkt: Option<&str>) {
-    assert_scalar_equal(actual, &create_scalar(expected_wkt, &WKB_GEOMETRY));
+    let expected = create_scalar(expected_wkt, &WKB_GEOMETRY);
+    assert_eq!(actual.data_type(), DataType::Binary);
+    assert_wkb_scalar_equal(actual, &expected);
 }
 
 /// Assert two [`ScalarValue`]s are equal
@@ -205,9 +210,32 @@ fn assert_wkb_value_equal(
             )
         }
         (Some(actual_wkb), Some(expected_wkb)) => {
+            // Quick test: if the binary of the WKB is the same, they are equal
             if actual_wkb != expected_wkb {
-                let (actual_wkt, expected_wkt) = (format_wkb(actual_wkb), format_wkb(expected_wkb));
-                panic!("{actual_label} != {expected_label}\n{actual_label}:\n  {actual_wkt}\n{expected_label}:\n  {expected_wkt}")
+                // Binary of the WKB are not the same, but geometries could be topologically the same.
+                let expected = wkb::reader::read_wkb(expected_wkb);
+                let actual = wkb::reader::read_wkb(actual_wkb);
+                let is_equals = match (expected, actual) {
+                    (Ok(expected_geom), Ok(actual_geom)) => {
+                        if expected_geom.dimension() == Dimension::Xy
+                            && actual_geom.dimension() == Dimension::Xy
+                        {
+                            let expected_geom = expected_geom.to_geometry();
+                            let actual_geom = actual_geom.to_geometry();
+                            expected_geom.relate(&actual_geom).is_equal_topo()
+                        } else {
+                            // geo crate does not support 3D/4D geometry operations, so we fall back to using the result
+                            // of byte-wise comparison
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+                if !is_equals {
+                    let (actual_wkt, expected_wkt) =
+                        (format_wkb(actual_wkb), format_wkb(expected_wkb));
+                    panic!("{actual_label} != {expected_label}\n{actual_label}:\n  {actual_wkt}\n{expected_label}:\n  {expected_wkt}")
+                }
             }
         }
     }

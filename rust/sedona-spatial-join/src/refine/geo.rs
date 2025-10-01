@@ -17,12 +17,11 @@
 use std::sync::{Arc, OnceLock};
 
 use datafusion_common::Result;
-use geo_generic_alg::{
-    line_measures::DistanceExt, Contains, Distance, Euclidean, Intersects, Relate, Within,
-};
+use geo::{Contains, Relate, Within};
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
+use sedona_geo_generic_alg::{line_measures::DistanceExt, Intersects};
 use wkb::reader::Wkb;
 
 use crate::{
@@ -136,7 +135,7 @@ impl GeoRefiner {
             Ok(geom) => geom,
             Err(_) => return Ok(Vec::new()),
         };
-        let probe_geom = geo_generic_alg::PreparedGeometry::from(probe_geom);
+        let probe_geom = geo::PreparedGeometry::from(probe_geom);
 
         for index_result in index_query_results {
             if self.evaluator.evaluate_prepare_probe(
@@ -204,7 +203,7 @@ trait GeoPredicateEvaluator: Send + Sync {
     fn evaluate_prepare_probe(
         &self,
         build: &Wkb,
-        probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+        probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
         distance: Option<f64>,
     ) -> Result<bool>;
 }
@@ -237,7 +236,7 @@ impl GeoPredicateEvaluator for GeoIntersects {
     fn evaluate_prepare_probe(
         &self,
         build: &Wkb,
-        probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+        probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
         _distance: Option<f64>,
     ) -> Result<bool> {
         let build_geom = match item_to_geometry(build) {
@@ -266,7 +265,7 @@ impl GeoPredicateEvaluator for GeoContains {
     fn evaluate_prepare_probe(
         &self,
         build: &Wkb,
-        probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+        probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
         _distance: Option<f64>,
     ) -> Result<bool> {
         let build_geom = match item_to_geometry(build) {
@@ -295,7 +294,7 @@ impl GeoPredicateEvaluator for GeoWithin {
     fn evaluate_prepare_probe(
         &self,
         build: &Wkb,
-        probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+        probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
         _distance: Option<f64>,
     ) -> Result<bool> {
         let build_geom = match item_to_geometry(build) {
@@ -320,18 +319,13 @@ impl GeoPredicateEvaluator for GeoDistance {
     fn evaluate_prepare_probe(
         &self,
         build: &Wkb,
-        probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+        probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
         distance: Option<f64>,
     ) -> Result<bool> {
         let Some(distance) = distance else {
             return Ok(false);
         };
-        let build_geom = match item_to_geometry(build) {
-            Ok(geom) => geom,
-            Err(_) => return Ok(false),
-        };
-        let euc = Euclidean;
-        let dist = euc.distance(&build_geom, probe.geometry());
+        let dist = build.distance_ext(probe.geometry());
         Ok(dist <= distance)
     }
 }
@@ -358,7 +352,7 @@ macro_rules! impl_relate_evaluator {
             fn evaluate_prepare_probe(
                 &self,
                 build: &Wkb,
-                probe: &geo_generic_alg::PreparedGeometry<'static, geo_types::Geometry>,
+                probe: &geo::PreparedGeometry<'static, geo_types::Geometry>,
                 _distance: Option<f64>,
             ) -> Result<bool> {
                 let build_geom = match item_to_geometry(build) {

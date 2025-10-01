@@ -20,6 +20,7 @@ repos:
     hooks:
     - id: check-yaml
     - id: end-of-file-fixer
+      exclude: "^rust/geo-test-fixtures/fixtures/.*"
     - id: trailing-whitespace
 
   - repo: https://github.com/codespell-project/codespell

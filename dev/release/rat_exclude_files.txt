@@ -18,3 +18,4 @@ r/sedonadb/DESCRIPTION
 r/sedonadb/NAMESPACE
 r/sedonadb/src/sedonadb-win.def
 submodules/geoarrow-data/*
+rust/sedona-geo-test-fixtures/fixtures/*.wkt

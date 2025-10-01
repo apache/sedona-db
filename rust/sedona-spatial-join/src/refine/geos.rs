@@ -24,7 +24,8 @@ use geos::{Geom, PreparedGeometry};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
-use wkb::reader::{to_geos::GEOSWkbFactory, Wkb};
+use sedona_geos::wkb_to_geos::GEOSWkbFactory;
+use wkb::reader::Wkb;
 
 use crate::{
     index::IndexQueryResult,

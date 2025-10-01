@@ -20,9 +20,9 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use geo_generic_alg::line_measures::DistanceExt;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
+use sedona_geo_generic_alg::line_measures::DistanceExt;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 

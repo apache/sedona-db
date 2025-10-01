@@ -51,12 +51,12 @@ impl Optionable for SedonaDatabase {
 impl Database for SedonaDatabase {
     type ConnectionType = SedonaConnection;
 
-    fn new_connection(&mut self) -> Result<SedonaConnection> {
+    fn new_connection(&self) -> Result<SedonaConnection> {
         self.new_connection_with_opts([])
     }
 
     fn new_connection_with_opts(
-        &mut self,
+        &self,
         opts: impl IntoIterator<Item = (OptionConnection, OptionValue)>,
     ) -> Result<SedonaConnection> {
         SedonaConnection::try_new(opts)
