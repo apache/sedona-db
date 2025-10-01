@@ -288,7 +288,7 @@ fn save_f64_to_scratch<B: ByteOrder>(scratch: &mut Vec<f64>, buf: &[u8], num_ord
 #[cfg(test)]
 mod test {
     use super::*;
-    use geo::{
+    use geo_types::{
         line_string, point, polygon, Geometry, GeometryCollection, LineString, MultiLineString,
         MultiPoint, MultiPolygon, Point, Polygon,
     };
@@ -483,7 +483,7 @@ mod test {
         let mut buf = Vec::new();
         write_line_string(
             &mut buf,
-            &geo::LineString::new(vec![]),
+            &LineString::new(vec![]),
             &WriteOptions {
                 endianness: Endianness::LittleEndian,
             },
@@ -528,7 +528,7 @@ mod test {
         let mut buf = Vec::new();
         write_multi_point(
             &mut buf,
-            &geo::MultiPoint::new(vec![]),
+            &MultiPoint::new(vec![]),
             &WriteOptions {
                 endianness: Endianness::LittleEndian,
             },
@@ -555,7 +555,7 @@ mod test {
         let mut buf = Vec::new();
         write_multi_line_string(
             &mut buf,
-            &geo::MultiLineString::new(vec![]),
+            &MultiLineString::new(vec![]),
             &WriteOptions {
                 endianness: Endianness::LittleEndian,
             },
@@ -582,7 +582,7 @@ mod test {
         let mut buf = Vec::new();
         write_multi_polygon(
             &mut buf,
-            &geo::MultiPolygon::new(vec![]),
+            &MultiPolygon::new(vec![]),
             &WriteOptions {
                 endianness: Endianness::LittleEndian,
             },
@@ -609,7 +609,7 @@ mod test {
         let mut buf = Vec::new();
         write_geometry_collection(
             &mut buf,
-            &geo::GeometryCollection::new_from(vec![]),
+            &GeometryCollection::new_from(vec![]),
             &WriteOptions {
                 endianness: Endianness::LittleEndian,
             },
@@ -625,17 +625,17 @@ mod test {
     #[test]
     fn test_nested_geometry_collection() {
         // Create a geometry collection containing other geometry collections
-        let inner_gc1 = geo::GeometryCollection::new_from(vec![
+        let inner_gc1 = GeometryCollection::new_from(vec![
             Geometry::Point(point_2d()),
             Geometry::LineString(linestring_2d()),
         ]);
 
-        let inner_gc2 = geo::GeometryCollection::new_from(vec![
+        let inner_gc2 = GeometryCollection::new_from(vec![
             Geometry::Polygon(polygon_2d()),
             Geometry::MultiPoint(multi_point_2d()),
         ]);
 
-        let outer_gc = geo::GeometryCollection::new_from(vec![
+        let outer_gc = GeometryCollection::new_from(vec![
             Geometry::GeometryCollection(inner_gc1),
             Geometry::GeometryCollection(inner_gc2),
             Geometry::MultiLineString(multi_line_string_2d()),
@@ -650,7 +650,7 @@ mod test {
     #[test]
     fn test_coordinate_precision() {
         // Test with high precision coordinates
-        let high_precision_point = geo::Point::new(123.456789012345, -98.765432109876);
+        let high_precision_point = Point::new(123.456789012345, -98.765432109876);
         let geo_geom = Geometry::Point(high_precision_point);
 
         test_geometry_conversion(&geo_geom, Endianness::LittleEndian);
@@ -660,7 +660,7 @@ mod test {
     #[test]
     fn test_large_coordinates() {
         // Test with very large coordinate values
-        let large_point = geo::Point::new(1e10, -1e10);
+        let large_point = Point::new(1e10, -1e10);
         let geo_geom = Geometry::Point(large_point);
 
         test_geometry_conversion(&geo_geom, Endianness::LittleEndian);
@@ -670,7 +670,7 @@ mod test {
     #[test]
     fn test_negative_coordinates() {
         // Test with negative coordinates
-        let negative_point = geo::Point::new(-180.0, -90.0);
+        let negative_point = Point::new(-180.0, -90.0);
         let geo_geom = Geometry::Point(negative_point);
 
         test_geometry_conversion(&geo_geom, Endianness::LittleEndian);
@@ -680,7 +680,7 @@ mod test {
     #[test]
     fn test_zero_coordinates() {
         // Test with zero coordinates
-        let zero_point = geo::Point::new(0.0, 0.0);
+        let zero_point = Point::new(0.0, 0.0);
         let geo_geom = Geometry::Point(zero_point);
 
         test_geometry_conversion(&geo_geom, Endianness::LittleEndian);
