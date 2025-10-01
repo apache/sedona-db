@@ -18,10 +18,10 @@ use std::sync::{Arc, OnceLock};
 
 use datafusion_common::Result;
 use geo::{Contains, Relate, Within};
-use geo_generic_alg::{line_measures::DistanceExt, Intersects};
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
+use sedona_geo_generic_alg::{line_measures::DistanceExt, Intersects};
 use wkb::reader::Wkb;
 
 use crate::{

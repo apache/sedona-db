@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-geo"
+name = "sedona-geo-generic-alg"
 version.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -24,32 +24,54 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[lints.clippy]
-result_large_err = "allow"
-
-[dev-dependencies]
-criterion = { workspace = true }
-rstest = { workspace = true }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
-wkt = { workspace = true }
+[features]
+default = ["multithreading"]
+use-serde = ["serde", "geo-types/serde"]
+multithreading = ["i_overlay/allow_multithreading", "geo-types/multithreading"]
 
 [dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
-sedona-geo-generic-alg = { path = "../sedona-geo-generic-alg" }
-geo-traits = { workspace = true, features = ["geo-types"] }
-geo-types = { workspace = true }
+float_next_after = { workspace = true }
+geo-traits = { workspace = true }
+geo-types = { workspace = true, features = ["approx", "use-rstar_0_12"] }
+sedona-geo-traits-ext = { path = "../sedona-geo-traits-ext" }
+log = "0.4.11"
+num-traits = { workspace = true }
+robust = "1.1.0"
+rstar = "0.12.0"
+serde = { workspace = true, features = ["derive"], optional = true }
+i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
+
+[dev-dependencies]
+sedona-geo-test-fixtures = { path = "../sedona-geo-test-fixtures" }
+approx = { workspace = true }
+criterion = { workspace = true }
+pretty_env_logger = "0.4"
+rand = { workspace = true }
+rand_distr = "0.4.3"
 geo = { workspace = true }
-sedona-expr = { path = "../sedona-expr" }
-sedona-functions = { path = "../sedona-functions" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
 wkb = { workspace = true }
+wkt = { workspace = true }
 
 [[bench]]
-name = "geo-functions"
+name = "area"
+harness = false
+
+[[bench]]
+name = "intersection"
+harness = false
+
+[[bench]]
+name = "centroid"
+harness = false
+
+[[bench]]
+name = "length"
+harness = false
+
+[[bench]]
+name = "distance"
+harness = false
+
+[[bench]]
+name = "perimeter"
 harness = false
