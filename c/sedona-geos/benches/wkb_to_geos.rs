@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use criterion::{criterion_group, criterion_main};
-use geo::{LineString, Point};
+use geo_types::{LineString, Point};
 use sedona_geos::wkb_to_geos::GEOSWkbFactory;
 use wkb::Endianness;
 
