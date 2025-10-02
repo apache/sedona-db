@@ -36,8 +36,10 @@ check_interrupts <- function() {
   }, interrupt = function(...) TRUE, error = function(...) TRUE)
 }
 
-# Permissively licensed (unlicense) from
-# https://github.com/r-lib/vctrs/blob/b63a233bd8b8d6511cf3f7d9182c359a3b8c3cab/R/register-s3.R
+# From the `vctrs` package (this function is intended to be copied
+# without attribution or license requirements to avoid a hard dependency on
+# vctrs:
+# https://github.com/r-lib/vctrs/blob/c2a7710fe55e3a2249c4fdfe75bbccbafcf38804/R/register-s3.R#L25-L31
 s3_register <- function(generic, class, method = NULL) {
   stopifnot(is.character(generic), length(generic) == 1)
   stopifnot(is.character(class), length(class) == 1)
@@ -57,7 +59,7 @@ s3_register <- function(generic, class, method = NULL) {
       caller
     }
   }
-  get_method <- function(method) {
+  get_method <- function(method, env) {
     if (is.null(method)) {
       get(paste0(generic, ".", class), envir = get_method_env())
     } else {
@@ -78,36 +80,19 @@ s3_register <- function(generic, class, method = NULL) {
     if (exists(generic, envir)) {
       registerS3method(generic, class, method_fn, envir = envir)
     } else if (identical(Sys.getenv("NOT_CRAN"), "true")) {
-      warn <- .rlang_s3_register_compat("warn")
-
-      warn(c(
-        sprintf(
-          "Can't find generic `%s` in package %s to register S3 method.",
-          generic,
-          package
-        ),
-        "i" = "This message is only shown to developers using devtools.",
-        "i" = sprintf("Do you need to update %s to the latest version?", package)
+      warning(sprintf(
+        "Can't find generic `%s` in package %s to register S3 method.",
+        generic,
+        package
       ))
     }
   }
 
   # Always register hook in case package is later unloaded & reloaded
-  setHook(packageEvent(package, "onLoad"), function(...) {
-    register()
-  })
+  setHook(packageEvent(package, "onLoad"), register)
 
-  # For compatibility with R < 4.0 where base isn't locked
-  is_sealed <- function(pkg) {
-    identical(pkg, "base") || environmentIsLocked(asNamespace(pkg))
-  }
-
-  # Avoid registration failures during loading (pkgload or regular).
-  # Check that environment is locked because the registering package
-  # might be a dependency of the package that exports the generic. In
-  # that case, the exports (and the generic) might not be populated
-  # yet (#1225).
-  if (isNamespaceLoaded(package) && is_sealed(package)) {
+  # Avoid registration failures during loading (pkgload or regular)
+  if (isNamespaceLoaded(package)) {
     register()
   }
 

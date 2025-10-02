@@ -38,7 +38,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -116,6 +116,17 @@ tokio = { version = "1.44" }
 url = "2.5.4"
 
 [patch.crates-io]
+# For R package build on Windows (can be removed when we upgrade to DataFusion main/51.0.0)
+datafusion = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion" }
+datafusion-catalog = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-catalog" }
+datafusion-common = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common" }
+datafusion-common-runtime = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common-runtime" }
+datafusion-execution = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-execution" }
+datafusion-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-expr" }
+datafusion-ffi = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-ffi" }
+datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-expr" }
+datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
+
 geo-types = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-types" }
 geo-traits = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-traits" }
 geo-traits-ext = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-traits-ext" }

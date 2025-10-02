@@ -15,7 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
+griffe
 mike
+mkdocs
 mkdocs-git-revision-date-localized-plugin
 mkdocs-glightbox
 mkdocs-macros-plugin
@@ -24,3 +26,4 @@ mkdocstrings[python]
 nbconvert
 pyproj
 ruff
+lonboard

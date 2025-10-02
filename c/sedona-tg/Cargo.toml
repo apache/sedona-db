@@ -27,7 +27,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-bindgen = "0.71.0"
 cc = { version = "1" }
 
 [dev-dependencies]

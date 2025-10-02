@@ -46,3 +46,6 @@ __pycache__
 
 # R-related files
 .Rproj.user
+
+# .env file for release management
+dev/release/.env

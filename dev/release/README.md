@@ -107,13 +107,14 @@ pre-release at <https://github.com/apache/sedona-db/releases> with the release
 artifacts uploaded from the CI run.
 
 After the release has been created with the appropriate artifacts, the assets
-need to be signed with signatures uploaded as release assets. The GPG_KEY_ID
-must have its public component listed in the
+need to be signed with signatures uploaded as release assets. Please create
+dev/release/.env from dev/release/.env.example and set the GPG_KEY_ID variable.
+The GPG_KEY_ID in dev/release/.env must have its public component listed in the
 [Apache Sedona KEYS file](https://dist.apache.org/repos/dist/dev/sedona/KEYS).
 
 ```shell
 # sign-assets.sh <version> <rc_number>
-GPG_KEY_ID=your_gpg_key_id dev/release/sign-assets.sh 0.1.0 0
+dev/release/sign-assets.sh 0.1.0 0
 ```
 
 After the assets are signed, they can be committed and uploaded to the
@@ -179,4 +180,28 @@ in the PyPI UI.
 # pip install twine
 twine upload wheels/**/*.whl
 rm -rf wheels
+```
+
+## Bump versions
+
+After a successful release, versions on the `main` branch need to be updated. These
+are currently all derived from `Cargo.toml`, which can be updated to:
+
+```
+[workspace.package]
+version = "0.2.0"
+```
+
+The R package must also be updated. R Packages use a different convention for development
+versions such that in preparation for 0.2.0 the development version should be
+`0.1.0.9000`. This is set the DESCRIPTION of the requisite package.
+
+Development versions and the changelog are derived from the presence of a development
+tag on the main branch signifying where development of that version "started". After
+the version bump PR merges, that commit should be tagged with the appropriate
+development tag:
+
+```shell
+git tag -a apache-sedona-db-0.2.0.dev -m "tag dev 0.2.0"
+git push upstream apache-sedona-db-0.2.0.dev
 ```

@@ -51,11 +51,17 @@ $(STATLIB):
 	# in actual, but we need this tweak to please the compiler.
 	mkdir -p $(LIBDIR)/libgcc_mock && touch $(LIBDIR)/libgcc_mock/libgcc_eh.a
 
+	# AWS_LC_SYS_CFLAGS are not ideal: It would be better to use the
+	# CMake builder but this incurs path length errors on at least one Windows builder.
+	# The AWS_LC_SYS_CMAKE_BUILDER environment variable can still be set at a
+	# higher level on Windows environments that support it.
+
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
 	  export CC="$(CC)" && \
 	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
+	  export CMAKE_TOOLCHAIN_FILE="$(CURDIR)/rust/aws-lc-sys-win-toolchain.cmake" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
 	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
 

@@ -22,3 +22,9 @@ target
 
 Makevars
 Makevars.win
+
+# Vendored sources
+rust/sedona*
+Cargo.lock
+Cargo.toml
+c/

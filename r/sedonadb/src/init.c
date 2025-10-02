@@ -51,6 +51,14 @@ SEXP handle_result(SEXP res_) {
   return (SEXP)res;
 }
 
+SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
+                                       SEXP c_arg__database_path,
+                                       SEXP c_arg__search_path) {
+  SEXP res = savvy_configure_proj_shared__ffi(
+      c_arg__shared_library_path, c_arg__database_path, c_arg__search_path);
+  return handle_result(res);
+}
+
 SEXP savvy_init_r_runtime__impl(DllInfo *c_arg___dll_info) {
   SEXP res = savvy_init_r_runtime__ffi(c_arg___dll_info);
   return handle_result(res);
@@ -156,6 +164,8 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"savvy_configure_proj_shared__impl",
+     (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
     {"savvy_init_r_runtime_interrupts__impl",
      (DL_FUNC)&savvy_init_r_runtime_interrupts__impl, 2},
     {"savvy_sedonadb_adbc_init_func__impl",

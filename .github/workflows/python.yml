@@ -116,6 +116,7 @@ jobs:
 
       - name: Install
         run: |
+          # Keep this export in sync with the export in dev/release/verify-release-candidate.sh
           export MATURIN_PEP517_ARGS="--features s2geography"
           pip install -e "python/sedonadb/[test]" -vv
 

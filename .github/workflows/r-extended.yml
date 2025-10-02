@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: r
+name: r-extended
 
 on:
   push:
@@ -25,11 +25,6 @@ on:
     branches:
       - main
     paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/r.yml'
-      - 'rust/**'
-      - 'c/**'
       - 'r/**'
 jobs:
 
@@ -45,8 +40,6 @@ jobs:
       matrix:
         config:
           - {os: ubuntu-latest, r: 'release'}
-          - {os: macos-latest, r: 'release'}
-          - {os: windows-latest, r: 'release'}
 
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
@@ -54,6 +47,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
@@ -66,34 +60,17 @@ jobs:
           rustup toolchain install stable --no-self-update
           rustup default stable
 
-      # GHA runner installs GNU target by default, but --no-self-update might
-      # remove it, so run `target add` to ensure the GNU target installed.
-      - name: Setup Rust (Windows)
-        if: matrix.config.os == 'windows-latest'
-        run: rustup target add x86_64-pc-windows-gnu
-
-      - name: Install dependencies (Linux)
+      - name: Install dependencies
         if: matrix.config.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libgeos-dev
 
-      - name: Install dependencies (MacOS)
-        if: matrix.config.os == 'macos-latest'
-        run: brew install geos
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Update this key to force a new cache
-          prefix-key: "r-v2"
-
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          extra-packages: any::rcmdcheck
           needs: check
           working-directory: r/sedonadb
 
-      - name: Install R Package
-        run: |
-          R CMD INSTALL r/sedonadb --preclean
-
-      - name: Test R Package
-        run: |
-          R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r/sedonadb
+          error-on: '"error"'

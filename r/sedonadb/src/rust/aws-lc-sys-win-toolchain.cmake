@@ -15,9 +15,5 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# This file specifies the default version of Rust used
-# to compile this workspace and run CI jobs.
-
-[toolchain]
-channel = "stable"
-components = ["rustfmt", "clippy"]
+# Set the maximum object path length
+set(CMAKE_OBJECT_PATH_MAX 1024)

@@ -15,29 +15,60 @@
 # specific language governing permissions and limitations
 # under the License.
 
+extra:
+  version:
+    provider: mike
+    default:
+      - latest
+  social:
+    - icon: fontawesome/brands/github
+      link: 'https://github.com/apache/sedona-db/'
+    - icon: fontawesome/brands/twitter
+      link: 'https://twitter.com/ApacheSedona'
+    - icon: fontawesome/brands/discord
+      link: 'https://discord.gg/9A3k5dEBsY'
+  community_links: &community_links
+    - Get Involved:
+        - Sedona OSS Blog: "https://sedona.apache.org/latest/blog/"
+        - Community: "https://sedona.apache.org/latest/community/contact/"
+        - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
+
 site_name: SedonaDB
-site_description: "Documentation for Apache SedonaDB"
+site_description: "Documentation for SedonaDB"
 site_url: https://sedona.apache.org/sedonadb/
 nav:
-   - SedonaDB: index.md
-   - Quickstart: quickstart-python.md
-   - SedonaDB Guides:
-     - Working with Vector Data: programming-guide.md
-     - Working with GeoPandas: geopandas-interop.md
-     - Working with Overture: overture-examples.md
-     - Working with Parquet Files: working-with-parquet-files.md
-     - Contributors Guide: contributors-guide.md
+  # This becomes the 'SedonaDB' tab
+  - SedonaDB:
+      - Home: index.md
+      # The alias (*) works perfectly from the 'extra' block
+      - <<: *community_links
 
-   - SedonaDB Reference:
+  # This becomes the 'Quickstart' tab
+  - Python Quickstart:
+      - quickstart-python.md
+      - <<: *community_links
+
+  # This becomes the 'SedonaDB Guides' tab
+  - SedonaDB Guides:
+      - Working with Vector Data: programming-guide.md
+      - Working with GeoPandas: geopandas-interop.md
+      - Working with Overture: overture-examples.md
+      - Working with Parquet Files: working-with-parquet-files.md
+      - Joining Spatial Data with Different Coordinate Systems: crs-examples.md
+      - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
+      - Contributors Guide: contributors-guide.md
+
+      - <<: *community_links
+
+  # This becomes the 'SedonaDB Reference' tab
+  - SedonaDB Reference:
       - Python:
           - Python Functions: reference/python.md
       - SQL:
           - SQL Functions: reference/sql.md
           - Spatial Joins: reference/sql-joins.md
-   - Blog: "https://sedona.apache.org/latest/blog/"
-   - Community: "https://sedona.apache.org/latest/community/contact/"
-   - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
-   - Sedona Homepage: "https://sedona.apache.org/latest/"
+      - <<: *community_links
+  - Sedona Homepage: "https://sedona.apache.org/"
 
 repo_url: https://github.com/apache/sedona-db
 edit_uri: https://github.com/apache/sedona-db/blob/main/docs/
@@ -67,11 +98,7 @@ theme:
     - navigation.sections
     - navigation.tabs
     - navigation.tabs.sticky
-extra:
-  version:
-    provider: mike
-    default:
-      - latest
+
 
 extra_css:
   - stylesheets/extra.css
@@ -137,23 +164,23 @@ plugins:
         background: white
         shadow: false
         manual: false
-   - tags
    - mkdocstrings:
-          handlers:
-               python:
-                    inventories:
-                         - https://docs.python.org/3/objects.inv
-                         - https://geopandas.org/en/stable/objects.inv
-                         - https://pandas.pydata.org/docs/objects.inv
-                    options:
-                         docstring_section_style: list
-                         docstring_style: google
-                         line_length: 80
-                         separate_signature: true
-                         show_root_heading: true
-                         show_signature_annotations: true
-                         show_source: false
-                         show_symbol_type_toc: true
-                         signature_crossrefs: true
-                         extra:
-                              paths: ['python']
+        handlers:
+           python:
+              inventories:
+                 - https://docs.python.org/3/objects.inv
+                 - https://geopandas.org/en/stable/objects.inv
+                 - https://pandas.pydata.org/docs/objects.inv
+              options:
+                 docstring_section_style: list
+                 docstring_style: google
+                 line_length: 80
+                 separate_signature: true
+                 show_root_heading: true
+                 show_signature_annotations: true
+                 show_source: false
+                 show_symbol_type_toc: true
+                 signature_crossrefs: true
+                 preload_modules:
+                   - sedonadb
+                 search_paths: [python]

@@ -33,10 +33,8 @@ SQL with high function coverage and GeoParquet IO.
 You can install the development version of sedonadb from
 [GitHub](https://github.com/) with:
 
-``` shell
-git clone https://github.com/apache/sedona-db.git
-cd sedona-db/r/sedonadb
-R CMD INSTALL .
+``` r
+pak::pkg_install("apache/sedona-db/r/sedonadb")
 ```
 
 Installing a development version of sedonadb requires a [Rust

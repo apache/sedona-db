@@ -22,6 +22,7 @@ use savvy::savvy;
 
 use savvy_ffi::R_NilValue;
 use sedona_adbc::AdbcSedonadbDriverInit;
+use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 
 mod context;
 mod dataframe;
@@ -39,4 +40,28 @@ fn sedonadb_adbc_init_func() -> savvy::Result<savvy::Sexp> {
             R_NilValue,
         )))
     }
+}
+
+#[savvy]
+fn configure_proj_shared(
+    shared_library_path: Option<&str>,
+    database_path: Option<&str>,
+    search_path: Option<&str>,
+) -> savvy::Result<()> {
+    let mut builder = ProjCrsEngineBuilder::default();
+
+    if let Some(shared_library_path) = shared_library_path {
+        builder = builder.with_shared_library(shared_library_path.into());
+    }
+
+    if let Some(database_path) = database_path {
+        builder = builder.with_database_path(database_path.into());
+    }
+
+    if let Some(search_path) = search_path {
+        builder = builder.with_search_paths(vec![search_path.into()]);
+    }
+
+    configure_global_proj_engine(builder)?;
+    Ok(())
 }

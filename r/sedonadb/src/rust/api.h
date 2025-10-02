@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+SEXP savvy_configure_proj_shared__ffi(SEXP c_arg__shared_library_path,
+                                      SEXP c_arg__database_path,
+                                      SEXP c_arg__search_path);
 SEXP savvy_init_r_runtime__ffi(DllInfo *c_arg___dll_info);
 SEXP savvy_init_r_runtime_interrupts__ffi(SEXP c_arg__interrupts_call,
                                           SEXP c_arg__pkg_env);

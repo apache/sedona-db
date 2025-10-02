@@ -22,25 +22,50 @@ title: Introducing SedonaDB
   under the License.
 -->
 
-SedonaDB is a single-node analytical database engine with geospatial as the first-class citizen.
+SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
-Fast and dependency-free, SedonaDB is ideal for working with smaller datasets located on local machines or cloud instances.
+SedonaDB is perfect for processing smaller to medium datasets on local machines or cloud instances. For distributed workloads, you can leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
 
-The initial `0.1` release supports a core set of vector operations, with comprehensive vector and raster computation capabilities planned for the near future.
+## Architecture
 
-For distributed workloads, you can still leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
+![SedonaDB Architecture](image/sedonadb-architecture.svg)
+
+* **Columnar in-memory datasets**
+    * Spatial indexing
+    * Spatial statistics
+    * CRS tracking
+    * Arrow format and zero serialization overhead
+
+* **Spatial query optimization**
+    * Spatial-aware heuristic based optimization
+    * Spatial-aware cost based optimization
+
+* **Spatial query processing**
+    * Spatial range query, KNN query, spatial join query, KNN join query
+    * Map algebra, NDVI, mask, zonal statistics
+
+Raster functions are coming soon. We expect SedonaDB Raster will match all raster functions provided in [SedonaSpark](https://sedona.apache.org/latest/api/sql/Raster-operators/).
 
 ## Key features
 
 SedonaDB has several advantages:
 
-* **Exceptional Performance:** Built in Rust to process massive geospatial datasets with exceptional speed.
-* **Unified Geospatial Toolkit:** Access a comprehensive suite of functions for both vector and raster data in a single, powerful library.
-* **Extensive Ecosystem Integration:** Built on Apache Arrow for smooth interoperability with popular data science libraries like GeoPandas, DuckDB, and Polars.
-* **Flexible APIs:** Effortlessly switch between Python and SQL interfaces to match your preferred workflow and skill set.
-* **Guaranteed CRS Propagation:** Automatically manages coordinate reference systems (CRS) to ensure spatial accuracy and prevent common errors.
-* **Broad File Format Support:** Work with a wide range of both modern and legacy geospatial file formats like geoparquet.
-* **Highly Extensible:** Easily customize and extend the library's functionality to meet your project's unique requirements.
+* **🚀 High Performance:** Built in Rust for exceptional speed and memory efficiency
+* **🗺️ Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
+* **🌍 CRS Propagation:** Always maintains coordinate reference system information
+* **📁 Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
+* **⚡ Dual APIs:** Python and SQL interfaces for seamless workflow integration
+* **🔧 Extensible:** Easily customizable and extensible architecture
+* **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
+
+## Performance Benchmarks
+
+This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/single-node-benchmarks/).
+
+<div align="center">
+  <img src="image/sf1-09242025.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="image/sf10-09242025.png" alt="SF10 Benchmark Results" width="45%" />
+</div>
 
 ## Install SedonaDB
 
@@ -64,20 +89,20 @@ SedonaDB offers a flexible query interface.
 
 === "Python"
 
-	```python
-	import sedona.db
+    ```python
+    import sedona.db
 
-	sd = sedona.db.connect()
-	sd.sql("SELECT ST_Point(0, 1) as geom")
+    sd = sedona.db.connect()
+    sd.sql("SELECT ST_Point(0, 1) as geom")
 	```
 
 === "R"
 
-	```r
-	library(sedonadb)
+    ```r
+    library(sedonadb)
 
-        sd_sql("SELECT ST_Point(0, 1) as geom")
-	```
+    sd_sql("SELECT ST_Point(0, 1) as geom")
+    ```
 
 ## Have questions?
 

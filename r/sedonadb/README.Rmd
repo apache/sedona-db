@@ -42,10 +42,8 @@ The goal of sedonadb is to provide an R interface to [Apache SedonaDB](https://s
 
 You can install the development version of sedonadb from [GitHub](https://github.com/) with:
 
-``` shell
-git clone https://github.com/apache/sedona-db.git
-cd sedona-db/r/sedonadb
-R CMD INSTALL .
+``` r
+pak::pkg_install("apache/sedona-db/r/sedonadb")
 ```
 
 Installing a development version of sedonadb requires a [Rust compiler](https://rustup.rs) and a GEOS system dependency (e.g., `brew install geos` or `apt-get install libgeos-dev`). Install instructions for these dependencies on other platforms can be found on the [sf package homepage](https://r-spatial.github.io/sf).

@@ -27,7 +27,7 @@ Your first step is to create a personal copy of the repository and connect it to
 
 1. Fork the repository
 
-      * Navigate to the official [Apache SedonaDB GitHub repository](https://github.com/apache/sedona-db).
+      * Navigate to the official [SedonaDB GitHub repository](https://github.com/apache/sedona-db).
       * Click the **Fork** button in the top-right corner. This creates a complete copy of the project in your own GitHub account.
 
 1. Clone your fork
@@ -42,7 +42,7 @@ Your first step is to create a personal copy of the repository and connect it to
 
 1. Configure the remotes
 
-      * Your local repository needs to know where the original project is so you can pull in updates. You'll add a remote link, traditionally named **`upstream`**, to the main Apache SedonaDB repository.
+      * Your local repository needs to know where the original project is so you can pull in updates. You'll add a remote link, traditionally named **`upstream`**, to the main SedonaDB repository.
       * Your fork is automatically configured as the **`origin`** remote.
 
         ```shell
