@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use arrow_array::{builder::Float32Builder, ArrayRef, StructArray};
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, Fields};
 use datafusion::{
     config::TableParquetOptions,
     datasource::{
@@ -26,13 +26,15 @@ use datafusion::{
     },
 };
 use datafusion_common::{exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result};
-use datafusion_expr::{dml::InsertOp, ColumnarValue};
-use datafusion_physical_expr::LexRequirement;
-use datafusion_physical_plan::ExecutionPlan;
+use datafusion_expr::{dml::InsertOp, ColumnarValue, ScalarUDF, Volatility};
+use datafusion_physical_expr::{
+    expressions::Column, LexRequirement, PhysicalExpr, ScalarFunctionExpr,
+};
+use datafusion_physical_plan::{projection::ProjectionExec, ExecutionPlan};
 use float_next_after::NextAfter;
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::SedonaScalarKernel;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::{
     bounds::geo_traits_update_xy_bounds,
@@ -40,7 +42,7 @@ use sedona_geometry::{
 };
 use sedona_schema::{
     crs::lnglat,
-    datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+    datatypes::{Edges, SedonaType},
     matchers::ArgMatcher,
     schema::SedonaSchema,
 };
@@ -162,12 +164,61 @@ fn create_inner_writer(
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
+fn project_bboxes(input: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
+    let input_schema = input.schema();
+    let matcher = ArgMatcher::is_geometry();
+    let bbox_udf: Arc<ScalarUDF> = Arc::new(geoparquet_bbox_udf().into());
+    let bbox_udf_name = bbox_udf.name();
+
+    let exprs = input
+        .schema()
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(i, f)| -> Result<(Arc<dyn PhysicalExpr>, String)> {
+            // TODO: not quite right, we always need to return the original colum
+            // and optionally append the bbox
+            let column = Arc::new(Column::new(f.name(), i));
+            if matcher.match_type(&SedonaType::from_storage_field(
+                column.return_field(&input_schema)?.as_ref(),
+            )?) {
+                Ok((
+                    Arc::new(ScalarFunctionExpr::new(
+                        bbox_udf_name,
+                        bbox_udf.clone(),
+                        vec![column],
+                        Arc::new(Field::new("", bbox_type(), true)),
+                    )),
+                    f.name().to_string(),
+                ))
+            } else {
+                Ok((column, f.name().to_string()))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let exec = ProjectionExec::try_new(exprs, input)?;
+    Ok(Arc::new(exec))
+}
+
+fn geoparquet_bbox_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "geoparquet_bbox",
+        vec![Arc::new(GeoParquetBbox {})],
+        Volatility::Immutable,
+        None,
+    )
+}
+
 #[derive(Debug)]
 struct GeoParquetBbox {}
 
 impl SedonaScalarKernel for GeoParquetBbox {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry()],
+            SedonaType::Arrow(bbox_type()),
+        );
         matcher.match_args(args)
     }
 
@@ -200,13 +251,7 @@ impl SedonaScalarKernel for GeoParquetBbox {
         })?;
 
         let out_array = StructArray::try_new(
-            vec![
-                Field::new("xmin", DataType::Float32, true),
-                Field::new("ymin", DataType::Float32, true),
-                Field::new("xmax", DataType::Float32, true),
-                Field::new("ymax", DataType::Float32, true),
-            ]
-            .into(),
+            bbox_fields(),
             builders
                 .iter_mut()
                 .map(|builder| -> ArrayRef { Arc::new(builder.finish()) })
@@ -216,6 +261,20 @@ impl SedonaScalarKernel for GeoParquetBbox {
 
         executor.finish(Arc::new(out_array))
     }
+}
+
+fn bbox_type() -> DataType {
+    DataType::Struct(bbox_fields())
+}
+
+fn bbox_fields() -> Fields {
+    vec![
+        Field::new("xmin", DataType::Float32, true),
+        Field::new("ymin", DataType::Float32, true),
+        Field::new("xmax", DataType::Float32, true),
+        Field::new("ymax", DataType::Float32, true),
+    ]
+    .into()
 }
 
 fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Float32Builder]) -> Result<()> {
