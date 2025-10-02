@@ -97,6 +97,9 @@ jobs:
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
           ./vcpkg/vcpkg install abseil openssl
+          # Clean up vcpkg buildtrees and downloads to save space
+          rm -rf vcpkg/buildtrees
+          rm -rf vcpkg/downloads
 
       - name: Use stable Rust
         id: rust
@@ -106,33 +109,50 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "rust-${{ matrix.name }}-v2"
+          prefix-key: "rust-${{ matrix.name }}-v3"
 
       - name: Install dependencies
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y libgeos-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y libgeos-dev
 
       - name: Build
         if: matrix.name == 'build'
         run: |
           cargo build --workspace --all-targets --all-features
+          # Clean up build artifacts aggressively
+          rm -rf target/debug/deps
+          rm -rf target/debug/incremental
+          rm -rf target/debug/build
 
       - name: Clippy
         if: matrix.name == 'clippy'
         run: |
           cargo clippy --workspace --all-targets --all-features -- -Dwarnings
+          # Clean up clippy artifacts aggressively
+          rm -rf target/debug/deps
+          rm -rf target/debug/incremental
+          rm -rf target/debug/build
 
       - name: Test
         if: matrix.name == 'test'
         run: |
           cargo test --workspace --all-targets --all-features
-          # Clean up intermediate build artifacts to free disk space
+          # Clean up intermediate build artifacts to free disk space aggressively
           cargo clean -p sedona-s2geography
+          rm -rf target/debug/deps
+          rm -rf target/debug/incremental
+          rm -rf target/debug/build
+          # Also clean target/.rustc_info.json and other cache files
+          find target/debug -name "*.rlib" -delete
+          find target/debug -name "*.rmeta" -delete
 
       - name: Doctests
         if: matrix.name == 'test'
         run: |
           cargo test --workspace --doc --all-features
+          # Clean up after doctests
+          cargo clean
 
       - name: Check docs
         if: matrix.name == 'docs'

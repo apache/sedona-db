@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use once_cell::sync::OnceCell;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -30,7 +31,9 @@ use datafusion_execution::{
 use datafusion_expr::{ColumnarValue, JoinType};
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use futures::StreamExt;
-use geo_index::rtree::distance::{DistanceMetric, EuclideanDistance, HaversineDistance};
+use geo_index::rtree::distance::{
+    DistanceMetric, EuclideanDistance, GeometryAccessor, HaversineDistance,
+};
 use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
 use geo_index::IndexableNum;
 use geo_types::{Geometry, Point, Rect};
@@ -235,32 +238,6 @@ impl SpatialIndexBuilder {
         geom_idx_vec
     }
 
-    /// Build cached geometries for KNN queries to avoid repeated WKB conversions
-    /// Returns both geometries and total WKB size for memory estimation
-    fn build_cached_geometries(indexed_batches: &[IndexedBatch]) -> (Vec<Geometry<f64>>, usize) {
-        let mut geometries = Vec::new();
-        let mut total_wkb_size = 0;
-
-        for indexed_batch in indexed_batches.iter() {
-            for wkb_opt in indexed_batch.geom_array.wkbs().iter() {
-                if let Some(wkb) = wkb_opt.as_ref() {
-                    if let Ok(geom) = item_to_geometry(wkb) {
-                        geometries.push(geom);
-                        total_wkb_size += wkb.buf().len();
-                    }
-                }
-            }
-        }
-
-        (geometries, total_wkb_size)
-    }
-
-    /// Estimate the memory usage of cached geometries based on WKB size with overhead
-    fn estimate_geometry_memory(wkb_size: usize) -> usize {
-        // Use WKB size as base + overhead for geo::Geometry objects
-        wkb_size * 2
-    }
-
     /// Finish building and return the completed SpatialIndex.
     pub fn finish(mut self, schema: SchemaRef) -> Result<SpatialIndex> {
         if self.indexed_batches.is_empty() {
@@ -270,6 +247,7 @@ impl SpatialIndexBuilder {
                 self.options,
                 AtomicUsize::new(self.probe_threads_count),
                 self.reservation,
+                self.memory_pool.clone(),
             ));
         }
 
@@ -297,15 +275,9 @@ impl SpatialIndexBuilder {
             ConcurrentReservation::try_new(REFINER_RESERVATION_PREALLOC_SIZE, refiner_reservation)
                 .unwrap();
 
-        // Pre-compute geometries for KNN queries to avoid repeated WKB-to-geometry conversions
-        let (cached_geometries, total_wkb_size) =
-            Self::build_cached_geometries(&self.indexed_batches);
-
-        // Reserve memory for cached geometries using WKB size with overhead
-        let geometry_memory_estimate = Self::estimate_geometry_memory(total_wkb_size);
-        let geometry_consumer = MemoryConsumer::new("SpatialJoinGeometryCache");
-        let mut geometry_reservation = geometry_consumer.register(&self.memory_pool);
-        geometry_reservation.try_grow(geometry_memory_estimate)?;
+        let cache_size = batch_pos_vec.len();
+        let knn_components =
+            KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone())?;
 
         Ok(SpatialIndex {
             schema,
@@ -318,9 +290,8 @@ impl SpatialIndexBuilder {
             geom_idx_vec,
             visited_left_side,
             probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
+            knn_components,
             reservation: self.reservation,
-            cached_geometries,
-            cached_geometry_reservation: geometry_reservation,
         })
     }
 }
@@ -365,19 +336,13 @@ pub(crate) struct SpatialIndex {
     /// build side when running left-outer joins. See also [`report_probe_completed`].
     probe_threads_counter: AtomicUsize,
 
+    /// Shared KNN components (distance metrics and geometry cache) for efficient KNN queries
+    knn_components: KnnComponents,
+
     /// Memory reservation for tracking the memory usage of the spatial index
     /// Cleared on `SpatialIndex` drop
     #[expect(dead_code)]
     reservation: MemoryReservation,
-
-    /// Cached vector of geometries for KNN queries to avoid repeated WKB-to-geometry conversions
-    /// This is computed once during index building for performance optimization
-    cached_geometries: Vec<Geometry<f64>>,
-
-    /// Memory reservation for tracking the memory usage of cached geometries
-    /// Cleared on `SpatialIndex` drop
-    #[expect(dead_code)]
-    cached_geometry_reservation: MemoryReservation,
 }
 
 /// Indexed batch containing the original record batch and the evaluated geometry array.
@@ -421,6 +386,7 @@ impl SpatialIndex {
         options: SpatialJoinOptions,
         probe_threads_counter: AtomicUsize,
         mut reservation: MemoryReservation,
+        memory_pool: Arc<dyn MemoryPool>,
     ) -> Self {
         let evaluator = create_operand_evaluator(&spatial_predicate, options.clone());
         let refiner = create_refiner(
@@ -432,7 +398,6 @@ impl SpatialIndex {
         );
         let refiner_reservation = reservation.split(0);
         let refiner_reservation = ConcurrentReservation::try_new(0, refiner_reservation).unwrap();
-        let cached_geometry_reservation = reservation.split(0);
         let rtree = RTreeBuilder::<f32>::new(0).finish::<HilbertSort>();
         Self {
             schema,
@@ -445,14 +410,22 @@ impl SpatialIndex {
             geom_idx_vec: Vec::new(),
             visited_left_side: None,
             probe_threads_counter,
+            knn_components: KnnComponents::new(0, &[], memory_pool.clone()).unwrap(), // Empty index has no cache
             reservation,
-            cached_geometries: Vec::new(),
-            cached_geometry_reservation,
         }
     }
 
     pub(crate) fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+
+    /// Create a KNN geometry accessor for accessing geometries with caching
+    fn create_knn_accessor(&self) -> SedonaKnnAdapter<'_> {
+        SedonaKnnAdapter::new(
+            &self.indexed_batches,
+            &self.data_id_to_batch_pos,
+            &self.knn_components,
+        )
     }
 
     /// Get the batch at the given index.
@@ -557,32 +530,23 @@ impl SpatialIndex {
             }
         };
 
-        // Use pre-computed cached geometries for performance
-        let geometries = &self.cached_geometries;
-
-        if geometries.is_empty() {
-            return Ok(JoinResultMetrics {
-                count: 0,
-                candidate_count: 0,
-            });
-        }
-
-        // Choose distance metric based on use_spheroid parameter
-        let distance_metric: Box<dyn DistanceMetric<f32>> = if use_spheroid {
-            // For spheroid (geodesic) distance, we use the Haversine formula as an approximation for now.
-            // The distance metric will be used to calculate distances between geometries for ranking purposes.
-            Box::new(HaversineDistance::default())
+        // Select the appropriate distance metric
+        let distance_metric: &dyn DistanceMetric<f32> = if use_spheroid {
+            &self.knn_components.haversine_metric
         } else {
-            Box::new(EuclideanDistance)
+            &self.knn_components.euclidean_metric
         };
+
+        // Create geometry accessor for on-demand WKB decoding and caching
+        let geometry_accessor = self.create_knn_accessor();
 
         // Use neighbors_geometry to find k nearest neighbors
         let initial_results = self.rtree.neighbors_geometry(
             &probe_geom,
             Some(k as usize),
             None, // no max_distance filter
-            distance_metric.as_ref(),
-            geometries,
+            distance_metric,
+            &geometry_accessor,
         );
 
         if initial_results.is_empty() {
@@ -601,13 +565,13 @@ impl SpatialIndex {
             let mut distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
             for &result_idx in &final_results {
-                if (result_idx as usize) < geometries.len() {
-                    let distance = distance_metric.geometry_to_geometry_distance(
-                        &probe_geom,
-                        &geometries[result_idx as usize],
-                    );
-                    if let Some(distance_f64) = distance.to_f64() {
-                        distances_with_indices.push((distance_f64, result_idx));
+                if (result_idx as usize) < self.data_id_to_batch_pos.len() {
+                    if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize) {
+                        let distance =
+                            distance_metric.distance_to_geometry(&probe_geom, &item_geom);
+                        if let Some(distance_f64) = distance.to_f64() {
+                            distances_with_indices.push((distance_f64, result_idx));
+                        }
                     }
                 }
             }
@@ -654,13 +618,14 @@ impl SpatialIndex {
                 let mut all_distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
                 for &result_idx in &expanded_results {
-                    if (result_idx as usize) < geometries.len() {
-                        let distance = distance_metric.geometry_to_geometry_distance(
-                            &probe_geom,
-                            &geometries[result_idx as usize],
-                        );
-                        if let Some(distance_f64) = distance.to_f64() {
-                            all_distances_with_indices.push((distance_f64, result_idx));
+                    if (result_idx as usize) < self.data_id_to_batch_pos.len() {
+                        if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize)
+                        {
+                            let distance =
+                                distance_metric.distance_to_geometry(&probe_geom, &item_geom);
+                            if let Some(distance_f64) = distance.to_f64() {
+                                all_distances_with_indices.push((distance_f64, result_idx));
+                            }
                         }
                     }
                 }
@@ -827,6 +792,7 @@ pub(crate) async fn build_index(
             options,
             AtomicUsize::new(probe_threads_count),
             reservation,
+            memory_pool,
         ));
     }
 
@@ -936,6 +902,112 @@ async fn collect_build_partition(
 
 /// Rough estimate for in-memory size of the rtree per rect in bytes
 const RTREE_MEMORY_ESTIMATE_PER_RECT: usize = 60;
+
+/// Shared KNN components that can be reused across queries
+struct KnnComponents {
+    euclidean_metric: EuclideanDistance,
+    haversine_metric: HaversineDistance,
+    /// Pre-allocated vector for geometry cache - lock-free access
+    /// Indexed by rtree data index for O(1) access
+    geometry_cache: Vec<OnceCell<Geometry<f64>>>,
+    /// Memory reservation to track geometry cache memory usage
+    _reservation: MemoryReservation,
+}
+
+impl KnnComponents {
+    fn new(
+        cache_size: usize,
+        indexed_batches: &[IndexedBatch],
+        memory_pool: Arc<dyn MemoryPool>,
+    ) -> datafusion_common::Result<Self> {
+        // Create memory consumer and reservation for geometry cache
+        let consumer = MemoryConsumer::new("SpatialJoinKnnGeometryCache");
+        let mut reservation = consumer.register(&memory_pool);
+
+        // Estimate maximum possible memory usage based on WKB sizes
+        let estimated_memory = Self::estimate_max_memory_usage(indexed_batches);
+        reservation.try_grow(estimated_memory)?;
+
+        // Pre-allocate OnceCell vector
+        let geometry_cache = (0..cache_size).map(|_| OnceCell::new()).collect();
+
+        Ok(Self {
+            euclidean_metric: EuclideanDistance,
+            haversine_metric: HaversineDistance::default(),
+            geometry_cache,
+            _reservation: reservation,
+        })
+    }
+
+    /// Estimate the maximum memory usage for decoded geometries based on WKB sizes
+    fn estimate_max_memory_usage(indexed_batches: &[IndexedBatch]) -> usize {
+        let mut total_wkb_size = 0;
+
+        for batch in indexed_batches {
+            for wkb in batch.geom_array.wkbs().iter().flatten() {
+                total_wkb_size += wkb.buf().len();
+            }
+        }
+        total_wkb_size
+    }
+}
+
+/// Geometry accessor for SedonaDB KNN queries.
+/// This accessor provides on-demand WKB decoding and geometry caching for efficient
+/// KNN queries with support for both Euclidean and Haversine distance metrics.
+struct SedonaKnnAdapter<'a> {
+    indexed_batches: &'a [IndexedBatch],
+    data_id_to_batch_pos: &'a [(i32, i32)],
+    // Reference to KNN components for cache and memory tracking
+    knn_components: &'a KnnComponents,
+}
+
+impl<'a> SedonaKnnAdapter<'a> {
+    /// Create a new adapter
+    fn new(
+        indexed_batches: &'a [IndexedBatch],
+        data_id_to_batch_pos: &'a [(i32, i32)],
+        knn_components: &'a KnnComponents,
+    ) -> Self {
+        Self {
+            indexed_batches,
+            data_id_to_batch_pos,
+            knn_components,
+        }
+    }
+}
+
+impl<'a> GeometryAccessor for SedonaKnnAdapter<'a> {
+    /// Get geometry for the given item index with lock-free caching
+    fn get_geometry(&self, item_index: usize) -> Option<Geometry<f64>> {
+        let geometry_cache = &self.knn_components.geometry_cache;
+
+        // Bounds check
+        if item_index >= geometry_cache.len() || item_index >= self.data_id_to_batch_pos.len() {
+            return None;
+        }
+
+        // Try to get from cache first
+        if let Some(geom) = geometry_cache[item_index].get() {
+            return Some(geom.clone());
+        }
+
+        // Cache miss - decode from WKB
+        let (batch_idx, row_idx) = self.data_id_to_batch_pos[item_index];
+        let indexed_batch = &self.indexed_batches[batch_idx as usize];
+
+        if let Some(wkb) = indexed_batch.wkb(row_idx as usize) {
+            if let Ok(geom) = item_to_geometry(wkb) {
+                // Try to store in cache - if another thread got there first, we just use theirs
+                let _ = geometry_cache[item_index].set(geom.clone());
+                return Some(geom);
+            }
+        }
+
+        // Failed to decode - don't cache invalid results
+        None
+    }
+}
 
 #[cfg(test)]
 mod tests {

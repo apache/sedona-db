@@ -42,6 +42,7 @@ datafusion-physical-plan = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
+once_cell = { workspace = true }
 parking_lot = { workspace = true }
 geo-generic-alg = { workspace = true }
 geo-traits = { workspace = true, features = ["geo-types"] }
