@@ -29,6 +29,7 @@ result_large_err = "allow"
 
 [dev-dependencies]
 rstest = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
 default = []

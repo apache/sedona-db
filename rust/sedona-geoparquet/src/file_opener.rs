@@ -24,6 +24,7 @@ use datafusion::datasource::{
 };
 use datafusion_common::Result;
 use datafusion_physical_expr::PhysicalExpr;
+use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
 use object_store::ObjectStore;
 use parquet::file::{
     metadata::{ParquetMetaData, RowGroupMetaData},
@@ -34,6 +35,37 @@ use sedona_geometry::bounding_box::BoundingBox;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::metadata::GeoParquetMetadata;
+
+#[derive(Clone)]
+struct GeoParquetFileOpenerMetrics {
+    /// How many file ranges are pruned by [`SpatialFilter`]
+    ///
+    /// Note on "file range": an opener may read only part of a file rather than the
+    /// entire file; that portion is referred to as the "file range". See [`PartitionedFile`]
+    /// for details.
+    files_ranges_spatial_pruned: Count,
+    /// How many file ranges are matched by [`SpatialFilter`]
+    files_ranges_spatial_matched: Count,
+    /// How many row groups are pruned by [`SpatialFilter`]
+    row_groups_spatial_pruned: Count,
+    /// How many row groups are matched by [`SpatialFilter`]
+    row_groups_spatial_matched: Count,
+}
+
+impl GeoParquetFileOpenerMetrics {
+    fn new(execution_plan_global_metrics: &ExecutionPlanMetricsSet) -> Self {
+        Self {
+            files_ranges_spatial_pruned: MetricBuilder::new(execution_plan_global_metrics)
+                .global_counter("files_ranges_spatial_pruned"),
+            files_ranges_spatial_matched: MetricBuilder::new(execution_plan_global_metrics)
+                .global_counter("files_ranges_spatial_matched"),
+            row_groups_spatial_pruned: MetricBuilder::new(execution_plan_global_metrics)
+                .global_counter("row_groups_spatial_pruned"),
+            row_groups_spatial_matched: MetricBuilder::new(execution_plan_global_metrics)
+                .global_counter("row_groups_spatial_matched"),
+        }
+    }
+}
 
 /// Geo-aware [FileOpener] implementing file and row group pruning
 ///
@@ -47,6 +79,7 @@ pub struct GeoParquetFileOpener {
     predicate: Arc<dyn PhysicalExpr>,
     file_schema: SchemaRef,
     enable_pruning: bool,
+    metrics: GeoParquetFileOpenerMetrics,
 }
 
 impl GeoParquetFileOpener {
@@ -58,6 +91,7 @@ impl GeoParquetFileOpener {
         predicate: Arc<dyn PhysicalExpr>,
         file_schema: SchemaRef,
         enable_pruning: bool,
+        execution_plan_global_metrics: &ExecutionPlanMetricsSet,
     ) -> Self {
         Self {
             inner,
@@ -66,6 +100,7 @@ impl GeoParquetFileOpener {
             predicate,
             file_schema,
             enable_pruning,
+            metrics: GeoParquetFileOpenerMetrics::new(execution_plan_global_metrics),
         }
     }
 }
@@ -96,6 +131,7 @@ impl FileOpener for GeoParquetFileOpener {
                         &mut access_plan,
                         &spatial_filter,
                         &geoparquet_metadata,
+                        &self_clone.metrics,
                     )?;
 
                     filter_access_plan_using_geoparquet_covering(
@@ -104,6 +140,7 @@ impl FileOpener for GeoParquetFileOpener {
                         &spatial_filter,
                         &geoparquet_metadata,
                         &parquet_metadata,
+                        &self_clone.metrics,
                     )?;
                 }
             }
@@ -135,12 +172,16 @@ fn filter_access_plan_using_geoparquet_file_metadata(
     access_plan: &mut ParquetAccessPlan,
     spatial_filter: &SpatialFilter,
     metadata: &GeoParquetMetadata,
+    metrics: &GeoParquetFileOpenerMetrics,
 ) -> Result<()> {
     let table_geo_stats = geoparquet_file_geo_stats(file_schema, metadata)?;
     if !spatial_filter.evaluate(&table_geo_stats) {
+        metrics.files_ranges_spatial_pruned.add(1);
         for i in access_plan.row_group_indexes() {
             access_plan.skip(i);
         }
+    } else {
+        metrics.files_ranges_spatial_matched.add(1);
     }
 
     Ok(())
@@ -156,6 +197,7 @@ fn filter_access_plan_using_geoparquet_covering(
     spatial_filter: &SpatialFilter,
     metadata: &GeoParquetMetadata,
     parquet_metadata: &ParquetMetaData,
+    metrics: &GeoParquetFileOpenerMetrics,
 ) -> Result<()> {
     let row_group_indices_to_scan = access_plan.row_group_indexes();
 
@@ -176,7 +218,10 @@ fn filter_access_plan_using_geoparquet_covering(
 
         // Evaluate predicate!
         if !spatial_filter.evaluate(&row_group_geo_stats) {
+            metrics.row_groups_spatial_pruned.add(1);
             access_plan.skip(i);
+        } else {
+            metrics.row_groups_spatial_matched.add(1);
         }
     }
 
@@ -345,11 +390,13 @@ pub fn storage_schema_contains_geo(schema: &SchemaRef) -> bool {
 #[cfg(test)]
 mod test {
     use arrow_schema::{DataType, Field, Schema};
+    use datafusion_physical_expr::expressions::Column;
     use parquet::{
         arrow::ArrowSchemaConverter,
         file::{
             metadata::{
-                ColumnChunkMetaData, FileMetaData, ParquetMetaDataBuilder, RowGroupMetaData,
+                ColumnChunkMetaData, FileMetaData, ParquetMetaData, ParquetMetaDataBuilder,
+                RowGroupMetaData,
             },
             statistics::ValueStatistics,
         },
@@ -718,6 +765,92 @@ mod test {
         ));
     }
 
+    #[test]
+    fn metrics_track_file_pruning() {
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = GeoParquetFileOpenerMetrics::new(&metrics_set);
+
+        let file_schema = file_schema_with_covering();
+        let geoparquet_metadata =
+            geoparquet_metadata_with_bbox_and_covering(-180.0, -18.28799, 180.0, 83.23324);
+        let parquet_metadata =
+            parquet_metadata_with_covering_stats(&file_schema, -180.0, -18.28799, 180.0, 83.23324);
+
+        let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
+        let spatial_filter = SpatialFilter::Intersects(
+            Column::new("some_geo", 1),
+            BoundingBox::xy((-10.0, 10.0), (84.0, 88.0)),
+        );
+
+        filter_access_plan_using_geoparquet_file_metadata(
+            &file_schema,
+            &mut access_plan,
+            &spatial_filter,
+            &geoparquet_metadata,
+            &metrics,
+        )
+        .unwrap();
+
+        filter_access_plan_using_geoparquet_covering(
+            &file_schema,
+            &mut access_plan,
+            &spatial_filter,
+            &geoparquet_metadata,
+            &parquet_metadata,
+            &metrics,
+        )
+        .unwrap();
+
+        assert!(access_plan.row_group_indexes().is_empty());
+        assert_eq!(metrics.files_ranges_spatial_pruned.value(), 1);
+        assert_eq!(metrics.files_ranges_spatial_matched.value(), 0);
+        assert_eq!(metrics.row_groups_spatial_pruned.value(), 0);
+        assert_eq!(metrics.row_groups_spatial_matched.value(), 0);
+    }
+
+    #[test]
+    fn metrics_track_row_group_matches() {
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = GeoParquetFileOpenerMetrics::new(&metrics_set);
+
+        let file_schema = file_schema_with_covering();
+        let geoparquet_metadata =
+            geoparquet_metadata_with_bbox_and_covering(-180.0, -18.28799, 180.0, 83.23324);
+        let parquet_metadata =
+            parquet_metadata_with_covering_stats(&file_schema, -180.0, -18.28799, 180.0, 83.23324);
+
+        let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
+        let spatial_filter = SpatialFilter::Intersects(
+            Column::new("some_geo", 1),
+            BoundingBox::xy((-180.0, 180.0), (-18.28799, 83.23324)),
+        );
+
+        filter_access_plan_using_geoparquet_file_metadata(
+            &file_schema,
+            &mut access_plan,
+            &spatial_filter,
+            &geoparquet_metadata,
+            &metrics,
+        )
+        .unwrap();
+
+        filter_access_plan_using_geoparquet_covering(
+            &file_schema,
+            &mut access_plan,
+            &spatial_filter,
+            &geoparquet_metadata,
+            &parquet_metadata,
+            &metrics,
+        )
+        .unwrap();
+
+        assert_eq!(access_plan.row_group_indexes(), vec![0]);
+        assert_eq!(metrics.files_ranges_spatial_pruned.value(), 0);
+        assert_eq!(metrics.files_ranges_spatial_matched.value(), 1);
+        assert_eq!(metrics.row_groups_spatial_pruned.value(), 0);
+        assert_eq!(metrics.row_groups_spatial_matched.value(), 1);
+    }
+
     fn file_schema_with_covering() -> SchemaRef {
         Arc::new(Schema::new(vec![
             Field::new("not_geo", DataType::Binary, true),
@@ -736,6 +869,124 @@ mod test {
                 true,
             ),
         ]))
+    }
+
+    fn geoparquet_metadata_with_bbox_and_covering(
+        xmin: f64,
+        ymin: f64,
+        xmax: f64,
+        ymax: f64,
+    ) -> GeoParquetMetadata {
+        GeoParquetMetadata::try_new(&format!(
+            r#"{{
+                "columns": {{
+                    "some_geo": {{
+                        "encoding": "WKB",
+                        "geometry_types": [],
+                        "bbox": [{xmin}, {ymin}, {xmax}, {ymax}],
+                        "covering": {{
+                            "bbox": {{
+                                "xmin": ["bbox", "xmin"],
+                                "ymin": ["bbox", "ymin"],
+                                "xmax": ["bbox", "xmax"],
+                                "ymax": ["bbox", "ymax"]
+                            }}
+                        }}
+                    }}
+                }},
+                "version": "1.1.0",
+                "primary_column": "some_geo"
+            }}"#
+        ))
+        .unwrap()
+    }
+
+    fn parquet_metadata_with_covering_stats(
+        schema: &SchemaRef,
+        xmin: f64,
+        ymin: f64,
+        xmax: f64,
+        ymax: f64,
+    ) -> ParquetMetaData {
+        let parquet_schema = Arc::new(
+            ArrowSchemaConverter::new()
+                .convert(schema.as_ref())
+                .unwrap(),
+        );
+
+        let xmin_stats = Statistics::Double(ValueStatistics::new(
+            Some(xmin),
+            Some(xmin),
+            None,
+            None,
+            false,
+        ));
+        let ymin_stats = Statistics::Double(ValueStatistics::new(
+            Some(ymin),
+            Some(ymin),
+            None,
+            None,
+            false,
+        ));
+        let xmax_stats = Statistics::Double(ValueStatistics::new(
+            Some(xmax),
+            Some(xmax),
+            None,
+            None,
+            false,
+        ));
+        let ymax_stats = Statistics::Double(ValueStatistics::new(
+            Some(ymax),
+            Some(ymax),
+            None,
+            None,
+            false,
+        ));
+
+        let row_group_metadata = RowGroupMetaData::builder(parquet_schema.clone())
+            .set_num_rows(1)
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(0))
+                    .build()
+                    .unwrap(),
+            )
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(1))
+                    .build()
+                    .unwrap(),
+            )
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(2))
+                    .set_statistics(xmin_stats)
+                    .build()
+                    .unwrap(),
+            )
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(3))
+                    .set_statistics(ymin_stats)
+                    .build()
+                    .unwrap(),
+            )
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(4))
+                    .set_statistics(xmax_stats)
+                    .build()
+                    .unwrap(),
+            )
+            .add_column_metadata(
+                ColumnChunkMetaData::builder(parquet_schema.column(5))
+                    .set_statistics(ymax_stats)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        let file_metadata = FileMetaData::new(0, 1, None, None, parquet_schema.clone(), None);
+
+        ParquetMetaDataBuilder::new(file_metadata)
+            .add_row_group(row_group_metadata)
+            .build()
     }
 
     fn geoparquet_metadata_with_covering() -> GeoParquetMetadata {
