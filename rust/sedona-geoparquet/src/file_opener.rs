@@ -390,13 +390,11 @@ pub fn storage_schema_contains_geo(schema: &SchemaRef) -> bool {
 #[cfg(test)]
 mod test {
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion_physical_expr::expressions::Column;
     use parquet::{
         arrow::ArrowSchemaConverter,
         file::{
             metadata::{
-                ColumnChunkMetaData, FileMetaData, ParquetMetaData, ParquetMetaDataBuilder,
-                RowGroupMetaData,
+                ColumnChunkMetaData, FileMetaData, ParquetMetaDataBuilder, RowGroupMetaData,
             },
             statistics::ValueStatistics,
         },
