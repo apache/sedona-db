@@ -17,7 +17,8 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::Float32Builder;
+use arrow_array::{builder::Float32Builder, ArrayRef, StructArray};
+use arrow_schema::{DataType, Field};
 use datafusion::{
     config::TableParquetOptions,
     datasource::{
@@ -25,14 +26,18 @@ use datafusion::{
     },
 };
 use datafusion_common::{exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result};
-use datafusion_expr::{dml::InsertOp, expr::FieldMetadata, ColumnarValue};
+use datafusion_expr::{dml::InsertOp, ColumnarValue};
 use datafusion_physical_expr::LexRequirement;
 use datafusion_physical_plan::ExecutionPlan;
+use float_next_after::NextAfter;
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::SedonaScalarKernel;
 use sedona_functions::executor::WkbExecutor;
-use sedona_geometry::bounds::geo_traits_bounds_xy;
+use sedona_geometry::{
+    bounds::geo_traits_update_xy_bounds,
+    interval::{Interval, IntervalTrait},
+};
 use sedona_schema::{
     crs::lnglat,
     datatypes::{Edges, SedonaType, WKB_GEOMETRY},
@@ -173,9 +178,12 @@ impl SedonaScalarKernel for GeoParquetBbox {
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
 
-        let mut builders = (0..4)
-            .map(|_| Vec::with_capacity(executor.num_iterations()))
-            .collect::<Vec<_>>();
+        let mut builders = [
+            Float32Builder::with_capacity(executor.num_iterations()),
+            Float32Builder::with_capacity(executor.num_iterations()),
+            Float32Builder::with_capacity(executor.num_iterations()),
+            Float32Builder::with_capacity(executor.num_iterations()),
+        ];
 
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
@@ -183,26 +191,49 @@ impl SedonaScalarKernel for GeoParquetBbox {
                     invoke_scalar(&item, &mut builders)?;
                 }
                 None => {
-                    // These
-                    for vec in builders {
-                        vec.push(0.0);
+                    for builder in &mut builders {
+                        builder.append_null();
                     }
-                },
+                }
             }
             Ok(())
         })?;
 
-        FieldMetadata
+        let out_array = StructArray::try_new(
+            vec![
+                Field::new("xmin", DataType::Float32, true),
+                Field::new("ymin", DataType::Float32, true),
+                Field::new("xmax", DataType::Float32, true),
+                Field::new("ymax", DataType::Float32, true),
+            ]
+            .into(),
+            builders
+                .iter_mut()
+                .map(|builder| -> ArrayRef { Arc::new(builder.finish()) })
+                .collect(),
+            None,
+        )?;
 
-        executor.finish(Arc::new(builder.finish()))
+        executor.finish(Arc::new(out_array))
     }
 }
 
-fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Vec<f32>]) -> Result<()> {
-    let bounds = geo_traits_bounds_xy(wkb).map_err(|e| DataFusionError::External(e.into()))?;
+fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Float32Builder]) -> Result<()> {
+    let mut x = Interval::empty();
+    let mut y = Interval::empty();
+    geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
+        .map_err(|e| DataFusionError::External(e.into()))?;
 
-    // TODO: Use float_next_after::NextAfter; to properly round float32s
-    builders[]
+    if x.is_empty() || y.is_empty() {
+        for builder in builders {
+            builder.append_null();
+        }
+    } else {
+        builders[0].append_value((x.lo() as f32).next_after(-f32::INFINITY));
+        builders[1].append_value((y.lo() as f32).next_after(-f32::INFINITY));
+        builders[2].append_value((x.hi() as f32).next_after(f32::INFINITY));
+        builders[3].append_value((y.hi() as f32).next_after(f32::INFINITY));
+    }
 
     Ok(())
 }

@@ -50,6 +50,7 @@ datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+float_next_after = { workspace = true }
 geo-traits = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }

@@ -4942,6 +4942,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "float_next_after",
  "futures",
  "geo-traits 0.2.0",
  "object_store",
