@@ -295,7 +295,7 @@ class DataFrame:
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1", "2.0"],
+        geoparquet_version: Literal["1.0", "1.1"] = "1.0",
     ):
         """Write this DataFrame to one or more (Geo)Parquet files
 
@@ -315,7 +315,12 @@ class DataFrame:
                 a single file is written if `partition_by` is unspecified and
                 `path` ends with `.parquet`.
             geoparquet_version: GeoParquet metadata version to write if output contains
-                one or more geometry columns.
+                one or more geometry columns. The default (1.0) is the most widely
+                supported and will result in geometry columns being recognized in many
+                readers; however, only includes statistics at the file level.
+                Use GeoParquet 1.1 to compute an additional bounding box column
+                for every geometry column in the output: some readers can use these columns
+                to prune row groups when files contain an effective spatial ordering.
 
         Examples:
 
