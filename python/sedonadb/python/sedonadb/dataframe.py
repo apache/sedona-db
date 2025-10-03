@@ -301,8 +301,8 @@ class DataFrame:
 
         For input that contains geometry columns, GeoParquet metadata is written
         such that suitable readers can recreate Geometry/Geography types when
-        reading the output.
-
+        reading the output and potentially read fewer row groups when only a
+        subset of the file is needed for a given query.
 
         Args:
             path: A filename or directory to which parquet file(s) should be written.
@@ -318,9 +318,15 @@ class DataFrame:
                 one or more geometry columns. The default (1.0) is the most widely
                 supported and will result in geometry columns being recognized in many
                 readers; however, only includes statistics at the file level.
+
                 Use GeoParquet 1.1 to compute an additional bounding box column
                 for every geometry column in the output: some readers can use these columns
                 to prune row groups when files contain an effective spatial ordering.
+                The extra columns will be appear just before their geometry column and
+                will be named "[geom_col_name]_bbox" for all geometry columns except
+                "geometry", whose bounding box column name is just "bbox". If such a
+                column already exists, it will be overwritten to avoid accumulating
+                bbox columns in read -> filter -> write scenarios.
 
         Examples:
 
