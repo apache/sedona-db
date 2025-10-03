@@ -30,13 +30,13 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 ///
 /// An implementation of WKT writing using GeoRust's wkt crate.
 pub fn st_astext_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_with_aliases(
+    let udf = SedonaScalarUDF::new(
         "st_astext",
         vec![Arc::new(STAsText {})],
         Volatility::Immutable,
         Some(st_astext_doc()),
-        vec!["st_aswkt".to_string()],
-    )
+    );
+    udf.with_aliases(vec!["st_aswkt".to_string()])
 }
 
 fn st_astext_doc() -> Documentation {
