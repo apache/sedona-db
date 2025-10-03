@@ -147,7 +147,6 @@ impl SedonaScalarUDF {
             kernels: self.kernels,
             documentation: self.documentation,
             aliases,
-            ..self
         }
     }
 
