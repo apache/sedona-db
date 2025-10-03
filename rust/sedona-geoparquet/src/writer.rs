@@ -54,7 +54,7 @@ use crate::{
 
 pub fn create_geoparquet_writer_physical_plan(
     mut input: Arc<dyn ExecutionPlan>,
-    conf: FileSinkConfig,
+    mut conf: FileSinkConfig,
     order_requirements: Option<LexRequirement>,
     options: &TableGeoParquetOptions,
 ) -> Result<Arc<dyn ExecutionPlan>> {
@@ -63,7 +63,7 @@ pub fn create_geoparquet_writer_physical_plan(
     }
 
     // If there is no geometry, just use the inner implementation
-    let output_geometry_column_indices = conf.output_schema().geometry_column_indices()?;
+    let mut output_geometry_column_indices = conf.output_schema().geometry_column_indices()?;
     if output_geometry_column_indices.is_empty() {
         return create_inner_writer(input, conf, order_requirements, options.inner.clone());
     }
@@ -78,8 +78,10 @@ pub fn create_geoparquet_writer_physical_plan(
             metadata.version = "1.0.0".to_string();
         }
         GeoParquetVersion::V1_1 => {
-            (input, bbox_colunns) = project_bboxes(input)?;
             metadata.version = "1.1.0".to_string();
+            (input, bbox_colunns) = project_bboxes(input)?;
+            conf.output_schema = input.schema();
+            output_geometry_column_indices = input.schema().geometry_column_indices()?;
         }
         _ => {
             return not_impl_err!(
@@ -461,9 +463,20 @@ mod test {
         let mut options = TableGeoParquetOptions::new();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
-        let df_batches_with_bbox = df.clone().collect().await.unwrap();
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
-        // TODO: not quite right: test is passing but shouldn't
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                col("wkt"),
+                bbox_udf.call(vec![col("geometry")]),
+                col("geometry"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
         test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
     }
 }

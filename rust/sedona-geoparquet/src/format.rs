@@ -91,17 +91,14 @@ impl FileFormatFactory for GeoParquetFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         let mut options_mut = self.options.clone().unwrap_or_default();
         let mut format_options_mut = format_options.clone();
-        options_mut.geoparquet_version =
-            if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
-                match version_string.as_str() {
-                    "1.0" => GeoParquetVersion::V1_0,
-                    "1.1" => GeoParquetVersion::V1_1,
-                    "2.0" => GeoParquetVersion::V2_0,
-                    _ => GeoParquetVersion::default(),
-                }
-            } else {
-                GeoParquetVersion::default()
-            };
+        if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
+            options_mut.geoparquet_version = match version_string.as_str() {
+                "1.0" => GeoParquetVersion::V1_0,
+                "1.1" => GeoParquetVersion::V1_1,
+                "2.0" => GeoParquetVersion::V2_0,
+                _ => GeoParquetVersion::default(),
+            }
+        }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
         if let Some(parquet_format) = inner_format.as_any().downcast_ref::<ParquetFormat>() {
