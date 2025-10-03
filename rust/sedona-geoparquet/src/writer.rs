@@ -185,11 +185,11 @@ fn create_inner_writer(
 /// Create a projection that inserts a bbox column for every geometry column
 ///
 /// This implements creating the GeoParquet 1.1 bounding box columns,
-/// returning a map from the name of the geometry columm to the name of the
+/// returning a map from the name of the geometry column to the name of the
 /// bounding box column it created. This does not currently create such
 /// a column for any geography input.
 ///
-/// The inserted bounding box columns always directly preceed their
+/// The inserted bounding box columns always directly precede their
 /// corresponding geometry column and are named a follows:
 ///
 /// - For a column named "geometry", the bbox column is named "bbox". This
@@ -608,7 +608,7 @@ mod test {
         let ctx = setup_context();
 
         // Test writing a DataFrame that already has a column named "bbox".
-        // Writing this using GeoParquet 1.1 will ovewrite the column.
+        // Writing this using GeoParquet 1.1 will overwrite the column.
         let df = ctx
             .table(&example)
             .await
