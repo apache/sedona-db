@@ -335,6 +335,7 @@ fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Float32Builde
 mod test {
     use std::iter::zip;
 
+    use arrow_array::RecordBatch;
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
@@ -357,18 +358,26 @@ mod test {
         SessionContext::new_with_state(state).enable_url_table()
     }
 
-    async fn test_dataframe_roundtrip(ctx: SessionContext, df: DataFrame) {
+    async fn test_dataframe_roundtrip(ctx: SessionContext, src: DataFrame) {
+        let df_batches = src.clone().collect().await.unwrap();
+        test_write_dataframe(ctx, src, df_batches, TableGeoParquetOptions::default()).await
+    }
+
+    async fn test_write_dataframe(
+        ctx: SessionContext,
+        src: DataFrame,
+        expected_batches: Vec<RecordBatch>,
+        options: TableGeoParquetOptions,
+    ) {
         // It's a bit verbose to trigger this without helpers
-        let format = GeoParquetFormatFactory::new();
+        let format = GeoParquetFormatFactory::new_with_options(options);
         let file_type = format_as_file_type(Arc::new(format));
         let tmpdir = tempdir().unwrap();
-
-        let df_batches = df.clone().collect().await.unwrap();
 
         let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
 
         let plan = LogicalPlanBuilder::copy_to(
-            df.into_unoptimized_plan(),
+            src.into_unoptimized_plan(),
             tmp_parquet.to_string_lossy().into(),
             file_type,
             Default::default(),
@@ -388,7 +397,7 @@ mod test {
             .await
             .unwrap();
 
-        assert_eq!(df_parquet_batches.len(), df_batches.len());
+        assert_eq!(df_parquet_batches.len(), expected_batches.len());
 
         // Check types, since the schema may not compare byte-for-byte equal (CRSes)
         let df_parquet_sedona_types = df_parquet_batches[0]
@@ -396,7 +405,7 @@ mod test {
             .sedona_types()
             .collect::<Result<Vec<_>>>()
             .unwrap();
-        let df_sedona_types = df_batches[0]
+        let df_sedona_types = expected_batches[0]
             .schema()
             .sedona_types()
             .collect::<Result<Vec<_>>>()
@@ -404,7 +413,7 @@ mod test {
         assert_eq!(df_parquet_sedona_types, df_sedona_types);
 
         // Check batches without metadata
-        for (df_parquet_batch, df_batch) in zip(df_parquet_batches, df_batches) {
+        for (df_parquet_batch, df_batch) in zip(df_parquet_batches, expected_batches) {
             assert_eq!(df_parquet_batch.columns(), df_batch.columns())
         }
     }
@@ -441,5 +450,20 @@ mod test {
         let df = ctx.table(&example).await.unwrap();
 
         test_dataframe_roundtrip(ctx, df).await;
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let mut options = TableGeoParquetOptions::new();
+        options.geoparquet_version = GeoParquetVersion::V1_1;
+
+        let df_batches_with_bbox = df.clone().collect().await.unwrap();
+
+        // TODO: not quite right: test is passing but shouldn't
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
     }
 }

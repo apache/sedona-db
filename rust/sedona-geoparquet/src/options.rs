@@ -26,6 +26,12 @@ pub struct TableGeoParquetOptions {
     pub geoparquet_version: GeoParquetVersion,
 }
 
+impl TableGeoParquetOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 impl From<TableParquetOptions> for TableGeoParquetOptions {
     fn from(value: TableParquetOptions) -> Self {
         Self {
