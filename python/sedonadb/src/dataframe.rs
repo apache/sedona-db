@@ -32,7 +32,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_geoparquet::options::TableGeoParquetOptions;
+use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
@@ -168,6 +168,8 @@ impl InternalDataFrame {
         let mut writer_options = TableGeoParquetOptions::new();
         if let Some(geoparquet_version) = geoparquet_version {
             writer_options.geoparquet_version = geoparquet_version.parse()?;
+        } else {
+            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
         }
 
         wait_for_future(
