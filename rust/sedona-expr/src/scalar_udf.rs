@@ -139,19 +139,13 @@ impl SedonaScalarUDF {
         }
     }
 
-    pub fn new_with_aliases(
-        name: &str,
-        kernels: Vec<ScalarKernelRef>,
-        volatility: Volatility,
-        documentation: Option<Documentation>,
-        aliases: Vec<String>,
-    ) -> SedonaScalarUDF {
-        let signature = Signature::user_defined(volatility);
+    /// Add aliases to an existing SedonaScalarUDF
+    pub fn with_aliases(self, aliases: Vec<String>) -> SedonaScalarUDF {
         Self {
-            name: name.to_string(),
-            signature,
-            kernels,
-            documentation,
+            name: self.name,
+            signature: self.signature,
+            kernels: self.kernels,
+            documentation: self.documentation,
             aliases,
         }
     }

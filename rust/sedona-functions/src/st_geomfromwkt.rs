@@ -39,15 +39,15 @@ use crate::executor::WkbExecutor;
 /// An implementation of WKT reading using GeoRust's wkt crate.
 /// See [`st_geogfromwkt_udf`] for the corresponding geography function.
 pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_with_aliases(
+    let udf = SedonaScalarUDF::new(
         "st_geomfromwkt",
         vec![Arc::new(STGeoFromWKT {
             out_type: WKB_GEOMETRY,
         })],
         Volatility::Immutable,
         Some(doc("ST_GeomFromWKT", "Geometry")),
-        vec!["st_geomfromtext".to_string()],
-    )
+    );
+    udf.with_aliases(vec!["st_geomfromtext".to_string()])
 }
 
 /// ST_GeogFromWKT() UDF implementation
@@ -55,15 +55,15 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
 /// An implementation of WKT reading using GeoRust's wkt crate.
 /// See [`st_geomfromwkt_udf`] for the corresponding geometry function.
 pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_with_aliases(
+    let udf = SedonaScalarUDF::new(
         "st_geogfromwkt",
         vec![Arc::new(STGeoFromWKT {
             out_type: WKB_GEOGRAPHY,
         })],
         Volatility::Immutable,
         Some(doc("ST_GeogFromWKT", "Geography")),
-        vec!["st_geogfromtext".to_string()],
-    )
+    );
+    udf.with_aliases(vec!["st_geogfromtext".to_string()])
 }
 
 fn doc(name: &str, out_type_name: &str) -> Documentation {
