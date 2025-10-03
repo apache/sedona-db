@@ -167,6 +167,7 @@ pub fn create_geoparquet_writer_physical_plan(
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
+/// Create a regular Parquet writer like DataFusion would otherwise do.
 fn create_inner_writer(
     input: Arc<dyn ExecutionPlan>,
     conf: FileSinkConfig,
@@ -178,6 +179,27 @@ fn create_inner_writer(
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
+/// Create a projection that inserts a bbox column for every geometry column
+///
+/// This implements creating the GeoParquet 1.1 bounding box columns,
+/// returning a map from the name of the geometry columm to the name of the
+/// bounding box column it created. This does not currently create such
+/// a column for any geography input.
+///
+/// The inserted bounding box columns always directly preceed their
+/// corresponding geometry column and are named a follows:
+///
+/// - For a column named "geometry", the bbox column is named "bbox". This
+///   reflects what pretty much everybody is already naming their columns
+///   today.
+/// - For any other column, the bbox column is named "{col_name}_bbox".
+///
+/// If a bbox column name already exists in the schema, we replace it.
+/// In the context of writing a file and all that goes with it, the time it
+/// takes to recompute the bounding box is not important; because writing
+/// GeoParquet 1.1 is opt-in, if somebody *did* have a column with "bbox" or
+/// "some_col_bbox", it is unlikely that replacing it would have unintended
+/// consequences.
 fn project_bboxes(
     input: Arc<dyn ExecutionPlan>,
 ) -> Result<(Arc<dyn ExecutionPlan>, HashMap<String, String>)> {
@@ -186,10 +208,15 @@ fn project_bboxes(
     let bbox_udf: Arc<ScalarUDF> = Arc::new(geoparquet_bbox_udf().into());
     let bbox_udf_name = bbox_udf.name();
 
+    // Calculate and keep track of the expression, name pairs for the bounding box
+    // columns we are about to (potentially) create.
     let mut bbox_exprs = HashMap::<usize, (Arc<dyn PhysicalExpr>, String)>::new();
     let mut bbox_column_names = HashMap::new();
     for (i, f) in input.schema().fields().iter().enumerate() {
         let column = Arc::new(Column::new(f.name(), i));
+
+        // If this is a geometry column (not geography), compute the
+        // expression that is a function call to our bbox column creator
         if matcher.match_type(&SedonaType::from_storage_field(
             column.return_field(&input_schema)?.as_ref(),
         )?) {
@@ -206,26 +233,37 @@ fn project_bboxes(
         }
     }
 
+    // If we don't need to create any bbox columns, don't add an additional
+    // projection at the end of the input plan
     if bbox_exprs.is_empty() {
         return Ok((input, HashMap::new()));
     }
 
+    // Create the projection expressions
     let mut exprs = Vec::new();
     for (i, f) in input.schema().fields().iter().enumerate() {
+        // Skip any column with the same name as a bbox column, since we are
+        // about to replace it with the recomputed bbox.
         if bbox_column_names.contains_key(f.name()) {
             continue;
         }
 
+        // If this is a column with a bbox, insert the bbox expression now
         if let Some((expr, expr_name)) = bbox_exprs.remove(&i) {
             exprs.push((expr, expr_name));
         }
 
+        // Insert the column (whether it does or does not have geometry)
         let column = Arc::new(Column::new(f.name(), i));
         exprs.push((column, f.name().clone()));
     }
 
+    // Create the projection
     let exec = ProjectionExec::try_new(exprs, input)?;
+
+    // Flip the bbox_column_names into the form our caller needs it
     let bbox_column_names_by_field = bbox_column_names.drain().map(|(k, v)| (v, k)).collect();
+
     Ok((Arc::new(exec), bbox_column_names_by_field))
 }
 
@@ -275,7 +313,7 @@ impl SedonaScalarKernel for GeoParquetBbox {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar(&item, &mut builders)?;
+                    append_float_bbox(&item, &mut builders)?;
                 }
                 None => {
                     for builder in &mut builders {
@@ -313,7 +351,13 @@ fn bbox_fields() -> Fields {
     .into()
 }
 
-fn invoke_scalar(wkb: impl GeometryTrait<T = f64>, builders: &mut [Float32Builder]) -> Result<()> {
+// Calculates a bounding box and appends the float32-rounded version to
+// a set of builders, ensuring the float bounds always include the double
+// bounds.
+fn append_float_bbox(
+    wkb: impl GeometryTrait<T = f64>,
+    builders: &mut [Float32Builder],
+) -> Result<()> {
     let mut x = Interval::empty();
     let mut y = Interval::empty();
     geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
@@ -342,7 +386,7 @@ mod test {
     use datafusion::prelude::DataFrame;
     use datafusion::{
         execution::SessionStateBuilder,
-        prelude::{col, SessionContext},
+        prelude::{col, lit, SessionContext},
     };
     use datafusion_expr::LogicalPlanBuilder;
     use sedona_testing::data::test_geoparquet;
@@ -401,6 +445,21 @@ mod test {
 
         assert_eq!(df_parquet_batches.len(), expected_batches.len());
 
+        // Check columns
+        let df_parquet_names = df_parquet_batches[0]
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>();
+        let expected_names = expected_batches[0]
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>();
+        assert_eq!(df_parquet_names, expected_names);
+
         // Check types, since the schema may not compare byte-for-byte equal (CRSes)
         let df_parquet_sedona_types = df_parquet_batches[0]
             .schema()
@@ -455,7 +514,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn geoparquet_1_1() {
+    async fn geoparquet_1_1_basic() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
@@ -469,7 +528,86 @@ mod test {
             .clone()
             .select(vec![
                 col("wkt"),
-                bbox_udf.call(vec![col("geometry")]),
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1_multiple_columns() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+
+        // Include >1 geometry and sprinkle in some non-geometry columns
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            .select(vec![
+                col("wkt"),
+                col("geometry").alias("geom"),
+                col("wkt").alias("wkt2"),
+                col("geometry"),
+                col("wkt").alias("wkt3"),
+            ])
+            .unwrap();
+
+        let mut options = TableGeoParquetOptions::new();
+        options.geoparquet_version = GeoParquetVersion::V1_1;
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                col("wkt"),
+                bbox_udf.call(vec![col("geom")]).alias("geom_bbox"),
+                col("geom"),
+                col("wkt2"),
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+                col("wkt3"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1_overwrite_existing_bbox() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+
+        // Test writing a DataFrame that already has a column named "bbox".
+        // Writing this using GeoParquet 1.1 will ovewrite the column.
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            .select(vec![
+                lit("this is definitely not a bbox").alias("bbox"),
+                col("geometry"),
+            ])
+            .unwrap();
+
+        let mut options = TableGeoParquetOptions::new();
+        options.geoparquet_version = GeoParquetVersion::V1_1;
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
                 col("geometry"),
             ])
             .unwrap()
