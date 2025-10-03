@@ -15,7 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::str::FromStr;
+
 use datafusion::config::TableParquetOptions;
+use datafusion_common::{plan_err, DataFusionError};
 
 /// [TableParquetOptions] wrapper with GeoParquet-specific options
 #[derive(Debug, Default, Clone)]
@@ -77,5 +80,21 @@ pub enum GeoParquetVersion {
 impl Default for GeoParquetVersion {
     fn default() -> Self {
         Self::V1_0
+    }
+}
+
+impl FromStr for GeoParquetVersion {
+    type Err = DataFusionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "1.0" => Ok(GeoParquetVersion::V1_0),
+            "1.1" => Ok(GeoParquetVersion::V1_1),
+            "2.0" => Ok(GeoParquetVersion::V2_0),
+            "none" => Ok(GeoParquetVersion::Omitted),
+            _ => plan_err!(
+                "Unexpected GeoParquet version string (expected '1.0', '1.1', '2.0', or 'none'"
+            ),
+        }
     }
 }

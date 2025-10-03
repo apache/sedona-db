@@ -48,7 +48,7 @@ use sedona_schema::extension_type::ExtensionType;
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
-    options::{GeoParquetVersion, TableGeoParquetOptions},
+    options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
 use datafusion::datasource::physical_plan::ParquetSource;
@@ -92,12 +92,7 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         let mut options_mut = self.options.clone().unwrap_or_default();
         let mut format_options_mut = format_options.clone();
         if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
-            options_mut.geoparquet_version = match version_string.as_str() {
-                "1.0" => GeoParquetVersion::V1_0,
-                "1.1" => GeoParquetVersion::V1_1,
-                "2.0" => GeoParquetVersion::V2_0,
-                _ => GeoParquetVersion::default(),
-            }
+            options_mut.geoparquet_version = version_string.parse()?;
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;

@@ -139,6 +139,7 @@ impl InternalDataFrame {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn to_parquet<'py>(
         &self,
         py: Python<'py>,
@@ -147,6 +148,7 @@ impl InternalDataFrame {
         partition_by: Vec<String>,
         sort_by: Vec<String>,
         single_file_output: bool,
+        geoparquet_version: Option<String>,
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
@@ -162,7 +164,11 @@ impl InternalDataFrame {
             .with_partition_by(partition_by)
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
-        let writer_options = TableGeoParquetOptions::default();
+
+        let mut writer_options = TableGeoParquetOptions::new();
+        if let Some(geoparquet_version) = geoparquet_version {
+            writer_options.geoparquet_version = geoparquet_version.parse()?;
+        }
 
         wait_for_future(
             py,
