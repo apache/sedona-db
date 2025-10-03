@@ -17,7 +17,10 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use arrow_array::{builder::Float32Builder, ArrayRef, StructArray};
+use arrow_array::{
+    builder::{Float32Builder, NullBufferBuilder},
+    ArrayRef, StructArray,
+};
 use arrow_schema::{DataType, Field, Fields};
 use datafusion::{
     config::TableParquetOptions,
@@ -303,6 +306,9 @@ impl SedonaScalarKernel for GeoParquetBbox {
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
 
+        // Initialize the builders. We use Float32 to minimize the impact
+        // on the file size.
+        let mut nulls = NullBufferBuilder::new(executor.num_iterations());
         let mut builders = [
             Float32Builder::with_capacity(executor.num_iterations()),
             Float32Builder::with_capacity(executor.num_iterations()),
@@ -313,9 +319,15 @@ impl SedonaScalarKernel for GeoParquetBbox {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
+                    nulls.append(true);
                     append_float_bbox(&item, &mut builders)?;
                 }
                 None => {
+                    // If we have a null, we set the outer validity bitmap to null
+                    // (i.e., "the bounding box is null") but also the inner bitmap
+                    // to null to ensure the value is not counted for the purposes
+                    // of computing statistics for the nested column.
+                    nulls.append(false);
                     for builder in &mut builders {
                         builder.append_null();
                     }
@@ -330,7 +342,7 @@ impl SedonaScalarKernel for GeoParquetBbox {
                 .iter_mut()
                 .map(|builder| -> ArrayRef { Arc::new(builder.finish()) })
                 .collect(),
-            None,
+            nulls.finish(),
         )?;
 
         executor.finish(Arc::new(out_array))
@@ -363,6 +375,9 @@ fn append_float_bbox(
     geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
         .map_err(|e| DataFusionError::External(e.into()))?;
 
+    // If we have an empty, append null values to the individual min/max
+    // columns to ensure their values aren't considered in the Parquet
+    // statistics.
     if x.is_empty() || y.is_empty() {
         for builder in builders {
             builder.append_null();
@@ -381,15 +396,20 @@ fn append_float_bbox(
 mod test {
     use std::iter::zip;
 
-    use arrow_array::RecordBatch;
+    use arrow_array::{create_array, Array, RecordBatch};
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
         execution::SessionStateBuilder,
         prelude::{col, lit, SessionContext},
     };
+    use datafusion_common::cast::{as_float32_array, as_struct_array};
+    use datafusion_common::ScalarValue;
     use datafusion_expr::LogicalPlanBuilder;
+    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_testing::create::create_array;
     use sedona_testing::data::test_geoparquet;
+    use sedona_testing::testers::ScalarUdfTester;
     use tempfile::tempdir;
 
     use crate::format::GeoParquetFormatFactory;
@@ -445,7 +465,7 @@ mod test {
 
         assert_eq!(df_parquet_batches.len(), expected_batches.len());
 
-        // Check columns
+        // Check column names
         let df_parquet_names = df_parquet_batches[0]
             .schema()
             .fields()
@@ -616,5 +636,78 @@ mod test {
             .unwrap();
 
         test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+    }
+
+    #[test]
+    fn float_bbox() {
+        let tester = ScalarUdfTester::new(geoparquet_bbox_udf().into(), vec![WKB_GEOMETRY]);
+        assert_eq!(
+            tester.return_type().unwrap(),
+            SedonaType::Arrow(bbox_type())
+        );
+
+        let array = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("LINESTRING (4 5, 6 7)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_array(array).unwrap();
+        assert_eq!(result.len(), 3);
+
+        let expected_cols_f64 = [
+            create_array!(Float64, [Some(0.0), Some(2.0), Some(4.0)]),
+            create_array!(Float64, [Some(1.0), Some(3.0), Some(5.0)]),
+            create_array!(Float64, [Some(0.0), Some(2.0), Some(6.0)]),
+            create_array!(Float64, [Some(1.0), Some(3.0), Some(7.0)]),
+        ];
+
+        let result_struct = as_struct_array(&result).unwrap();
+        let actual_cols = result_struct
+            .columns()
+            .iter()
+            .map(|col| as_float32_array(col).unwrap())
+            .collect::<Vec<_>>();
+        for i in 0..result.len() {
+            let actual = actual_cols
+                .iter()
+                .map(|a| a.value(i) as f64)
+                .collect::<Vec<_>>();
+            let expected = expected_cols_f64
+                .iter()
+                .map(|e| e.value(i))
+                .collect::<Vec<_>>();
+
+            // These values aren't equal (the actual values were float32 values that
+            // had been rounded down); however, they should "contain" the expected box)
+            assert!(actual[0] <= expected[0]);
+            assert!(actual[1] <= expected[1]);
+            assert!(actual[2] >= expected[2]);
+            assert!(actual[3] >= expected[3]);
+        }
+    }
+
+    #[test]
+    fn float_bbox_null() {
+        let tester = ScalarUdfTester::new(geoparquet_bbox_udf().into(), vec![WKB_GEOMETRY]);
+
+        let null_result = tester.invoke_scalar(ScalarValue::Null).unwrap();
+        assert!(null_result.is_null());
+        if let ScalarValue::Struct(s) = null_result {
+            let actual_cols = s
+                .columns()
+                .iter()
+                .map(|col| as_float32_array(col).unwrap())
+                .collect::<Vec<_>>();
+            assert!(actual_cols[0].is_null(0));
+            assert!(actual_cols[1].is_null(0));
+            assert!(actual_cols[2].is_null(0));
+            assert!(actual_cols[3].is_null(0));
+        } else {
+            panic!("Expected struct")
+        }
     }
 }
