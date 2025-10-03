@@ -268,6 +268,21 @@ pub struct GeoParquetCovering {
     pub bbox: GeoParquetBboxCovering,
 }
 
+impl GeoParquetCovering {
+    pub fn bbox_struct_xy(struct_column_name: &str) -> Self {
+        GeoParquetCovering {
+            bbox: GeoParquetBboxCovering {
+                xmin: vec![struct_column_name.to_string(), "xmin".to_string()],
+                ymin: vec![struct_column_name.to_string(), "ymin".to_string()],
+                zmin: None,
+                xmax: vec![struct_column_name.to_string(), "xmax".to_string()],
+                ymax: vec![struct_column_name.to_string(), "ymax".to_string()],
+                zmax: None,
+            },
+        }
+    }
+}
+
 /// Top-level GeoParquet file metadata
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeoParquetMetadata {

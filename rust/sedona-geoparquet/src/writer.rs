@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{builder::Float32Builder, ArrayRef, StructArray};
 use arrow_schema::{DataType, Field, Fields};
@@ -48,12 +48,12 @@ use sedona_schema::{
 };
 
 use crate::{
-    metadata::{GeoParquetColumnMetadata, GeoParquetMetadata},
+    metadata::{GeoParquetColumnMetadata, GeoParquetCovering, GeoParquetMetadata},
     options::{GeoParquetVersion, TableGeoParquetOptions},
 };
 
 pub fn create_geoparquet_writer_physical_plan(
-    input: Arc<dyn ExecutionPlan>,
+    mut input: Arc<dyn ExecutionPlan>,
     conf: FileSinkConfig,
     order_requirements: Option<LexRequirement>,
     options: &TableGeoParquetOptions,
@@ -70,11 +70,16 @@ pub fn create_geoparquet_writer_physical_plan(
 
     // We have geometry and/or geography! Collect the GeoParquetMetadata we'll need to write
     let mut metadata = GeoParquetMetadata::default();
+    let mut bbox_colunns = HashMap::new();
 
     // Check the version
     match options.geoparquet_version {
         GeoParquetVersion::V1_0 => {
             metadata.version = "1.0.0".to_string();
+        }
+        GeoParquetVersion::V1_1 => {
+            (input, bbox_colunns) = project_bboxes(input)?;
+            metadata.version = "1.1.0".to_string();
         }
         _ => {
             return not_impl_err!(
@@ -82,7 +87,7 @@ pub fn create_geoparquet_writer_physical_plan(
                 options.geoparquet_version
             );
         }
-    };
+    }
 
     let field_names = conf
         .output_schema()
@@ -131,6 +136,13 @@ pub fn create_geoparquet_writer_physical_plan(
             );
         }
 
+        // Add bbox column info, if we added one in project_bboxes()
+        if let Some(bbox_column_name) = bbox_colunns.get(f.name()) {
+            column_metadata
+                .covering
+                .replace(GeoParquetCovering::bbox_struct_xy(bbox_column_name));
+        }
+
         // Add to metadata
         metadata
             .columns
@@ -164,41 +176,55 @@ fn create_inner_writer(
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
-fn project_bboxes(input: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
+fn project_bboxes(
+    input: Arc<dyn ExecutionPlan>,
+) -> Result<(Arc<dyn ExecutionPlan>, HashMap<String, String>)> {
     let input_schema = input.schema();
     let matcher = ArgMatcher::is_geometry();
     let bbox_udf: Arc<ScalarUDF> = Arc::new(geoparquet_bbox_udf().into());
     let bbox_udf_name = bbox_udf.name();
 
-    let exprs = input
-        .schema()
-        .fields()
-        .iter()
-        .enumerate()
-        .map(|(i, f)| -> Result<(Arc<dyn PhysicalExpr>, String)> {
-            // TODO: not quite right, we always need to return the original colum
-            // and optionally append the bbox
-            let column = Arc::new(Column::new(f.name(), i));
-            if matcher.match_type(&SedonaType::from_storage_field(
-                column.return_field(&input_schema)?.as_ref(),
-            )?) {
-                Ok((
-                    Arc::new(ScalarFunctionExpr::new(
-                        bbox_udf_name,
-                        bbox_udf.clone(),
-                        vec![column],
-                        Arc::new(Field::new("", bbox_type(), true)),
-                    )),
-                    f.name().to_string(),
-                ))
-            } else {
-                Ok((column, f.name().to_string()))
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut bbox_exprs = HashMap::<usize, (Arc<dyn PhysicalExpr>, String)>::new();
+    let mut bbox_column_names = HashMap::new();
+    for (i, f) in input.schema().fields().iter().enumerate() {
+        let column = Arc::new(Column::new(f.name(), i));
+        if matcher.match_type(&SedonaType::from_storage_field(
+            column.return_field(&input_schema)?.as_ref(),
+        )?) {
+            let bbox_field_name = bbox_column_name(f.name());
+            let expr = Arc::new(ScalarFunctionExpr::new(
+                bbox_udf_name,
+                bbox_udf.clone(),
+                vec![column],
+                Arc::new(Field::new("", bbox_type(), true)),
+            ));
+
+            bbox_exprs.insert(i, (expr, bbox_field_name.clone()));
+            bbox_column_names.insert(bbox_field_name, f.name().clone());
+        }
+    }
+
+    if bbox_exprs.is_empty() {
+        return Ok((input, HashMap::new()));
+    }
+
+    let mut exprs = Vec::new();
+    for (i, f) in input.schema().fields().iter().enumerate() {
+        if bbox_column_names.contains_key(f.name()) {
+            continue;
+        }
+
+        if let Some((expr, expr_name)) = bbox_exprs.remove(&i) {
+            exprs.push((expr, expr_name));
+        }
+
+        let column = Arc::new(Column::new(f.name(), i));
+        exprs.push((column, f.name().clone()));
+    }
 
     let exec = ProjectionExec::try_new(exprs, input)?;
-    Ok(Arc::new(exec))
+    let bbox_column_names_by_field = bbox_column_names.drain().map(|(k, v)| (v, k)).collect();
+    Ok((Arc::new(exec), bbox_column_names_by_field))
 }
 
 fn geoparquet_bbox_udf() -> SedonaScalarUDF {
@@ -208,6 +234,14 @@ fn geoparquet_bbox_udf() -> SedonaScalarUDF {
         Volatility::Immutable,
         None,
     )
+}
+
+fn bbox_column_name(geometry_column_name: &str) -> String {
+    if geometry_column_name == "geometry" {
+        "bbox".to_string()
+    } else {
+        format!("{geometry_column_name}_bbox")
+    }
 }
 
 #[derive(Debug)]
