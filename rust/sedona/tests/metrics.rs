@@ -16,6 +16,7 @@
 // under the License.
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use sedona::context::SedonaContext;
+use sedona_testing::data::sedona_testing_dir;
 
 #[tokio::test]
 async fn geo_parquet_metrics() {
@@ -25,7 +26,10 @@ async fn geo_parquet_metrics() {
         .await
         .expect("interactive context should initialize");
 
-    let geo_parquet_path = "../../submodules/sedona-testing/data/parquet/geoparquet-1.1.0.parquet";
+    let geo_parquet_path = format!(
+        "{}/data/parquet/geoparquet-1.1.0.parquet",
+        sedona_testing_dir().expect("sedona-testing directory should resolve")
+    );
     let create_table_sql =
         format!("CREATE EXTERNAL TABLE test STORED AS PARQUET LOCATION '{geo_parquet_path}'");
 
