@@ -151,6 +151,29 @@ class DataFrame:
         """
         return self._impl.count()
 
+    def __len__(self) -> int:
+        """Compute the number of rows in the DataFrame"""
+        return self.count()
+
+    @property
+    def columns(self) -> list[str]:
+        """Return the column names in the DataFrame"""
+        columns = list()
+        field_index = 0
+        while True:
+            try:
+                columns.append(self._impl.schema().field(field_index).name)
+                field_index += 1
+            except IndexError:
+                break
+
+        return columns
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Return the shape of the DataFrame as a tuple of integers corresponding to (rows, columns)"""
+        return self.count(), len(self.columns)
+
     def __arrow_c_schema__(self):
         """ArrowSchema PyCapsule interface
 

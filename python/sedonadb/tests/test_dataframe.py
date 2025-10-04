@@ -228,6 +228,26 @@ def test_count(con):
     assert df.count() == 3
 
 
+def test_len(con):
+    df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+    assert len(df) == 3
+
+
+def test_columns(con):
+    df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
+    assert len(df.columns) == 2
+
+    pdf = df.to_pandas()
+    assert set(df.columns) == set(pdf.columns)
+
+
+def test_shape(con):
+    df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
+    assert isinstance(df.shape, tuple)
+    assert df.shape[0] == 1
+    assert df.shape[1] == 2
+
+
 def test_dataframe_to_arrow(con):
     df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
     expected_schema = pa.schema(
