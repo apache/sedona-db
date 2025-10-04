@@ -377,7 +377,7 @@ impl GeoParquetFileSource {
                     if Arc::ptr_eq(&inner_predicate, &specified_predicate) {
                         Some(inner_predicate)
                     } else {
-                        return sedona_internal_err!("Inner predicate should be equivalent to the predicate in `GeoParqeutFileSource`");
+                        return sedona_internal_err!("Inner predicate should be equivalent to the predicate in `GeoParquetFileSource`");
                     }
                 }
             };
