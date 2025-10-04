@@ -47,6 +47,9 @@ struct GeoParquetFileOpenerMetrics {
     /// How many file ranges are matched by [`SpatialFilter`]
     files_ranges_spatial_matched: Count,
     /// How many row groups are pruned by [`SpatialFilter`]
+    ///
+    /// Note: row groups skipped during the file-level pruning step are not counted
+    /// again here.
     row_groups_spatial_pruned: Count,
     /// How many row groups are matched by [`SpatialFilter`]
     row_groups_spatial_matched: Count,
