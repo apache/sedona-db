@@ -473,6 +473,8 @@ def test_st_geomfromwkb(eng, geom):
         ("POINT Z EMPTY", True),
         ("POINT M EMPTY", False),
         ("POINT ZM EMPTY", True),
+        # SedonaDB can't parse this yet: https://github.com/apache/sedona-db/issues/162
+        # ("POINT (0 0 0)", True),
         ("POINT Z (0 0 0)", True),
         ("POINT M (0 0 0)", False),
         ("POINT ZM (0 0 0 0)", True),
@@ -481,8 +483,18 @@ def test_st_geomfromwkb(eng, geom):
         ("LINESTRING Z (0 0 0, 1 1 1)", True),
         ("POLYGON EMPTY", False),
         ("MULTIPOINT ((0 0), (1 1))", False),
+        ("MULTIPOINT Z ((0 0 0))", True),
+        # SedonaDB can't parse this yet: https://github.com/apache/sedona-db/issues/162
+        # ("MULTIPOINT ((0 0 0))", True),
+        ("MULTIPOINT ZM ((0 0 0 0))", True),
         ("GEOMETRYCOLLECTION EMPTY", False),
+        # Z-dim specified only in the nested geometry
         ("GEOMETRYCOLLECTION (POINT Z (0 0 0))", True),
+        # SedonaDB can't parse this yet: https://github.com/apache/sedona-db/issues/162
+        # Z-dim specified only on the geom collection level but not the nested geometry level
+        # ("GEOMETRYCOLLECTION Z (POINT (0 0 0))", True),
+        # Z-dim specified on both levels
+        ("GEOMETRYCOLLECTION Z (POINT Z (0 0 0))", True),
         ("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT Z (0 0 0)))", True),
     ],
 )

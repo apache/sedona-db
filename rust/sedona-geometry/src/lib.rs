@@ -24,3 +24,4 @@ pub mod point_count;
 pub mod transform;
 pub mod types;
 pub mod wkb_factory;
+pub mod wkb_header;

@@ -4914,10 +4914,12 @@ dependencies = [
 name = "sedona-geometry"
 version = "0.2.0"
 dependencies = [
+ "datafusion-common",
  "geo-traits 0.2.0",
  "geo-types",
  "lru",
  "rstest",
+ "sedona-common",
  "serde",
  "serde_json",
  "serde_with",
