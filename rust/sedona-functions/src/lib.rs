@@ -26,6 +26,7 @@ pub mod st_analyze_aggr;
 mod st_area;
 mod st_asbinary;
 mod st_astext;
+mod st_azimuth;
 mod st_buffer;
 mod st_centroid;
 mod st_collect;

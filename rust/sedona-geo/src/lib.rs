@@ -17,6 +17,7 @@
 pub mod centroid;
 pub mod register;
 mod st_area;
+mod st_azimuth;
 mod st_centroid;
 mod st_distance;
 mod st_dwithin;

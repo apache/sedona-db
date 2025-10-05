@@ -64,6 +64,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_astext::st_astext_udf,
+        crate::st_azimuth::st_azimuth_udf,
         crate::st_buffer::st_buffer_udf,
         crate::st_centroid::st_centroid_udf,
         crate::st_dimension::st_dimension_udf,
@@ -127,6 +128,7 @@ pub mod stubs {
     pub use crate::predicates::*;
     pub use crate::referencing::*;
     pub use crate::st_area::st_area_udf;
+    pub use crate::st_azimuth::st_azimuth_udf;
     pub use crate::st_centroid::st_centroid_udf;
     pub use crate::st_length::st_length_udf;
     pub use crate::st_perimeter::st_perimeter_udf;
