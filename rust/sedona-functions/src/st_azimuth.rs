@@ -46,7 +46,7 @@ fn st_azimuth_doc() -> Documentation {
     .with_argument("geomA", "geometry: Start point geometry")
     .with_argument("geomB", "geometry: End point geometry")
     .with_sql_example(
-        "SELECT ST_Azimuth(\n            ST_Point(0, 0),\n            ST_Point(1, 1)\n        )",
+        "SELECT ST_Azimuth(ST_Point(0, 0), ST_Point(1, 1))",
     )
     .build()
 }
