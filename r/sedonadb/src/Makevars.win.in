@@ -37,9 +37,10 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # cf. https://stackoverflow.com/a/68979087
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
-# TODO: should $(CFLAGS) be included here?
-# Do not pass -pedantic
-CFLAGS_TWEAKED = $(subst -pedantic,,$(ALL_CPPFLAGS))
+# "-Wno-pedantic" is to override the "-pedantic" flag passed by pkgbuild, which
+# makes the compilation of aws-lc-sys fail. Hopefully, such C code will be fixed
+# on upstream so that we can remove this.
+CFLAGS_TWEAKED = $(CFLAGS) -Wno-pedantic
 
 all: $(SHLIB) clean_intermediate
 
@@ -50,11 +51,6 @@ $(STATLIB):
 	# building proc-macro2, but Rtools doesn't contain libgcc_eh. This isn't used
 	# in actual, but we need this tweak to please the compiler.
 	mkdir -p $(LIBDIR)/libgcc_mock && touch $(LIBDIR)/libgcc_mock/libgcc_eh.a
-
-	# AWS_LC_SYS_CFLAGS are not ideal: It would be better to use the
-	# CMake builder but this incurs path length errors on at least one Windows builder.
-	# The AWS_LC_SYS_CMAKE_BUILDER environment variable can still be set at a
-	# higher level on Windows environments that support it.
 
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
