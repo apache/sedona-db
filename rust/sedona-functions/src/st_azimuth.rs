@@ -40,13 +40,13 @@ pub fn st_azimuth_udf() -> SedonaScalarUDF {
 fn st_azimuth_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the azimuth in radians from geomA to geomB",
+        "Returns the azimuth (a clockwise angle measured from north) in radians from geomA to geomB",
         "ST_Azimuth (A: Geometry, B: Geometry)",
     )
     .with_argument("geomA", "geometry: Start point geometry")
     .with_argument("geomB", "geometry: End point geometry")
     .with_sql_example(
-        "SELECT ST_Azimuth(\n            ST_GeomFromText('POINT (0 0)'),\n            ST_GeomFromText('POINT (1 1)')\n        )",
+        "SELECT ST_Azimuth(\n            ST_Point(0, 0),\n            ST_Point(1, 1)\n        )",
     )
     .build()
 }

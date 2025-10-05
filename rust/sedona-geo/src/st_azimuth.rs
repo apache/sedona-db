@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, exec_datafusion_err};
+use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, PointTrait};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -27,7 +27,7 @@ use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-/// ST_Azimuth() implementation following PostGIS semantics
+/// ST_Azimuth() implementation
 pub fn st_azimuth_impl() -> ScalarKernelRef {
     Arc::new(STAzimuth {})
 }
@@ -69,41 +69,38 @@ impl SedonaScalarKernel for STAzimuth {
 }
 
 fn invoke_scalar(start: &Wkb, end: &Wkb) -> Result<Option<f64>> {
-    let Some((start_x, start_y)) = point_xy(start)? else {
-        return Ok(None);
-    };
-    let Some((end_x, end_y)) = point_xy(end)? else {
-        return Ok(None);
-    };
+    match (start.as_type(), end.as_type()) {
+        (GeometryType::Point(start_point), GeometryType::Point(end_point)) => {
+            match (start_point.coord(), end_point.coord()) {
+                // If both geometries are non-empty points, calculate the angle
+                (Some(start_coord), Some(end_coord)) => Ok(calc_azimuth(
+                    start_coord.x(),
+                    start_coord.y(),
+                    end_coord.x(),
+                    end_coord.y(),
+                )),
+                // If either of the points is empty, the result is NULL
+                _ => Ok(None),
+            }
+        }
+        _ => Err(datafusion_common::error::DataFusionError::Execution(
+            "ST_Azimuth expects both arguments to be POINT geometries".into(),
+        )),
+    }
+}
 
+// Note: When the two points are completely coincident, PostGIS's ST_Azimuth()
+//       returns NULL. However, this returns 0.0.
+fn calc_azimuth(start_x: f64, start_y: f64, end_x: f64, end_y: f64) -> Option<f64> {
     let dx = end_x - start_x;
     let dy = end_y - start_y;
-
-    if dx == 0.0 && dy == 0.0 {
-        return Ok(None);
-    }
 
     let mut angle = dx.atan2(dy);
     if angle < 0.0 {
         angle += 2.0 * std::f64::consts::PI;
     }
 
-    Ok(Some(angle))
-}
-
-fn point_xy(geom: &Wkb) -> Result<Option<(f64, f64)>> {
-    match geom.as_type() {
-        GeometryType::Point(point) => {
-            if let Some(coord) = point.coord() {
-                Ok(Some((coord.x(), coord.y())))
-            } else {
-                Ok(None)
-            }
-        }
-        _ => Err(exec_datafusion_err!(
-            "ST_Azimuth expects both arguments to be POINT geometries"
-        )),
-    }
+    Some(angle)
 }
 
 #[cfg(test)]
@@ -168,11 +165,6 @@ mod tests {
             result,
             ScalarValue::Float64(Some(val)) if (val - (3.0 * std::f64::consts::FRAC_PI_2)).abs() < 1e-12
         ));
-
-        let result = tester
-            .invoke_scalar_scalar(start.clone(), start.clone())
-            .unwrap();
-        assert!(result.is_null());
 
         let result = tester
             .invoke_scalar_scalar(ScalarValue::Null, north.clone())
