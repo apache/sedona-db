@@ -111,11 +111,13 @@ fn invoke_scalar(start: &Wkb, end: &Wkb) -> Result<Option<f64>> {
     }
 }
 
-// Note: When the two points are completely coincident, PostGIS's ST_Azimuth()
-//       returns NULL. However, this returns 0.0.
 fn calc_azimuth(start_x: f64, start_y: f64, end_x: f64, end_y: f64) -> Option<f64> {
     let dx = end_x - start_x;
     let dy = end_y - start_y;
+
+    if dx == 0.0 && dy == 0.0 {
+        return None;
+    }
 
     let mut angle = dx.atan2(dy);
     if angle < 0.0 {
