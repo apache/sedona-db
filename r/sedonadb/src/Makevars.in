@@ -30,6 +30,11 @@ PKG_LIBS = -L$(LIBDIR) -lsedonadbr @PKG_LIBS@
 
 CARGO_BUILD_ARGS = --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)
 
+# "-Wno-pedantic" is to override the "-pedantic" flag passed by pkgbuild, which
+# makes the compilation of aws-lc-sys fail. Hopefully, such C code will be fixed
+# on upstream so that we can remove this.
+CFLAGS_TWEAKED = $(CFLAGS) -Wno-pedantic
+
 all: $(SHLIB) clean_intermediate
 
 $(SHLIB): $(STATLIB)
@@ -40,7 +45,7 @@ $(STATLIB):
 	# therefore is only used if cargo is absent from the user's PATH.
 	export PATH="$(PATH):$(HOME)/.cargo/bin" && \
 	  export CC="$(CC)" && \
-	  export CFLAGS="$(CFLAGS)" && \
+	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
 	  export AWS_LC_SYS_CMAKE_BUILDER=1 && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
 	  if [ "$(TARGET)" != "wasm32-unknown-emscripten" ]; then \

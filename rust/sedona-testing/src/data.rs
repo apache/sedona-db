@@ -84,6 +84,47 @@ pub fn geoarrow_data_dir() -> Result<String> {
     )
 }
 
+/// Find the most likely path to the sedona-testing directory if it exists
+///
+/// This mirrors [`geoarrow_data_dir`] but for the sedona-testing submodule.
+/// It checks the `SEDONA_TESTING_DIR` environment variable first, then
+/// falls back to the typical repository-relative locations.
+pub fn sedona_testing_dir() -> Result<String> {
+    if let Ok(from_env) = env::var("SEDONA_TESTING_DIR") {
+        if fs::exists(&from_env)? {
+            return Ok(from_env);
+        } else {
+            return sedona_internal_err!(
+                "{}\n{}{}{}",
+                "Can't resolve sedona-testing directory because",
+                "the value of the SEDONA_TESTING_DIR (",
+                from_env,
+                ") does not exist"
+            );
+        }
+    }
+
+    let likely_possibilities = [
+        "../../submodules/sedona-testing".to_string(),
+        "submodules/sedona-testing".to_string(),
+    ];
+
+    for possibility in likely_possibilities.into_iter().rev() {
+        if let Ok(exists) = fs::exists(&possibility) {
+            if exists {
+                return Ok(possibility);
+            }
+        }
+    }
+
+    sedona_internal_err!(
+        "{}\n{}\n{}",
+        "Can't resolve sedona-testing directory from the current working directory",
+        "You may need to run `git submodule init && git submodule update --recursive` or",
+        "set the SEDONA_TESTING_DIR environment variable"
+    )
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -112,5 +153,23 @@ mod test {
         let maybe_file = test_geoparquet("natural-earth", "countries");
         env::remove_var("SEDONA_GEOARROW_DATA_DIR");
         assert!(maybe_file.is_ok());
+    }
+
+    #[test]
+    fn sedona_testing_dir_resolves() {
+        assert!(sedona_testing_dir().is_ok());
+
+        env::set_var("SEDONA_TESTING_DIR", "this_directory_does_not_exist");
+        let err = sedona_testing_dir();
+        env::remove_var("SEDONA_TESTING_DIR");
+        assert!(err
+            .unwrap_err()
+            .message()
+            .contains("the value of the SEDONA_TESTING_DIR"));
+
+        env::set_var("SEDONA_TESTING_DIR", sedona_testing_dir().unwrap());
+        let maybe_dir = sedona_testing_dir();
+        env::remove_var("SEDONA_TESTING_DIR");
+        assert!(maybe_dir.is_ok());
     }
 }

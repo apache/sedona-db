@@ -364,15 +364,21 @@ impl GeoParquetFileSource {
         predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
         if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
-            let mut parquet_source = parquet_source.clone();
+            let parquet_source = parquet_source.clone();
             // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.predicate().cloned(), predicate) {
                 (None, None) => None,
                 (None, Some(specified_predicate)) => Some(specified_predicate),
                 (Some(inner_predicate), None) => Some(inner_predicate),
-                (Some(_), Some(specified_predicate)) => {
-                    parquet_source = parquet_source.with_predicate(specified_predicate.clone());
-                    Some(specified_predicate)
+                (Some(inner_predicate), Some(specified_predicate)) => {
+                    // Sanity check: predicate in `GeoParquetFileSource` is init
+                    // from its inner ParquetSource's predicate, they should be
+                    // equivalent.
+                    if Arc::ptr_eq(&inner_predicate, &specified_predicate) {
+                        Some(inner_predicate)
+                    } else {
+                        return sedona_internal_err!("Inner predicate should be equivalent to the predicate in `GeoParquetFileSource`");
+                    }
                 }
             };
 
@@ -452,6 +458,9 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone().unwrap(),
             base_config.file_schema.clone(),
             self.inner.table_parquet_options().global.pruning,
+            // HACK: Since there is no public API to set inner's metrics, so we use
+            // inner's metrics as the ExecutionPlan-global metrics
+            self.inner.metrics(),
         ))
     }
 
