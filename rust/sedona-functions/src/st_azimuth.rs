@@ -165,6 +165,8 @@ mod tests {
         let east = create_scalar(Some("POINT (1 0)"), &end_type);
         let south = create_scalar(Some("POINT (0 -1)"), &end_type);
         let west = create_scalar(Some("POINT (-1 0)"), &end_type);
+        let same = create_scalar(Some("POINT (0 0)"), &end_type);
+        let empty = create_scalar(Some("POINT EMPTY"), &end_type);
 
         let result = tester
             .invoke_scalar_scalar(start.clone(), north.clone())
@@ -198,6 +200,19 @@ mod tests {
             ScalarValue::Float64(Some(val)) if (val - (3.0 * std::f64::consts::FRAC_PI_2)).abs() < 1e-12
         ));
 
+        // If two points are the same, return NULL
+        let result = tester
+            .invoke_scalar_scalar(start.clone(), same.clone())
+            .unwrap();
+        assert!(result.is_null());
+
+        // If either one of the points is empty, return NULL
+        let result = tester
+            .invoke_scalar_scalar(start.clone(), empty.clone())
+            .unwrap();
+        assert!(result.is_null());
+
+        // If either one of the points is NULL, return NULL
         let result = tester
             .invoke_scalar_scalar(ScalarValue::Null, north.clone())
             .unwrap();
