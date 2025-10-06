@@ -105,9 +105,7 @@ fn invoke_scalar(start: &Wkb, end: &Wkb) -> Result<Option<f64>> {
                 _ => Ok(None),
             }
         }
-        _ => Err(datafusion_common::error::DataFusionError::Execution(
-            "ST_Azimuth expects both arguments to be POINT geometries".into(),
-        )),
+        _ => exec_err!("ST_Azimuth expects both arguments to be POINT geometries"),
     }
 }
 
