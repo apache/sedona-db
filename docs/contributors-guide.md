@@ -200,6 +200,7 @@ docker compose up -d
 ```
 
 You can later shut it down with
+
 ```shell
 docker compose down
 ```
