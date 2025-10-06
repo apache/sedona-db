@@ -322,7 +322,7 @@ class DataFrame:
                 Use GeoParquet 1.1 to compute an additional bounding box column
                 for every geometry column in the output: some readers can use these columns
                 to prune row groups when files contain an effective spatial ordering.
-                The extra columns will be appear just before their geometry column and
+                The extra columns will appear just before their geometry column and
                 will be named "[geom_col_name]_bbox" for all geometry columns except
                 "geometry", whose bounding box column name is just "bbox". If such a
                 column already exists, it will be overwritten to avoid accumulating
