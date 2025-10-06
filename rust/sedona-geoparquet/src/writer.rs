@@ -405,7 +405,7 @@ mod test {
     };
     use datafusion_common::cast::{as_float32_array, as_struct_array};
     use datafusion_common::ScalarValue;
-    use datafusion_expr::LogicalPlanBuilder;
+    use datafusion_expr::{Expr, LogicalPlanBuilder};
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
     use sedona_testing::data::test_geoparquet;
@@ -537,7 +537,14 @@ mod test {
     async fn geoparquet_1_1_basic() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
-        let df = ctx.table(&example).await.unwrap();
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            // DataFusion internals loose the nullability we assigned to the bbox
+            // and without this line the test fails.
+            .filter(Expr::IsNotNull(col("geometry").into()))
+            .unwrap();
 
         let mut options = TableGeoParquetOptions::new();
         options.geoparquet_version = GeoParquetVersion::V1_1;
@@ -568,6 +575,10 @@ mod test {
         let df = ctx
             .table(&example)
             .await
+            .unwrap()
+            // DataFusion internals loose the nullability we assigned to the bbox
+            // and without this line the test fails.
+            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .select(vec![
                 col("wkt"),
@@ -612,6 +623,10 @@ mod test {
         let df = ctx
             .table(&example)
             .await
+            .unwrap()
+            // DataFusion internals loose the nullability we assigned to the bbox
+            // and without this line the test fails.
+            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .select(vec![
                 lit("this is definitely not a bbox").alias("bbox"),
