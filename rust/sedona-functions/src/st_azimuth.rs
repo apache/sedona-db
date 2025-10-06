@@ -16,7 +16,7 @@
 // under the License.
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
+use datafusion_common::{error::Result, exec_err};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
