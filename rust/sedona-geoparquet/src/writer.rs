@@ -73,7 +73,7 @@ pub fn create_geoparquet_writer_physical_plan(
 
     // We have geometry and/or geography! Collect the GeoParquetMetadata we'll need to write
     let mut metadata = GeoParquetMetadata::default();
-    let mut bbox_colunns = HashMap::new();
+    let mut bbox_columns = HashMap::new();
 
     // Check the version
     match options.geoparquet_version {
@@ -82,7 +82,7 @@ pub fn create_geoparquet_writer_physical_plan(
         }
         GeoParquetVersion::V1_1 => {
             metadata.version = "1.1.0".to_string();
-            (input, bbox_colunns) = project_bboxes(input)?;
+            (input, bbox_columns) = project_bboxes(input)?;
             conf.output_schema = input.schema();
             output_geometry_column_indices = input.schema().geometry_column_indices()?;
         }
@@ -142,7 +142,7 @@ pub fn create_geoparquet_writer_physical_plan(
         }
 
         // Add bbox column info, if we added one in project_bboxes()
-        if let Some(bbox_column_name) = bbox_colunns.get(f.name()) {
+        if let Some(bbox_column_name) = bbox_columns.get(f.name()) {
             column_metadata
                 .covering
                 .replace(GeoParquetCovering::bbox_struct_xy(bbox_column_name));
@@ -549,7 +549,7 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
+            // DataFusion internals lose the nullability we assigned to the bbox
             // and without this line the test fails.
             .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap();
@@ -584,7 +584,7 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
+            // DataFusion internals lose the nullability we assigned to the bbox
             // and without this line the test fails.
             .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
@@ -632,7 +632,7 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
+            // DataFusion internals lose the nullability we assigned to the bbox
             // and without this line the test fails.
             .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
