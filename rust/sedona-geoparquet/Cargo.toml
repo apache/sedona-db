@@ -57,7 +57,6 @@ object_store = { workspace = true }
 parquet = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-expr = { path = "../sedona-expr" }
-# TODO: move the executor into sedona-expr
 sedona-functions = { path = "../sedona-functions" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
