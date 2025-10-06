@@ -93,7 +93,7 @@ impl FromStr for GeoParquetVersion {
             "2.0" => Ok(GeoParquetVersion::V2_0),
             "none" => Ok(GeoParquetVersion::Omitted),
             _ => plan_err!(
-                "Unexpected GeoParquet version string (expected '1.0', '1.1', '2.0', or 'none'"
+                "Unexpected GeoParquet version string (expected '1.0', '1.1', '2.0', or 'none')"
             ),
         }
     }
