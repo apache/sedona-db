@@ -121,6 +121,29 @@ def test_st_astext(eng, geom):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
+        # doesn't work on SedonaDB yet.
+        # (None, None, None),
+        ("POINT (0 0)", None, None),
+        (None, "POINT (0 0)", None),
+        ("POINT (0 0)", "POINT (0 0)", None),
+        ("POINT (0 0)", "POINT (1 1)", 0.7853981633974483),  # 45 / 180 * PI
+        ("POINT (0 0)", "POINT (-1 -1)", 3.9269908169872414),  # 225 / 180 * PI
+    ],
+)
+def test_st_azimuth(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Azimuth({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+        expected,
+        numeric_epsilon=1e-8,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "dist", "expected_area"),
     [
         (None, None, None),
