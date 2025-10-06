@@ -155,6 +155,12 @@ native component with:
 maturin develop
 ```
 
+If you don't yet have maturin installed, you can install it using pip
+
+```shell
+pip install maturin
+```
+
 ## Debugging
 
 ### Rust
@@ -174,6 +180,39 @@ any IDE that supports debugging an editable Python package installation (e.g., V
 Rust, C, or C++ code can be debugged using the
 [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
 *Attach to Process...* command from the command palette in VSCode.
+
+## Testing
+
+### Running Rust tests
+
+We use cargo to run the Rust tests.
+
+```shell
+cargo test
+```
+
+### Running Python tests
+
+A large number of the Python tests rely on a running PostGIS instance. You can spin one up by using the providied PostGIS docker compose file.
+
+```shell
+docker compose up -d
+```
+
+You can later shut it down with
+```shell
+docker compose down
+```
+
+To run the actual Python tests, you can use pytest.
+
+e.g Run all of the tests
+
+```shell
+pytest python/sedonadb/tests
+```
+
+Remember that you need to run `maturin develop` to update your python installation after changes in Rust code.
 
 ## Low-level benchmarking
 
