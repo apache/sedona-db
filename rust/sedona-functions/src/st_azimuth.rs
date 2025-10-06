@@ -101,11 +101,13 @@ fn invoke_scalar(start: &Wkb, end: &Wkb) -> Result<Option<f64>> {
                     end_coord.x(),
                     end_coord.y(),
                 )),
-                // If either of the points is empty, the result is NULL
-                _ => Ok(None),
+                // If either of the points is empty, raise an error.
+                _ => {
+                    exec_err!("ST_Azimuth expects both arguments to be non-empty POINT geometries")
+                }
             }
         }
-        _ => exec_err!("ST_Azimuth expects both arguments to be POINT geometries"),
+        _ => exec_err!("ST_Azimuth expects both arguments to be non-empty POINT geometries"),
     }
 }
 
@@ -205,10 +207,14 @@ mod tests {
         assert!(result.is_null());
 
         // If either one of the points is empty, return NULL
-        let result = tester
-            .invoke_scalar_scalar(start.clone(), empty.clone())
-            .unwrap();
-        assert!(result.is_null());
+        let result = tester.invoke_scalar_scalar(start.clone(), empty.clone());
+        assert!(
+            result.is_err()
+                && result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("ST_Azimuth expects both arguments to be non-empty POINT geometries")
+        );
 
         // If either one of the points is NULL, return NULL
         let result = tester
