@@ -426,7 +426,14 @@ mod test {
 
     async fn test_dataframe_roundtrip(ctx: SessionContext, src: DataFrame) {
         let df_batches = src.clone().collect().await.unwrap();
-        test_write_dataframe(ctx, src, df_batches, TableGeoParquetOptions::default()).await
+        test_write_dataframe(
+            ctx,
+            src,
+            df_batches,
+            TableGeoParquetOptions::default(),
+            vec![],
+        )
+        .await
     }
 
     async fn test_write_dataframe(
@@ -434,6 +441,7 @@ mod test {
         src: DataFrame,
         expected_batches: Vec<RecordBatch>,
         options: TableGeoParquetOptions,
+        partition_by: Vec<String>,
     ) {
         // It's a bit verbose to trigger this without helpers
         let format = GeoParquetFormatFactory::new_with_options(options);
@@ -447,7 +455,7 @@ mod test {
             tmp_parquet.to_string_lossy().into(),
             file_type,
             Default::default(),
-            vec![],
+            partition_by,
         )
         .unwrap()
         .build()
@@ -563,7 +571,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
     }
 
     #[tokio::test]
@@ -610,7 +618,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
     }
 
     #[tokio::test]
@@ -650,7 +658,51 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1_with_partition() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            // DataFusion internals loose the nullability we assigned to the bbox
+            // and without this line the test fails.
+            .filter(Expr::IsNotNull(col("geometry").into()))
+            .unwrap()
+            .select(vec![
+                lit("some_partition").alias("part"),
+                col("wkt"),
+                col("geometry"),
+            ])
+            .unwrap();
+
+        let mut options = TableGeoParquetOptions::new();
+        options.geoparquet_version = GeoParquetVersion::V1_1;
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                col("wkt"),
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+                lit(ScalarValue::Dictionary(
+                    DataType::UInt16.into(),
+                    ScalarValue::Utf8(Some("some_partition".to_string())).into(),
+                ))
+                .alias("part"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec!["part".into()]).await;
     }
 
     #[test]
