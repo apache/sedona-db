@@ -32,6 +32,7 @@ rstest = { workspace = true }
 
 [features]
 default = []
+geo = ["dep:geo"]
 criterion = ["dep:criterion"]
 
 [dependencies]
@@ -42,7 +43,7 @@ criterion = { workspace = true, optional = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
-geo-traits = { workspace = true }
+geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
 rand = { workspace = true }
@@ -52,3 +53,4 @@ sedona-expr = { path = "../sedona-expr" }
 sedona-schema = { path = "../sedona-schema" }
 wkb = { workspace = true }
 wkt = { workspace = true }
+geo = { workspace = true, optional = true }

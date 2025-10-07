@@ -104,7 +104,25 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
 /// Panics if the values' are not equal, generating reasonable failure messages for geometry
 /// arrays where the default failure message would otherwise be uninformative.
 pub fn assert_scalar_equal_wkb_geometry(actual: &ScalarValue, expected_wkt: Option<&str>) {
-    assert_scalar_equal(actual, &create_scalar(expected_wkt, &WKB_GEOMETRY));
+    let expected = create_scalar(expected_wkt, &WKB_GEOMETRY);
+    assert_eq!(actual.data_type(), DataType::Binary);
+    assert_wkb_scalar_equal(actual, &expected, false);
+}
+
+/// Assert a [`ScalarValue`] is a WKB_GEOMETRY scalar corresponding to the given WKT. This function
+/// compares the geometries topologically, so two geometries that are not byte-wise equal but are
+/// topologically equal will be considered equal.
+///
+/// Panics if the values' are not topologically equal, generating reasonable failure messages for geometry
+/// arrays where the default failure message would otherwise be uninformative.
+#[cfg(feature = "geo")]
+pub fn assert_scalar_equal_wkb_geometry_topologically(
+    actual: &ScalarValue,
+    expected_wkt: Option<&str>,
+) {
+    let expected = create_scalar(expected_wkt, &WKB_GEOMETRY);
+    assert_eq!(actual.data_type(), DataType::Binary);
+    assert_wkb_scalar_equal(actual, &expected, true);
 }
 
 /// Assert two [`ScalarValue`]s are equal
@@ -123,7 +141,7 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
         (SedonaType::Arrow(_), SedonaType::Arrow(_)) => assert_arrow_scalar_equal(actual, expected),
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _))
         | (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
-            assert_wkb_scalar_equal(actual, expected);
+            assert_wkb_scalar_equal(actual, expected, false);
         }
         (_, _) => unreachable!(),
     }
@@ -160,11 +178,21 @@ where
     for (i, (actual_item, expected_item)) in zip(actual, expected).enumerate() {
         let actual_label = format!("actual Array element #{i}");
         let expected_label = format!("expected Array element #{i}");
-        assert_wkb_value_equal(actual_item, expected_item, &actual_label, &expected_label);
+        assert_wkb_value_equal(
+            actual_item,
+            expected_item,
+            &actual_label,
+            &expected_label,
+            false,
+        );
     }
 }
 
-fn assert_wkb_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
+fn assert_wkb_scalar_equal(
+    actual: &ScalarValue,
+    expected: &ScalarValue,
+    compare_topologically: bool,
+) {
     match (actual, expected) {
         (ScalarValue::Binary(maybe_actual_wkb), ScalarValue::Binary(maybe_expected_wkb))
         | (
@@ -176,6 +204,7 @@ fn assert_wkb_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
                 maybe_expected_wkb.as_deref(),
                 "actual WKB scalar",
                 "expected WKB scalar",
+                compare_topologically,
             );
         }
         (_, _) => {
@@ -189,6 +218,7 @@ fn assert_wkb_value_equal(
     expected: Option<&[u8]>,
     actual_label: &str,
     expected_label: &str,
+    compare_topologically: bool,
 ) {
     match (actual, expected) {
         (None, None) => {}
@@ -205,11 +235,55 @@ fn assert_wkb_value_equal(
             )
         }
         (Some(actual_wkb), Some(expected_wkb)) => {
+            // Quick test: if the binary of the WKB is the same, they are equal
             if actual_wkb != expected_wkb {
-                let (actual_wkt, expected_wkt) = (format_wkb(actual_wkb), format_wkb(expected_wkb));
-                panic!("{actual_label} != {expected_label}\n{actual_label}:\n  {actual_wkt}\n{expected_label}:\n  {expected_wkt}")
+                let is_equals = if compare_topologically {
+                    compare_wkb_topologically(expected_wkb, actual_wkb)
+                } else {
+                    false
+                };
+
+                if !is_equals {
+                    let (actual_wkt, expected_wkt) =
+                        (format_wkb(actual_wkb), format_wkb(expected_wkb));
+                    panic!("{actual_label} != {expected_label}\n{actual_label}:\n  {actual_wkt}\n{expected_label}:\n  {expected_wkt}")
+                }
             }
         }
+    }
+}
+
+fn compare_wkb_topologically(
+    #[allow(unused)] expected_wkb: &[u8],
+    #[allow(unused)] actual_wkb: &[u8],
+) -> bool {
+    #[cfg(feature = "geo")]
+    {
+        use geo::Relate;
+        use geo_traits::to_geo::ToGeoGeometry;
+        use geo_traits::Dimensions;
+        use geo_traits::GeometryTrait;
+
+        let expected = wkb::reader::read_wkb(expected_wkb);
+        let actual = wkb::reader::read_wkb(actual_wkb);
+        match (expected, actual) {
+            (Ok(expected_geom), Ok(actual_geom)) => {
+                if expected_geom.dim() == Dimensions::Xy && actual_geom.dim() == Dimensions::Xy {
+                    let expected_geom = expected_geom.to_geometry();
+                    let actual_geom = actual_geom.to_geometry();
+                    expected_geom.relate(&actual_geom).is_equal_topo()
+                } else {
+                    // geo crate does not support 3D/4D geometry operations, so we fall back to using the result
+                    // of byte-wise comparison
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+    #[cfg(not(feature = "geo"))]
+    {
+        panic!("Topological comparison requires the 'geo' feature to be enabled");
     }
 }
 
@@ -357,20 +431,20 @@ actual Array element #0 is POINT(1 2), expected Array element #0 is null")]
 
     #[test]
     fn wkb_value_equal() {
-        assert_wkb_value_equal(None, None, "lhs", "rhs");
-        assert_wkb_value_equal(Some(&[]), Some(&[]), "lhs", "rhs");
+        assert_wkb_value_equal(None, None, "lhs", "rhs", false);
+        assert_wkb_value_equal(Some(&[]), Some(&[]), "lhs", "rhs", false);
     }
 
     #[test]
     #[should_panic(expected = "lhs != rhs:\nlhs is POINT(1 2), rhs is null")]
     fn wkb_value_expected_null() {
-        assert_wkb_value_equal(Some(&POINT), None, "lhs", "rhs");
+        assert_wkb_value_equal(Some(&POINT), None, "lhs", "rhs", false);
     }
 
     #[test]
     #[should_panic(expected = "lhs != rhs:\nlhs is null, rhs is POINT(1 2)")]
     fn wkb_value_actual_null() {
-        assert_wkb_value_equal(None, Some(&POINT), "lhs", "rhs");
+        assert_wkb_value_equal(None, Some(&POINT), "lhs", "rhs", false);
     }
 
     #[test]
@@ -380,7 +454,31 @@ lhs:
 rhs:
   POINT(1 2)")]
     fn wkb_value_values_not_equal() {
-        assert_wkb_value_equal(Some(&[]), Some(&POINT), "lhs", "rhs");
+        assert_wkb_value_equal(Some(&[]), Some(&POINT), "lhs", "rhs", false);
+    }
+
+    #[cfg(feature = "geo")]
+    #[test]
+    fn wkb_value_equal_topologically() {
+        use crate::create::make_wkb;
+        assert_wkb_value_equal(Some(&POINT), Some(&POINT), "lhs", "rhs", true);
+        let lhs = make_wkb("POLYGON ((0 0, 1 0, 0 1, 0 0))");
+        let rhs = make_wkb("POLYGON ((0 0, 0 1, 1 0, 0 0))");
+        assert_wkb_value_equal(Some(&lhs), Some(&rhs), "lhs", "rhs", true);
+    }
+
+    #[cfg(feature = "geo")]
+    #[test]
+    #[should_panic(expected = "lhs != rhs
+lhs:
+  POLYGON((0 0,1 0,0 1,0 0))
+rhs:
+  POLYGON((0 0,1 0,0 0))")]
+    fn wkb_value_not_equal_topologically() {
+        use crate::create::make_wkb;
+        let lhs = make_wkb("POLYGON ((0 0, 1 0, 0 1, 0 0))");
+        let rhs = make_wkb("POLYGON ((0 0, 1 0, 0 0))");
+        assert_wkb_value_equal(Some(&lhs), Some(&rhs), "lhs", "rhs", true);
     }
 
     #[test]

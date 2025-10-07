@@ -52,9 +52,21 @@ dependencies = [
 
 [[package]]
 name = "adbc_core"
-version = "0.18.0"
-source = "git+https://github.com/apache/arrow-adbc?rev=1ba248290cd299c4969b679463bcd54c217cf2e4#1ba248290cd299c4969b679463bcd54c217cf2e4"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5b891479797b5588e320f7fd3caf15faba311cf8f8a76911195b6a3d55304eb"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
+]
+
+[[package]]
+name = "adbc_ffi"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c30e0f28a8363a76a8ec802934223ea5811ea658308c7403c8beb9aa86fa808f"
+dependencies = [
+ "adbc_core",
  "arrow-array",
  "arrow-schema",
 ]
@@ -4787,6 +4799,7 @@ name = "sedona-adbc"
 version = "0.2.0"
 dependencies = [
  "adbc_core",
+ "adbc_ffi",
  "arrow-array",
  "arrow-schema",
  "datafusion",
@@ -5090,6 +5103,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "geo",
  "geo-traits 0.2.0",
  "geo-types",
  "parquet",
