@@ -40,6 +40,21 @@ class TestBenchFunctions(TestBenchBase):
     @pytest.mark.parametrize(
         "table",
         [
+            "points_simple",
+        ],
+    )
+    def test_st_azimuth(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_Azimuth(geom1, geom2) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+    @pytest.mark.parametrize(
+        "table",
+        [
             "collections_simple",
             "collections_complex",
         ],
