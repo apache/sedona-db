@@ -54,7 +54,8 @@ rust-version = "1.82"
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
-adbc_core = { git = "https://github.com/apache/arrow-adbc", rev = "1ba248290cd299c4969b679463bcd54c217cf2e4" }
+adbc_core = "0.20.0"
+adbc_ffi = "0.20.0"
 lru = "0.12"
 arrow = { version = "55.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "55.1.0" }
