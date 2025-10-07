@@ -29,6 +29,13 @@ class TestBenchBase:
         # Setup tables
         for name, base_options in [
             (
+                "points_simple",
+                {
+                    "geom_type": "Point",
+                    "target_rows": num_geoms,
+                },
+            ),
+            (
                 "segments_large",
                 {
                     "geom_type": "LineString",
