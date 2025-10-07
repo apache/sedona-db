@@ -42,6 +42,8 @@ To run a benchmark, simply run the corresponding test function. For example, to 
 pytest test_functions.py::TestBenchFunctions::test_st_buffer
 ```
 
+Note: It is recommended to run a single (pytest) benchmark function at a time instead of the whole suite because these benchmarks take a long time. This is because they run multiple iterations by default. For example, it often takes 2-3 minutes to run a single benchmark for a basic function.
+
 Most of the time, you'll also want to group by `param:table` or `func` (function) by using the `--benchmark-group-by=param:table` flag. pytest-benchmark will highlight the "best" value in green (e.g fastest for median, lowest for stddev) and "worse" value in red for each column per each group.
 
 ```bash
