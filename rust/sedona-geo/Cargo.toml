@@ -32,7 +32,7 @@ criterion = { workspace = true }
 rstest = { workspace = true }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
+sedona-testing = { path = "../sedona-testing", features = ["criterion", "geo"] }
 wkt = { workspace = true }
 
 [dependencies]
