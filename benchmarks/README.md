@@ -36,6 +36,8 @@ The below commands assume your working directory is in `benchmarks`.
 cd benchmarks/
 ```
 
+Please also make sure you have PostGIS running. Instructions for starting PostGIS using the provided docker image can be found in the [contributors-guide](../docs/contributors-guide.md)
+
 To run a benchmark, simply run the corresponding test function. For example, to run the benchmarks for st_buffer, you can run
 
 ```bash
