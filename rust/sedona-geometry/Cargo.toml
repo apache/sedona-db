@@ -34,8 +34,10 @@ serde_json = { workspace = true }
 wkt = { workspace = true }
 
 [dependencies]
+datafusion-common = { workspace = true }
 geo-traits = { workspace = true }
 lru = { workspace = true }
+sedona-common = { path = "../sedona-common" }
 serde = { workspace = true }
 serde_with = { workspace = true }
 thiserror = { workspace = true }
