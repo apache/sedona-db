@@ -19,7 +19,6 @@
 extern crate serde;
 
 pub use crate::algorithm::*;
-pub use crate::types::Closest;
 use std::cmp::Ordering;
 
 pub use geo_types::{coord, line_string, point, polygon, wkt, CoordFloat, CoordNum};
@@ -29,7 +28,6 @@ pub use geometry::*;
 
 /// This module includes all the functions of geometric calculations
 pub mod algorithm;
-mod types;
 mod utils;
 use crate::kernels::{RobustKernel, SimpleKernel};
 

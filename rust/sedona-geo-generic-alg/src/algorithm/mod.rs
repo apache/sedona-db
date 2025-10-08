@@ -30,22 +30,9 @@ pub use bounding_rect::BoundingRect;
 pub mod centroid;
 pub use centroid::Centroid;
 
-/// Convert the type of a geometry’s coordinate value.
-pub mod convert;
-pub use convert::{Convert, TryConvert};
-
-/// Convert coordinate angle units between radians and degrees.
-pub mod convert_angle_unit;
-pub use convert_angle_unit::{ToDegrees, ToRadians};
-
 /// Determine whether a `Coord` lies inside, outside, or on the boundary of a geometry.
 pub mod coordinate_position;
 pub use coordinate_position::CoordinatePosition;
-
-/// Iterate over geometry coordinates.
-pub mod coords_iter;
-pub use coords_iter::CoordsIter;
-pub use coords_iter::CoordsSeqIter;
 
 /// Dimensionality of a geometry and its boundary, based on OGC-SFA.
 pub mod dimensions;
@@ -55,10 +42,6 @@ pub use dimensions::HasDimensions;
 pub mod euclidean_length;
 #[allow(deprecated)]
 pub use euclidean_length::EuclideanLength;
-
-/// Calculate the extreme coordinates and indices of a geometry.
-pub mod extremes;
-pub use extremes::Extremes;
 
 /// Determine whether `Geometry` `A` intersects `Geometry` `B`.
 pub mod intersects;
@@ -72,27 +55,3 @@ pub use line_measures::{Distance, DistanceExt, LengthMeasurableExt};
 /// Apply a function to all `Coord`s of a `Geometry`.
 pub mod map_coords;
 pub use map_coords::{MapCoords, MapCoordsInPlace};
-
-/// Rotate a `Geometry` by an angle given in degrees.
-pub mod rotate;
-pub use rotate::{Rotate, RotateMut};
-
-/// Scale a `Geometry` up or down by a factor
-pub mod scale;
-pub use scale::{Scale, ScaleMut};
-
-/// Skew a `Geometry` by shearing it at angles along the x and y dimensions
-pub mod skew;
-pub use skew::{Skew, SkewMut};
-
-/// Composable affine operations such as rotate, scale, skew, and translate
-pub mod affine_ops;
-pub use affine_ops::{AffineOps, AffineOpsMut, AffineTransform};
-
-/// Simplify `Geometries` using the Ramer-Douglas-Peucker algorithm.
-pub mod simplify;
-pub use simplify::{Simplify, SimplifyIdx};
-
-/// Translate a `Geometry` along the given offsets.
-pub mod translate;
-pub use translate::{Translate, TranslateMut};
