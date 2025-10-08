@@ -3052,6 +3052,8 @@ column with a spatial data type (in that order).</p>
     <span class="n">partition_by</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">sort_by</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">single_file_output</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">geoparquet_version</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a></span><span class="p">[</span><span class="s2">"1.0"</span><span class="p">,</span> <span class="s2">"1.1"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1.0"</span><span class="p">,</span>
+    <span class="n">overwrite_bbox_columns</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 
@@ -3060,7 +3062,8 @@ column with a spatial data type (in that order).</p>
         <p>Write this DataFrame to one or more (Geo)Parquet files</p>
 <p>For input that contains geometry columns, GeoParquet metadata is written
 such that suitable readers can recreate Geometry/Geography types when
-reading the output.</p>
+reading the output and potentially read fewer row groups when only a
+subset of the file is needed for a given query.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3106,6 +3109,38 @@ sort is supported.</p>
 file vs. writing one file per partition to a directory. By default,
 a single file is written if <code>partition_by</code> is unspecified and
 <code>path</code> ends with <code>.parquet</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>geoparquet_version</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a>['1.0', '1.1']</code>, default:
+                  <code>'1.0'</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>GeoParquet metadata version to write if output contains
+one or more geometry columns. The default (1.0) is the most widely
+supported and will result in geometry columns being recognized in many
+readers; however, only includes statistics at the file level.</p>
+<p>Use GeoParquet 1.1 to compute an additional bounding box column
+for every geometry column in the output: some readers can use these columns
+to prune row groups when files contain an effective spatial ordering.
+The extra columns will appear just before their geometry column and
+will be named "[geom_col_name]_bbox" for all geometry columns except
+"geometry", whose bounding box column name is just "bbox".</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>overwrite_bbox_columns</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Use <code>True</code> to overwrite any bounding box columns
+that already exist in the input. This is useful in a read -&gt; modify
+-&gt; write scenario to ensure these columns are up-to-date. If <code>False</code>
+(the default), an error will be raised if a bbox column already exists.</p>
           </div>
         </li>
     </ul>
