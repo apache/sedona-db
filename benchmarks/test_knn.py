@@ -16,15 +16,12 @@
 # under the License.
 import json
 import pytest
-from test_bench_base import TestBenchBase, QueryBenchBase
+from test_bench_base import TestBenchBase
 from sedonadb.testing import SedonaDB, PostGIS, DuckDB
 
 
-import pytest
-
-
 @pytest.mark.bench_query
-class TestBenchKNN(TestBenchBase, QueryBenchBase):
+class TestBenchKNN(TestBenchBase):
     def setup_class(self):
         """Setup test data for KNN benchmarks"""
         self.sedonadb = SedonaDB.create_or_skip()

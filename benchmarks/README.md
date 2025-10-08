@@ -6,42 +6,6 @@ to you under the Apache License, Version 2.0 (the
 "License"); you may not use this file except in compliance
 with the License.  You may obtain a copy of the License at
 
-
-## Benchmark Execution Modes
-
-There are two categories of benchmarks, each mapped to a pytest marker:
-
-- `@pytest.mark.bench_udf` (or inherit `UDFBenchBase`):
-  Micro / UDF benchmarks that measure the per-function cost (e.g. ST_Area, ST_Contains). These should run engines in a comparable, single-thread style configuration (where possible) to make function-level performance differences clearer.
-- `@pytest.mark.bench_query` (or inherit `QueryBenchBase`):
-  Macro / complex query benchmarks (e.g. KNN joins) that represent perceived end-user performance. Engines run with their default / natural configuration (multi-threading, internal parallelism, etc.).
-
-When adding a new benchmark, choose the appropriate marker or base class. All existing benchmarks have been annotated accordingly.
-
-Example (UDF benchmark):
-```python
-import pytest
-from sedonadb.testing import SedonaDB, DuckDB, PostGIS
-
-@pytest.mark.bench_udf
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-def test_st_area(benchmark, eng):
-    ...
-```
-
-Example (Query benchmark):
-```python
-import pytest
-from sedonadb.testing import SedonaDB, DuckDB, PostGIS
-
-@pytest.mark.bench_query
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-def test_knn_performance(benchmark, eng):
-    ...
-```
-
-Currently, the markers primarily serve for classification and future mode-specific configuration. If/when engine configuration (threads, partitions) is automated via these markers, tests will automatically benefit without code changes.
-
   http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing,
@@ -115,3 +79,36 @@ test_st_buffer[collections_simple-PostGIS]      855.3329 (9.96)     854.7194 (9.
 ```
 
 For more details and command line options, refer to the official [pytest-benchmark documentation](https://pytest-benchmark.readthedocs.io/en/latest/usage.html)
+
+### Adding New Benchmarks
+
+There are two categories of benchmarks, each mapped to a pytest marker:
+
+- `@pytest.mark.bench_udf`:
+  Micro / UDF benchmarks that measure the per-function cost (e.g. ST_Area, ST_Contains). These should run engines in a comparable, single-thread style configuration (where possible) to make function-level performance differences clearer.
+- `@pytest.mark.bench_query`:
+  Macro / complex query benchmarks (e.g. KNN joins) that represent perceived end-user performance. Engines run with their default / natural configuration (multi-threading, internal parallelism, etc.).
+
+Please choose the appropriate marker when adding a new benchmark. All existing benchmarks have been annotated accordingly.
+
+Example (UDF benchmark):
+```python
+import pytest
+from sedonadb.testing import SedonaDB, DuckDB, PostGIS
+
+@pytest.mark.bench_udf
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+def test_st_area(benchmark, eng):
+    ...
+```
+
+Example (Query benchmark):
+```python
+import pytest
+from sedonadb.testing import SedonaDB, DuckDB, PostGIS
+
+@pytest.mark.bench_query
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+def test_knn_performance(benchmark, eng):
+    ...
+```

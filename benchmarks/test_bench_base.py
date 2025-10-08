@@ -1,28 +1,4 @@
 # Licensed to the Apache Software Foundation (ASF) under one
-import pytest
-
-
-@pytest.mark.usefixtures("_bench_mode_marker_guard")
-class UDFBenchBase:
-    """Base class for UDF (micro) benchmarks enforcing single-thread semantics.
-
-    Tests inheriting from this class will be tagged with the `bench_udf` marker,
-    which signals that engines should use a comparable, single-thread style
-    configuration (where possible) for fair per-function performance comparison.
-    """
-    bench_mode = "udf"
-
-
-@pytest.mark.usefixtures("_bench_mode_marker_guard")
-class QueryBenchBase:
-    """Base class for complex / macro benchmarks (default engine configs).
-
-    Tests inheriting from this class will be tagged with the `bench_query` marker,
-    which signals that engines should run with their default (possibly multi-
-    threaded) configuration to reflect perceived end-user performance.
-    """
-    bench_mode = "query"
-
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
 # regarding copyright ownership.  The ASF licenses this file

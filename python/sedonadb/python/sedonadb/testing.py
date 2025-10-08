@@ -114,6 +114,14 @@ class DBEngine:
                 f"Failed to create engine tester {cls.name()}: {e}\n{cls.install_hint()}"
             )
 
+    def force_single_thread(self):
+        """Force the query engine to run in single-threaded mode. This will be useful
+        for running unit-test style benchmarks which tests the performance of individual
+        UDF functions
+
+        """
+        pass
+
     def assert_query_result(self, query: str, expected, **kwargs) -> "DBEngine":
         """Assert a SQL query result matches an expected target
 
@@ -313,7 +321,6 @@ class SedonaDB(DBEngine):
         import sedonadb
 
         self.con = sedonadb.connect()
-        self.con.sql("SET datafusion.execution.target_partitions TO 1")
 
     @classmethod
     def name(cls):
@@ -323,6 +330,9 @@ class SedonaDB(DBEngine):
     def create_or_skip(cls, *args, **kwargs):
         # Don't allow this to fail with a skip
         return cls(*args, **kwargs)
+
+    def force_single_thread(self):
+        self.con.sql("SET datafusion.execution.target_partitions TO 1")
 
     def create_table_parquet(self, name, paths) -> "SedonaDB":
         self.con.read_parquet(paths).to_memtable().to_view(name, overwrite=True)
@@ -355,7 +365,6 @@ class DuckDB(DBEngine):
         self.con.install_extension("spatial")
         self.con.load_extension("spatial")
         self.con.sql("CALL register_geoarrow_extensions()")
-        self.con.sql("SET threads TO 1")
 
     @classmethod
     def name(cls):
@@ -364,6 +373,9 @@ class DuckDB(DBEngine):
     @classmethod
     def install_hint(cls):
         return "- Run `pip install duckdb` to install DuckDB for Python"
+
+    def force_single_thread(self):
+        self.con.sql("SET threads TO 1")
 
     def create_view_parquet(self, name, paths) -> "DuckDB":
         self.con.read_parquet(_paths(paths)).to_view(name, replace=True)

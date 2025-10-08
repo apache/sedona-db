@@ -18,12 +18,42 @@ import pytest
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "bench_udf: mark a benchmark as a UDF (micro) benchmark")
-    config.addinivalue_line("markers", "bench_query: mark a benchmark as a complex query (macro) benchmark")
+    config.addinivalue_line(
+        "markers", "bench_udf: mark a benchmark as a UDF (micro) benchmark"
+    )
+    config.addinivalue_line(
+        "markers", "bench_query: mark a benchmark as a complex query (macro) benchmark"
+    )
 
 
-@pytest.fixture(scope="function")
-def _bench_mode_marker_guard(request):
-    # Placeholder fixture for future enforcement / logging if needed.
-    # Right now it does nothing but can be extended to apply config based on markers.
-    return None
+@pytest.fixture(autouse=True)
+def _apply_bench_mode(request):
+    """Apply per-benchmark execution mode engine configuration.
+
+    Logic:
+    - If test/function/class has marker bench_udf -> single-thread settings
+    - If marker bench_query -> default settings (do nothing)
+    - Otherwise do nothing.
+
+    This is intentionally lightweight and only targets engines used in benchmarks
+    (SedonaDB + DuckDB). PostGIS currently left unchanged.
+    """
+    force_single_thread = False
+    if request.node.get_closest_marker("bench_udf"):
+        force_single_thread = True
+
+    inst = getattr(request, "instance", None)
+    if force_single_thread and inst is not None:
+        # SedonaDB configuration
+        if hasattr(inst, "sedonadb") and getattr(inst, "sedonadb") is not None:
+            inst.sedonadb.force_single_thread()
+
+        # DuckDB configuration
+        if hasattr(inst, "duckdb") and getattr(inst, "duckdb") is not None:
+            inst.duckdb.force_single_thread()
+
+        # PostGIS configuration
+        if hasattr(inst, "postgis") and getattr(inst, "postgis") is not None:
+            inst.postgis.force_single_thread()
+
+    # No teardown necessary (settings are idempotent per test)
