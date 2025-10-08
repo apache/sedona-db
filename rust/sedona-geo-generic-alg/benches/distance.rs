@@ -79,7 +79,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("distance_linestring_to_linestring", |bencher| {
-        let ls1 = sedona_geo_test_fixtures::norway_main::<f64>();
+        let ls1 = sedona_testing::fixtures::norway_main::<f64>();
         let ls2 = LineString::from(vec![
             coord!(x: 100.0, y: 100.0),
             coord!(x: 200.0, y: 200.0),
@@ -136,7 +136,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("distance_wkb_linestring_to_linestring", |bencher| {
-        let ls1 = sedona_geo_test_fixtures::norway_main::<f64>();
+        let ls1 = sedona_testing::fixtures::norway_main::<f64>();
         let ls2 = LineString::from(vec![
             coord!(x: 100.0, y: 100.0),
             coord!(x: 200.0, y: 200.0),
@@ -195,7 +195,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("distance_concrete_linestring_to_linestring", |bencher| {
-        let ls1 = sedona_geo_test_fixtures::norway_main::<f64>();
+        let ls1 = sedona_testing::fixtures::norway_main::<f64>();
         let ls2 = LineString::from(vec![
             coord!(x: 100.0, y: 100.0),
             coord!(x: 200.0, y: 200.0),

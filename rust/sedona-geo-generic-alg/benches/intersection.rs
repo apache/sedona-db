@@ -24,8 +24,8 @@ use sedona_geo_generic_alg::{intersects::Intersects, Centroid};
 mod wkb_util;
 
 fn multi_polygon_intersection(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
     let plot_geoms: Vec<Geometry> = plot_polygons.into_iter().map(|p| p.into()).collect();
     let zone_geoms: Vec<Geometry> = zone_polygons.into_iter().map(|p| p.into()).collect();
 
@@ -71,8 +71,8 @@ fn multi_polygon_intersection(c: &mut Criterion) {
 }
 
 fn multi_polygon_intersection_wkb(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
 
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
@@ -108,8 +108,8 @@ fn multi_polygon_intersection_wkb(c: &mut Criterion) {
 }
 
 fn multi_polygon_intersection_wkb_aligned(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
 
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
@@ -149,8 +149,8 @@ fn multi_polygon_intersection_wkb_aligned(c: &mut Criterion) {
 }
 
 fn multi_polygon_intersection_wkb_conv(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
 
     // Convert intersected polygons to WKB
     let mut plot_polygon_wkbs = Vec::new();
@@ -188,8 +188,8 @@ fn multi_polygon_intersection_wkb_conv(c: &mut Criterion) {
 }
 
 fn point_polygon_intersection(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
     let plot_geoms: Vec<Geometry> = plot_polygons
         .into_iter()
         .map(|p| {
@@ -221,8 +221,8 @@ fn point_polygon_intersection(c: &mut Criterion) {
 }
 
 fn point_polygon_intersection_wkb(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
 
     // Convert intersected polygons to WKB
     let mut plot_centroid_wkbs = Vec::new();
@@ -249,8 +249,8 @@ fn point_polygon_intersection_wkb(c: &mut Criterion) {
 }
 
 fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
-    let plot_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_plots_wgs84();
-    let zone_polygons: MultiPolygon = sedona_geo_test_fixtures::nl_zones();
+    let plot_polygons: MultiPolygon = sedona_testing::fixtures::nl_plots_wgs84();
+    let zone_polygons: MultiPolygon = sedona_testing::fixtures::nl_zones();
 
     // Convert intersected polygons to WKB
     let mut plot_centroid_wkbs = Vec::new();
@@ -281,11 +281,11 @@ fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
 fn rect_intersection(c: &mut Criterion) {
     use sedona_geo_generic_alg::algorithm::BoundingRect;
     use sedona_geo_generic_alg::Rect;
-    let plot_bbox: Vec<Rect> = sedona_geo_test_fixtures::nl_plots_wgs84()
+    let plot_bbox: Vec<Rect> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.bounding_rect().unwrap())
         .collect();
-    let zone_bbox: Vec<Rect> = sedona_geo_test_fixtures::nl_zones()
+    let zone_bbox: Vec<Rect> = sedona_testing::fixtures::nl_zones()
         .iter()
         .map(|plot| plot.bounding_rect().unwrap())
         .collect();
@@ -314,11 +314,11 @@ fn rect_intersection(c: &mut Criterion) {
 fn point_rect_intersection(c: &mut Criterion) {
     use sedona_geo_generic_alg::algorithm::{BoundingRect, Centroid};
     use sedona_geo_generic_alg::geometry::{Point, Rect};
-    let plot_centroids: Vec<Point> = sedona_geo_test_fixtures::nl_plots_wgs84()
+    let plot_centroids: Vec<Point> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.centroid().unwrap())
         .collect();
-    let zone_bbox: Vec<Rect> = sedona_geo_test_fixtures::nl_zones()
+    let zone_bbox: Vec<Rect> = sedona_testing::fixtures::nl_zones()
         .iter()
         .map(|plot| plot.bounding_rect().unwrap())
         .collect();
@@ -347,11 +347,11 @@ fn point_rect_intersection(c: &mut Criterion) {
 fn point_triangle_intersection(c: &mut Criterion) {
     use geo::algorithm::TriangulateEarcut;
     use sedona_geo_generic_alg::{Point, Triangle};
-    let plot_centroids: Vec<Point> = sedona_geo_test_fixtures::nl_plots_wgs84()
+    let plot_centroids: Vec<Point> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.centroid().unwrap())
         .collect();
-    let zone_triangles: Vec<Triangle> = sedona_geo_test_fixtures::nl_zones()
+    let zone_triangles: Vec<Triangle> = sedona_testing::fixtures::nl_zones()
         .iter()
         .flat_map(|plot| plot.earcut_triangles_iter())
         .collect();

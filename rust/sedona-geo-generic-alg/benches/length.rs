@@ -23,7 +23,7 @@ mod wkb_util;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("length_f32", |bencher| {
-        let linestring = sedona_geo_test_fixtures::norway_main::<f32>();
+        let linestring = sedona_testing::fixtures::norway_main::<f32>();
 
         bencher.iter(|| {
             criterion::black_box(criterion::black_box(&linestring).length_ext(&Euclidean));
@@ -31,7 +31,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("length", |bencher| {
-        let linestring = sedona_geo_test_fixtures::norway_main::<f64>();
+        let linestring = sedona_testing::fixtures::norway_main::<f64>();
 
         bencher.iter(|| {
             criterion::black_box(criterion::black_box(&linestring).length_ext(&Euclidean));
@@ -39,7 +39,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("length_wkb", |bencher| {
-        let linestring = sedona_geo_test_fixtures::norway_main::<f64>();
+        let linestring = sedona_testing::fixtures::norway_main::<f64>();
         let wkb_bytes = wkb_util::geo_to_wkb(linestring);
 
         bencher.iter(|| {
@@ -49,7 +49,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("length_wkb_convert", |bencher| {
-        let linestring = sedona_geo_test_fixtures::norway_main::<f64>();
+        let linestring = sedona_testing::fixtures::norway_main::<f64>();
         let wkb_bytes = wkb_util::geo_to_wkb(linestring);
 
         bencher.iter(|| {

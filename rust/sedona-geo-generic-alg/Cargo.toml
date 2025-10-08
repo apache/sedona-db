@@ -42,7 +42,7 @@ serde = { workspace = true, features = ["derive"], optional = true }
 i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
 
 [dev-dependencies]
-sedona-geo-test-fixtures = { path = "../sedona-geo-test-fixtures" }
+sedona-testing = { path = "../sedona-testing" }
 approx = { workspace = true }
 criterion = { workspace = true }
 pretty_env_logger = "0.4"

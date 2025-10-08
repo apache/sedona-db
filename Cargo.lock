@@ -4949,18 +4949,10 @@ dependencies = [
  "rand_distr",
  "robust",
  "rstar",
- "sedona-geo-test-fixtures",
  "sedona-geo-traits-ext",
+ "sedona-testing",
  "serde",
  "wkb",
- "wkt 0.14.0",
-]
-
-[[package]]
-name = "sedona-geo-test-fixtures"
-version = "0.2.0"
-dependencies = [
- "geo-types",
  "wkt 0.14.0",
 ]
 

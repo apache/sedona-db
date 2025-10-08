@@ -24,7 +24,6 @@ members = [
     "r/sedonadb/src/rust",
     "rust/sedona-geo-traits-ext",
     "rust/sedona-geo-generic-alg",
-    "rust/sedona-geo-test-fixtures",
     "rust/sedona-adbc",
     "rust/sedona-expr",
     "rust/sedona-functions",

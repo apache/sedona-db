@@ -24,7 +24,7 @@ mod wkb_util;
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("area_generic_f32", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f32>();
+        let norway = sedona_testing::fixtures::norway_main::<f32>();
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
@@ -33,7 +33,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("area_generic", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f64>();
+        let norway = sedona_testing::fixtures::norway_main::<f64>();
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
@@ -42,7 +42,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("area_geo_f32", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f32>();
+        let norway = sedona_testing::fixtures::norway_main::<f32>();
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
@@ -51,7 +51,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("area_geo", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f64>();
+        let norway = sedona_testing::fixtures::norway_main::<f64>();
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
@@ -60,7 +60,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("area_wkb", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f64>();
+        let norway = sedona_testing::fixtures::norway_main::<f64>();
         let polygon = Polygon::new(norway, vec![]);
         let wkb_bytes = wkb_util::geo_to_wkb(polygon);
 
@@ -71,7 +71,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     c.bench_function("area_wkb_convert", |bencher| {
-        let norway = sedona_geo_test_fixtures::norway_main::<f64>();
+        let norway = sedona_testing::fixtures::norway_main::<f64>();
         let polygon = Polygon::new(norway, vec![]);
         let wkb_bytes = wkb_util::geo_to_wkb(polygon);
 
