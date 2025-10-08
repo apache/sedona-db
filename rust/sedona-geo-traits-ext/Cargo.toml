@@ -28,7 +28,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-geo-traits = { version = "0.3.0", features = ["geo-types"] }
+geo-traits = "0.3.0"
 geo-types = "0.7.17"
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 wkb = "0.9.1"
