@@ -297,6 +297,23 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         df_roundtrip = con.read_parquet(tmp_parquet).to_pandas()
         assert "bbox" in df_roundtrip.columns
 
+        # An attempt to rewrite this should fail because it would have to overwrite
+        # the bbox column
+        tmp_parquet2 = Path(td) / "tmp2.parquet"
+        with pytest.raises(
+            SedonaError, match="Can't overwrite GeoParquet 1.1 bbox column 'bbox'"
+        ):
+            con.read_parquet(tmp_parquet).to_parquet(
+                tmp_parquet2, geoparquet_version="1.1"
+            )
+
+        # ...unless we pass the appropriate option
+        con.read_parquet(tmp_parquet).to_parquet(
+            tmp_parquet2, geoparquet_version="1.1", overwrite_bbox_columns=True
+        )
+        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
+        assert "bbox" in df_roundtrip.columns
+
 
 def test_write_geoparquet_unknown(con):
     with pytest.raises(SedonaError, match="Unexpected GeoParquet version string"):

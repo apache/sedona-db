@@ -149,6 +149,7 @@ impl InternalDataFrame {
         sort_by: Vec<String>,
         single_file_output: bool,
         geoparquet_version: Option<String>,
+        overwrite_bbox_columns: bool,
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
@@ -166,6 +167,7 @@ impl InternalDataFrame {
             .with_single_file_output(single_file_output);
 
         let mut writer_options = TableGeoParquetOptions::new();
+        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
         if let Some(geoparquet_version) = geoparquet_version {
             writer_options.geoparquet_version = geoparquet_version.parse()?;
         } else {

@@ -296,6 +296,7 @@ class DataFrame:
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
         geoparquet_version: Literal["1.0", "1.1"] = "1.0",
+        overwrite_bbox_columns: bool = False,
     ):
         """Write this DataFrame to one or more (Geo)Parquet files
 
@@ -324,9 +325,11 @@ class DataFrame:
                 to prune row groups when files contain an effective spatial ordering.
                 The extra columns will appear just before their geometry column and
                 will be named "[geom_col_name]_bbox" for all geometry columns except
-                "geometry", whose bounding box column name is just "bbox". If such a
-                column already exists, it will be overwritten to avoid accumulating
-                bbox columns in read -> filter -> write scenarios.
+                "geometry", whose bounding box column name is just "bbox".
+            overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
+                that already exist in the input. This is useful in a read -> modify
+                -> write scenario to ensure these columns are up-to-date. If `False`
+                (the default), an error will be raised if a bbox column already exists.
 
         Examples:
 
@@ -364,6 +367,7 @@ class DataFrame:
             sort_by,
             single_file_output,
             geoparquet_version,
+            overwrite_bbox_columns
         )
 
     def show(
