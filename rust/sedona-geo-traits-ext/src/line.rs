@@ -21,6 +21,7 @@ use geo_types::{CoordNum, Line};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, LineTag};
 
+/// Extra helpers for [`LineTrait`] implementors that mirror `geo-types` APIs.
 pub trait LineTraitExt: LineTrait + GeoTraitExtWithTypeTag<Tag = LineTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
@@ -29,27 +30,34 @@ where
     where
         Self: 'a;
 
+    /// Returns the start coordinate as an extension trait instance.
     fn start_ext(&self) -> Self::CoordTypeExt<'_>;
+    /// Returns the end coordinate as an extension trait instance.
     fn end_ext(&self) -> Self::CoordTypeExt<'_>;
+    /// Returns both start and end coordinates in a fixed-size array.
     fn coords_ext(&self) -> [Self::CoordTypeExt<'_>; 2];
 
     #[inline]
+    /// Returns the start coordinate converted to [`geo_types::Coord`].
     fn start_coord(&self) -> geo_types::Coord<<Self as GeometryTrait>::T> {
         self.start_ext().geo_coord()
     }
 
     #[inline]
+    /// Returns the end coordinate converted to [`geo_types::Coord`].
     fn end_coord(&self) -> geo_types::Coord<<Self as GeometryTrait>::T> {
         self.end_ext().geo_coord()
     }
 
     #[inline]
+    /// Returns the line converted to a [`geo_types::Line`].
     fn geo_line(&self) -> Line<<Self as GeometryTrait>::T> {
         Line::new(self.start_coord(), self.end_coord())
     }
 }
 
 #[macro_export]
+/// Forwards [`LineTraitExt`] methods to an underlying [`LineTrait`] implementation.
 macro_rules! forward_line_trait_ext_funcs {
     () => {
         type CoordTypeExt<'__l_inner>

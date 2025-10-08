@@ -21,6 +21,7 @@ use geo_types::{Coord, CoordNum, Line, LineString, Triangle};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, LineStringTag};
 
+/// Additional convenience methods for [`LineStringTrait`] implementors that mirror `geo-types`.
 pub trait LineStringTraitExt:
     LineStringTrait + GeoTraitExtWithTypeTag<Tag = LineStringTag>
 where
@@ -30,6 +31,7 @@ where
     where
         Self: 'a;
 
+    /// Returns the coordinate at the provided index.
     fn coord_ext(&self, i: usize) -> Option<Self::CoordTypeExt<'_>>;
 
     /// Returns a coordinate by index without bounds checking.
@@ -39,6 +41,7 @@ where
     /// Otherwise, this function may cause undefined behavior.
     unsafe fn coord_unchecked_ext(&self, i: usize) -> Self::CoordTypeExt<'_>;
 
+    /// Returns an iterator over all coordinates as extension trait instances.
     fn coords_ext(&self) -> impl Iterator<Item = Self::CoordTypeExt<'_>>;
 
     /// Returns a coordinate by index without bounds checking.
@@ -92,13 +95,14 @@ where
         })
     }
 
-    // Returns an iterator yielding the coordinates of this line string as `geo_types::Coord`s.
+    /// Returns an iterator yielding the coordinates of this line string as [`geo_types::Coord`] values.
     #[inline]
     fn coord_iter(&self) -> impl Iterator<Item = Coord<<Self as GeometryTrait>::T>> {
         self.coords_ext().map(|c| c.geo_coord())
     }
 
     #[inline]
+    /// Returns true when the line string is closed (its first and last coordinates are equal).
     fn is_closed(&self) -> bool {
         match (self.coords_ext().next(), self.coords_ext().last()) {
             (Some(first), Some(last)) => first.geo_coord() == last.geo_coord(),
@@ -109,6 +113,7 @@ where
 }
 
 #[macro_export]
+/// Forwards [`LineStringTraitExt`] methods to an underlying [`LineStringTrait`] implementation.
 macro_rules! forward_line_string_trait_ext_funcs {
     () => {
         type CoordTypeExt<'__l_inner>

@@ -21,15 +21,28 @@ use geo_types::{Coord, CoordNum, MultiPoint};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, MultiPointTag, PointTraitExt};
 
+/// Extension trait that augments [`geo_traits::MultiPointTrait`] with richer
+/// ergonomics and accessors.
+///
+/// The trait keeps parity with the APIs provided by `geo-types::MultiPoint`
+/// while still working with trait objects that only implement
+/// [`geo_traits::MultiPointTrait`]. It also wires the geometry up with a
+/// [`MultiPointTag`](crate::MultiPointTag) so the type can participate in the
+/// shared `GeoTraitExtWithTypeTag` machinery.
 pub trait MultiPointTraitExt:
     MultiPointTrait + GeoTraitExtWithTypeTag<Tag = MultiPointTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-aware point type returned from accessors on this multi point.
     type PointTypeExt<'a>: 'a + PointTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Returns the point at index `i`, wrapped in the extension trait.
+    ///
+    /// This mirrors [`geo_traits::MultiPointTrait::point`] but guarantees the
+    /// returned point implements [`PointTraitExt`].
     fn point_ext(&self, i: usize) -> Option<Self::PointTypeExt<'_>>;
 
     /// Returns a point by index without bounds checking.
@@ -44,14 +57,29 @@ where
     /// # Safety
     /// The caller must ensure that `i` is a valid index less than the number of points.
     /// Otherwise, this function may cause undefined behavior.
+    /// Returns the coordinate at index `i` without bounds checking.
+    ///
+    /// This helper is primarily used by iterator adapters that need direct
+    /// coordinate access while still honoring the [`PointTraitExt`] abstraction.
+    ///
+    /// # Safety
+    /// The caller must ensure that `i` is a valid index less than the number of points.
+    /// Otherwise, this function may cause undefined behavior.
     #[inline]
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<<Self as GeometryTrait>::T>> {
         let point = unsafe { self.point_unchecked_ext(i) };
         point.coord_ext().map(|c| c.geo_coord())
     }
 
+    /// Returns an iterator over all points, each wrapped in [`PointTraitExt`].
     fn points_ext(&self) -> impl DoubleEndedIterator<Item = Self::PointTypeExt<'_>>;
 
+    /// Iterates over the coordinates contained in this multi point.
+    ///
+    /// For trait-based implementations this is derived from
+    /// [`points_ext`](Self::points_ext), while concrete `geo-types::MultiPoint`
+    /// instances provide a specialized iterator that avoids intermediate
+    /// allocations.
     #[inline]
     fn coord_iter(&self) -> impl DoubleEndedIterator<Item = Coord<<Self as GeometryTrait>::T>> {
         self.points_ext().flat_map(|p| p.geo_coord())
@@ -59,6 +87,9 @@ where
 }
 
 #[macro_export]
+/// Forwards [`MultiPointTraitExt`] methods to the underlying
+/// [`geo_traits::MultiPointTrait`] implementation while maintaining the
+/// extension trait wrappers.
 macro_rules! forward_multi_point_trait_ext_funcs {
     () => {
         type PointTypeExt<'__l_inner>
@@ -89,6 +120,7 @@ where
 {
     forward_multi_point_trait_ext_funcs!();
 
+    /// Specialized coordinate accessor for `geo_types::MultiPoint`.
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<T>> {
         Some(self.0.get_unchecked(i).0)
     }
@@ -109,6 +141,7 @@ where
 {
     forward_multi_point_trait_ext_funcs!();
 
+    /// Specialized coordinate accessor for `&geo_types::MultiPoint`.
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<T>> {
         Some(self.0.get_unchecked(i).0)
     }

@@ -21,15 +21,23 @@ use geo_types::{CoordNum, GeometryCollection};
 
 use crate::{GeoTraitExtWithTypeTag, GeometryCollectionTag, GeometryTraitExt};
 
+/// Extension trait that enriches [`geo_traits::GeometryCollectionTrait`] with
+/// Sedona-specific conveniences.
+///
+/// The trait exposes accessor methods that return geometry values wrapped in
+/// [`GeometryTraitExt`], enabling downstream consumers to leverage the unified
+/// extension API regardless of the backing geometry type.
 pub trait GeometryCollectionTraitExt:
     GeometryCollectionTrait + GeoTraitExtWithTypeTag<Tag = GeometryCollectionTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-aware geometry type yielded by accessor methods.
     type GeometryTypeExt<'a>: 'a + GeometryTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Returns the geometry at index `i`, wrapped with [`GeometryTraitExt`].
     fn geometry_ext(&self, i: usize) -> Option<Self::GeometryTypeExt<'_>>;
 
     /// Returns a geometry by index without bounds checking.
@@ -39,10 +47,14 @@ where
     /// Otherwise, this function may cause undefined behavior.
     unsafe fn geometry_unchecked_ext(&self, i: usize) -> Self::GeometryTypeExt<'_>;
 
+    /// Iterates over all geometries in the collection with extension wrappers applied.
     fn geometries_ext(&self) -> impl Iterator<Item = Self::GeometryTypeExt<'_>>;
 }
 
 #[macro_export]
+/// Forwards [`GeometryCollectionTraitExt`] methods to the underlying
+/// [`geo_traits::GeometryCollectionTrait`] implementation while preserving the
+/// extension trait wrappers.
 macro_rules! forward_geometry_collection_trait_ext_funcs {
     () => {
         type GeometryTypeExt<'__gc_inner>

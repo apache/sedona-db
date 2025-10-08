@@ -21,11 +21,13 @@ use geo_types::{Coord, CoordNum};
 
 use crate::{CoordTag, GeoTraitExtWithTypeTag};
 
+/// Extension methods that bridge [`CoordTrait`] with concrete `geo-types` helpers.
 pub trait CoordTraitExt: CoordTrait + GeoTraitExtWithTypeTag<Tag = CoordTag>
 where
     <Self as CoordTrait>::T: CoordNum,
 {
     #[inline]
+    /// Converts this coordinate into the concrete [`geo_types::Coord`].
     fn geo_coord(&self) -> Coord<Self::T> {
         Coord {
             x: self.x(),

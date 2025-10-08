@@ -21,6 +21,7 @@ use geo_types::{Coord, CoordNum, Point};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, PointTag};
 
+/// Extension methods that expose `geo-types` conveniences for [`PointTrait`] implementors.
 pub trait PointTraitExt: PointTrait + GeoTraitExtWithTypeTag<Tag = PointTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
@@ -29,21 +30,25 @@ where
     where
         Self: 'a;
 
+    /// Returns the underlying coordinate view for this point, if available.
     fn coord_ext(&self) -> Option<Self::CoordTypeExt<'_>>;
 
     #[inline]
+    /// Converts the point into a concrete [`geo_types::Point`].
     fn geo_point(&self) -> Option<Point<<Self as GeometryTrait>::T>> {
         self.coord_ext()
             .map(|coord| Point::new(coord.x(), coord.y()))
     }
 
     #[inline]
+    /// Converts the point into a concrete [`geo_types::Coord`].
     fn geo_coord(&self) -> Option<Coord<<Self as GeometryTrait>::T>> {
         self.coord_ext().map(|coord| coord.geo_coord())
     }
 }
 
 #[macro_export]
+/// Forwards [`PointTraitExt`] methods to the wrapped [`PointTrait`] implementation.
 macro_rules! forward_point_trait_ext_funcs {
     () => {
         type CoordTypeExt<'__l_inner>

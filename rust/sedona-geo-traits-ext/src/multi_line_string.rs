@@ -21,15 +21,26 @@ use geo_types::{CoordNum, MultiLineString};
 
 use crate::{GeoTraitExtWithTypeTag, LineStringTraitExt, MultiLineStringTag};
 
+/// Extension trait that layers additional ergonomics on
+/// [`geo_traits::MultiLineStringTrait`].
+///
+/// Implementors gain access to extension-aware iterators and helper methods
+/// that mirror the behavior of `geo-types::MultiLineString`, while still being
+/// consumable through the trait abstractions provided by `geo-traits`.
 pub trait MultiLineStringTraitExt:
     MultiLineStringTrait + GeoTraitExtWithTypeTag<Tag = MultiLineStringTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-friendly line string type returned by accessor methods.
     type LineStringTypeExt<'a>: 'a + LineStringTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Returns the line string at index `i` with the extension trait applied.
+    ///
+    /// This is analogous to [`geo_traits::MultiLineStringTrait::line_string`]
+    /// but ensures the result implements [`LineStringTraitExt`].
     fn line_string_ext(&self, i: usize) -> Option<Self::LineStringTypeExt<'_>>;
 
     /// Returns a line string by index without bounds checking.
@@ -39,9 +50,10 @@ where
     /// Otherwise, this function may cause undefined behavior.
     unsafe fn line_string_unchecked_ext(&self, i: usize) -> Self::LineStringTypeExt<'_>;
 
+    /// Iterates over all line strings with extension-aware wrappers applied.
     fn line_strings_ext(&self) -> impl Iterator<Item = Self::LineStringTypeExt<'_>>;
 
-    /// True if the MultiLineString is empty or if all of its LineStrings are closed
+    /// Returns `true` when the multi line string is empty or every component is closed.
     #[inline]
     fn is_closed(&self) -> bool {
         // Note: Unlike JTS et al, we consider an empty MultiLineString as closed.
@@ -50,6 +62,9 @@ where
 }
 
 #[macro_export]
+/// Forwards [`MultiLineStringTraitExt`] methods to the underlying
+/// [`geo_traits::MultiLineStringTrait`] implementation while keeping the
+/// extension trait wrappers intact.
 macro_rules! forward_multi_line_string_trait_ext_funcs {
     () => {
         type LineStringTypeExt<'__l_inner>

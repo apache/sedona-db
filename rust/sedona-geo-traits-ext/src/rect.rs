@@ -24,42 +24,54 @@ use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, RectTag};
 
 static RECT_INVALID_BOUNDS_ERROR: &str = "Failed to create Rect: 'min' coordinate's x/y value must be smaller or equal to the 'max' x/y value";
 
+/// Extension trait that augments [`geo_traits::RectTrait`] with additional
+/// helpers for working with axis-aligned bounding boxes.
 pub trait RectTraitExt: RectTrait + GeoTraitExtWithTypeTag<Tag = RectTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-aware coordinate type returned from accessors.
     type CoordTypeExt<'a>: 'a + CoordTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Returns the minimum corner using the extension trait wrapper.
     fn min_ext(&self) -> Self::CoordTypeExt<'_>;
+
+    /// Returns the maximum corner using the extension trait wrapper.
     fn max_ext(&self) -> Self::CoordTypeExt<'_>;
 
     #[inline]
+    /// Returns the minimum corner as a `geo-types::Coord`.
     fn min_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.min_ext().geo_coord()
     }
 
     #[inline]
+    /// Returns the maximum corner as a `geo-types::Coord`.
     fn max_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.max_ext().geo_coord()
     }
 
     #[inline]
+    /// Constructs a [`geo_types::Rect`] from the extension trait accessors.
     fn geo_rect(&self) -> Rect<<Self as GeometryTrait>::T> {
         Rect::new(self.min_coord(), self.max_coord())
     }
 
     #[inline]
+    /// Returns the width of the rectangle.
     fn width(&self) -> <Self as GeometryTrait>::T {
         self.max().x() - self.min().x()
     }
 
     #[inline]
+    /// Returns the height of the rectangle.
     fn height(&self) -> <Self as GeometryTrait>::T {
         self.max().y() - self.min().y()
     }
 
+    /// Converts the rectangle into a polygon with four corners.
     fn to_polygon(&self) -> Polygon<<Self as GeometryTrait>::T>
     where
         <Self as GeometryTrait>::T: Clone,
@@ -83,6 +95,7 @@ where
         Polygon::new(line_string, vec![])
     }
 
+    /// Returns the four outer edges as line segments.
     fn to_lines(&self) -> [Line<<Self as GeometryTrait>::T>; 4] {
         let min_coord = self.min_coord();
         let max_coord = self.max_coord();
@@ -130,6 +143,7 @@ where
         ]
     }
 
+    /// Converts the rectangle into a closed line string in counter-clockwise order.
     fn to_line_string(&self) -> LineString<<Self as GeometryTrait>::T>
     where
         <Self as GeometryTrait>::T: Clone,
@@ -152,6 +166,7 @@ where
     }
 
     #[inline]
+    /// Returns `true` if the rectangle has non-decreasing bounds.
     fn has_valid_bounds(&self) -> bool {
         let min_coord = self.min_coord();
         let max_coord = self.max_coord();
@@ -159,6 +174,7 @@ where
     }
 
     #[inline]
+    /// Panics when the rectangle bounds are invalid.
     fn assert_valid_bounds(&self) {
         if !self.has_valid_bounds() {
             panic!("{}", RECT_INVALID_BOUNDS_ERROR);
@@ -166,6 +182,7 @@ where
     }
 
     #[inline]
+    /// Returns `true` if `coord` lies inside or on the rectangle boundary.
     fn contains_point(&self, coord: &Coord<<Self as GeometryTrait>::T>) -> bool
     where
         <Self as GeometryTrait>::T: PartialOrd,
@@ -182,6 +199,7 @@ where
     }
 
     #[inline]
+    /// Returns `true` if `rect` is fully contained within `self`.
     fn contains_rect(&self, rect: &Self) -> bool
     where
         <Self as GeometryTrait>::T: PartialOrd,
@@ -206,6 +224,7 @@ where
     }
 
     #[inline]
+    /// Returns the rectangle centroid as a coordinate.
     fn center(&self) -> Coord<<Self as GeometryTrait>::T>
     where
         <Self as GeometryTrait>::T: CoordFloat,
@@ -219,6 +238,9 @@ where
 }
 
 #[macro_export]
+/// Forwards [`RectTraitExt`] methods to the underlying
+/// [`geo_traits::RectTrait`] implementation while keeping the extension trait
+/// wrappers intact.
 macro_rules! forward_rect_trait_ext_funcs {
     () => {
         type CoordTypeExt<'__l_inner>

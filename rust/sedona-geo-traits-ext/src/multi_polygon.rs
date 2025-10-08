@@ -21,15 +21,23 @@ use geo_types::{CoordNum, MultiPolygon};
 
 use crate::{GeoTraitExtWithTypeTag, MultiPolygonTag, PolygonTraitExt};
 
+/// Extension trait that enriches [`geo_traits::MultiPolygonTrait`] with Sedona
+/// conveniences.
+///
+/// Implementations can expose polygon members through the
+/// [`PolygonTraitExt`] abstraction, ensuring consistent access to exterior and
+/// interior rings regardless of the backing geometry type.
 pub trait MultiPolygonTraitExt:
     MultiPolygonTrait + GeoTraitExtWithTypeTag<Tag = MultiPolygonTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-aware polygon type yielded by accessor methods.
     type PolygonTypeExt<'a>: 'a + PolygonTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Returns the polygon at index `i`, wrapped with [`PolygonTraitExt`].
     fn polygon_ext(&self, i: usize) -> Option<Self::PolygonTypeExt<'_>>;
 
     /// Returns a polygon by index without bounds checking.
@@ -39,10 +47,14 @@ where
     /// Otherwise, this function may cause undefined behavior.
     unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_>;
 
+    /// Iterates over all polygon members, each wrapped with the extension trait.
     fn polygons_ext(&self) -> impl Iterator<Item = Self::PolygonTypeExt<'_>>;
 }
 
 #[macro_export]
+/// Forwards [`MultiPolygonTraitExt`] methods to the underlying
+/// [`geo_traits::MultiPolygonTrait`] implementation while preserving the
+/// extension trait wrappers.
 macro_rules! forward_multi_polygon_trait_ext_funcs {
     () => {
         type PolygonTypeExt<'__l_inner>

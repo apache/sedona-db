@@ -380,7 +380,7 @@ where
 // │ Iterators                                                │
 // └──────────────────────────────────────────────────────────┘
 
-// Coordinate iterator with compile-time endianness
+/// Iterator over coordinates in a WKB buffer using a compile-time endianness.
 pub struct CoordIter<'a, B: ByteOrder> {
     buf: &'a [u8],
     current_offset: usize,
@@ -391,6 +391,7 @@ pub struct CoordIter<'a, B: ByteOrder> {
 
 impl<'a, B: ByteOrder> CoordIter<'a, B> {
     #[inline]
+    /// Creates a new coordinate iterator over the provided buffer.
     pub fn new(buf: &'a [u8], num_coords: usize, dim_size: usize) -> Self {
         Self {
             buf,
@@ -435,7 +436,7 @@ impl<B: ByteOrder> Iterator for CoordIter<'_, B> {
 
 impl<B: ByteOrder> ExactSizeIterator for CoordIter<'_, B> {}
 
-// Line iterator with compile-time endianness
+/// Iterator over line segments derived from sequential coordinates in a WKB buffer.
 pub struct LineIter<'a, B: ByteOrder> {
     coord_iter: CoordIter<'a, B>,
     prev_coord: Option<GeoCoord<f64>>,
@@ -443,6 +444,7 @@ pub struct LineIter<'a, B: ByteOrder> {
 
 impl<'a, B: ByteOrder> LineIter<'a, B> {
     #[inline]
+    /// Creates a new line iterator over the provided buffer.
     pub fn new(buf: &'a [u8], num_coords: usize, dim_size: usize) -> Self {
         Self {
             coord_iter: CoordIter::new(buf, num_coords, dim_size),
@@ -483,8 +485,10 @@ impl<B: ByteOrder> Iterator for LineIter<'_, B> {
 
 impl<B: ByteOrder> ExactSizeIterator for LineIter<'_, B> {}
 
-// Enum-based wrappers to handle the different endianness types without boxing.
-// The dispatch in the iterator methods is static and can be inlined by the compiler.
+/// Wrapper around [`CoordIter`] that selects the concrete endianness at runtime.
+///
+/// The dispatch in the iterator methods is static and can be inlined by the
+/// compiler, so callers do not pay the cost of dynamic allocation.
 pub enum EndianCoordIter<'a> {
     LE(CoordIter<'a, LittleEndian>),
     BE(CoordIter<'a, BigEndian>),
@@ -512,6 +516,7 @@ impl Iterator for EndianCoordIter<'_> {
     }
 }
 
+/// Wrapper around [`LineIter`] that selects the concrete endianness at runtime.
 pub enum EndianLineIter<'a> {
     LE(LineIter<'a, LittleEndian>),
     BE(LineIter<'a, BigEndian>),
@@ -542,6 +547,7 @@ impl ExactSizeIterator for EndianLineIter<'_> {}
 // ┌──────────────────────────────────────────────────────────┐
 // │ Utils.                                                   │
 // └──────────────────────────────────────────────────────────┘
+/// Returns the dimensionality (number of ordinates) represented by a WKB [`Dimension`].
 fn dimension_size(dim: Dimension) -> usize {
     match dim {
         Dimension::Xy => 2,

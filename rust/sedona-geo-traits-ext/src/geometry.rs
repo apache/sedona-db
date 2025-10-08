@@ -24,42 +24,58 @@ use geo_types::*;
 use crate::*;
 
 #[allow(clippy::type_complexity)]
+/// Extension trait that augments [`geo_traits::GeometryTrait`] with Sedona's
+/// additional helpers and type tagging support.
+///
+/// The trait adds accessors that mirror the behavior of `geo-types::Geometry`
+/// while keeping the code ergonomic when working through trait objects.
+/// Implementations must also opt into [`GeoTraitExtWithTypeTag`] so geometries
+/// can be introspected using [`GeometryTag`].
 pub trait GeometryTraitExt: GeometryTrait + GeoTraitExtWithTypeTag<Tag = GeometryTag>
 where
     <Self as GeometryTrait>::T: CoordNum,
 {
+    /// Extension-aware point type exposed by this geometry.
     type PointTypeExt<'a>: 'a + PointTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware line string type exposed by this geometry.
     type LineStringTypeExt<'a>: 'a + LineStringTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware polygon type exposed by this geometry.
     type PolygonTypeExt<'a>: 'a + PolygonTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware multi point type exposed by this geometry.
     type MultiPointTypeExt<'a>: 'a + MultiPointTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware multi line string type exposed by this geometry.
     type MultiLineStringTypeExt<'a>: 'a + MultiLineStringTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware multi polygon type exposed by this geometry.
     type MultiPolygonTypeExt<'a>: 'a + MultiPolygonTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware triangle type exposed by this geometry.
     type TriangleTypeExt<'a>: 'a + TriangleTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware rectangle type exposed by this geometry.
     type RectTypeExt<'a>: 'a + RectTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
 
+    /// Extension-aware line type exposed by this geometry.
     type LineTypeExt<'a>: 'a + LineTraitExt<T = <Self as GeometryTrait>::T>
     where
         Self: 'a;
@@ -74,6 +90,7 @@ where
     // we are not certain if there will be other issues caused by recursive GATs in the future. So we decided to completely get rid
     // of recursive GATs.
 
+    /// Reference type yielded when iterating over nested geometries inside a collection.
     type InnerGeometryRef<'a>: 'a + Borrow<Self>
     where
         Self: 'a;
@@ -131,6 +148,7 @@ where
 }
 
 #[derive(Debug)]
+/// Borrowed view into a concrete geometry type implementing the extension traits.
 pub enum GeometryTypeExt<'a, P, LS, Y, MP, ML, MY, R, TT, L>
 where
     P: PointTraitExt,
@@ -164,6 +182,9 @@ where
 }
 
 #[macro_export]
+/// Forwards [`GeometryTraitExt`] associated types and methods to the
+/// underlying [`geo_traits::GeometryTrait`] implementation while retaining the
+/// extension trait wrappers.
 macro_rules! forward_geometry_trait_ext_funcs {
     ($t:ty) => {
         type PointTypeExt<'__g_inner>
