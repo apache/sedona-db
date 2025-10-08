@@ -21,7 +21,7 @@ use geo_types::{CoordNum, Line};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, LineTag};
 
-/// Extra helpers for [`LineTrait`] implementors that mirror `geo-types` APIs.
+/// Extra helpers for [`LineTrait`] implementers that mirror `geo-types` APIs.
 pub trait LineTraitExt: LineTrait + GeoTraitExtWithTypeTag<Tag = LineTag>
 where
     <Self as GeometryTrait>::T: CoordNum,

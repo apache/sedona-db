@@ -21,7 +21,7 @@ use geo_types::{Coord, CoordNum, Point};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, PointTag};
 
-/// Extension methods that expose `geo-types` conveniences for [`PointTrait`] implementors.
+/// Extension methods that expose `geo-types` conveniences for [`PointTrait`] implementers.
 pub trait PointTraitExt: PointTrait + GeoTraitExtWithTypeTag<Tag = PointTag>
 where
     <Self as GeometryTrait>::T: CoordNum,

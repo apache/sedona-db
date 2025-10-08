@@ -24,7 +24,7 @@ use crate::{GeoTraitExtWithTypeTag, LineStringTraitExt, MultiLineStringTag};
 /// Extension trait that layers additional ergonomics on
 /// [`geo_traits::MultiLineStringTrait`].
 ///
-/// Implementors gain access to extension-aware iterators and helper methods
+/// implementers gain access to extension-aware iterators and helper methods
 /// that mirror the behavior of `geo-types::MultiLineString`, while still being
 /// consumable through the trait abstractions provided by `geo-traits`.
 pub trait MultiLineStringTraitExt:
