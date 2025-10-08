@@ -87,7 +87,8 @@ where
         &'_ self,
     ) -> impl ExactSizeIterator<Item = Triangle<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
-        (0..num_coords - 2).map(|i| unsafe {
+        let end = num_coords.saturating_sub(2);
+        (0..end).map(|i| unsafe {
             let coord1 = self.coord_unchecked_ext(i);
             let coord2 = self.coord_unchecked_ext(i + 1);
             let coord3 = self.coord_unchecked_ext(i + 2);

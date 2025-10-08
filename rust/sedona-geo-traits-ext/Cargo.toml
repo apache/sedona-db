@@ -34,5 +34,8 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 wkb = "0.9.1"
 byteorder = "1"
 
+[dev-dependencies]
+wkt = "0.14.0"
+
 [patch.crates-io]
 wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
