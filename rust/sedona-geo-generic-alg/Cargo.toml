@@ -1,0 +1,82 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+[package]
+name = "sedona-geo-generic-alg"
+version = "0.2.0"
+authors = ["Apache Sedona <dev@sedona.apache.org>"]
+license = "Apache-2.0"
+homepage = "https://github.com/apache/sedona-db"
+repository = "https://github.com/apache/sedona-db"
+description = "geo algorithms refactored to work with sedona-geo-traits-ext"
+readme = "README.md"
+edition = "2021"
+
+[workspace]
+
+[features]
+default = ["multithreading"]
+use-serde = ["serde", "geo-types/serde"]
+multithreading = ["i_overlay/allow_multithreading", "geo-types/multithreading"]
+
+[dependencies]
+float_next_after = "1"
+geo-traits = { version = "0.3.0" }
+geo-types = { version = "0.7.17", features = ["approx", "use-rstar_0_12"] }
+sedona-geo-traits-ext = { path = "../sedona-geo-traits-ext" }
+log = "0.4.11"
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+robust = "1.1.0"
+rstar = "0.12.0"
+serde = { version = "1", features = ["derive"], optional = true }
+i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
+
+[dev-dependencies]
+approx = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+pretty_env_logger = "0.4"
+rand = "0.8"
+rand_distr = "0.4.3"
+geo = "0.31.0"
+wkb = "0.9.1"
+wkt = "0.14.0"
+
+[patch.crates-io]
+wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
+
+[[bench]]
+name = "area"
+harness = false
+
+[[bench]]
+name = "intersection"
+harness = false
+
+[[bench]]
+name = "centroid"
+harness = false
+
+[[bench]]
+name = "length"
+harness = false
+
+[[bench]]
+name = "distance"
+harness = false
+
+[[bench]]
+name = "perimeter"
+harness = false
