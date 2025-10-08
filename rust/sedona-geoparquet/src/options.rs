@@ -27,6 +27,9 @@ pub struct TableGeoParquetOptions {
     pub inner: TableParquetOptions,
     /// [GeoParquetVersion] to use when writing GeoParquet files
     pub geoparquet_version: GeoParquetVersion,
+    /// When writing [GeoParquetVersion::V1_1], use `true` to overwrite existing
+    /// bounding box columns.
+    pub overwrite_bbox_columns: bool,
 }
 
 impl TableGeoParquetOptions {
@@ -39,7 +42,7 @@ impl From<TableParquetOptions> for TableGeoParquetOptions {
     fn from(value: TableParquetOptions) -> Self {
         Self {
             inner: value,
-            geoparquet_version: GeoParquetVersion::default(),
+            ..Default::default()
         }
     }
 }

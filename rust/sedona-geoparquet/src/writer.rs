@@ -82,7 +82,7 @@ pub fn create_geoparquet_writer_physical_plan(
         }
         GeoParquetVersion::V1_1 => {
             metadata.version = "1.1.0".to_string();
-            (input, bbox_columns) = project_bboxes(input)?;
+            (input, bbox_columns) = project_bboxes(input, options.overwrite_bbox_columns)?;
             conf.output_schema = input.schema();
             output_geometry_column_indices = input.schema().geometry_column_indices()?;
         }
@@ -205,6 +205,7 @@ fn create_inner_writer(
 /// consequences.
 fn project_bboxes(
     input: Arc<dyn ExecutionPlan>,
+    overwrite_bbox_columns: bool,
 ) -> Result<(Arc<dyn ExecutionPlan>, HashMap<String, String>)> {
     let input_schema = input.schema();
     let matcher = ArgMatcher::is_geometry();
@@ -248,7 +249,15 @@ fn project_bboxes(
         // Skip any column with the same name as a bbox column, since we are
         // about to replace it with the recomputed bbox.
         if bbox_column_names.contains_key(f.name()) {
-            continue;
+            if overwrite_bbox_columns {
+                continue;
+            } else {
+                return exec_err!(
+                    "Can't overwrite GeoParquet 1.1 bbox column '{}'.
+Use overwrite_bbox_columns = True if this is what was intended.",
+                    f.name()
+                );
+            }
         }
 
         // If this is a column with a bbox, insert the bbox expression now
@@ -434,6 +443,7 @@ mod test {
             vec![],
         )
         .await
+        .unwrap()
     }
 
     async fn test_write_dataframe(
@@ -442,7 +452,7 @@ mod test {
         expected_batches: Vec<RecordBatch>,
         options: TableGeoParquetOptions,
         partition_by: Vec<String>,
-    ) {
+    ) -> Result<()> {
         // It's a bit verbose to trigger this without helpers
         let format = GeoParquetFormatFactory::new_with_options(options);
         let file_type = format_as_file_type(Arc::new(format));
@@ -461,7 +471,7 @@ mod test {
         .build()
         .unwrap();
 
-        DataFrame::new(ctx.state(), plan).collect().await.unwrap();
+        DataFrame::new(ctx.state(), plan).collect().await?;
 
         let df_parquet_batches = ctx
             .table(tmp_parquet.to_string_lossy().to_string())
@@ -505,6 +515,8 @@ mod test {
         for (df_parquet_batch, df_batch) in zip(df_parquet_batches, expected_batches) {
             assert_eq!(df_parquet_batch.columns(), df_batch.columns())
         }
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -571,7 +583,9 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -618,7 +632,9 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -658,7 +674,24 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![]).await;
+        // Without setting overwrite_bbox_columns = true, this should error
+        let err = test_write_dataframe(
+            ctx.clone(),
+            df.clone(),
+            df_batches_with_bbox.clone(),
+            options.clone(),
+            vec!["part".into()],
+        )
+        .await
+        .unwrap_err();
+        assert!(err
+            .message()
+            .starts_with("Can't overwrite GeoParquet 1.1 bbox column 'bbox'"));
+
+        options.overwrite_bbox_columns = true;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -702,7 +735,9 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec!["part".into()]).await;
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec!["part".into()])
+            .await
+            .unwrap();
     }
 
     #[test]
