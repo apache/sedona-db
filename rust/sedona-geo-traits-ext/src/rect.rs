@@ -113,7 +113,7 @@ where
             Line::new(
                 coord! {
                     x: max_coord.x,
-                    y: min_coord.y,
+                    y: max_coord.y,
                 },
                 coord! {
                     x: min_coord.x,

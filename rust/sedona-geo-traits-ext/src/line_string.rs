@@ -74,7 +74,7 @@ where
     #[inline]
     fn rev_lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
-        (num_coords - 1..0).map(|i| unsafe {
+        (1..num_coords).rev().map(|i| unsafe {
             let coord1 = self.coord_unchecked_ext(i);
             let coord2 = self.coord_unchecked_ext(i - 1);
             Line::new(coord2.geo_coord(), coord1.geo_coord())
@@ -104,10 +104,17 @@ where
     #[inline]
     /// Returns true when the line string is closed (its first and last coordinates are equal).
     fn is_closed(&self) -> bool {
-        match (self.coords_ext().next(), self.coords_ext().last()) {
-            (Some(first), Some(last)) => first.geo_coord() == last.geo_coord(),
-            (None, None) => true,
-            _ => false,
+        let num_coords = self.num_coords();
+        if num_coords <= 1 {
+            true
+        } else {
+            let (first, last) = unsafe {
+                (
+                    self.geo_coord_unchecked(0),
+                    self.geo_coord_unchecked(num_coords - 1),
+                )
+            };
+            first == last
         }
     }
 }
