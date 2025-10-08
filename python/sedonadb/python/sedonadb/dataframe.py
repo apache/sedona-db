@@ -367,7 +367,7 @@ class DataFrame:
             sort_by,
             single_file_output,
             geoparquet_version,
-            overwrite_bbox_columns
+            overwrite_bbox_columns,
         )
 
     def show(
