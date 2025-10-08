@@ -15,11 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 import pytest
-from test_bench_base import TestBenchBase
+from test_bench_base import TestBenchBase, UDFBenchBase
 from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 
-class TestBenchFunctions(TestBenchBase):
+@pytest.mark.bench_udf
+class TestBenchFunctions(TestBenchBase, UDFBenchBase):
     @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
     @pytest.mark.parametrize(
         "table",

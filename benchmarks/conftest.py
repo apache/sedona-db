@@ -15,24 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 import pytest
-from test_bench_base import TestBenchBase, UDFBenchBase
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 
-@pytest.mark.bench_udf
-class TestBenchPredicates(TestBenchBase, UDFBenchBase):
-    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    @pytest.mark.parametrize(
-        "table",
-        [
-            "polygons_simple",
-            "polygons_complex",
-        ],
-    )
-    def test_st_distance(self, benchmark, eng, table):
-        eng = self._get_eng(eng)
+def pytest_configure(config):
+    config.addinivalue_line("markers", "bench_udf: mark a benchmark as a UDF (micro) benchmark")
+    config.addinivalue_line("markers", "bench_query: mark a benchmark as a complex query (macro) benchmark")
 
-        def queries():
-            eng.execute_and_collect(f"SELECT ST_Distance(geom1, geom2) from {table}")
 
-        benchmark(queries)
+@pytest.fixture(scope="function")
+def _bench_mode_marker_guard(request):
+    # Placeholder fixture for future enforcement / logging if needed.
+    # Right now it does nothing but can be extended to apply config based on markers.
+    return None
