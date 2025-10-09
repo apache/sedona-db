@@ -20,7 +20,6 @@ from test_bench_base import TestBenchBase
 from sedonadb.testing import SedonaDB, PostGIS, DuckDB
 
 
-@pytest.mark.bench_query
 class TestBenchKNN(TestBenchBase):
     def setup_class(self):
         """Setup test data for KNN benchmarks"""

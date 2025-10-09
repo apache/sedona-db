@@ -82,32 +82,30 @@ For more details and command line options, refer to the official [pytest-benchma
 
 ### Adding New Benchmarks
 
-There are two categories of benchmarks, each mapped to a pytest marker:
+There are two types of engines, each type serving a different purpose:
 
-- `@pytest.mark.bench_udf`:
+- `SedonaDBSingleThread`, `DuckDBSingleThread`, `PostGISSingleThread`:
   Micro / UDF benchmarks that measure the per-function cost (e.g. ST_Area, ST_Contains). These should run engines in a comparable, single-thread style configuration (where possible) to make function-level performance differences clearer.
-- `@pytest.mark.bench_query`:
+- `SedonaDB`, `DuckDB`, `PostGIS`:
   Macro / complex query benchmarks (e.g. KNN joins) that represent perceived end-user performance. Engines run with their default / natural configuration (multi-threading, internal parallelism, etc.).
 
-Please choose the appropriate marker when adding a new benchmark. All existing benchmarks have been annotated accordingly.
+Please choose the appropriate engines when adding a new benchmark. All existing benchmarks have been annotated accordingly.
 
-Example (UDF benchmark):
+Example (UDF micro benchmark in single-thread mode):
 ```python
 import pytest
-from sedonadb.testing import SedonaDB, DuckDB, PostGIS
+from sedonadb.testing import SedonaDBSingleThread, DuckDBSingleThread, PostGISSingleThread
 
-@pytest.mark.bench_udf
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+@pytest.mark.parametrize("eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread])
 def test_st_area(benchmark, eng):
     ...
 ```
 
-Example (Query benchmark):
+Example (Query / macro benchmark in default mode):
 ```python
 import pytest
 from sedonadb.testing import SedonaDB, DuckDB, PostGIS
 
-@pytest.mark.bench_query
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
 def test_knn_performance(benchmark, eng):
     ...

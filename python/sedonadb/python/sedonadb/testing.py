@@ -114,14 +114,6 @@ class DBEngine:
                 f"Failed to create engine tester {cls.name()}: {e}\n{cls.install_hint()}"
             )
 
-    def force_single_thread(self):
-        """Force the query engine to run in single-threaded mode. This will be useful
-        for running unit-test style benchmarks which tests the performance of individual
-        UDF functions
-
-        """
-        pass
-
     def assert_query_result(self, query: str, expected, **kwargs) -> "DBEngine":
         """Assert a SQL query result matches an expected target
 
@@ -331,9 +323,6 @@ class SedonaDB(DBEngine):
         # Don't allow this to fail with a skip
         return cls(*args, **kwargs)
 
-    def force_single_thread(self):
-        self.con.sql("SET datafusion.execution.target_partitions TO 1")
-
     def create_table_parquet(self, name, paths) -> "SedonaDB":
         self.con.read_parquet(paths).to_memtable().to_view(name, overwrite=True)
         return self
@@ -355,6 +344,15 @@ class SedonaDB(DBEngine):
         return self.con.sql(query).to_arrow_table()
 
 
+class SedonaDBSingleThread(SedonaDB):
+    """SedonaDB configured for single-threaded execution"""
+
+    def __init__(self):
+        super().__init__()
+        # Force single-threaded execution
+        self.con.sql("SET datafusion.execution.target_partitions TO 1")
+
+
 class DuckDB(DBEngine):
     """A DuckDB implementation of the DBEngine using DuckDB Python"""
 
@@ -373,9 +371,6 @@ class DuckDB(DBEngine):
     @classmethod
     def install_hint(cls):
         return "- Run `pip install duckdb` to install DuckDB for Python"
-
-    def force_single_thread(self):
-        self.con.sql("SET threads TO 1")
 
     def create_view_parquet(self, name, paths) -> "DuckDB":
         self.con.read_parquet(_paths(paths)).to_view(name, replace=True)
@@ -407,6 +402,14 @@ class DuckDB(DBEngine):
 
     def execute_and_collect(self, query) -> pa.Table:
         return self.con.sql(query).fetch_arrow_table()
+
+
+class DuckDBSingleThread(DuckDB):
+    """DuckDB configured for single-threaded execution"""
+
+    def __init__(self):
+        super().__init__()
+        self.con.sql("SET threads TO 1")
 
 
 class PostGIS(DBEngine):
@@ -610,6 +613,15 @@ class PostGIS(DBEngine):
                 cur.fetchall()
 
         return col_srid
+
+
+class PostGISSingleThread(PostGIS):
+    """PostGIS configured for single-threaded (no parallel workers) execution"""
+
+    def __init__(self, uri=None):
+        super().__init__(uri)
+        with self.con.cursor() as cur:
+            cur.execute("SET max_parallel_workers_per_gather TO 0")
 
 
 def geom_or_null(arg):

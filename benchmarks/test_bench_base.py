@@ -15,7 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 import json
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
+from sedonadb.testing import (
+    DuckDB,
+    PostGIS,
+    SedonaDB,
+    DuckDBSingleThread,
+    PostGISSingleThread,
+    SedonaDBSingleThread,
+)
 
 
 class TestBenchBase:
@@ -23,6 +30,10 @@ class TestBenchBase:
         self.sedonadb = SedonaDB.create_or_skip()
         self.postgis = PostGIS.create_or_skip()
         self.duckdb = DuckDB.create_or_skip()
+        # Single-thread engine instances
+        self.sedonadb_single = SedonaDBSingleThread.create_or_skip()
+        self.postgis_single = PostGISSingleThread.create_or_skip()
+        self.duckdb_single = DuckDBSingleThread.create_or_skip()
 
         num_geoms = 100_000
 
@@ -128,6 +139,10 @@ class TestBenchBase:
             self.sedonadb.create_table_arrow(name, tab)
             self.postgis.create_table_arrow(name, tab)
             self.duckdb.create_table_arrow(name, tab)
+            self.sedonadb_single.create_table_arrow(name, tab)
+            self.duckdb_single.create_table_arrow(name, tab)
+            # We don't need to call self.postgis_single.create_table_arrow
+            # because it shares the same database with self.postgis
 
     def _get_eng(self, eng):
         if eng == SedonaDB:
@@ -136,5 +151,11 @@ class TestBenchBase:
             return self.postgis
         elif eng == DuckDB:
             return self.duckdb
+        elif eng == SedonaDBSingleThread:
+            return self.sedonadb_single
+        elif eng == PostGISSingleThread:
+            return self.postgis_single
+        elif eng == DuckDBSingleThread:
+            return self.duckdb_single
         else:
             raise ValueError(f"Unsupported engine: {eng}")
