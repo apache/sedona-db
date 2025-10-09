@@ -143,6 +143,14 @@ where
     fn third_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.2
     }
+
+    fn to_array(&self) -> [Coord<<Self as GeometryTrait>::T>; 3] {
+        self.to_array()
+    }
+
+    fn to_lines(&self) -> [Line<<Self as GeometryTrait>::T>; 3] {
+        self.to_lines()
+    }
 }
 
 impl<T: CoordNum> GeoTraitExtWithTypeTag for Triangle<T> {
@@ -165,6 +173,14 @@ where
 
     fn third_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.2
+    }
+
+    fn to_array(&self) -> [Coord<<Self as GeometryTrait>::T>; 3] {
+        (*self).to_array()
+    }
+
+    fn to_lines(&self) -> [Line<<Self as GeometryTrait>::T>; 3] {
+        (*self).to_lines()
     }
 }
 

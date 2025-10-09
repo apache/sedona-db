@@ -60,9 +60,9 @@ where
     fn lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
         (0..num_coords.saturating_sub(1)).map(|i| unsafe {
-            let coord1 = self.coord_unchecked_ext(i);
-            let coord2 = self.coord_unchecked_ext(i + 1);
-            Line::new(coord1.geo_coord(), coord2.geo_coord())
+            let coord1 = self.geo_coord_unchecked(i);
+            let coord2 = self.geo_coord_unchecked(i + 1);
+            Line::new(coord1, coord2)
         })
     }
 
@@ -75,9 +75,9 @@ where
     fn rev_lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         let num_coords = self.num_coords();
         (1..num_coords).rev().map(|i| unsafe {
-            let coord1 = self.coord_unchecked_ext(i);
-            let coord2 = self.coord_unchecked_ext(i - 1);
-            Line::new(coord2.geo_coord(), coord1.geo_coord())
+            let coord1 = self.geo_coord_unchecked(i);
+            let coord2 = self.geo_coord_unchecked(i - 1);
+            Line::new(coord2, coord1)
         })
     }
 
@@ -89,10 +89,10 @@ where
         let num_coords = self.num_coords();
         let end = num_coords.saturating_sub(2);
         (0..end).map(|i| unsafe {
-            let coord1 = self.coord_unchecked_ext(i);
-            let coord2 = self.coord_unchecked_ext(i + 1);
-            let coord3 = self.coord_unchecked_ext(i + 2);
-            Triangle::new(coord1.geo_coord(), coord2.geo_coord(), coord3.geo_coord())
+            let coord1 = self.geo_coord_unchecked(i);
+            let coord2 = self.geo_coord_unchecked(i + 1);
+            let coord3 = self.geo_coord_unchecked(i + 2);
+            Triangle::new(coord1, coord2, coord3)
         })
     }
 
@@ -161,6 +161,20 @@ where
         self.lines()
     }
 
+    fn rev_lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
+        self.rev_lines()
+    }
+
+    fn triangles(
+        &'_ self,
+    ) -> impl ExactSizeIterator<Item = Triangle<<Self as GeometryTrait>::T>> + '_ {
+        self.triangles()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.is_closed()
+    }
+
     fn coord_iter(&self) -> impl Iterator<Item = Coord<<Self as GeometryTrait>::T>> {
         self.0.iter().copied()
     }
@@ -183,6 +197,20 @@ where
     // Delegate to the `geo-types` implementation for less performance overhead
     fn lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
         (*self).lines()
+    }
+
+    fn rev_lines(&'_ self) -> impl ExactSizeIterator<Item = Line<<Self as GeometryTrait>::T>> + '_ {
+        (*self).rev_lines()
+    }
+
+    fn triangles(
+        &'_ self,
+    ) -> impl ExactSizeIterator<Item = Triangle<<Self as GeometryTrait>::T>> + '_ {
+        (*self).triangles()
+    }
+
+    fn is_closed(&self) -> bool {
+        (*self).is_closed()
     }
 
     fn coord_iter(&self) -> impl Iterator<Item = Coord<<Self as GeometryTrait>::T>> {

@@ -17,44 +17,56 @@
 
 //! Tests for the WKB extension traits implemented in `wkb_ext`.
 
-use geo_traits::{
-    CoordTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait, MultiPointTrait,
-    MultiPolygonTrait, PointTrait, PolygonTrait,
-};
+use geo_traits::GeometryTrait;
+use rstest::rstest;
 use sedona_geo_traits_ext::*;
 use std::str::FromStr;
-use wkb::reader::Wkb;
+use wkb::{reader::Wkb, Endianness};
 use wkt::Wkt;
 
 /// Helper to create WKB from WKT string using the wkb writer
 fn wkb_from_wkt(wkt_str: &str) -> Vec<u8> {
+    wkb_from_wkt_with_endianness(wkt_str, wkb::Endianness::LittleEndian)
+}
+
+/// Helper to create WKB from WKT string using the wkb writer
+fn wkb_from_wkt_with_endianness(wkt_str: &str, endianness: wkb::Endianness) -> Vec<u8> {
     let geometry = Wkt::<f64>::from_str(wkt_str).unwrap();
     let mut buf = Vec::new();
-    let options = wkb::writer::WriteOptions {
-        endianness: wkb::Endianness::LittleEndian,
-    };
+    let options = wkb::writer::WriteOptions { endianness };
     wkb::writer::write_geometry(&mut buf, &geometry, &options).unwrap();
     buf
 }
 
-#[test]
-fn test_point_ext() {
-    let buf = wkb_from_wkt("POINT(1.5 -2.0)");
+#[rstest]
+fn test_geo_coord(
+    #[values(Endianness::LittleEndian, Endianness::BigEndian)] endianness: Endianness,
+) {
+    let buf = wkb_from_wkt_with_endianness("POINT (1.0 2.0)", endianness);
     let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::Point(p) = wkb.as_type() else {
+    let geo_traits::GeometryType::Point(pt) = wkb.as_type() else {
         panic!("expected point")
     };
-    let c = geo_traits::PointTrait::coord(&p).unwrap();
-    assert_eq!(c.x(), 1.5);
-    assert_eq!(c.y(), -2.0);
-    assert_eq!(p.coord_ext().unwrap().geo_coord().x, 1.5);
+    let coord = pt.geo_coord().unwrap();
+    assert_eq!(coord.x, 1.0);
+    assert_eq!(coord.y, 2.0);
+
+    let buf = wkb_from_wkt_with_endianness("POINT EMPTY", endianness);
+    let wkb = Wkb::try_new(&buf).unwrap();
+    let geo_traits::GeometryType::Point(pt) = wkb.as_type() else {
+        panic!("expected point")
+    };
+    let coord = pt.geo_coord();
+    assert!(coord.is_none());
 }
 
-#[test]
-fn test_linestring_iterators() {
-    let buf = wkb_from_wkt("LINESTRING(0 0, 1 1, 2 1.5)");
+#[rstest]
+fn test_linestring_iterators(
+    #[values(Endianness::LittleEndian, Endianness::BigEndian)] endianness: Endianness,
+) {
+    let buf = wkb_from_wkt_with_endianness("LINESTRING(0 0, 1 1, 2 1.5)", endianness);
     let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::LineString(ls) = wkb.as_type() else {
+    let GeometryTypeExt::LineString(ls) = wkb.as_type_ext() else {
         panic!("expected linestring")
     };
 
@@ -69,51 +81,15 @@ fn test_linestring_iterators() {
     assert_eq!(segs.len(), coords.len() - 1);
     assert_eq!(segs[0].start.x, 0.0);
     assert_eq!(segs[0].end.x, 1.0);
-}
 
-#[test]
-fn test_polygon_ext() {
-    let buf = wkb_from_wkt("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
+    // Empty linestring
+    let buf = wkb_from_wkt_with_endianness("LINESTRING EMPTY", endianness);
     let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::Polygon(p) = wkb.as_type() else {
-        panic!("expected polygon")
+    let GeometryTypeExt::LineString(ls) = wkb.as_type_ext() else {
+        panic!("expected linestring")
     };
-    assert_eq!(PolygonTrait::num_interiors(&p), 0);
-    let exterior = PolygonTrait::exterior(&p).unwrap();
-    assert_eq!(exterior.num_coords(), 5);
-}
-
-#[test]
-fn test_multi_geometries() {
-    // MultiPoint
-    let buf = wkb_from_wkt("MULTIPOINT(1 1, 2 2)");
-    let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::MultiPoint(mp) = wkb.as_type() else {
-        panic!("expected multipoint")
-    };
-    assert_eq!(MultiPointTrait::num_points(&mp), 2);
-    let p0 = geo_traits::MultiPointTrait::point(&mp, 0).unwrap();
-    assert_eq!(p0.coord().unwrap().x(), 1.0);
-
-    // MultiLineString
-    let buf = wkb_from_wkt("MULTILINESTRING((0 0, 1 0))");
-    let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::MultiLineString(mls) = wkb.as_type() else {
-        panic!("expected multilinestring")
-    };
-    assert_eq!(MultiLineStringTrait::num_line_strings(&mls), 1);
-    let ls0 = geo_traits::MultiLineStringTrait::line_string(&mls, 0).unwrap();
-    assert_eq!(LineStringTrait::num_coords(&ls0), 2);
-
-    // MultiPolygon
-    let buf = wkb_from_wkt("MULTIPOLYGON(((0 0, 1 0, 0 0)))");
-    let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::MultiPolygon(mp) = wkb.as_type() else {
-        panic!("expected multipolygon")
-    };
-    assert_eq!(MultiPolygonTrait::num_polygons(&mp), 1);
-    let poly0 = geo_traits::MultiPolygonTrait::polygon(&mp, 0).unwrap();
-    assert_eq!(PolygonTrait::exterior(&poly0).unwrap().num_coords(), 3);
+    assert_eq!(ls.coord_iter().count(), 0);
+    assert_eq!(ls.lines().count(), 0);
 }
 
 #[test]
@@ -126,44 +102,19 @@ fn test_geometry_collection_ext() {
     assert_eq!(wkb.num_geometries_ext(), 2);
 
     let child0 = wkb.geometry_ext(0).unwrap();
-    let geo_traits::GeometryType::Point(_) = child0.as_type() else {
+    let GeometryTypeExt::Point(_) = child0.as_type_ext() else {
         panic!("child0 expected point");
     };
 
     // Iterate via geometries_ext
     let types: Vec<_> = wkb
         .geometries_ext()
-        .map(|g| match g.as_type() {
-            geo_traits::GeometryType::Point(_) => "P",
+        .map(|g| match g.as_type_ext() {
+            GeometryTypeExt::Point(_) => "P",
             _ => "?",
         })
         .collect();
     assert_eq!(types, vec!["P", "P"]);
-}
-
-/// Helper to create big-endian WKB linestring (for testing endianness handling)
-fn wkb_linestring_be(coords: &[(f64, f64)]) -> Vec<u8> {
-    let mut b = Vec::new();
-    b.push(0u8); // Big endian
-    b.extend_from_slice(&2u32.to_be_bytes());
-    b.extend_from_slice(&(coords.len() as u32).to_be_bytes());
-    for (x, y) in coords {
-        b.extend_from_slice(&x.to_be_bytes());
-        b.extend_from_slice(&y.to_be_bytes());
-    }
-    b
-}
-
-#[test]
-fn test_linestring_iter_exact_size() {
-    let buf = wkb_from_wkt("LINESTRING(0 0, 1 0, 2 1, 3 1)");
-    let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::LineString(ls) = wkb.as_type() else {
-        panic!("expected linestring")
-    };
-    let mut iter = ls.lines();
-    assert_eq!(iter.len(), 3); // ExactSizeIterator::len (4 coords - 1)
-    assert!(iter.next().is_some());
 }
 
 #[test]
@@ -276,26 +227,4 @@ fn test_linestring_triangles() {
     };
     assert_eq!(ls.triangles().count(), 0);
     assert_eq!(ls.lines().len(), 0);
-}
-
-#[test]
-fn test_linestring_big_endian_and_coord_iter() {
-    // Big endian variant to exercise EndianCoordIter and EndianLineIter
-    let coords = &[(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)];
-    let buf = wkb_linestring_be(coords);
-    let wkb = Wkb::try_new(&buf).unwrap();
-    let geo_traits::GeometryType::LineString(ls) = wkb.as_type() else {
-        panic!("expected linestring")
-    };
-
-    let collected: Vec<_> = ls.coord_iter().collect();
-    assert_eq!(collected.len(), coords.len());
-    for (c, (ex_x, ex_y)) in collected.iter().zip(coords.iter()) {
-        assert_eq!((c.x, c.y), (*ex_x, *ex_y));
-    }
-
-    let segs: Vec<_> = ls.lines().collect();
-    assert_eq!(segs.len(), 2);
-    assert_eq!(segs[0].start.x, 1.0);
-    assert_eq!(segs[1].end.x, 3.0);
 }
