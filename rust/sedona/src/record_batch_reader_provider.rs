@@ -91,9 +91,9 @@ impl TableProvider for RecordBatchReaderProvider {
         let mut reader_guard = self.reader.lock();
         if let Some(reader) = reader_guard.take() {
             let projection = projection.cloned();
-            Ok(Arc::new(RecordBatchReaderExec::new(
+            Ok(Arc::new(RecordBatchReaderExec::try_new(
                 reader, limit, projection,
-            )))
+            )?))
         } else {
             sedona_internal_err!("Can't scan RecordBatchReader provider more than once")
         }
@@ -165,18 +165,18 @@ struct RecordBatchReaderExec {
 }
 
 impl RecordBatchReaderExec {
-    fn new(
+    fn try_new(
         reader: Box<dyn RecordBatchReader + Send>,
         limit: Option<usize>,
         projection: Option<Vec<usize>>,
-    ) -> Self {
+    ) -> Result<Self> {
         let full_schema = reader.schema();
         let schema: SchemaRef = if let Some(indices) = projection.as_ref() {
-            let fields: Vec<_> = indices
-                .iter()
-                .map(|i| full_schema.field(*i).clone())
-                .collect();
-            Arc::new(arrow_schema::Schema::new(fields))
+            SchemaRef::new(
+                full_schema
+                    .project(indices)
+                    .map_err(DataFusionError::from)?,
+            )
         } else {
             full_schema.clone()
         };
@@ -187,13 +187,13 @@ impl RecordBatchReaderExec {
             Boundedness::Bounded,
         );
 
-        Self {
+        Ok(Self {
             reader: Mutex::new(Some(reader)),
             schema,
             properties,
             limit,
             projection,
-        }
+        })
     }
 }
 
