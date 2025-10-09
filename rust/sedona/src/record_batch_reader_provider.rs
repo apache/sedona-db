@@ -84,13 +84,16 @@ impl TableProvider for RecordBatchReaderProvider {
     async fn scan(
         &self,
         _state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let mut reader_guard = self.reader.lock();
         if let Some(reader) = reader_guard.take() {
-            Ok(Arc::new(RecordBatchReaderExec::new(reader, limit)))
+            let projection = projection.cloned();
+            Ok(Arc::new(RecordBatchReaderExec::new(
+                reader, limit, projection,
+            )))
         } else {
             sedona_internal_err!("Can't scan RecordBatchReader provider more than once")
         }
@@ -158,11 +161,25 @@ struct RecordBatchReaderExec {
     schema: SchemaRef,
     properties: PlanProperties,
     limit: Option<usize>,
+    projection: Option<Vec<usize>>,
 }
 
 impl RecordBatchReaderExec {
-    fn new(reader: Box<dyn RecordBatchReader + Send>, limit: Option<usize>) -> Self {
-        let schema = reader.schema();
+    fn new(
+        reader: Box<dyn RecordBatchReader + Send>,
+        limit: Option<usize>,
+        projection: Option<Vec<usize>>,
+    ) -> Self {
+        let full_schema = reader.schema();
+        let schema: SchemaRef = if let Some(indices) = projection.as_ref() {
+            let fields: Vec<_> = indices
+                .iter()
+                .map(|i| full_schema.field(*i).clone())
+                .collect();
+            Arc::new(arrow_schema::Schema::new(fields))
+        } else {
+            full_schema.clone()
+        };
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
             Partitioning::UnknownPartitioning(1),
@@ -175,6 +192,7 @@ impl RecordBatchReaderExec {
             schema,
             properties,
             limit,
+            projection,
         }
     }
 }
@@ -186,6 +204,7 @@ impl Debug for RecordBatchReaderExec {
             .field("schema", &self.schema)
             .field("properties", &self.properties)
             .field("limit", &self.limit)
+            .field("projection", &self.projection)
             .finish()
     }
 }
@@ -240,7 +259,17 @@ impl ExecutionPlan for RecordBatchReaderExec {
         match self.limit {
             Some(limit) => {
                 // Create a row-limited iterator that properly handles row counting
-                let iter = RowLimitedIterator::new(reader, limit);
+                let projection = self.projection.clone();
+                let iter = RowLimitedIterator::new(reader, limit).map(move |res| match res {
+                    Ok(batch) => {
+                        if let Some(indices) = projection.as_ref() {
+                            Ok(batch.project(indices).unwrap())
+                        } else {
+                            Ok(batch)
+                        }
+                    }
+                    Err(e) => Err(e),
+                });
                 let stream = Box::pin(futures::stream::iter(iter));
                 let record_batch_stream =
                     RecordBatchStreamAdapter::new(self.schema.clone(), stream);
@@ -248,8 +277,15 @@ impl ExecutionPlan for RecordBatchReaderExec {
             }
             None => {
                 // No limit, just convert the reader directly to a stream
-                let iter = reader.map(|item| match item {
-                    Ok(batch) => Ok(batch),
+                let projection = self.projection.clone();
+                let iter = reader.map(move |item| match item {
+                    Ok(batch) => {
+                        if let Some(indices) = projection.as_ref() {
+                            Ok(batch.project(indices).unwrap())
+                        } else {
+                            Ok(batch)
+                        }
+                    }
                     Err(e) => Err(DataFusionError::from(e)),
                 });
                 let stream = Box::pin(futures::stream::iter(iter));
@@ -381,6 +417,49 @@ mod test {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_projection_pushdown() {
+        use arrow_array::{RecordBatch, RecordBatchIterator};
+        use arrow_schema::{DataType, Field, Schema};
+        use datafusion::prelude::col;
+        use datafusion::prelude::SessionContext;
+        let ctx = SessionContext::new();
+
+        // Create a two-column batch
+        let schema = Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+        ]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![
+                Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3])),
+                Arc::new(arrow_array::Int32Array::from(vec![10, 20, 30])),
+            ],
+        )
+        .unwrap();
+
+        // Wrap in a RecordBatchReaderProvider
+        let reader =
+            RecordBatchIterator::new(vec![batch.clone()].into_iter().map(Ok), Arc::new(schema));
+        let provider = Arc::new(RecordBatchReaderProvider::new(Box::new(reader)));
+
+        // Read table then select only column b (this should push projection into scan)
+        let df = ctx.read_table(provider).unwrap();
+        let df_b = df.select(vec![col("b")]).unwrap();
+        let results = df_b.collect().await.unwrap();
+        assert_eq!(results.len(), 1);
+        let out_batch = &results[0];
+        assert_eq!(out_batch.num_columns(), 1);
+        assert_eq!(out_batch.schema().field(0).name(), "b");
+        let values = out_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        assert_eq!(values.values(), &[10, 20, 30]);
     }
 
     fn read_test_table_with_limit(
