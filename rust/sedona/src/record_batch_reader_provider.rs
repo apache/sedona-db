@@ -263,7 +263,7 @@ impl ExecutionPlan for RecordBatchReaderExec {
                 let iter = RowLimitedIterator::new(reader, limit).map(move |res| match res {
                     Ok(batch) => {
                         if let Some(indices) = projection.as_ref() {
-                            Ok(batch.project(indices).unwrap())
+                            batch.project(indices).map_err(|e| e.into())
                         } else {
                             Ok(batch)
                         }
@@ -281,12 +281,12 @@ impl ExecutionPlan for RecordBatchReaderExec {
                 let iter = reader.map(move |item| match item {
                     Ok(batch) => {
                         if let Some(indices) = projection.as_ref() {
-                            Ok(batch.project(indices).unwrap())
+                            batch.project(indices).map_err(|e| e.into())
                         } else {
                             Ok(batch)
                         }
                     }
-                    Err(e) => Err(DataFusionError::from(e)),
+                    Err(e) => Err(e.into()),
                 });
                 let stream = Box::pin(futures::stream::iter(iter));
                 let record_batch_stream =
@@ -302,7 +302,7 @@ mod test {
 
     use arrow_array::{RecordBatch, RecordBatchIterator};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::prelude::{DataFrame, SessionContext};
+    use datafusion::prelude::{col, DataFrame, SessionContext};
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array_storage;
@@ -421,10 +421,6 @@ mod test {
 
     #[tokio::test]
     async fn test_projection_pushdown() {
-        use arrow_array::{RecordBatch, RecordBatchIterator};
-        use arrow_schema::{DataType, Field, Schema};
-        use datafusion::prelude::col;
-        use datafusion::prelude::SessionContext;
         let ctx = SessionContext::new();
 
         // Create a two-column batch
