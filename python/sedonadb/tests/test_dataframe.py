@@ -117,12 +117,39 @@ def test_dataframe_from_array_stream(con):
     # Ensure that we exhausted the reader
     assert list(one_way_stream) == []
 
+    # Ensure we can't collect again
     with pytest.raises(
         sedonadb._lib.SedonaError,
         match="Can't scan RecordBatchReader provider more than once.",
     ):
-        # Ensure we can't collect again
         df.to_arrow_table()
+
+
+def test_record_batch_reader_projection(con):
+    """Regression test for projection pushdown on RecordBatchReaderProvider (issue #186).
+
+    Creates a once-consumable RecordBatchReader and ensures selecting a
+    subset of columns works (previously raised a projection mismatch error).
+    """
+    import pyarrow as pa
+
+    def batches():
+        for _ in range(3):
+            yield pa.record_batch({"a": ["a", "b", "c"], "b": [1, 2, 3]})
+
+    reader = pa.RecordBatchReader.from_batches(next(batches()).schema, batches())
+    # Create DataFrame and project only column b
+    df = con.create_data_frame(reader)
+    # Convert to a memtable to allow multiple materializations (source reader is single-use)
+    df = df.to_memtable()
+    df.to_view("temp_rbr_proj", overwrite=True)
+    try:
+        proj_df = con.sql("SELECT b FROM temp_rbr_proj")
+        tbl = proj_df.to_arrow_table()
+        assert tbl.column_names == ["b"]
+        assert tbl.to_pydict()["b"] == [1, 2, 3] * 3
+    finally:
+        con.drop_view("temp_rbr_proj")
 
 
 def test_schema(con):
