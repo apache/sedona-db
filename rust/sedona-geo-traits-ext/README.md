@@ -34,4 +34,4 @@ cannot show that there would be no type implementing both `LineStringTrait` and
 `PolygonTrait`. By adding an associated `Tag` type, we can write blanket
 implementations for `AreaTrait<LineStringTag>` and `AreaTrait<PolygonTag>`, since
 `AreaTrait<LineStringTag>` and `AreaTrait<PolygonTag>` are different types.
-Please refer to the source code of `geo-generic-alg` for more details.
+Please refer to the source code of `sedona-geo-generic-alg` for more details.
