@@ -27,48 +27,34 @@ extra:
       link: 'https://twitter.com/ApacheSedona'
     - icon: fontawesome/brands/discord
       link: 'https://discord.gg/9A3k5dEBsY'
-  community_links: &community_links
-    - Get Involved:
-        - Sedona OSS Blog: "https://sedona.apache.org/latest/blog/"
-        - Community: "https://sedona.apache.org/latest/community/contact/"
-        - Apache Software Foundation: "https://sedona.apache.org/latest/asf/asf/"
 
 site_name: SedonaDB
 site_description: "Documentation for SedonaDB"
 site_url: https://sedona.apache.org/sedonadb/
 nav:
-  # This becomes the 'SedonaDB' tab
+  - Home: https://sedona.apache.org/latest/
+  - Setup: https://sedona.apache.org/latest/setup/overview/
+  - Download: https://sedona.apache.org/latest/download/
+  - Programming Guides: https://sedona.apache.org/latest/tutorial/sql/
+  - API Docs: https://sedona.apache.org/latest/api/sql/Overview/
   - SedonaDB:
       - Home: index.md
-      # The alias (*) works perfectly from the 'extra' block
-      - <<: *community_links
-
-  # This becomes the 'Quickstart' tab
-  - Python Quickstart:
-      - quickstart-python.md
-      - <<: *community_links
-
-  # This becomes the 'SedonaDB Guides' tab
-  - SedonaDB Guides:
-      - Working with Vector Data: programming-guide.md
-      - Working with GeoPandas: geopandas-interop.md
-      - Working with Overture: overture-examples.md
+      - Quickstart: quickstart-python.md
+      - Programming Guide: programming-guide.md
+      - GeoPandas interop: geopandas-interop.md
+      - Overture Examples: overture-examples.md
+      - CRS Examples: crs-examples.md
       - Working with Parquet Files: working-with-parquet-files.md
-      - Joining Spatial Data with Different Coordinate Systems: crs-examples.md
       - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
       - Contributors Guide: contributors-guide.md
-
-      - <<: *community_links
-
-  # This becomes the 'SedonaDB Reference' tab
-  - SedonaDB Reference:
-      - Python:
-          - Python Functions: reference/python.md
-      - SQL:
-          - SQL Functions: reference/sql.md
-          - Spatial Joins: reference/sql-joins.md
-      - <<: *community_links
-  - Sedona Homepage: "https://sedona.apache.org/"
+      - API:
+        - Python: reference/python.md
+        - SQL: reference/sql.md
+        - Spatial Joins: reference/sql-joins.md
+  - SpatialBench: https://sedona.apache.org/spatialbench/
+  - Blog: https://sedona.apache.org/latest/blog/
+  - Community: https://sedona.apache.org/latest/setup/compile/
+  - Apache Software Foundation: https://sedona.apache.org/latest/asf/asf/
 
 repo_url: https://github.com/apache/sedona-db
 edit_uri: https://github.com/apache/sedona-db/blob/main/docs/
