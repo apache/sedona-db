@@ -14,6 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Generic Kernel predicates (orientation, distance, dot product)
+//!
+//! Ported (and contains copied code) from `geo::algorithm::kernels`:
+//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/kernels/mod.rs>.
+//! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use num_traits::Zero;
 
 use crate::{coord, Coord, CoordNum};

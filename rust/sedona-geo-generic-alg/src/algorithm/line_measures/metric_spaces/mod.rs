@@ -14,6 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Generic Metric Spaces (currently Euclidean)
+//!
+//! Ported (and contains copied code) from `geo::algorithm::line_measures::metric_spaces`:
+//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/line_measures/metric_spaces>.
+//! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 pub mod euclidean;
 pub use euclidean::DistanceExt;
 pub use euclidean::Euclidean;

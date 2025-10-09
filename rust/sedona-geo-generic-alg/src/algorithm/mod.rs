@@ -14,6 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Collection of generic geometry algorithms ported from the `geo` crate.
+//!
+//! All submodules in this directory are ported (and contain copied code) from the
+//! `geo` crate at commit `5d667f844716a3d0a17aa60bc0a58528cb5808c3`:
+//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm>.
+//! The original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 /// Kernels to compute various predicates
 pub mod kernels;
 pub use kernels::{Kernel, Orientation};

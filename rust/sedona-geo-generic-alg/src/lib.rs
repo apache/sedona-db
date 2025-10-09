@@ -14,6 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Crate root for generic geometry algorithms ported from `geo`.
+//!
+//! Substantial portions of this crate (algorithm modules, trait patterns, and API surface) are
+//! ported (and contain copied code) from the `geo` crate at commit
+//! `5d667f844716a3d0a17aa60bc0a58528cb5808c3`:
+//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src>.
+//! The original upstream project is dual-licensed under Apache-2.0 or MIT; the copied/ported code
+//! here is used under the Apache-2.0 license consistent with this repository.
+//! This top-level file orchestrates module exposure and numeric traits mirroring upstream design.
 #[cfg(feature = "use-serde")]
 #[macro_use]
 extern crate serde;

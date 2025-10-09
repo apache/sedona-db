@@ -14,6 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Generic Intersects algorithm
+//!
+//! Ported (and contains copied code) from `geo::algorithm::intersects` (and its submodules):
+//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/intersects>.
+//! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::GeoTraitExtWithTypeTag;
 
 use crate::BoundingRect;

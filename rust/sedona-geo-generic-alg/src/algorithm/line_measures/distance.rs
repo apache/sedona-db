@@ -14,6 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Generic Distance traits (line measures)
+//!
+//! Ported (and contains copied code) from `geo::algorithm::line_measures::distance`:
+//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/line_measures/distance.rs>.
+//! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 /// Calculate the minimum distance between two geometries.
 pub trait Distance<F, Origin, Destination> {
     /// Note that not all implementations support all geometry combinations, but at least `Point` to `Point`

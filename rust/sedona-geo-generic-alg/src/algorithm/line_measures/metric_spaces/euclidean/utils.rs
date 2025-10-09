@@ -14,6 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+//! Euclidean distance helper utilities (generic)
+//!
+//! Ported (and contains copied code) from `geo::algorithm::line_measures::metric_spaces::euclidean::utils`:
+//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/line_measures/metric_spaces/euclidean/utils.rs>.
+//! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use crate::algorithm::Intersects;
 use crate::coordinate_position::{coord_pos_relative_to_ring, CoordPos};
 use crate::geometry::*;

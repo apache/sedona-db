@@ -15,6 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 //! Internal utility functions, types, and data structures.
+//!
+//! Some helper logic (naming / minimal patterns) corresponds to simple utilities present in the
+//! upstream `geo` crate at commit `5d667f844716a3d0a17aa60bc0a58528cb5808c3`.
+//! (Example: partial_min / partial_max helpers). Where identical or trivially adapted, they are
+//! used here under the upstream dual-license (Apache-2.0 or MIT); incorporated under Apache-2.0.
+//! Upstream repository: <https://github.com/georust/geo>.
 
 // The Rust standard library has `max` for `Ord`, but not for `PartialOrd`
 pub fn partial_max<T: PartialOrd>(a: T, b: T) -> T {
