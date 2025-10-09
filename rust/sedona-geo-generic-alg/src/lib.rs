@@ -23,10 +23,6 @@
 //! The original upstream project is dual-licensed under Apache-2.0 or MIT; the copied/ported code
 //! here is used under the Apache-2.0 license consistent with this repository.
 //! This top-level file orchestrates module exposure and numeric traits mirroring upstream design.
-#[cfg(feature = "use-serde")]
-#[macro_use]
-extern crate serde;
-
 pub use crate::algorithm::*;
 use std::cmp::Ordering;
 
