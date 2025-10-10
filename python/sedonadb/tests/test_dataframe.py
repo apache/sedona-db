@@ -261,30 +261,30 @@ def test_dataframe_to_arrow(con):
 def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
     # It's difficult to trigger this with a simpler example
     # https://github.com/apache/sedona-db/issues/156
-    path_water_poly = (
-        geoarrow_data / "ns-water" / "files" / "ns-water_water-poly_geo.parquet"
+    path_water_junc = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-junc_geo.parquet"
     )
-    path_water_line = (
-        geoarrow_data / "ns-water" / "files" / "ns-water_water-line_geo.parquet"
+    path_water_point = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
     )
-    skip_if_not_exists(path_water_poly)
-    skip_if_not_exists(path_water_line)
+    skip_if_not_exists(path_water_junc)
+    skip_if_not_exists(path_water_point)
 
-    con.read_parquet(path_water_poly).to_view("lakes", overwrite=True)
-    con.read_parquet(path_water_line).to_view("rivers", overwrite=True)
-    con.sql("""SELECT geometry AS lake FROM lakes WHERE "OBJECTID" = 1976""").to_view(
-        "east_lake", overwrite=True
+    con.read_parquet(path_water_junc).to_view("junc", overwrite=True)
+    con.read_parquet(path_water_point).to_view("point", overwrite=True)
+    con.sql("""SELECT geometry FROM junc WHERE "OBJECTID" = 1814""").to_view(
+        "junc_filter", overwrite=True
     )
 
     inlets_and_outlets = con.sql("""
-        SELECT "OBJECTID", "FEAT_CODE", geometry
-        FROM rivers
-        JOIN east_lake ON ST_Intersects(east_lake.lake, rivers.geometry)
+        SELECT "OBJECTID", "FEAT_CODE", point.geometry
+        FROM point
+        JOIN junc_filter ON ST_DWithin(junc_filter.geometry, point.geometry, 10000)
     """)
 
     reader = pa.RecordBatchReader.from_stream(inlets_and_outlets)
     batch_rows = [len(batch) for batch in reader]
-    assert batch_rows == [31]
+    assert batch_rows == [24]
 
 
 def test_dataframe_to_pandas(con):
