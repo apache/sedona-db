@@ -14,15 +14,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import tempfile
+from pathlib import Path
+
 import geoarrow.pyarrow as ga
 import geoarrow.types as gat
 import geopandas.testing
 import pandas as pd
-from pathlib import Path
 import pyarrow as pa
 import pytest
 import sedonadb
-import tempfile
+from sedonadb.testing import skip_if_not_exists
 
 
 def test_dataframe_from_dataframe(con):
@@ -253,6 +256,33 @@ def test_dataframe_to_arrow(con):
         match="Requested schema != DataFrame schema not yet supported",
     ):
         df.to_arrow_table(schema=pa.schema({}))
+
+
+def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
+    path_water_poly = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-poly_geo.parquet"
+    )
+    path_water_line = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-line_geo.parquet"
+    )
+    skip_if_not_exists(path_water_poly)
+    skip_if_not_exists(path_water_line)
+
+    con.read_parquet(path_water_poly).to_view("lakes", overwrite=True)
+    con.read_parquet(path_water_line).to_view("rivers", overwrite=True)
+    con.sql("""SELECT geometry AS lake FROM lakes WHERE "OBJECTID" = 1976""").to_view(
+        "east_lake", overwrite=True
+    )
+
+    inlets_and_outlets = con.sql("""
+        SELECT "OBJECTID", "FEAT_CODE", geometry
+        FROM rivers
+        JOIN east_lake ON ST_Intersects(east_lake.lake, rivers.geometry)
+        """)
+
+    reader = pa.RecordBatchReader.from_stream(inlets_and_outlets)
+    batch_rows = [len(batch) for batch in reader]
+    assert batch_rows == [31]
 
 
 def test_dataframe_to_pandas(con):
