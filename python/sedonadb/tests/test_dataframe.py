@@ -259,6 +259,8 @@ def test_dataframe_to_arrow(con):
 
 
 def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
+    # It's difficult to trigger this with a simpler example
+    # https://github.com/apache/sedona-db/issues/156
     path_water_poly = (
         geoarrow_data / "ns-water" / "files" / "ns-water_water-poly_geo.parquet"
     )
@@ -278,7 +280,7 @@ def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
         SELECT "OBJECTID", "FEAT_CODE", geometry
         FROM rivers
         JOIN east_lake ON ST_Intersects(east_lake.lake, rivers.geometry)
-        """)
+    """)
 
     reader = pa.RecordBatchReader.from_stream(inlets_and_outlets)
     batch_rows = [len(batch) for batch in reader]
