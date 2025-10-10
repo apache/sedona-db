@@ -276,13 +276,13 @@ def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
         "junc_filter", overwrite=True
     )
 
-    inlets_and_outlets = con.sql("""
+    joined = con.sql("""
         SELECT "OBJECTID", "FEAT_CODE", point.geometry
         FROM point
         JOIN junc_filter ON ST_DWithin(junc_filter.geometry, point.geometry, 10000)
     """)
 
-    reader = pa.RecordBatchReader.from_stream(inlets_and_outlets)
+    reader = pa.RecordBatchReader.from_stream(joined)
     batch_rows = [len(batch) for batch in reader]
     assert batch_rows == [24]
 
