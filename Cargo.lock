@@ -2621,7 +2621,7 @@ dependencies = [
 [[package]]
 name = "geo-index"
 version = "0.3.1"
-source = "git+https://github.com/wherobots/geo-index.git?branch=geo-0.31.0#75e758a5690675980b881e12878f2eb96cb5bb21"
+source = "git+https://github.com/wherobots/geo-index.git?branch=main#3213c162b1dfdac9effdef3083afc17261c9f6fc"
 dependencies = [
  "bytemuck",
  "float_next_after",
