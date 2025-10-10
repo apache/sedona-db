@@ -23,7 +23,8 @@ FEATURE_FLAGS = @FEATURE_FLAGS@
 # Add flags if necessary
 RUSTFLAGS =
 
-TARGET_DIR = $(CURDIR)/rust/target
+# We set this in configure to work around a Windows path length restriction
+TARGET_DIR = @TARGET_DIR@
 LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
 STATLIB = $(LIBDIR)/libsedonadbr.a
 PKG_LIBS = -L$(LIBDIR) -lsedonadbr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll  @PKG_LIBS@
@@ -57,7 +58,6 @@ $(STATLIB):
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
 	  export CC="$(CC)" && \
 	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
-	  export CMAKE_TOOLCHAIN_FILE="$(CURDIR)/rust/aws-lc-sys-win-toolchain.cmake" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \
 	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
 

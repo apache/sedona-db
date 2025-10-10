@@ -56,6 +56,20 @@ RUSTC_VERSION="$(rustc --version || true)"
 echo "using Rust package manager: '${CARGO_VERSION}'"
 echo "using Rust compiler: '${RUSTC_VERSION}'"
 
+# If we are in GitHub actions (e.g., R Universe), set the target directory
+# to a very, very short path. If we don't do this, we run out of path length
+# to compile components of the aws-lc-sys crate. This also lets us better
+# cache the compilation.
+if [ -n "$SEDONADB_TARGET_DIR" ];then
+  TARGET_DIR="$SEDONADB_TARGET_DIR"
+elif [ -n "$GITHUB_ACTIONS" ]; then
+  mkdir C:/sedonadb_tmp
+  TARGET_DIR="C:/sedonadb_tmp"
+else
+  TARGET_DIR="$(pwd)/src/rust/target"
+fi
+
+
 # allow overriding profile externally (e.g. on CI)
 if [ -n "${SAVVY_PROFILE}" ]; then
   PROFILE="${SAVVY_PROFILE}"
@@ -74,6 +88,7 @@ fi
 sed \
   -e "s/@TARGET@/x86_64-pc-windows-gnu/" \
   -e "s/@PROFILE@/${PROFILE}/" \
+  -e "s|@TARGET_DIR@|${TARGET_DIR}|" \
   -e "s/@FEATURE_FLAGS@/${FEATURE_FLAGS}/" \
   -e "s|@PKG_LIBS@|${PKG_LIBS}|" \
   src/Makevars.win.in > src/Makevars.win
