@@ -17,8 +17,8 @@
 use std::sync::Arc;
 
 use crate::geos::{
-    BinaryPredicate, Contains, CoveredBy, Covers, Disjoint, Equals, GeosPredicate, Intersects,
-    Touches, Within,
+    BinaryPredicate, Contains, CoveredBy, Covers, Crosses, Disjoint, Equals, GeosPredicate,
+    Intersects, Overlaps, Touches, Within,
 };
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
@@ -59,6 +59,14 @@ pub fn st_touches_impl() -> ScalarKernelRef {
 
 pub fn st_within_impl() -> ScalarKernelRef {
     Arc::new(GeosPredicate::<Within>::default())
+}
+
+pub fn st_crosses_impl() -> ScalarKernelRef {
+    Arc::new(GeosPredicate::<Crosses>::default())
+}
+
+pub fn st_overlaps_impl() -> ScalarKernelRef {
+    Arc::new(GeosPredicate::<Overlaps>::default())
 }
 
 impl<Op: BinaryPredicate> SedonaScalarKernel for GeosPredicate<Op> {
@@ -375,6 +383,83 @@ mod tests {
         );
 
         let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None]);
+        assert_array_equal(&tester.invoke_array_array(arg1, arg2).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn crosses_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        use datafusion_common::ScalarValue;
+        let udf = SedonaScalarUDF::from_kernel("st_crosses", st_crosses_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        tester.assert_return_type(DataType::Boolean);
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 1 1)", "LINESTRING (0 1, 1 0)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, true);
+
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        let arg1 = create_array(
+            &[
+                Some("LINESTRING (0 0, 1 1)"),
+                Some("LINESTRING (0 0, 1 0)"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let arg2 = create_array(
+            &[
+                Some("LINESTRING (0 1, 1 0)"),
+                Some("POLYGON ((2 2, 2 3, 3 3, 3 2, 2 2))"),
+                Some("LINESTRING (0 0, 1 1)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None]);
+        assert_array_equal(&tester.invoke_array_array(arg1, arg2).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn overlaps_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        use datafusion_common::ScalarValue;
+        let udf = SedonaScalarUDF::from_kernel("st_overlaps", st_overlaps_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        tester.assert_return_type(DataType::Boolean);
+
+        let result = tester
+            .invoke_scalar_scalar(
+                "POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))",
+                "POLYGON ((1 1, 1 3, 3 3, 3 1, 1 1))",
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, true);
+
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        let arg1 = create_array(
+            &[
+                Some("POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))"),
+                Some("LINESTRING (0 0, 2 0)"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let arg2 = create_array(
+            &[
+                Some("POLYGON ((1 1, 1 3, 3 3, 3 1, 1 1))"),
+                Some("LINESTRING (1 0, 3 0)"),
+                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(true), None]);
         assert_array_equal(&tester.invoke_array_array(arg1, arg2).unwrap(), &expected);
     }
 }
