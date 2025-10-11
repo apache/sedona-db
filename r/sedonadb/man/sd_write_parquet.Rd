@@ -56,15 +56,12 @@ recreate Geometry/Geography types when reading the output and potentially read
 fewer row groups when only a subset of the file is needed for a given query.
 }
 \examples{
-\dontrun{
-# Write to a single parquet file
-df <- sd_read_parquet("input.parquet")
-sd_write_parquet(df, "output.parquet")
+tmp_parquet <- tempfile(fileext = ".parquet")
 
-# Write partitioned output
-sd_write_parquet(df, "output_dir", partition_by = "column_name")
+sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom") |>
+  sd_write_parquet(tmp_parquet)
 
-# Write with sorting
-sd_write_parquet(df, "output.parquet", sort_by = c("col1", "col2"))
-}
+sd_read_parquet(tmp_parquet)
+unlink(tmp_parquet)
+
 }
