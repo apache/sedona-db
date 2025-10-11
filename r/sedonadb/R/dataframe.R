@@ -183,6 +183,11 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 }
 
 
+sd_write_parquet <- function(.data, path) {
+
+}
+
+
 new_sedonadb_dataframe <- function(ctx, internal_df) {
   structure(list(ctx = ctx, df = internal_df), class = "sedonadb_dataframe")
 }

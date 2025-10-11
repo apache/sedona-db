@@ -16,9 +16,9 @@
 // under the License.
 
 #include <Rinternals.h>
+#include <stdint.h>
 
 #include <R_ext/Parse.h>
-#include <stdint.h>
 
 #include "rust/api.h"
 
@@ -155,6 +155,17 @@ SEXP savvy_InternalDataFrame_to_arrow_stream__impl(SEXP self__,
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_to_parquet__impl(
+    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
+    SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
+    SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version) {
+  SEXP res = savvy_InternalDataFrame_to_parquet__ffi(
+      self__, c_arg__ctx, c_arg__path, c_arg__partition_by, c_arg__sort_by,
+      c_arg__single_file_output, c_arg__overwrite_bbox_columns,
+      c_arg__geoparquet_version);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
                                            SEXP c_arg__table_ref,
                                            SEXP c_arg__overwrite) {
@@ -198,6 +209,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_arrow_schema__impl, 2},
     {"savvy_InternalDataFrame_to_arrow_stream__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_arrow_stream__impl, 2},
+    {"savvy_InternalDataFrame_to_parquet__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_to_parquet__impl, 8},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
     {NULL, NULL, 0}};

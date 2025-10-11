@@ -5244,6 +5244,7 @@ dependencies = [
  "arrow-schema",
  "datafusion",
  "datafusion-common",
+ "datafusion-expr",
  "savvy",
  "savvy-ffi",
  "sedona",
