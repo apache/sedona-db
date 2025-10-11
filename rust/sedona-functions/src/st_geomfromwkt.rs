@@ -48,7 +48,10 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
         Volatility::Immutable,
         Some(doc("ST_GeomFromWKT", "Geometry")),
     );
-    udf.with_aliases(vec!["st_geomfromtext".to_string()])
+    udf.with_aliases(vec![
+        "st_geomfromtext".to_string(),
+        "st_geometryfromtext".to_string(),
+        ])
 }
 
 /// ST_GeogFromWKT() UDF implementation
@@ -215,6 +218,7 @@ mod tests {
     fn aliases() {
         let udf: ScalarUDF = st_geomfromwkt_udf().into();
         assert!(udf.aliases().contains(&"st_geomfromtext".to_string()));
+        assert!(udf.aliases().contains(&"st_geometryfromtext".to_string()));
 
         let udf: ScalarUDF = st_geogfromwkt_udf().into();
         assert!(udf.aliases().contains(&"st_geogfromtext".to_string()));
