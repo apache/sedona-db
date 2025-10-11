@@ -454,12 +454,12 @@ mod tests {
         let arg2 = create_array(
             &[
                 Some("POLYGON ((1 1, 1 3, 3 3, 3 1, 1 1))"),
-                Some("LINESTRING (1 0, 3 0)"),
+                Some("LINESTRING (2 0, 3 0)"),
                 Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
             ],
             &WKB_GEOMETRY,
         );
-        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(true), None]);
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None]);
         assert_array_equal(&tester.invoke_array_array(arg1, arg2).unwrap(), &expected);
     }
 }
