@@ -97,7 +97,7 @@ impl BinaryPredicate for Touches {
     }
 }
 
-/// Check if the geometries crosses
+/// Check if the geometries cross
 #[derive(Debug, Default)]
 pub struct Crosses {}
 impl BinaryPredicate for Crosses {
@@ -106,7 +106,7 @@ impl BinaryPredicate for Crosses {
     }
 }
 
-/// Check if the geometries overlaps
+/// Check if the geometries overlap
 #[derive(Debug, Default)]
 pub struct Overlaps {}
 impl BinaryPredicate for Overlaps {
