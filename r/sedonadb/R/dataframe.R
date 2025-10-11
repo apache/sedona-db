@@ -218,17 +218,10 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #' @export
 #'
 #' @examples
-#' \dontrun{
-#' # Write to a single parquet file
-#' df <- sd_read_parquet("input.parquet")
-#' sd_write_parquet(df, "output.parquet")
-#'
-#' # Write partitioned output
-#' sd_write_parquet(df, "output_dir", partition_by = "column_name")
-#'
-#' # Write with sorting
-#' sd_write_parquet(df, "output.parquet", sort_by = c("col1", "col2"))
-#' }
+#' tmp_parquet <- tempfile(fileext = ".parquet")
+#' sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom") |>
+#'   sd_write_parquet(tmp_parquet)
+#' sd_read_parquet(tmp_parquet)
 sd_write_parquet <- function(.data,
                              path,
                              partition_by = character(0),
