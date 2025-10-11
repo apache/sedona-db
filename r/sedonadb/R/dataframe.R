@@ -224,6 +224,7 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #'   sd_write_parquet(tmp_parquet)
 #'
 #' sd_read_parquet(tmp_parquet)
+#' unlink(tmp_parquet)
 #'
 sd_write_parquet <- function(.data,
                              path,
