@@ -51,7 +51,7 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
     udf.with_aliases(vec![
         "st_geomfromtext".to_string(),
         "st_geometryfromtext".to_string(),
-        ])
+    ])
 }
 
 /// ST_GeogFromWKT() UDF implementation
