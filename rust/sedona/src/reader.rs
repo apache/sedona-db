@@ -41,9 +41,20 @@ impl Iterator for SedonaStreamReader {
     type Item = std::result::Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.runtime.block_on(self.stream.try_next()) {
-            Ok(maybe_batch) => maybe_batch.map(Ok),
-            Err(err) => Some(Err(ArrowError::ExternalError(Box::new(err)))),
+        loop {
+            match self.runtime.block_on(self.stream.try_next()) {
+                Ok(maybe_batch) => match maybe_batch {
+                    Some(batch) => {
+                        if batch.num_rows() == 0 {
+                            continue;
+                        }
+
+                        return Some(Ok(batch));
+                    }
+                    None => return None,
+                },
+                Err(err) => return Some(Err(ArrowError::ExternalError(Box::new(err)))),
+            }
         }
     }
 }
@@ -57,7 +68,9 @@ impl RecordBatchReader for SedonaStreamReader {
 #[cfg(test)]
 mod test {
 
+    use arrow_array::record_batch;
     use arrow_schema::{DataType, Field, Schema};
+    use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 
     use crate::context::SedonaContext;
 
@@ -80,6 +93,34 @@ mod test {
         assert_eq!(reader.schema(), expected_schema);
 
         assert_eq!(reader.next().unwrap().unwrap(), expected_batches[0]);
+        assert!(reader.next().is_none());
+    }
+
+    #[test]
+    fn reader_empty_chunks() {
+        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+
+        let batch0 = record_batch!(
+            ("a", Int32, [1, 2, 3]),
+            ("b", Float64, [Some(4.0), None, Some(5.0)])
+        )
+        .expect("created batch");
+        let schema = batch0.schema();
+
+        let batch1 = RecordBatch::new_empty(schema.clone());
+        let batch2 = batch0.clone();
+
+        let stream = futures::stream::iter(vec![
+            Ok(batch0.clone()),
+            Ok(batch1.clone()),
+            Ok(batch2.clone()),
+        ]);
+        let adapter = RecordBatchStreamAdapter::new(schema, stream);
+        let batch_stream: SendableRecordBatchStream = Box::pin(adapter);
+
+        let mut reader = SedonaStreamReader::new(runtime, batch_stream);
+        assert_eq!(reader.next().unwrap().unwrap(), batch0);
+        assert_eq!(reader.next().unwrap().unwrap(), batch2);
         assert!(reader.next().is_none());
     }
 }
