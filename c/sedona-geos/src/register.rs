@@ -24,8 +24,8 @@ use crate::{
 };
 
 use crate::binary_predicates::{
-    st_contains_impl, st_covered_by_impl, st_covers_impl, st_disjoint_impl, st_equals_impl,
-    st_intersects_impl, st_touches_impl, st_within_impl,
+    st_contains_impl, st_covered_by_impl, st_covers_impl, st_crosses_impl, st_disjoint_impl,
+    st_equals_impl, st_intersects_impl, st_overlaps_impl, st_touches_impl, st_within_impl,
 };
 
 use crate::overlay::{
@@ -54,5 +54,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_touches", st_touches_impl()),
         ("st_union", st_union_impl()),
         ("st_within", st_within_impl()),
+        ("st_crosses", st_crosses_impl()),
+        ("st_overlaps", st_overlaps_impl()),
     ]
 }
