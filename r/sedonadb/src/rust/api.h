@@ -44,6 +44,10 @@ SEXP savvy_InternalDataFrame_show__ffi(SEXP self__, SEXP c_arg__ctx,
                                        SEXP c_arg__ascii, SEXP c_arg__limit);
 SEXP savvy_InternalDataFrame_to_arrow_schema__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_to_arrow_stream__ffi(SEXP self__, SEXP c_arg__out);
+SEXP savvy_InternalDataFrame_to_parquet__ffi(
+    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
+    SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
+    SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);
