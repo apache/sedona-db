@@ -182,11 +182,86 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
   invisible(.data)
 }
 
+#' Write DataFrame to (Geo)Parquet files
+#'
+#' Write this DataFrame to one or more (Geo)Parquet files. For input that contains
+#' geometry columns, GeoParquet metadata is written such that suitable readers can
+#' recreate Geometry/Geography types when reading the output and potentially read
+#' fewer row groups when only a subset of the file is needed for a given query.
+#'
+#' @inheritParams sd_count
+#' @param path A filename or directory to which parquet file(s) should be written
+#' @param partition_by A character vector of column names to partition by. If non-empty,
+#'   applies hive-style partitioning to the output
+#' @param sort_by A character vector of column names to sort by. Currently only
+#'   ascending sort is supported
+#' @param single_file_output Use TRUE or FALSE to force writing a single Parquet
+#'   file vs. writing one file per partition to a directory. By default,
+#'   a single file is written if `partition_by` is unspecified and
+#'   `path` ends with `.parquet`
+#' @param geoparquet_version GeoParquet metadata version to write if output contains
+#'   one or more geometry columns. The default ("1.0") is the most widely
+#'   supported and will result in geometry columns being recognized in many
+#'   readers; however, only includes statistics at the file level.
+#'   Use "1.1" to compute an additional bounding box column
+#'   for every geometry column in the output: some readers can use these columns
+#'   to prune row groups when files contain an effective spatial ordering.
+#'   The extra columns will appear just before their geometry column and
+#'   will be named "[geom_col_name]_bbox" for all geometry columns except
+#'   "geometry", whose bounding box column name is just "bbox"
+#' @param overwrite_bbox_columns Use TRUE to overwrite any bounding box columns
+#'   that already exist in the input. This is useful in a read -> modify
+#'   -> write scenario to ensure these columns are up-to-date. If FALSE
+#'   (the default), an error will be raised if a bbox column already exists
+#'
+#' @returns The input, invisibly
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Write to a single parquet file
+#' df <- sd_read_parquet("input.parquet")
+#' sd_write_parquet(df, "output.parquet")
+#'
+#' # Write partitioned output
+#' sd_write_parquet(df, "output_dir", partition_by = "column_name")
+#'
+#' # Write with sorting
+#' sd_write_parquet(df, "output.parquet", sort_by = c("col1", "col2"))
+#' }
+sd_write_parquet <- function(.data,
+                             path,
+                             partition_by = character(0),
+                             sort_by = character(0),
+                             single_file_output = NULL,
+                             geoparquet_version = "1.0",
+                             overwrite_bbox_columns = FALSE) {
 
-sd_write_parquet <- function(.data, path) {
+  # Determine single_file_output default based on path and partition_by
+  if (is.null(single_file_output)) {
+    single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)
+  }
 
+  # Validate geoparquet_version
+  if (!is.null(geoparquet_version)) {
+    if (!geoparquet_version %in% c("1.0", "1.1")) {
+      stop("geoparquet_version must be '1.0' or '1.1'")
+    }
+  }
+
+  # Call the underlying Rust method
+  .data$df$to_parquet(
+    ctx = .data$ctx,
+    path = path,
+    partition_by = partition_by,
+    sort_by = sort_by,
+    single_file_output = single_file_output,
+    overwrite_bbox_columns = overwrite_bbox_columns,
+    geoparquet_version = geoparquet_version
+  )
+
+  invisible(.data)
 }
-
 
 new_sedonadb_dataframe <- function(ctx, internal_df) {
   structure(list(ctx = ctx, df = internal_df), class = "sedonadb_dataframe")
