@@ -239,6 +239,7 @@ class(`InternalContext`) <- c("InternalContext__bundle", "savvy_sedonadb__sealed
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
 
+  e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
 
   class(e) <- c("InternalDataFrame", "savvy_sedonadb__sealed")
