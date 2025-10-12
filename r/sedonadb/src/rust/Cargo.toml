@@ -29,6 +29,7 @@ arrow-array = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+datafusion-ffi = { workspace = true }
 savvy = "*"
 savvy-ffi = "*"
 sedona = { path = "../../../../rust/sedona" }

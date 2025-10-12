@@ -30,6 +30,9 @@ SEXP savvy_InternalContext_deregister_table__ffi(SEXP self__,
                                                  SEXP c_arg__table_ref);
 SEXP savvy_InternalContext_new__ffi(void);
 SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths);
+SEXP savvy_InternalContext_register_scalar_udf__ffi(
+    SEXP self__, SEXP c_arg__scalar_udf_xptr);
+SEXP savvy_InternalContext_scalar_udf_xptr__ffi(SEXP self__, SEXP c_arg__name);
 SEXP savvy_InternalContext_sql__ffi(SEXP self__, SEXP c_arg__query);
 SEXP savvy_InternalContext_view__ffi(SEXP self__, SEXP c_arg__table_ref);
 
@@ -48,6 +51,8 @@ SEXP savvy_InternalDataFrame_to_parquet__ffi(
     SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
     SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
     SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version);
+SEXP savvy_InternalDataFrame_to_arrow_stream__ffi(
+    SEXP self__, SEXP c_arg__out, SEXP c_arg__requested_schema_xptr);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);

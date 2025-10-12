@@ -89,6 +89,18 @@ NULL
   }
 }
 
+`InternalContext_register_scalar_udf` <- function(self) {
+  function(`scalar_udf_xptr`) {
+    invisible(.Call(savvy_InternalContext_register_scalar_udf__impl, `self`, `scalar_udf_xptr`))
+  }
+}
+
+`InternalContext_scalar_udf_xptr` <- function(self) {
+  function(`name`) {
+    .Call(savvy_InternalContext_scalar_udf_xptr__impl, `self`, `name`)
+  }
+}
+
 `InternalContext_sql` <- function(self) {
   function(`query`) {
     .savvy_wrap_InternalDataFrame(.Call(savvy_InternalContext_sql__impl, `self`, `query`))
@@ -107,6 +119,8 @@ NULL
   e$`data_frame_from_array_stream` <- `InternalContext_data_frame_from_array_stream`(ptr)
   e$`deregister_table` <- `InternalContext_deregister_table`(ptr)
   e$`read_parquet` <- `InternalContext_read_parquet`(ptr)
+  e$`register_scalar_udf` <- `InternalContext_register_scalar_udf`(ptr)
+  e$`scalar_udf_xptr` <- `InternalContext_scalar_udf_xptr`(ptr)
   e$`sql` <- `InternalContext_sql`(ptr)
   e$`view` <- `InternalContext_view`(ptr)
 
@@ -179,8 +193,8 @@ class(`InternalContext`) <- c("InternalContext__bundle", "savvy_sedonadb__sealed
 }
 
 `InternalDataFrame_to_arrow_stream` <- function(self) {
-  function(`out`) {
-    invisible(.Call(savvy_InternalDataFrame_to_arrow_stream__impl, `self`, `out`))
+  function(`out`, `requested_schema_xptr`) {
+    invisible(.Call(savvy_InternalDataFrame_to_arrow_stream__impl, `self`, `out`, `requested_schema_xptr`))
   }
 }
 
@@ -230,3 +244,4 @@ class(`InternalDataFrame`) <- c("InternalDataFrame__bundle", "savvy_sedonadb__se
 `print.InternalDataFrame__bundle` <- function(x, ...) {
   cat('InternalDataFrame\n')
 }
+

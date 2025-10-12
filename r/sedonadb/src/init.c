@@ -100,6 +100,19 @@ SEXP savvy_InternalContext_read_parquet__impl(SEXP self__, SEXP c_arg__paths) {
   return handle_result(res);
 }
 
+SEXP savvy_InternalContext_register_scalar_udf__impl(
+    SEXP self__, SEXP c_arg__scalar_udf_xptr) {
+  SEXP res = savvy_InternalContext_register_scalar_udf__ffi(
+      self__, c_arg__scalar_udf_xptr);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalContext_scalar_udf_xptr__impl(SEXP self__,
+                                                 SEXP c_arg__name) {
+  SEXP res = savvy_InternalContext_scalar_udf_xptr__ffi(self__, c_arg__name);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalContext_sql__impl(SEXP self__, SEXP c_arg__query) {
   SEXP res = savvy_InternalContext_sql__ffi(self__, c_arg__query);
   return handle_result(res);
@@ -149,9 +162,10 @@ SEXP savvy_InternalDataFrame_to_arrow_schema__impl(SEXP self__,
   return handle_result(res);
 }
 
-SEXP savvy_InternalDataFrame_to_arrow_stream__impl(SEXP self__,
-                                                   SEXP c_arg__out) {
-  SEXP res = savvy_InternalDataFrame_to_arrow_stream__ffi(self__, c_arg__out);
+SEXP savvy_InternalDataFrame_to_arrow_stream__impl(
+    SEXP self__, SEXP c_arg__out, SEXP c_arg__requested_schema_xptr) {
+  SEXP res = savvy_InternalDataFrame_to_arrow_stream__ffi(
+      self__, c_arg__out, c_arg__requested_schema_xptr);
   return handle_result(res);
 }
 
@@ -189,6 +203,10 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalContext_new__impl, 0},
     {"savvy_InternalContext_read_parquet__impl",
      (DL_FUNC)&savvy_InternalContext_read_parquet__impl, 2},
+    {"savvy_InternalContext_register_scalar_udf__impl",
+     (DL_FUNC)&savvy_InternalContext_register_scalar_udf__impl, 2},
+    {"savvy_InternalContext_scalar_udf_xptr__impl",
+     (DL_FUNC)&savvy_InternalContext_scalar_udf_xptr__impl, 2},
     {"savvy_InternalContext_sql__impl",
      (DL_FUNC)&savvy_InternalContext_sql__impl, 2},
     {"savvy_InternalContext_view__impl",
@@ -208,7 +226,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"savvy_InternalDataFrame_to_arrow_schema__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_arrow_schema__impl, 2},
     {"savvy_InternalDataFrame_to_arrow_stream__impl",
-     (DL_FUNC)&savvy_InternalDataFrame_to_arrow_stream__impl, 2},
+     (DL_FUNC)&savvy_InternalDataFrame_to_arrow_stream__impl, 3},
     {"savvy_InternalDataFrame_to_parquet__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_parquet__impl, 8},
     {"savvy_InternalDataFrame_to_view__impl",

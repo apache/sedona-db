@@ -33,6 +33,7 @@ use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
+use crate::ffi::import_schema;
 use crate::runtime::wait_for_future_captured_r;
 
 #[savvy]
@@ -86,10 +87,20 @@ impl InternalDataFrame {
         Ok(())
     }
 
-    fn to_arrow_stream(&self, out: savvy::Sexp) -> Result<()> {
+    fn to_arrow_stream(&self, out: savvy::Sexp, requested_schema_xptr: savvy::Sexp) -> Result<()> {
         let out_void = unsafe { savvy_ffi::R_ExternalPtrAddr(out.0) };
         if out_void.is_null() {
             return Err(savvy_err!("external pointer to null in to_arrow_stream()"));
+        }
+
+        let maybe_requested_schema = if requested_schema_xptr.is_null() {
+            None
+        } else {
+            Some(import_schema(requested_schema_xptr))
+        };
+
+        if maybe_requested_schema.is_some() {
+            return Err(savvy_err!("Requested schema is not supported"));
         }
 
         let inner = self.inner.clone();

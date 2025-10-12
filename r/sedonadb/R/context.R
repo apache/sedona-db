@@ -80,6 +80,11 @@ sd_view <- function(table_ref) {
   new_sedonadb_dataframe(ctx, df)
 }
 
+sd_register_udf <- function(udf) {
+  ctx <- ctx()
+  ctx$register_scalar_udf(udf)
+}
+
 # We use just one context for now. In theory we could support multiple
 # contexts with a shared runtime, which would scope the registration
 # of various components more cleanly from the runtime.

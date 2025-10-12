@@ -27,6 +27,7 @@ use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 mod context;
 mod dataframe;
 mod error;
+mod ffi;
 mod runtime;
 
 #[savvy]

@@ -16,13 +16,11 @@
 // under the License.
 use std::sync::Arc;
 
-use arrow_array::{
-    ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
-    RecordBatchReader,
-};
+use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
-use savvy::{savvy, savvy_err, Result};
+use datafusion_ffi::udf::FFI_ScalarUDF;
+use savvy::{savvy, savvy_err, IntoExtPtrSexp, Result};
 
 use sedona::{context::SedonaContext, record_batch_reader_provider::RecordBatchReaderProvider};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
@@ -30,6 +28,7 @@ use tokio::runtime::Runtime;
 
 use crate::{
     dataframe::{new_data_frame, InternalDataFrame},
+    ffi::{import_array_stream, import_scalar_udf},
     runtime::wait_for_future_captured_r,
 };
 
@@ -94,14 +93,7 @@ impl InternalContext {
         stream_xptr: savvy::Sexp,
         collect_now: bool,
     ) -> savvy::Result<InternalDataFrame> {
-        let ffi_stream =
-            unsafe { savvy_ffi::R_ExternalPtrAddr(stream_xptr.0) as *mut FFI_ArrowArrayStream };
-        if ffi_stream.is_null() {
-            return Err(savvy_err!("external pointer to null in to_arrow_schema()"));
-        }
-
-        let stream = unsafe { FFI_ArrowArrayStream::from_raw(ffi_stream as _) };
-        let stream_reader = ArrowArrayStreamReader::try_new(stream)?;
+        let stream_reader = import_array_stream(stream_xptr)?;
 
         // Some readers are sensitive to being collected on the R thread or not, so
         // provide the option to collect everything immediately.
@@ -121,4 +113,28 @@ impl InternalContext {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
     }
+
+    pub fn scalar_udf_xptr(&self, name: &str) -> savvy::Result<savvy::Sexp> {
+        if let Some(udf) = self.inner.ctx.state().scalar_functions().get(name) {
+            let ffi_scalar_udf: FFI_ScalarUDF = udf.clone().into();
+            let mut ffi_xptr = FFIScalarUdfR(ffi_scalar_udf).into_external_pointer();
+            unsafe { savvy_ffi::Rf_protect(ffi_xptr.0) };
+            ffi_xptr.set_class(vec!["datafusion_scalar_udf"])?;
+            unsafe { savvy_ffi::Rf_unprotect(1) };
+
+            Ok(ffi_xptr)
+        } else {
+            Err(savvy_err!("Scalar UDF '{name}' was not found"))
+        }
+    }
+
+    pub fn register_scalar_udf(&self, scalar_udf_xptr: savvy::Sexp) -> savvy::Result<()> {
+        let scalar_udf = import_scalar_udf(scalar_udf_xptr)?;
+        self.inner.ctx.register_udf(scalar_udf);
+        Ok(())
+    }
 }
+
+#[repr(C)]
+struct FFIScalarUdfR(FFI_ScalarUDF);
+impl IntoExtPtrSexp for FFIScalarUdfR {}

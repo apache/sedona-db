@@ -297,9 +297,13 @@ infer_nanoarrow_schema.sedonadb_dataframe <- function(x, ...) {
 
 #' @importFrom nanoarrow as_nanoarrow_array_stream
 #' @export
-as_nanoarrow_array_stream.sedonadb_dataframe <- function(x, ...) {
+as_nanoarrow_array_stream.sedonadb_dataframe <- function(x, ..., schema = NULL) {
+  if (!is.null(schema)) {
+    schema <- nanoarrow::as_nanoarrow_schema(schema)
+  }
+
   stream <- nanoarrow::nanoarrow_allocate_array_stream()
-  x$df$to_arrow_stream(stream)
+  x$df$to_arrow_stream(stream, schema)
   stream
 }
 
