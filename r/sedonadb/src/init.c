@@ -83,6 +83,13 @@ SEXP savvy_InternalContext_data_frame_from_array_stream__impl(
   return handle_result(res);
 }
 
+SEXP savvy_InternalContext_data_frame_from_table_provider__impl(
+    SEXP self__, SEXP c_arg__provider_xptr) {
+  SEXP res = savvy_InternalContext_data_frame_from_table_provider__ffi(
+      self__, c_arg__provider_xptr);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalContext_deregister_table__impl(SEXP self__,
                                                   SEXP c_arg__table_ref) {
   SEXP res =
@@ -177,6 +184,8 @@ SEXP savvy_InternalDataFrame_to_parquet__impl(
       self__, c_arg__ctx, c_arg__path, c_arg__partition_by, c_arg__sort_by,
       c_arg__single_file_output, c_arg__overwrite_bbox_columns,
       c_arg__geoparquet_version);
+SEXP savvy_InternalDataFrame_to_provider__impl(SEXP self__) {
+  SEXP res = savvy_InternalDataFrame_to_provider__ffi(self__);
   return handle_result(res);
 }
 
@@ -197,6 +206,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_sedonadb_adbc_init_func__impl, 0},
     {"savvy_InternalContext_data_frame_from_array_stream__impl",
      (DL_FUNC)&savvy_InternalContext_data_frame_from_array_stream__impl, 3},
+    {"savvy_InternalContext_data_frame_from_table_provider__impl",
+     (DL_FUNC)&savvy_InternalContext_data_frame_from_table_provider__impl, 2},
     {"savvy_InternalContext_deregister_table__impl",
      (DL_FUNC)&savvy_InternalContext_deregister_table__impl, 2},
     {"savvy_InternalContext_new__impl",
@@ -229,6 +240,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_arrow_stream__impl, 3},
     {"savvy_InternalDataFrame_to_parquet__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_parquet__impl, 8},
+    {"savvy_InternalDataFrame_to_provider__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
     {NULL, NULL, 0}};

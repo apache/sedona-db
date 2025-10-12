@@ -67,6 +67,13 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(x, ..., schema = NULL,
   as_sedonadb_dataframe(new_sedonadb_dataframe(ctx, df), schema = schema)
 }
 
+#' @export
+as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NULL) {
+  ctx <- ctx()
+  df <- ctx$data_frame_from_table_provider(x)
+  new_sedonadb_dataframe(ctx, df)
+}
+
 #' Count rows in a DataFrame
 #'
 #' @param .data A sedonadb_dataframe

@@ -28,7 +28,7 @@ use tokio::runtime::Runtime;
 
 use crate::{
     dataframe::{new_data_frame, InternalDataFrame},
-    ffi::{import_array_stream, import_scalar_udf},
+    ffi::{import_array_stream, import_scalar_udf, import_table_provider, FFIScalarUdfR},
     runtime::wait_for_future_captured_r,
 };
 
@@ -109,6 +109,15 @@ impl InternalContext {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
+    pub fn data_frame_from_table_provider(
+        &self,
+        provider_xptr: savvy::Sexp,
+    ) -> Result<InternalDataFrame> {
+        let provider = import_table_provider(provider_xptr)?;
+        let inner = self.inner.ctx.read_table(provider)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
     pub fn deregister_table(&self, table_ref: &str) -> savvy::Result<()> {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
@@ -134,7 +143,3 @@ impl InternalContext {
         Ok(())
     }
 }
-
-#[repr(C)]
-struct FFIScalarUdfR(FFI_ScalarUDF);
-impl IntoExtPtrSexp for FFIScalarUdfR {}

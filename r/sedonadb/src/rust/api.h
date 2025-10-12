@@ -26,6 +26,8 @@ SEXP savvy_sedonadb_adbc_init_func__ffi(void);
 // methods and associated functions for InternalContext
 SEXP savvy_InternalContext_data_frame_from_array_stream__ffi(
     SEXP self__, SEXP c_arg__stream_xptr, SEXP c_arg__collect_now);
+SEXP savvy_InternalContext_data_frame_from_table_provider__ffi(
+    SEXP self__, SEXP c_arg__provider_xptr);
 SEXP savvy_InternalContext_deregister_table__ffi(SEXP self__,
                                                  SEXP c_arg__table_ref);
 SEXP savvy_InternalContext_new__ffi(void);
@@ -53,6 +55,7 @@ SEXP savvy_InternalDataFrame_to_parquet__ffi(
     SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version);
 SEXP savvy_InternalDataFrame_to_arrow_stream__ffi(
     SEXP self__, SEXP c_arg__out, SEXP c_arg__requested_schema_xptr);
+SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);

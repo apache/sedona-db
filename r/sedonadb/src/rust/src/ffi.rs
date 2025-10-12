@@ -1,8 +1,17 @@
-use arrow_array::{ffi::FFI_ArrowSchema, ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream}};
+use std::sync::Arc;
+
+use arrow_array::{
+    ffi::FFI_ArrowSchema,
+    ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
+};
 use arrow_schema::Schema;
+use datafusion::catalog::TableProvider;
 use datafusion_expr::ScalarUDF;
-use datafusion_ffi::udf::{FFI_ScalarUDF, ForeignScalarUDF};
-use savvy::savvy_err;
+use datafusion_ffi::{
+    table_provider::{FFI_TableProvider, ForeignTableProvider},
+    udf::{FFI_ScalarUDF, ForeignScalarUDF},
+};
+use savvy::{savvy_err, IntoExtPtrSexp};
 
 pub fn import_schema(mut xptr: savvy::Sexp) -> savvy::Result<Schema> {
     let ffi_schema: &FFI_ArrowSchema = import_xptr(&mut xptr, "nanoarrow_schema")?;
@@ -16,8 +25,18 @@ pub fn import_array_stream(mut xptr: savvy::Sexp) -> savvy::Result<ArrowArrayStr
     Ok(reader)
 }
 
+pub fn import_table_provider(
+    mut provider_xptr: savvy::Sexp,
+) -> savvy::Result<Arc<dyn TableProvider>> {
+    let ffi_provider: &FFI_TableProvider =
+        import_xptr(&mut provider_xptr, "datafusion_table_provider")?;
+    let provider_impl = ForeignTableProvider::from(ffi_provider);
+    Ok(Arc::new(provider_impl))
+}
+
 pub fn import_scalar_udf(mut scalar_udf_xptr: savvy::Sexp) -> savvy::Result<ScalarUDF> {
-    let ffi_scalar_udf_ref: &FFI_ScalarUDF = import_xptr(&mut scalar_udf_xptr, "datafusion_scalar_udf")?;
+    let ffi_scalar_udf_ref: &FFI_ScalarUDF =
+        import_xptr(&mut scalar_udf_xptr, "datafusion_scalar_udf")?;
     let scalar_udf_impl = ForeignScalarUDF::try_from(ffi_scalar_udf_ref)?;
     Ok(scalar_udf_impl.into())
 }
@@ -47,3 +66,11 @@ fn import_xptr<'a, T>(xptr: &'a mut savvy::Sexp, cls: &str) -> savvy::Result<&'a
         Err(savvy_err!("external pointer with class {cls} is null"))
     }
 }
+
+#[repr(C)]
+pub struct FFIScalarUdfR(pub FFI_ScalarUDF);
+impl IntoExtPtrSexp for FFIScalarUdfR {}
+
+#[repr(C)]
+pub struct FFITableProviderR(pub FFI_TableProvider);
+impl IntoExtPtrSexp for FFITableProviderR {}
