@@ -80,6 +80,13 @@ sd_view <- function(table_ref) {
   new_sedonadb_dataframe(ctx, df)
 }
 
+#' Register a user-defined function
+#'
+#' @param udf An object of class 'datafusion_scalar_udf'
+#'
+#' @returns NULL, invisibly
+#' @export
+#'
 sd_register_udf <- function(udf) {
   ctx <- ctx()
   ctx$register_scalar_udf(udf)
