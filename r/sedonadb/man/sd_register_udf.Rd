@@ -13,5 +13,8 @@ sd_register_udf(udf)
 NULL, invisibly
 }
 \description{
-Register a user-defined function
+Several types of user-defined functions can be registered into a session
+context. Currently, the only implemented variety is an external pointer
+to a Rust \code{FFI_ScalarUDF}, an example of which is available from the
+\href{https://github.com/apache/datafusion-python/blob/6f3b1cab75cfaa0cdf914f9b6fa023cb9afccd7d/examples/datafusion-ffi-example/src/scalar_udf.rs}{DataFusion Python documentation}.
 }

@@ -55,7 +55,7 @@ test_that("dataframe can be created from nanoarrow objects", {
 
 test_that("dataframe can be created from an FFI table provider", {
   df <- as_sedonadb_dataframe(data.frame(one = 1, two = "two"))
-  provider <-df$df$to_provider()
+  provider <- df$df$to_provider()
   df2 <- as_sedonadb_dataframe(provider)
   expect_identical(
     sd_collect(df2),
@@ -117,6 +117,11 @@ test_that("dataframe can be converted to an array stream", {
   expect_identical(
     as.data.frame(stream),
     data.frame(one = 1, two = "two")
+  )
+
+  expect_error(
+    nanoarrow::as_nanoarrow_array_stream(df, schema = nanoarrow::na_int32()),
+    "Requested schema is not supported"
   )
 })
 
