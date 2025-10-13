@@ -164,6 +164,8 @@ def test_read_geoparquet_prune_points(geoarrow_data, name, predicate):
         "contains",
         "covers",
         "touches",
+        "crosses",
+        "overlaps",
     ],
 )
 def test_read_geoparquet_prune_polygons(sedona_testing, predicate):
@@ -176,9 +178,16 @@ def test_read_geoparquet_prune_polygons(sedona_testing, predicate):
     # A point inside of a polygon for contains / covers
     wkt_filter = "POINT (33.60 -5.54)"
 
+    # Use a wkt_filter that will lead to non-empty results
     if predicate == "touches":
         # A point on the boundary of a polygon
         wkt_filter = "POINT (33.90371119710453 -0.9500000000000001)"
+    elif predicate == "overlaps":
+        # A polygon that intersects the polygon but neither contain each other
+        wkt_filter = "POLYGON ((33 -1.9, 33.00 0, 34 0, 34 -1.9, 33 -1.9))"
+    elif predicate == "crosses":
+        # A linestring that intersects the polygon but is not contained by it
+        wkt_filter = "LINESTRING (33 -1.9, 33.00 0, 34 0, 34 -1.9, 33 -1.9)"
 
     poly_filter = shapely.from_wkt(wkt_filter)
 

@@ -14,15 +14,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import tempfile
+from pathlib import Path
+
 import geoarrow.pyarrow as ga
 import geoarrow.types as gat
 import geopandas.testing
 import pandas as pd
-from pathlib import Path
 import pyarrow as pa
 import pytest
 import sedonadb
-import tempfile
+from sedonadb.testing import skip_if_not_exists
 
 
 def test_dataframe_from_dataframe(con):
@@ -253,6 +256,35 @@ def test_dataframe_to_arrow(con):
         match="Requested schema != DataFrame schema not yet supported",
     ):
         df.to_arrow_table(schema=pa.schema({}))
+
+
+def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
+    # It's difficult to trigger this with a simpler example
+    # https://github.com/apache/sedona-db/issues/156
+    path_water_junc = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-junc_geo.parquet"
+    )
+    path_water_point = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
+    )
+    skip_if_not_exists(path_water_junc)
+    skip_if_not_exists(path_water_point)
+
+    con.read_parquet(path_water_junc).to_view("junc", overwrite=True)
+    con.read_parquet(path_water_point).to_view("point", overwrite=True)
+    con.sql("""SELECT geometry FROM junc WHERE "OBJECTID" = 1814""").to_view(
+        "junc_filter", overwrite=True
+    )
+
+    joined = con.sql("""
+        SELECT "OBJECTID", "FEAT_CODE", point.geometry
+        FROM point
+        JOIN junc_filter ON ST_DWithin(junc_filter.geometry, point.geometry, 10000)
+    """)
+
+    reader = pa.RecordBatchReader.from_stream(joined)
+    batch_rows = [len(batch) for batch in reader]
+    assert batch_rows == [24]
 
 
 def test_dataframe_to_pandas(con):

@@ -177,7 +177,7 @@ impl SpatialFilter {
         let args = parse_args(raw_args);
         let fun_name = scalar_fun.fun().name();
         match fun_name {
-            "st_intersects" | "st_touches" => {
+            "st_intersects" | "st_touches" | "st_crosses" | "st_overlaps" => {
                 if args.len() != 2 {
                     return sedona_internal_err!("unexpected argument count in filter evaluation");
                 }
@@ -597,8 +597,8 @@ mod test {
     }
 
     #[rstest]
-    fn predicate_from_expr_intersects_touches_functions(
-        #[values("st_intersects", "st_touches")] func_name: &str,
+    fn predicate_from_expr_commutative_intersects_functions(
+        #[values("st_intersects", "st_touches", "st_crosses", "st_overlaps")] func_name: &str,
     ) {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
         let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
@@ -863,7 +863,9 @@ mod test {
             "st_covers",
             "st_within",
             "st_covered_by",
-            "st_coveredby"
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
         )]
         func_name: &str,
     ) {
@@ -905,7 +907,9 @@ mod test {
             "st_covers",
             "st_within",
             "st_covered_by",
-            "st_coveredby"
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
         )]
         func_name: &str,
     ) {

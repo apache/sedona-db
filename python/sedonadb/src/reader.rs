@@ -43,12 +43,21 @@ impl Iterator for PySedonaStreamReader {
     type Item = std::result::Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match wait_for_future_from_rust(&self.runtime, self.stream.try_next()) {
-            Ok(maybe_batch) => match maybe_batch {
-                Ok(maybe_batch) => maybe_batch.map(Ok),
-                Err(err) => Some(Err(ArrowError::ExternalError(Box::new(err)))),
-            },
-            Err(err) => Some(Err(ArrowError::ExternalError(Box::new(err)))),
+        loop {
+            match wait_for_future_from_rust(&self.runtime, self.stream.try_next()) {
+                Ok(Ok(maybe_batch)) => match maybe_batch {
+                    Some(batch) => {
+                        if batch.num_rows() == 0 {
+                            continue;
+                        }
+
+                        return Some(Ok(batch));
+                    }
+                    None => return None,
+                },
+                Ok(Err(df_err)) => return Some(Err(ArrowError::ExternalError(Box::new(df_err)))),
+                Err(py_err) => return Some(Err(ArrowError::ExternalError(Box::new(py_err)))),
+            }
         }
     }
 }
