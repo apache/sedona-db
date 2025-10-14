@@ -40,6 +40,7 @@ mod st_geomfromwkb;
 mod st_geomfromwkt;
 mod st_haszm;
 pub mod st_intersection_aggr;
+mod st_isclosed;
 pub mod st_isempty;
 mod st_length;
 mod st_makeline;
