@@ -17,14 +17,8 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
-#![allow(dead_code)]
 
 use std::os::raw::{c_char, c_int, c_void};
-
-#[repr(C)]
-pub struct ArrowSchema {
-    _private: [u8; 0],
-}
 
 #[repr(C)]
 pub struct ArrowArray {
@@ -46,11 +40,8 @@ pub type GeoArrowGeometryType = enum_t;
 pub type GeoArrowDimensions = enum_t;
 pub type GeoArrowType = enum_t;
 
-pub const GeoArrowType_GEOARROW_TYPE_UNINITIALIZED: GeoArrowType = 0;
 pub const GeoArrowType_GEOARROW_TYPE_WKB: GeoArrowType = 100001;
-pub const GeoArrowType_GEOARROW_TYPE_LARGE_WKB: GeoArrowType = 100002;
 pub const GeoArrowType_GEOARROW_TYPE_WKT: GeoArrowType = 100003;
-pub const GeoArrowType_GEOARROW_TYPE_LARGE_WKT: GeoArrowType = 100004;
 pub const GeoArrowType_GEOARROW_TYPE_WKB_VIEW: GeoArrowType = 100005;
 pub const GeoArrowType_GEOARROW_TYPE_WKT_VIEW: GeoArrowType = 100006;
 
@@ -66,13 +57,6 @@ pub struct GeoArrowError {
 #[derive(Debug, Copy, Clone)]
 pub struct GeoArrowStringView {
     pub data: *const c_char,
-    pub size_bytes: i64,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct GeoArrowBufferView {
-    pub data: *const u8,
     pub size_bytes: i64,
 }
 
@@ -99,53 +83,12 @@ pub struct GeoArrowVisitor {
     pub error: *mut GeoArrowError,
 }
 
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowVisitorInitVoid(v: *mut GeoArrowVisitor);
-}
-
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowVersion() -> *const c_char;
-}
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GeoArrowArrayReader {
     pub private_data: *mut c_void,
 }
 
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayReaderInitFromType(
-        reader: *mut GeoArrowArrayReader,
-        type_: GeoArrowType,
-    ) -> GeoArrowErrorCode;
-}
-
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayReaderInitFromSchema(
-        reader: *mut GeoArrowArrayReader,
-        schema: *const ArrowSchema,
-        error: *mut GeoArrowError,
-    ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayReaderSetArray(
-        reader: *mut GeoArrowArrayReader,
-        array: *const ArrowArray,
-        error: *mut GeoArrowError,
-    ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayReaderVisit(
-        reader: *mut GeoArrowArrayReader,
-        offset: i64,
-        length: i64,
-        v: *mut GeoArrowVisitor,
-    ) -> GeoArrowErrorCode;
-}
-
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayReaderReset(reader: *mut GeoArrowArrayReader);
-}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GeoArrowArrayWriter {
@@ -153,43 +96,45 @@ pub struct GeoArrowArrayWriter {
 }
 
 unsafe extern "C" {
+    pub fn SedonaDBGeoArrowVersion() -> *const c_char;
+
+    pub fn SedonaDBGeoArrowVisitorInitVoid(v: *mut GeoArrowVisitor);
+
+    pub fn SedonaDBGeoArrowArrayReaderInitFromType(
+        reader: *mut GeoArrowArrayReader,
+        type_: GeoArrowType,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowArrayReaderSetArray(
+        reader: *mut GeoArrowArrayReader,
+        array: *const ArrowArray,
+        error: *mut GeoArrowError,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowArrayReaderVisit(
+        reader: *mut GeoArrowArrayReader,
+        offset: i64,
+        length: i64,
+        v: *mut GeoArrowVisitor,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowArrayReaderReset(reader: *mut GeoArrowArrayReader);
+
     pub fn SedonaDBGeoArrowArrayWriterInitFromType(
         writer: *mut GeoArrowArrayWriter,
         type_: GeoArrowType,
     ) -> GeoArrowErrorCode;
-}
 
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayWriterInitFromSchema(
-        writer: *mut GeoArrowArrayWriter,
-        schema: *const ArrowSchema,
-    ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayWriterSetPrecision(
-        writer: *mut GeoArrowArrayWriter,
-        precision: c_int,
-    ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowArrayWriterSetFlatMultipoint(
-        writer: *mut GeoArrowArrayWriter,
-        flat_multipoint: c_int,
-    ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
     pub fn SedonaDBGeoArrowArrayWriterInitVisitor(
         writer: *mut GeoArrowArrayWriter,
         v: *mut GeoArrowVisitor,
     ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
+
     pub fn SedonaDBGeoArrowArrayWriterFinish(
         writer: *mut GeoArrowArrayWriter,
         array: *mut ArrowArray,
         error: *mut GeoArrowError,
     ) -> GeoArrowErrorCode;
-}
-unsafe extern "C" {
+
     pub fn SedonaDBGeoArrowArrayWriterReset(writer: *mut GeoArrowArrayWriter);
 }
