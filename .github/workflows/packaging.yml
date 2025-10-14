@@ -111,7 +111,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache (but share with the python.yml workflow)
-          prefix-key: "python-v1"
+          prefix-key: "python-v2"
 
       - name: Install docs requirements
         run: |

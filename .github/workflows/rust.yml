@@ -91,7 +91,7 @@ jobs:
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build
-          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-1
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-2
 
       - name: Install vcpkg dependencies
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
@@ -109,19 +109,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "rust-${{ matrix.name }}-v3"
-
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # Free up space by removing tools we don't need
-          tool-cache: false  # Keep tool cache as we need build tools
-          android: true      # Remove Android SDK (not needed)
-          dotnet: true       # Remove .NET runtime (not needed)
-          haskell: true      # Remove Haskell toolchain (not needed)
-          large-packages: false  # Keep essential packages including build-essential
-          swap-storage: true     # Remove swap file to free space
-          docker-images: true    # Remove docker images (not needed)
+          prefix-key: "rust-${{ matrix.name }}-v4"
 
       - name: Install dependencies
         shell: bash

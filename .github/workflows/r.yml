@@ -51,6 +51,9 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # Explicitly specify for Windows, which otherwise chooses a shorter version
+      # This allows us to use a common cache configuration for Windows, MacOS, and Linux
+      SEDONADB_TARGET_DIR: "${{ github.workspace }}/r/sedonadb/src/rust/target"
 
     steps:
       - uses: actions/checkout@v4
@@ -83,7 +86,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "r-v2"
+          prefix-key: "r-v3"
+          # The R package uses its own target directory
+          workspaces: ". -> r/sedonadb/src/rust/target"
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
