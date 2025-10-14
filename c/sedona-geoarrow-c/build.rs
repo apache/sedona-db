@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/geoarrow/double_parse_fast_float.cc");
@@ -38,17 +37,4 @@ fn main() {
         .flag("-DGEOARROW_NAMESPACE=SedonaDB")
         .flag("-DNANOARROW_NAMESPACE=SedonaDB")
         .compile("geoarrow_fast_float");
-
-    let bindings = bindgen::Builder::default()
-        .header("src/geoarrow/geoarrow.h")
-        .clang_arg("-DGEOARROW_NAMESPACE=SedonaDB")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("Unable to generate bindings");
-
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    bindings
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
 }

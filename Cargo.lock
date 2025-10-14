@@ -4973,7 +4973,6 @@ version = "0.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "bindgen 0.71.1",
  "cc",
  "criterion",
  "datafusion-common",
