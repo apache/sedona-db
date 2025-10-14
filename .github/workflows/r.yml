@@ -51,9 +51,6 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
-      # Explicitly specify for Windows, which otherwise chooses a shorter version
-      # This allows us to use a common cache configuration for Windows, MacOS, and Linux
-      SEDONADB_TARGET_DIR: "${{ github.workspace }}/r/sedonadb/src/rust/target"
 
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +86,15 @@ jobs:
           prefix-key: "r-v3"
           # The R package uses its own target directory
           workspaces: ". -> r/sedonadb/src/rust/target"
+
+      # Explicitly specify for Windows, which otherwise chooses a shorter version
+      # to work around a path length limitation when building from longer starting paths.
+      # This allows us to use a common cache configuration for Windows, MacOS, and Linux
+      - name: Set R/Rust target directory
+        if: matrix.config.os == 'windows-latest'
+        run: |
+          echo "SEDONADB_TARGET_DIR=$(pwd -W)/r/sedonadb/src/rust/target" >> $GITHUB_ENV
+        shell: bash
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
