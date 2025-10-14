@@ -19,9 +19,15 @@ use std::sync::Arc;
 
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
+use datafusion_common::{error::Result, internal_err};
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
-use geo_traits::{GeometryTrait, LineStringTrait, PointTrait};
+use geo_traits::{
+    to_geo::{
+        ToGeoGeometry, ToGeoLineString, ToGeoMultiLineString, ToGeoMultiPoint, ToGeoMultiPolygon,
+        ToGeoPolygon,
+    },
+    GeometryTrait, LineStringTrait, PointTrait,
+};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -83,10 +89,6 @@ impl SedonaScalarKernel for STIsClosed {
     }
 }
 
-pub fn is_wkb_closed(item: &Wkb) -> Result<bool> {
-    invoke_scalar(&item)
-}
-
 fn invoke_scalar(item: &Wkb) -> Result<bool> {
     is_geometry_closed(item).map_err(|e| {
         datafusion_common::error::DataFusionError::Execution(format!(
@@ -95,6 +97,18 @@ fn invoke_scalar(item: &Wkb) -> Result<bool> {
     })
 }
 
-fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: &G) -> Result<bool, SedonaGeometryError> {
-    unimplemented!()
+fn is_geometry_closed(item: &Wkb) -> Result<bool> {
+    match item.as_type() {
+        geo_traits::GeometryType::Point(point) => Ok(point.coord().is_none()),
+        geo_traits::GeometryType::LineString(linestring) => {
+            Ok(linestring.to_line_string().is_closed())
+        }
+        geo_traits::GeometryType::Polygon(polygon) => {
+            Ok(polygon.to_polygon().exterior().is_closed())
+        }
+        geo_traits::GeometryType::MultiLineString(multilinestring) => {
+            Ok(multilinestring.to_multi_line_string().is_closed())
+        }
+        _ => internal_err!("Invalid geometry type"),
+    }
 }
