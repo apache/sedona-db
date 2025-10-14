@@ -16,7 +16,6 @@
 // under the License.
 use std::{
     collections::HashSet,
-    env,
     path::{Path, PathBuf},
 };
 
@@ -59,20 +58,6 @@ fn main() {
     // Parse the output we wrote from CMake that is the linker flags
     // that CMake thinks we need for Abseil and OpenSSL.
     parse_cmake_linker_flags(&dst);
-
-    // Generate bindings from the header
-    println!("cargo::rerun-if-changed=src/geography_glue.h");
-    let bindings = bindgen::Builder::default()
-        .header("src/geography_glue.h")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("Unable to generate bindings");
-
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    bindings
-        .write_to_file(out_path.join("bindings.rs"))
-        .expect("Couldn't write bindings!");
 }
 
 fn parse_cmake_linker_flags(binary_dir: &Path) {
