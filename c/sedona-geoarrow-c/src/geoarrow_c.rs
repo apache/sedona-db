@@ -265,15 +265,6 @@ impl Default for Visitor {
     }
 }
 
-impl From<&str> for GeoArrowStringView {
-    fn from(value: &str) -> Self {
-        Self {
-            data: value.as_ptr() as *const _,
-            size_bytes: value.len() as i64,
-        }
-    }
-}
-
 /// Convert a [SedonaType] to a GeoArrow type identifier
 fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCError> {
     let type_id = match sedona_type {

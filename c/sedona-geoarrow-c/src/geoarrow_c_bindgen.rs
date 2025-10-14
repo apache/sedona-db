@@ -55,13 +55,6 @@ pub struct GeoArrowError {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct GeoArrowStringView {
-    pub data: *const c_char,
-    pub size_bytes: i64,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
 pub struct GeoArrowVisitor {
     pub feat_start: Option<unsafe extern "C" fn(v: *mut GeoArrowVisitor) -> c_int>,
     pub null_feat: Option<unsafe extern "C" fn(v: *mut GeoArrowVisitor) -> c_int>,
