@@ -414,10 +414,10 @@ mod test {
             DataType::Utf8View
         );
 
-        let err = arrow_storage_type(GeoArrowType_GEOARROW_TYPE_LINESTRING).unwrap_err();
+        let err = arrow_storage_type(GeoArrowType_GEOARROW_TYPE_UNINITIALIZED).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Can't guess Arrow type from GeoArrowType with ID 2"
+            "Can't guess Arrow type from GeoArrowType with ID 0"
         );
     }
 }
