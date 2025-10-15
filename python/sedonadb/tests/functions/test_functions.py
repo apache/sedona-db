@@ -578,6 +578,23 @@ def test_st_isempty(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        ("LINESTRING(0 0, 1 1)", False),
+        ("LINESTRING(0 0, 0 1, 1 1, 0 0)", True),
+        ("MULTILINESTRING((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", False),
+        ("POINT(0 0)", True),
+        ("MULTIPOINT((0 0), (1 1))", True),
+    ],
+)
+def test_st_isclosed(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsClosed({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT EMPTY", 0),
         ("LINESTRING EMPTY", 0),
         ("POINT (0 0)", 0),

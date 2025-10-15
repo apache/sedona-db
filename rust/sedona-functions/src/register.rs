@@ -104,6 +104,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm_minmax::st_zmax_udf,
         crate::st_xyzm_minmax::st_mmin_udf,
         crate::st_xyzm_minmax::st_mmax_udf,
+        crate::st_isclosed::st_isclosed_udf,
     );
 
     register_aggregate_udfs!(

@@ -70,6 +70,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_isempty", Point);
     benchmark::scalar(c, &f, "native", "st_isempty", LineString(10));
 
+    benchmark::scalar(c, &f, "native", "st_isclosed", Point);
+    benchmark::scalar(c, &f, "native", "st_isclosed", LineString(10));
+
     benchmark::scalar(
         c,
         &f,
