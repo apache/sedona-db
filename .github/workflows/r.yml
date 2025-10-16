@@ -71,7 +71,7 @@ jobs:
       - name: Use stable Rust (windows)
         if: matrix.config.os == 'windows-latest'
         run: |
-          rustup toolchain install x86_64-pc-windows-gnu --no-self-update
+          rustup toolchain install stable-x86_64-pc-windows-gnu --no-self-update
           rustup default stable-x86_64-pc-windows-gnu
 
       - name: Install dependencies (Linux)
