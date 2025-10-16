@@ -25,7 +25,6 @@ use geo_traits::{
     to_geo::{ToGeoGeometryCollection, ToGeoLineString, ToGeoMultiLineString},
     GeometryTrait,
 };
-use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
@@ -110,12 +109,12 @@ fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: G) -> Result<bool> {
                 is_geometry_closed(item).map(|is_closed| acc && is_closed)
             }),
         geo_traits::GeometryType::Point(_)
+        | geo_traits::GeometryType::Line(_)
         | geo_traits::GeometryType::MultiPoint(_)
         | geo_traits::GeometryType::Polygon(_)
         | geo_traits::GeometryType::MultiPolygon(_)
         | geo_traits::GeometryType::Rect(_)
         | geo_traits::GeometryType::Triangle(_) => Ok(true),
-        _ => sedona_internal_err!("Invalid geometry type"),
     }
 }
 
