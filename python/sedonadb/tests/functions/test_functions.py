@@ -585,7 +585,10 @@ def test_st_isempty(eng, geom, expected):
         ("MULTIPOINT((0 0), (1 1))", True),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", True),
         ("GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0))", True),
-        ("GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0), LINESTRING(0 0, 1 1))", False),
+        (
+            "GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0), LINESTRING(0 0, 1 1))",
+            False,
+        ),
         ("POINT EMPTY", False),
         ("LINESTRING EMPTY", False),
         ("POLYGON EMPTY", False),
