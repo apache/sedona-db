@@ -209,6 +209,9 @@ class(`InternalContext`) <- c("InternalContext__bundle", "savvy_sedonadb__sealed
   function(`ctx`, `path`, `partition_by`, `sort_by`, `single_file_output`, `overwrite_bbox_columns`, `geoparquet_version` = NULL) {
     `ctx` <- .savvy_extract_ptr(`ctx`, "InternalContext")
     invisible(.Call(savvy_InternalDataFrame_to_parquet__impl, `self`, `ctx`, `path`, `partition_by`, `sort_by`, `single_file_output`, `overwrite_bbox_columns`, `geoparquet_version`))
+  }
+}
+
 `InternalDataFrame_to_provider` <- function(self) {
   function() {
     .Call(savvy_InternalDataFrame_to_provider__impl, `self`)
@@ -233,12 +236,7 @@ class(`InternalContext`) <- c("InternalContext__bundle", "savvy_sedonadb__sealed
   e$`show` <- `InternalDataFrame_show`(ptr)
   e$`to_arrow_schema` <- `InternalDataFrame_to_arrow_schema`(ptr)
   e$`to_arrow_stream` <- `InternalDataFrame_to_arrow_stream`(ptr)
-
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
-
-  e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
-  e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
-
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
 
@@ -260,3 +258,4 @@ class(`InternalDataFrame`) <- c("InternalDataFrame__bundle", "savvy_sedonadb__se
 `print.InternalDataFrame__bundle` <- function(x, ...) {
   cat('InternalDataFrame\n')
 }
+
