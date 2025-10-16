@@ -162,6 +162,14 @@ def test_schema(con):
         df.schema.field({})
 
 
+def test_columns(con):
+    df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
+    assert len(df.columns) == 2
+
+    pdf = df.to_pandas()
+    assert set(df.columns) == set(pdf.columns)
+
+
 def test_schema_non_null_crs(con):
     tab = pa.table({"geom": ga.with_crs(ga.as_wkb(["POINT (0 1)"]), gat.OGC_CRS84)})
     df = con.create_data_frame(tab)

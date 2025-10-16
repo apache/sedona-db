@@ -61,6 +61,16 @@ impl InternalDataFrame {
         PySedonaSchema::new(arrow_schema.clone())
     }
 
+    fn columns(&self) -> Result<Vec<String>, PySedonaError> {
+        Ok(self
+            .inner
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect())
+    }
+
     fn primary_geometry_column(&self) -> Result<Option<String>, PySedonaError> {
         Ok(self
             .inner

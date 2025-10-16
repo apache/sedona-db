@@ -58,6 +58,11 @@ class DataFrame:
         """
         return self._impl.schema()
 
+    @property
+    def columns(self) -> list[str]:
+        """Return a list of column names"""
+        return self._impl.columns()
+
     def head(self, n: int = 5) -> "DataFrame":
         """Limit result to the first n rows
 

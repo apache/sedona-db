@@ -37,6 +37,7 @@ test = [
     "geoarrow-pyarrow",
     "geopandas",
     "pandas",
+    "polars",
     "pytest",
 ]
 geopandas = [
