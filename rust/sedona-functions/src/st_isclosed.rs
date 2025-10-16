@@ -21,6 +21,7 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use geo_traits::GeometryCollectionTrait;
 use geo_traits::{
     to_geo::{ToGeoLineString, ToGeoMultiLineString},
     GeometryTrait,
@@ -93,8 +94,6 @@ fn invoke_scalar(item: &Wkb) -> Result<bool> {
 }
 
 fn is_geometry_closed(item: &Wkb) -> Result<bool> {
-    use geo_traits::GeometryCollectionTrait;
-
     if is_geometry_empty(&item).map_err(|e| {
         datafusion_common::error::DataFusionError::Execution(format!(
             "Failed to check if geometry is empty: {e}"
