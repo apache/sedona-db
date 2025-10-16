@@ -123,6 +123,8 @@ impl InternalDataFrame {
 
     fn to_provider(&self) -> Result<savvy::Sexp> {
         let provider = self.inner.clone().into_view();
+        // Literal true is because the TableProvider that wraps this DataFrame
+        // can support filters being pushed down.
         let ffi_provider =
             FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
 
