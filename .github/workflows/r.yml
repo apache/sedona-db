@@ -62,7 +62,6 @@ jobs:
 
       - name: Use stable Rust
         if: matrix.config.os != 'windows-latest'
-        id: rust
         run: |
           rustup toolchain install stable --no-self-update
           rustup default stable
@@ -71,16 +70,9 @@ jobs:
       # the correct target. (The R package will use this target regardless)
       - name: Use stable Rust (windows)
         if: matrix.config.os == 'windows-latest'
-        id: rust
         run: |
-          rustup toolchain install stable --no-self-update
+          rustup toolchain install x86_64-pc-windows-gnu --no-self-update
           rustup default stable-x86_64-pc-windows-gnu
-
-      # GHA runner installs GNU target by default, but --no-self-update might
-      # remove it, so run `target add` to ensure the GNU target installed.
-      - name: Setup Rust (Windows)
-        if: matrix.config.os == 'windows-latest'
-        run: rustup target add x86_64-pc-windows-gnu
 
       - name: Install dependencies (Linux)
         if: matrix.config.os == 'ubuntu-latest'
