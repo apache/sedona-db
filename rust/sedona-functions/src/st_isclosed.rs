@@ -22,7 +22,7 @@ use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use geo_traits::{
-    to_geo::{ToGeoGeometryCollection, ToGeoLineString, ToGeoMultiLineString},
+    to_geo::{ToGeoLineString, ToGeoMultiLineString},
     GeometryTrait,
 };
 use sedona_common::sedona_internal_err;
@@ -92,7 +92,9 @@ fn invoke_scalar(item: &Wkb) -> Result<bool> {
     is_geometry_closed(item)
 }
 
-fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: G) -> Result<bool> {
+fn is_geometry_closed(item: &Wkb) -> Result<bool> {
+    use geo_traits::GeometryCollectionTrait;
+
     if is_geometry_empty(&item).map_err(|e| {
         datafusion_common::error::DataFusionError::Execution(format!(
             "Failed to check if geometry is empty: {e}"
@@ -108,8 +110,7 @@ fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: G) -> Result<bool> {
             Ok(multilinestring.to_multi_line_string().is_closed())
         }
         geo_traits::GeometryType::GeometryCollection(geometry_collection) => geometry_collection
-            .to_geometry_collection()
-            .iter()
+            .geometries()
             .try_fold(true, |acc, item| {
                 is_geometry_closed(item).map(|is_closed| acc && is_closed)
             }),
