@@ -583,6 +583,17 @@ def test_st_isempty(eng, geom, expected):
         ("MULTILINESTRING((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", False),
         ("POINT(0 0)", True),
         ("MULTIPOINT((0 0), (1 1))", True),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", True),
+        ("GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0))", True),
+        ("GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0), LINESTRING(0 0, 1 1))", False),
+        ("POINT EMPTY", False),
+        ("LINESTRING EMPTY", False),
+        ("POLYGON EMPTY", False),
+        ("MULTIPOINT EMPTY", False),
+        ("MULTILINESTRING EMPTY", False),
+        ("MULTIPOLYGON EMPTY", False),
+        ("GEOMETRYCOLLECTION EMPTY", False),
+        ("GEOMETRYCOLLECTION (LINESTRING EMPTY)", False),
     ],
 )
 def test_st_isclosed(eng, geom, expected):

@@ -25,7 +25,9 @@ use geo_traits::{
     to_geo::{ToGeoGeometryCollection, ToGeoLineString, ToGeoMultiLineString},
     GeometryTrait,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::is_empty::is_geometry_empty;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
@@ -87,14 +89,17 @@ impl SedonaScalarKernel for STIsClosed {
 }
 
 fn invoke_scalar(item: &Wkb) -> Result<bool> {
-    is_geometry_closed(item).map_err(|e| {
-        datafusion_common::error::DataFusionError::Execution(format!(
-            "Failed to check if geometry is closed: {e}"
-        ))
-    })
+    is_geometry_closed(item)
 }
 
 fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: G) -> Result<bool> {
+    if is_geometry_empty(&item).map_err(|e| {
+        datafusion_common::error::DataFusionError::Execution(format!(
+            "Failed to check if geometry is empty: {e}"
+        ))
+    })? {
+        return Ok(false);
+    }
     match item.as_type() {
         geo_traits::GeometryType::LineString(linestring) => {
             Ok(linestring.to_line_string().is_closed())
@@ -109,12 +114,10 @@ fn is_geometry_closed<G: GeometryTrait<T = f64>>(item: G) -> Result<bool> {
                 is_geometry_closed(item).map(|is_closed| acc && is_closed)
             }),
         geo_traits::GeometryType::Point(_)
-        | geo_traits::GeometryType::Line(_)
         | geo_traits::GeometryType::MultiPoint(_)
         | geo_traits::GeometryType::Polygon(_)
-        | geo_traits::GeometryType::MultiPolygon(_)
-        | geo_traits::GeometryType::Rect(_)
-        | geo_traits::GeometryType::Triangle(_) => Ok(true),
+        | geo_traits::GeometryType::MultiPolygon(_) => Ok(true),
+        _ => sedona_internal_err!("Invalid geometry type"),
     }
 }
 
@@ -158,6 +161,8 @@ mod tests {
             Some("MULTILINESTRING((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))"),
             Some("POINT(0 0)"),
             Some("MULTIPOINT((0 0), (1 1))"),
+            Some("LINESTRING EMPTY"),
+            Some("POINT EMPTY"),
         ];
         let expected: ArrayRef = arrow_array!(
             Boolean,
@@ -167,7 +172,9 @@ mod tests {
                 Some(true),
                 Some(false),
                 Some(true),
-                Some(true)
+                Some(true),
+                Some(false),
+                Some(false)
             ]
         );
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
