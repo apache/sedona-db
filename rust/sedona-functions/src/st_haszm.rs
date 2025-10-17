@@ -23,6 +23,7 @@ use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use geo_traits::GeometryCollectionTrait;
 use geo_traits::{Dimensions, GeometryTrait};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -110,7 +111,6 @@ impl SedonaScalarKernel for STHasZm {
 fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<bool>> {
     match item.as_type() {
         geo_traits::GeometryType::GeometryCollection(collection) => {
-            use geo_traits::GeometryCollectionTrait;
             if collection.num_geometries() == 0 {
                 Ok(Some(false))
             } else {

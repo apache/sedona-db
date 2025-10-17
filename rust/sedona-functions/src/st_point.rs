@@ -155,9 +155,11 @@ fn populate_wkb_item(item: &mut [u8], x: &f64, y: &f64) {
 #[cfg(test)]
 mod tests {
     use arrow_array::create_array;
+    use arrow_array::ArrayRef;
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_testing::compare::assert_array_equal;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
@@ -179,9 +181,6 @@ mod tests {
     #[case(DataType::Float64, DataType::Float32)]
     #[case(DataType::Float32, DataType::Float32)]
     fn udf_invoke(#[case] lhs_type: DataType, #[case] rhs_type: DataType) {
-        use arrow_array::ArrayRef;
-        use sedona_testing::compare::assert_array_equal;
-
         let udf = st_point_udf();
 
         let lhs_scalar_null = ScalarValue::Float64(None).cast_to(&lhs_type).unwrap();

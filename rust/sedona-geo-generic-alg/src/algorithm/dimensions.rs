@@ -22,6 +22,7 @@
 use core::borrow::Borrow;
 use sedona_geo_traits_ext::*;
 
+use crate::Kernel;
 use crate::Orientation::Collinear;
 use crate::{CoordNum, GeoNum};
 
@@ -564,7 +565,6 @@ where
     }
 
     fn dimensions_trait(&self) -> Dimensions {
-        use crate::Kernel;
         let (c0, c1, c2) = (self.first_coord(), self.second_coord(), self.third_coord());
         if Collinear == C::Ker::orient2d(c0, c1, c2) {
             if c0 == c1 && c1 == c2 {

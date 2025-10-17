@@ -19,14 +19,18 @@ use std::{fmt::Formatter, sync::Arc};
 use arrow_schema::SchemaRef;
 use datafusion_common::{project_schema, DataFusionError, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
-use datafusion_expr::JoinType;
-use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
-use datafusion_physical_expr::PhysicalExpr;
+use datafusion_expr::{JoinType, Operator};
+use datafusion_physical_expr::{
+    equivalence::{join_equivalence_properties, ProjectionMapping},
+    expressions::{BinaryExpr, Column},
+    PhysicalExpr,
+};
 use datafusion_physical_plan::{
     execution_plan::EmissionType,
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
+    PlanProperties,
 };
 use parking_lot::Mutex;
 
@@ -48,9 +52,6 @@ type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPla
 fn extract_equality_conditions(
     filter: &JoinFilter,
 ) -> Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> {
-    use datafusion_expr::Operator;
-    use datafusion_physical_expr::expressions::{BinaryExpr, Column};
-
     let mut equalities = Vec::new();
 
     if let Some(binary_expr) = filter.expression().as_any().downcast_ref::<BinaryExpr>() {
@@ -269,7 +270,7 @@ impl SpatialJoinExec {
             // Replicate HashJoin's symmetric partitioning logic
             // HashJoin preserves partitioning from both sides for inner joins
             // and from one side for outer joins
-            use datafusion_physical_plan::Partitioning;
+
             match join_type {
                 JoinType::Inner | JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti => {
                     left.output_partitioning().clone()

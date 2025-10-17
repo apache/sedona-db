@@ -104,6 +104,7 @@ impl<Op: BinaryPredicate> SedonaScalarKernel for GeosPredicate<Op> {
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -115,8 +116,6 @@ mod tests {
 
     #[rstest]
     fn contains_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_contains", st_contains_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -154,8 +153,6 @@ mod tests {
 
     #[rstest]
     fn covered_by_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_coveredby", st_covered_by_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -193,8 +190,6 @@ mod tests {
 
     #[rstest]
     fn covers_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_covers", st_covers_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -232,8 +227,6 @@ mod tests {
 
     #[rstest]
     fn disjoint_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_disjoint", st_disjoint_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -271,8 +264,6 @@ mod tests {
 
     #[rstest]
     fn equals_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_equals", st_equals_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -310,8 +301,6 @@ mod tests {
 
     #[rstest]
     fn intersects_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -349,8 +338,6 @@ mod tests {
 
     #[rstest]
     fn within_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_within", st_within_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -388,7 +375,6 @@ mod tests {
 
     #[rstest]
     fn crosses_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
         let udf = SedonaScalarUDF::from_kernel("st_crosses", st_crosses_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);
@@ -425,7 +411,6 @@ mod tests {
 
     #[rstest]
     fn overlaps_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
         let udf = SedonaScalarUDF::from_kernel("st_overlaps", st_overlaps_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Boolean);

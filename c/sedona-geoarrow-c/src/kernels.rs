@@ -154,14 +154,15 @@ mod tests {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
 
-    use sedona_testing::{create::create_scalar_storage, testers::ScalarUdfTester};
+    use sedona_testing::{
+        create::{create_array, create_scalar_storage},
+        testers::ScalarUdfTester,
+    };
 
     use super::*;
 
     #[rstest]
     fn fromwkt(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
-        use sedona_testing::create::create_array;
-
         let udf = SedonaScalarUDF::from_kernel("st_geomfromwkt", st_geomfromwkt_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type)]);
         tester.assert_return_type(WKB_GEOMETRY);

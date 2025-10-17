@@ -17,6 +17,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::exec::create_plan_from_sql;
+use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
@@ -229,7 +230,6 @@ impl SedonaContext {
 
         // Pre-register object store with our custom options before creating GeoParquetReadOptions
         if !urls.is_empty() {
-            use crate::object_storage::ensure_object_store_registered_with_options;
             // Extract the table options from GeoParquetReadOptions for object store registration
             let table_options_map = options.table_options().cloned().unwrap_or_default();
 

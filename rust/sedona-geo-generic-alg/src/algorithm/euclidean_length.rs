@@ -224,10 +224,11 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::line_string;
     #[allow(deprecated)]
-    use crate::EuclideanLength;
-    use crate::{coord, Line, MultiLineString};
+    use crate::{
+        coord, line_string, polygon, EuclideanLength, Geometry, GeometryCollection, Line,
+        MultiLineString, MultiPoint, MultiPolygon, Point, Polygon,
+    };
 
     #[allow(deprecated)]
     #[test]
@@ -285,7 +286,6 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn polygon_returns_zero_test() {
-        use crate::{polygon, Polygon};
         let polygon: Polygon<f64> = polygon![
             (x: 0., y: 0.),
             (x: 4., y: 0.),
@@ -300,7 +300,6 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn point_returns_zero_test() {
-        use crate::Point;
         let point = Point::new(3.0, 4.0);
         // Points have no length dimension
         assert_relative_eq!(point.euclidean_length(), 0.0);
@@ -309,11 +308,6 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn comprehensive_test_scenarios() {
-        use crate::{line_string, polygon};
-        use crate::{
-            Geometry, GeometryCollection, MultiLineString, MultiPoint, MultiPolygon, Point,
-        };
-
         // Test cases matching the Python pytest scenarios
 
         // POINT EMPTY - represented as Point with NaN coordinates
@@ -410,7 +404,6 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn test_point_empty() {
-        use crate::Point;
         // POINT EMPTY -> 0 (represented as empty coordinates or NaN in Rust context)
         let point = Point::new(f64::NAN, f64::NAN);
         // NaN coordinates still result in zero length for points
@@ -428,7 +421,6 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn test_point_0_0() {
-        use crate::Point;
         // POINT (0 0) -> 0
         let point = Point::new(0.0, 0.0);
         assert_relative_eq!(point.euclidean_length(), 0.0);
@@ -446,7 +438,6 @@ mod test {
     #[test]
     fn test_multipoint() {
         // MULTIPOINT ((0 0), (1 1)) -> 0
-        use crate::{MultiPoint, Point};
         let multipoint = MultiPoint::new(vec![Point::new(0.0, 0.0), Point::new(1.0, 1.0)]);
         assert_relative_eq!(multipoint.euclidean_length(), 0.0);
     }
@@ -455,7 +446,6 @@ mod test {
     #[test]
     fn test_multilinestring_diagonal() {
         // MULTILINESTRING ((0 0, 1 1), (1 1, 2 2)) -> 2.8284271247461903
-        use crate::MultiLineString;
         let multilinestring = MultiLineString::new(vec![
             line_string![(x: 0., y: 0.), (x: 1., y: 1.)], // sqrt(2)
             line_string![(x: 1., y: 1.), (x: 2., y: 2.)], // sqrt(2)
@@ -471,7 +461,6 @@ mod test {
     #[test]
     fn test_polygon_unit_square() {
         // POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)) -> 0 (perimeters aren't included)
-        use crate::polygon;
         let polygon = polygon![
             (x: 0., y: 0.),
             (x: 1., y: 0.),
@@ -486,7 +475,6 @@ mod test {
     #[test]
     fn test_multipolygon_double_unit_squares() {
         // MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0))) -> 0
-        use crate::{polygon, MultiPolygon};
         let multipolygon = MultiPolygon::new(vec![
             polygon![
                 (x: 0., y: 0.),
@@ -511,7 +499,6 @@ mod test {
     fn test_geometrycollection_mixed() {
         // GEOMETRYCOLLECTION (LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))
         // Expected: 2.8284271247461903 (only linestrings contribute)
-        use crate::{polygon, Geometry, GeometryCollection};
         let collection = GeometryCollection::new_from(vec![
             Geometry::LineString(line_string![(x: 0., y: 0.), (x: 1., y: 1.)]), // sqrt(2) ≈ 1.4142135623730951
             Geometry::Polygon(polygon![
@@ -544,7 +531,6 @@ mod test {
         // Exact match for the Python pytest scenario:
         // GEOMETRYCOLLECTION (LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))
         // Expected: 2.8284271247461903
-        use crate::{polygon, Geometry, GeometryCollection};
 
         let collection = GeometryCollection::new_from(vec![
             // LINESTRING (0 0, 1 1) - length = sqrt(2) ≈ 1.4142135623730951

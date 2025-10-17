@@ -617,15 +617,17 @@ pub(crate) async fn register_object_store_and_config_extensions(
 
 #[cfg(test)]
 mod tests {
-    use crate::context::SedonaContext;
-
-    use super::*;
+    use std::env;
+    use std::path::MAIN_SEPARATOR;
 
     use datafusion::common::plan_err;
     use datafusion::{
         datasource::listing::ListingTableUrl,
         logical_expr::{DdlStatement, LogicalPlan},
     };
+
+    use super::*;
+    use crate::context::SedonaContext;
 
     #[cfg(feature = "aws")]
     use object_store::{aws::AmazonS3ConfigKey, gcp::GoogleConfigKey};
@@ -819,8 +821,6 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_substitute_tilde() {
-        use std::env;
-        use std::path::MAIN_SEPARATOR;
         let original_home = home_dir();
         let test_home_path = if cfg!(windows) {
             "C:\\Users\\user"

@@ -19,6 +19,7 @@
 //! Ported (and contains copied code) from `geo::algorithm::area`:
 //! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/area.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
+use crate::MapCoords;
 use sedona_geo_traits_ext::*;
 
 use crate::{CoordFloat, CoordNum};
@@ -55,7 +56,6 @@ pub(crate) fn twice_signed_ring_area<T: CoordNum, LS: LineStringTraitExt<T = T>>
 
         let mut tmp = T::zero();
         for line in linestring.lines() {
-            use crate::MapCoords;
             let line = line.map_coords(|c| c - shift);
             tmp = tmp + line.determinant();
         }
@@ -347,7 +347,9 @@ where
 #[cfg(test)]
 mod test {
     use crate::Area;
+    use crate::MapCoords;
     use crate::{coord, polygon, wkt, Line, MultiPolygon, Polygon, Rect, Triangle};
+    use std::f64::consts::PI;
 
     // Area of the polygon
     #[test]
@@ -369,7 +371,6 @@ mod test {
     #[test]
     fn area_polygon_numerical_stability() {
         let polygon = {
-            use std::f64::consts::PI;
             const NUM_VERTICES: usize = 10;
             const ANGLE_INC: f64 = 2. * PI / NUM_VERTICES as f64;
 
@@ -392,7 +393,6 @@ mod test {
 
         let shift = coord! { x: 1.5e8, y: 1.5e8 };
 
-        use crate::map_coords::MapCoords;
         let polygon = polygon.map_coords(|c| c + shift);
 
         let new_area = polygon.signed_area();

@@ -15,10 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 use criterion::{criterion_group, criterion_main, Criterion};
+use geo::algorithm::TriangulateEarcut;
 use geo_traits::to_geo::ToGeoGeometry;
 use geo_types::Geometry;
-use sedona_geo_generic_alg::MultiPolygon;
-use sedona_geo_generic_alg::{intersects::Intersects, Centroid};
+use sedona_geo_generic_alg::{
+    BoundingRect, Centroid, Intersects, MultiPolygon, Point, Rect, Triangle,
+};
 
 #[path = "utils/wkb_util.rs"]
 mod wkb_util;
@@ -279,8 +281,6 @@ fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
 }
 
 fn rect_intersection(c: &mut Criterion) {
-    use sedona_geo_generic_alg::algorithm::BoundingRect;
-    use sedona_geo_generic_alg::Rect;
     let plot_bbox: Vec<Rect> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.bounding_rect().unwrap())
@@ -312,8 +312,6 @@ fn rect_intersection(c: &mut Criterion) {
 }
 
 fn point_rect_intersection(c: &mut Criterion) {
-    use sedona_geo_generic_alg::algorithm::{BoundingRect, Centroid};
-    use sedona_geo_generic_alg::geometry::{Point, Rect};
     let plot_centroids: Vec<Point> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.centroid().unwrap())
@@ -345,8 +343,6 @@ fn point_rect_intersection(c: &mut Criterion) {
 }
 
 fn point_triangle_intersection(c: &mut Criterion) {
-    use geo::algorithm::TriangulateEarcut;
-    use sedona_geo_generic_alg::{Point, Triangle};
     let plot_centroids: Vec<Point> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.centroid().unwrap())

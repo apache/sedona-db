@@ -41,6 +41,7 @@ use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_aggr::AnalyzeAccumulator;
 use sedona_geo::to_geo::item_to_geometry;
+use sedona_geo_generic_alg::algorithm::Centroid;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use wkb::reader::Wkb;
 
@@ -587,7 +588,7 @@ impl SpatialIndex {
                 let max_distance = distances_with_indices[k_idx].0;
 
                 // For tie-breakers, create spatial envelope around probe centroid and use rtree.search()
-                use sedona_geo_generic_alg::algorithm::Centroid;
+
                 let probe_centroid = probe_geom.centroid().unwrap_or(Point::new(0.0, 0.0));
                 let probe_x = probe_centroid.x() as f32;
                 let probe_y = probe_centroid.y() as f32;
@@ -1014,9 +1015,13 @@ mod tests {
     use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
 
     use super::*;
+    use arrow_array::RecordBatch;
+    use arrow_schema::{DataType, Field};
     use datafusion_execution::memory_pool::GreedyMemoryPool;
     use datafusion_physical_expr::expressions::Column;
+    use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
+    use sedona_geometry::wkb_factory::write_wkb_empty_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
 
@@ -1053,9 +1058,6 @@ mod tests {
 
     #[test]
     fn test_spatial_index_builder_add_batch() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1109,9 +1111,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_execution_with_sample_data() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create a spatial index with sample geometry data
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1207,9 +1206,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_execution_with_different_k_values() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create spatial index with more data points
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1297,9 +1293,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_execution_with_spheroid_distance() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create spatial index
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1393,9 +1386,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_execution_edge_cases() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create spatial index
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1530,9 +1520,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_execution_with_tie_breakers() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create a spatial index with sample geometry data
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1644,9 +1631,6 @@ mod tests {
 
     #[test]
     fn test_query_knn_with_geometry_distance() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create a spatial index with sample geometry data
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1730,9 +1714,6 @@ mod tests {
 
     #[test]
     fn test_query_knn_with_mixed_geometries() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create a spatial index with complex geometries where geometry-based
         // distance should differ from centroid-based distance
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
@@ -1814,9 +1795,6 @@ mod tests {
 
     #[test]
     fn test_query_knn_with_tie_breakers_geometry_distance() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-
         // Create a spatial index with geometries that have identical distances for tie-breaker testing
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
@@ -1909,11 +1887,6 @@ mod tests {
 
     #[test]
     fn test_knn_query_with_empty_geometry() {
-        use arrow_array::RecordBatch;
-        use arrow_schema::{DataType, Field};
-        use geo_traits::Dimensions;
-        use sedona_geometry::wkb_factory::write_wkb_empty_point;
-
         // Create a spatial index with sample geometry data like other tests
         let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {

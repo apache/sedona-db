@@ -23,6 +23,7 @@ use super::{CoordNum, Kernel, Orientation};
 use crate::Coord;
 
 use num_traits::{Float, NumCast};
+use robust::{orient2d, Coord as RobustCoord};
 
 /// Robust kernel that uses [fast robust
 /// predicates](//www.cs.cmu.edu/~quake/robust.html) to
@@ -37,18 +38,16 @@ where
     T: CoordNum + Float,
 {
     fn orient2d(p: Coord<T>, q: Coord<T>, r: Coord<T>) -> Orientation {
-        use robust::{orient2d, Coord};
-
         let orientation = orient2d(
-            Coord {
+            RobustCoord {
                 x: <f64 as NumCast>::from(p.x).unwrap(),
                 y: <f64 as NumCast>::from(p.y).unwrap(),
             },
-            Coord {
+            RobustCoord {
                 x: <f64 as NumCast>::from(q.x).unwrap(),
                 y: <f64 as NumCast>::from(q.y).unwrap(),
             },
-            Coord {
+            RobustCoord {
                 x: <f64 as NumCast>::from(r.x).unwrap(),
                 y: <f64 as NumCast>::from(r.y).unwrap(),
             },
