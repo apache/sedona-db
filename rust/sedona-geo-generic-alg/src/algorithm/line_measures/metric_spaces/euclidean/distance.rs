@@ -794,6 +794,8 @@ macro_rules! impl_distance_geometry_collection_from_geometry {
             RHS: $rhs_type<T = F>,
         {
             fn generic_distance_trait(&self, rhs: &RHS) -> F {
+                use num_traits::Bounded;
+
                 // Use distance_ext which will route through the appropriate implementations
                 // The key insight is that this works for all geometry types except GeometryCollection,
                 // where we need special handling to avoid infinite recursion
@@ -1102,9 +1104,9 @@ mod tests {
     use geo_types::{coord, polygon, private_utils::line_segment_distance};
 
     mod distance_cross_validation_tests {
-        use super::*;
-        use crate::line_measures::DistanceExt;
         use geo::{Coord, Distance, Euclidean, Geometry, GeometryCollection, Rect, Triangle};
+
+        use super::*;
 
         #[test]
         fn line_segment_distance_test() {
@@ -2236,7 +2238,7 @@ mod tests {
             );
 
             // Test the generic distance_ext API directly
-
+            use crate::line_measures::DistanceExt;
             let distance_ext = gc1.distance_ext(&gc2);
             assert_eq!(distance_ext, 0.0, "Generic distance should also be 0");
         }

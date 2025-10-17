@@ -385,7 +385,7 @@ mod tests {
         use super::*;
         use crate::{
             coord, line_string, polygon, Geometry, GeometryCollection, Line, MultiLineString,
-            MultiPoint, MultiPolygon, Point, Polygon, Rect, Triangle,
+            MultiPoint, MultiPolygon, Point, Polygon,
         };
 
         #[test]
@@ -683,6 +683,7 @@ mod tests {
 
         #[test]
         fn test_triangle_perimeter() {
+            use crate::Triangle;
             // Right triangle with sides 3, 4, 5
             let triangle = Triangle::new(
                 coord! { x: 0., y: 0. },
@@ -697,6 +698,7 @@ mod tests {
 
         #[test]
         fn test_rect_perimeter() {
+            use crate::Rect;
             // Rectangle 3x4
             let rect = Rect::new(coord! { x: 0., y: 0. }, coord! { x: 3., y: 4. });
             // Length should be 0 (2D geometry)

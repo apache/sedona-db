@@ -24,7 +24,6 @@ use datafusion_expr::{
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
-use ScalarValue::*;
 
 /// barrier() scalar UDF implementation
 ///
@@ -333,6 +332,7 @@ impl Barrier {
 
     /// Compare two scalar values using the given operator
     fn compare_values(left: &ScalarValue, op: &str, right: &ScalarValue) -> Result<bool> {
+        use ScalarValue::*;
         match (left, right) {
             (Int64(Some(l)), Int64(Some(r))) => match op {
                 "=" | "==" => Ok(l == r),

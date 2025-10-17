@@ -35,8 +35,6 @@ use datafusion_common::DataFusionError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use GeoParquetColumnEncoding::*;
-
 /// The actual encoding of the geometry in the Parquet file.
 ///
 /// In contrast to the _user-specified API_, which is just "WKB" or "Native", here we need to know
@@ -74,6 +72,7 @@ impl Default for GeoParquetColumnEncoding {
 
 impl Display for GeoParquetColumnEncoding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use GeoParquetColumnEncoding::*;
         match self {
             WKB => write!(f, "WKB"),
             Point => write!(f, "point"),
@@ -146,6 +145,7 @@ impl GeoParquetBboxCovering {
         column_name: &str,
         column_metadata: &GeoParquetColumnMetadata,
     ) -> Option<Self> {
+        use GeoParquetColumnEncoding::*;
         let (x, y) = match column_metadata.encoding {
             WKB => return None,
             Point => {

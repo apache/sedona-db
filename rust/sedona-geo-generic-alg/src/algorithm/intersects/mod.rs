@@ -157,7 +157,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use geo_types::{Coord, GeometryCollection, Triangle};
+    use geo_types::{Coord, GeometryCollection};
 
     use crate::Intersects;
     use crate::{
@@ -600,6 +600,7 @@ mod test {
 
     #[test]
     fn exhaustive_compile_test() {
+        use geo_types::{GeometryCollection, Triangle};
         let c: Coord<f64> = coord! { x: 0., y: 0. };
         let pt: Point = Point::new(0., 0.);
         let ln: Line = Line::new((0., 0.), (1., 1.));

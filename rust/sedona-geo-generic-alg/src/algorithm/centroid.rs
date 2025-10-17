@@ -30,7 +30,6 @@ use crate::geometry::*;
 use crate::line_measures::metric_spaces::euclidean::Euclidean;
 use crate::line_measures::LengthMeasurableExt;
 use crate::GeoFloat;
-use crate::MapCoords;
 
 /// Calculation of the centroid.
 /// The centroid is the arithmetic mean position of all points in the shape.
@@ -746,6 +745,7 @@ impl<T: GeoFloat> CentroidOperation<T> {
         let shift = unsafe { ring.geo_coord_unchecked(0) };
 
         let accumulated_coord = ring.lines().fold(Coord::zero(), |accum, line| {
+            use crate::MapCoords;
             let line = line.map_coords(|c| c - shift);
             let tmp = line.determinant();
             accum + (line.end + line.start) * tmp
@@ -817,9 +817,7 @@ impl<T: GeoFloat> WeightedCentroid<T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::MapCoords;
     use crate::{coord, line_string, point, polygon, wkt};
-    use std::f64::consts::PI;
 
     /// small helper to create a coordinate
     fn c<T: GeoFloat>(x: T, y: T) -> Coord<T> {
@@ -938,6 +936,7 @@ mod test {
     #[test]
     fn centroid_polygon_numerical_stability() {
         let polygon = {
+            use std::f64::consts::PI;
             const NUM_VERTICES: usize = 10;
             const ANGLE_INC: f64 = 2. * PI / NUM_VERTICES as f64;
 
@@ -960,6 +959,7 @@ mod test {
 
         let shift = coord! { x: 1.5e8, y: 1.5e8 };
 
+        use crate::map_coords::MapCoords;
         let polygon = polygon.map_coords(|c| c + shift);
 
         let new_centroid = polygon.centroid().unwrap().map_coords(|c| c - shift);
