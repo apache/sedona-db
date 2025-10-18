@@ -110,6 +110,7 @@ mod tests {
             Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
             Some("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))"),
             Some("LINESTRING (0 0, 1 1)"),
+            Some("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))"),
         ];
 
         let expected: ArrayRef = Arc::new(BooleanArray::from(vec![
@@ -117,6 +118,7 @@ mod tests {
             Some(true),
             Some(false),
             Some(true),
+            Some(false),
         ]));
         assert_eq!(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
     }

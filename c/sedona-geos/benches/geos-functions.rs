@@ -295,20 +295,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_overlaps",
         ArrayScalar(Polygon(10), Polygon(500)),
     );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_isvalid",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_isvalid",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(500));
 }
 
 criterion_group!(benches, criterion_benchmark);
