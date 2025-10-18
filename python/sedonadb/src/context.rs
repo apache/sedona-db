@@ -21,8 +21,10 @@ use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
 
 use crate::{
-    dataframe::InternalDataFrame, error::PySedonaError,
-    import_from::import_table_provider_from_any, runtime::wait_for_future,
+    dataframe::InternalDataFrame,
+    error::PySedonaError,
+    import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
+    runtime::wait_for_future,
 };
 
 #[pyclass]
@@ -114,6 +116,12 @@ impl InternalContext {
 
     pub fn drop_view(&self, table_ref: &str) -> Result<(), PySedonaError> {
         self.inner.ctx.deregister_table(table_ref)?;
+        Ok(())
+    }
+
+    pub fn register_udf<'py>(&self, py: Python<'py>, udf: PyObject) -> Result<(), PySedonaError> {
+        let udf = import_ffi_scalar_udf(udf.bind(py))?;
+        self.inner.ctx.register_udf(udf);
         Ok(())
     }
 }

@@ -38,7 +38,7 @@ use sedona_schema::datatypes::SedonaType;
 use crate::{
     error::PySedonaError,
     import_from::{import_arrow_array, import_arrow_field},
-    schema::{PySedonaField, PySedonaType},
+    schema::PySedonaType,
 };
 
 #[pyfunction]
@@ -116,8 +116,10 @@ fn eval_return_field(func: &PyObject, args: ReturnFieldArgs) -> Result<FieldRef,
         let py_arg_fields = args
             .arg_fields
             .iter()
-            .map(|f| PySedonaField::new(f.as_ref().clone()))
-            .collect::<Vec<_>>();
+            .map(|f| -> Result<_, PySedonaError> {
+                Ok(PySedonaType::new(SedonaType::from_storage_field(f)?))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let py_scalar_values = zip(args.arg_fields, args.scalar_arguments)
             .map(|(field, maybe_arg)| {
                 maybe_arg.map(|arg| PySedonaValue {
@@ -155,18 +157,18 @@ fn eval_invoke_batch(
             })
             .collect::<Vec<_>>();
 
-        let py_return_field = PySedonaField::new(args.return_field.as_ref().clone());
+        let expected_return_type = SedonaType::from_storage_field(&args.return_field)?;
+        let py_return_type = PySedonaType::new(expected_return_type.clone());
         let py_args = PyTuple::new(py, py_values)?;
 
-        let result = func.call(py, (py_args, py_return_field, args.number_rows), None)?;
+        let result = func.call(py, (py_args, py_return_type, args.number_rows), None)?;
 
         let (result_field, result_array) = import_arrow_array(result.bind(py))?;
         let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
 
-        let expected_result_sedona_type = SedonaType::from_storage_field(&args.return_field)?;
-        if expected_result_sedona_type != result_sedona_type {
+        if expected_return_type != result_sedona_type {
             return Err(PySedonaError::SedonaPython(format!(
-                "Expected {expected_result_sedona_type} but got {result_sedona_type}"
+                "Expected {expected_return_type} but got {result_sedona_type}"
             )));
         }
 
@@ -242,6 +244,9 @@ impl PySedonaValue {
     }
 
     fn __repr__(&self) -> String {
-        format!("PySedonaValue {self:?}")
+        let sedona_type = SedonaType::from_storage_field(&self.field)
+            .map(|t| t.to_string())
+            .unwrap_or("<error parsing type>".to_string());
+        format!("PySedonaValue {}[{}]", sedona_type, self.num_rows)
     }
 }

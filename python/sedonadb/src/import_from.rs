@@ -26,7 +26,11 @@ use arrow_array::{
 };
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
-use datafusion_ffi::table_provider::{FFI_TableProvider, ForeignTableProvider};
+use datafusion_expr::ScalarUDF;
+use datafusion_ffi::{
+    table_provider::{FFI_TableProvider, ForeignTableProvider},
+    udf::{FFI_ScalarUDF, ForeignScalarUDF},
+};
 use pyo3::{
     types::{PyAnyMethods, PyCapsule, PyCapsuleMethods},
     Bound, PyAny, Python,
@@ -63,6 +67,13 @@ pub fn import_ffi_table_provider(
     Ok(Arc::new(provider))
 }
 
+pub fn import_ffi_scalar_udf(obj: &Bound<PyAny>) -> Result<ScalarUDF, PySedonaError> {
+    let capsule = obj.getattr("__datafusion_scalar_udf__")?.call0()?;
+    let udf_ptr = check_pycapsule(&capsule, "datafusion_scalar_udf")? as *mut FFI_ScalarUDF;
+    let udf: ForeignScalarUDF = unsafe { udf_ptr.as_ref().unwrap().try_into()? };
+    Ok(udf.into())
+}
+
 pub fn import_arrow_array_stream<'py>(
     py: Python<'py>,
     obj: &Bound<PyAny>,
@@ -89,7 +100,7 @@ pub fn import_arrow_array_stream<'py>(
 }
 
 pub fn import_arrow_array(obj: &Bound<PyAny>) -> Result<(Field, ArrayRef), PySedonaError> {
-    let schema_and_array = obj.getattr("__arrow_c_schema__")?.call0()?;
+    let schema_and_array = obj.getattr("__arrow_c_array__")?.call0()?;
     let (schema_capsule, array_capsule): (Bound<PyCapsule>, Bound<PyCapsule>) =
         schema_and_array.extract()?;
 
