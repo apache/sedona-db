@@ -216,6 +216,41 @@ def test_st_centroid(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        ("POINT (0 0)", True),
+        ("POINT EMPTY", True),
+        ("LINESTRING (0 0, 1 1)", True),
+        ("LINESTRING EMPTY", True),
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", True),
+        ("POLYGON EMPTY", True),
+        ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", False),
+        ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", True),
+        ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (0 0, 0 1, 1 1, 1 0, 0 0))", False),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 10, 1 9, 2 9, 2 10, 1 10))",
+            False,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 2 0, 2 2, 0 2, 0 0)), ((1 1, 3 1, 3 3, 1 3, 1 1)))",
+            False,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
+            True,
+        ),
+        ("GEOMETRYCOLLECTION (POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0)))", False),
+        ("GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))", True),
+    ],
+)
+def test_st_isvalid(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsValid({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT (0 0)", "POINT (0 0)"),
         ("MULTIPOINT (0 0, 1 1)", "LINESTRING (0 0, 1 1)"),
         ("MULTIPOINT (0 0, 1 1, 1 0)", "POLYGON ((0 0, 1 1, 1 0, 0 0))"),
