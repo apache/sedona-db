@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use crate::error::PySedonaError;
+use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
@@ -27,6 +27,7 @@ mod import_from;
 mod reader;
 mod runtime;
 mod schema;
+mod udf;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -89,6 +90,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;

@@ -51,6 +51,12 @@ impl From<DataFusionError> for PySedonaError {
     }
 }
 
+impl From<PySedonaError> for DataFusionError {
+    fn from(other: PySedonaError) -> Self {
+        DataFusionError::External(Box::new(other))
+    }
+}
+
 impl From<PyErr> for PySedonaError {
     fn from(other: PyErr) -> Self {
         PySedonaError::Py(other)
