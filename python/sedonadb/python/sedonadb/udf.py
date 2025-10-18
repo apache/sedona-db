@@ -17,8 +17,8 @@
 
 from sedonadb._lib import sedona_scalar_udf
 
-class ScalarUdfImpl:
 
+class ScalarUdfImpl:
     @property
     def name(self):
         raise NotImplementedError()
@@ -34,4 +34,6 @@ class ScalarUdfImpl:
         raise NotImplementedError()
 
     def __datafusion_scalar_udf__(self):
-        return sedona_scalar_udf(self.name, self.return_type, self.invoke_batch, self.volatility)
+        return sedona_scalar_udf(
+            self.name, self.return_type, self.invoke_batch, self.volatility
+        )
