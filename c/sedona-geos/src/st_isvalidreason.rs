@@ -119,6 +119,7 @@ mod tests {
             Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
             Some("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))"),
             Some("LINESTRING (0 0, 1 1)"),
+            Some("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))"),
         ];
 
         let result_array = tester.invoke_wkb_array(input_wkt).unwrap();
@@ -128,5 +129,6 @@ mod tests {
         assert_eq!(result_array.value(1), "Valid Geometry");
         assert!(result_array.value(2).starts_with("Self-intersection"));
         assert_eq!(result_array.value(3), "Valid Geometry");
+        assert!(result_array.value(4).starts_with("Ring Self-intersection"),);
     }
 }
