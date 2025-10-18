@@ -267,6 +267,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_within",
         ArrayScalar(Polygon(10), Polygon(500)),
     );
+
     benchmark::scalar(
         c,
         &f,
@@ -293,6 +294,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "geos",
         "st_overlaps",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_isvalidreason",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_isvalidreason",
         ArrayScalar(Polygon(10), Polygon(500)),
     );
 }
