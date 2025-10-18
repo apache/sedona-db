@@ -1108,3 +1108,24 @@ def test_st_mmin(eng, geom, expected):
 def test_st_mmax(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_MMax({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT (0 0)", "Valid Geometry"),
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
+        ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", "Self-intersection%"),
+        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
+    ],
+)
+def test_st_isvalidreason(eng, geom, expected):
+    eng = eng.create_or_skip()
+    if expected is not None and "%" in str(expected):
+        query = f"SELECT ST_IsValidReason({geom_or_null(geom)}) LIKE '{expected}'"
+        eng.assert_query_result(query, True)
+    else:
+        query = f"SELECT ST_IsValidReason({geom_or_null(geom)})"
+        eng.assert_query_result(query, expected)
