@@ -54,8 +54,10 @@ impl SedonaScalarKernel for STCentroid {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
-        let mut builder =
-            BinaryBuilder::with_capacity(executor.num_iterations(), WKB_MIN_PROBABLE_BYTES);
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
