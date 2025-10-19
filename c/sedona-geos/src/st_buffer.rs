@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
+use datafusion_common::{error::Result, exec_err};
 use datafusion_expr::ColumnarValue;
 use geos::{BufferParams, Geom};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -71,10 +71,7 @@ impl SedonaScalarKernel for STBuffer {
                 distance = Some(f64::try_from(scalar_arg.clone())?);
             }
         } else {
-            return Err(DataFusionError::Execution(format!(
-                "Invalid distance: {:?}",
-                args[1]
-            )));
+            return exec_err!("Invalid distance: {:?}", args[1]);
         }
 
         let executor = GeosExecutor::new(arg_types, args);
@@ -162,5 +159,42 @@ mod tests {
             .unwrap();
         let envelope_result = envelope_tester.invoke_array(buffer_result).unwrap();
         assert_array_equal(&envelope_result, &expected_envelope);
+    }
+
+    #[test]
+    fn test_empty_geometry() {
+        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let input_wkt = vec![
+            Some("POINT EMPTY"),
+            Some("LINESTRING EMPTY"),
+            Some("POLYGON EMPTY"),
+            Some("MULTIPOINT EMPTY"),
+            Some("MULTILINESTRING EMPTY"),
+            Some("MULTIPOLYGON EMPTY"),
+            Some("GEOMETRYCOLLECTION EMPTY"),
+        ];
+        let input_dist = 2;
+
+        let buffer_result = tester
+            .invoke_wkb_array_scalar(input_wkt, input_dist)
+            .unwrap();
+        let expected: ArrayRef = create_array(
+            &[
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&buffer_result, &expected);
     }
 }
