@@ -22,8 +22,10 @@ use arrow_schema::DataType;
 use datafusion_common::{error::Result, exec_err, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geo::algorithm::buffer::{Buffer, BufferStyle};
+use geo_types::Polygon;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
+use sedona_geometry::is_empty::is_geometry_empty;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -34,7 +36,9 @@ use wkb::{
     Endianness,
 };
 
-/// ST_Centroid() implementation using centroid extraction
+use crate::to_geo::item_to_geometry;
+
+/// ST_Buffer() implementation using buffer calculation
 pub fn st_buffer_impl() -> ScalarKernelRef {
     Arc::new(STBuffer {})
 }
@@ -71,7 +75,6 @@ impl SedonaScalarKernel for STBuffer {
             return exec_err!("Invalid distance: {:?}", args[1]);
         }
 
-        // let executor = GeoTypesExecutor::new(arg_types, args);
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
@@ -99,10 +102,6 @@ fn invoke_scalar(
     params: BufferStyle<f64>,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
-    use crate::to_geo::item_to_geometry;
-    use geo_types::Polygon;
-    use sedona_geometry::is_empty::is_geometry_empty;
-
     // PostGIS returns POLYGON EMPTY for all empty geometries
     let is_empty = is_geometry_empty(wkb).map_err(|e| DataFusionError::External(Box::new(e)))?;
     if is_empty {
