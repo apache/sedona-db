@@ -219,17 +219,37 @@ def test_st_centroid(eng, geom, expected):
         ("POINT (0 0)", True),
         ("POINT EMPTY", True),
         ("LINESTRING (0 0, 1 1)", True),
+        ("LINESTRING (0 0, 1 1, 1 0, 0 1)", True),
+        (
+            "MULTILINESTRING ((0 0, 1 1), (0 0, 1 1, 1 0, 0 1))",
+            True,
+        ),
         ("LINESTRING EMPTY", True),
+        # Invalid LineStrings
+        ("LINESTRING (0 0, 0 0)", False),  # Degenerate - both points identical
+        ("LINESTRING (0 0, 0 0, 0 0)", False),  # All points identical
+        # Invalid MultiLineStrings
+        ("MULTILINESTRING ((0 0, 0 0), (1 1, 2 2))", False),  # Degenerate component
+        (
+            "MULTILINESTRING ((0 0, 0 0), (1 1, 1 1))",
+            False,
+        ),  # Multiple degenerate components
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", True),
         ("POLYGON EMPTY", True),
-        ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", False),
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", True),
+        # Invalid Polygons
+        # Self-intersecting polygon (bowtie)
+        ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", False),
+        # Inner ring shares an edge with the outer ring
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (0 0, 0 1, 1 1, 1 0, 0 0))", False),
+        # Self-intersecting polygon (figure-8)
         ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", False),
+        # Inner ring touches the outer ring at a point
         (
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 10, 1 9, 2 9, 2 10, 1 10))",
             False,
         ),
+        # Overlapping polygons in a multipolygon
         (
             "MULTIPOLYGON (((0 0, 2 0, 2 2, 0 2, 0 0)), ((1 1, 3 1, 3 3, 1 3, 1 1)))",
             False,
@@ -238,6 +258,7 @@ def test_st_centroid(eng, geom, expected):
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
             True,
         ),
+        # Geometry collection with an invalid polygon
         ("GEOMETRYCOLLECTION (POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0)))", False),
         ("GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))", True),
     ],
