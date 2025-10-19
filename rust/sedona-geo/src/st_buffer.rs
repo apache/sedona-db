@@ -64,8 +64,8 @@ impl SedonaScalarKernel for STBuffer {
             if scalar_arg.is_null() {
                 params = None;
             } else {
-                let distance = Some(f64::try_from(scalar_arg.clone())?);
-                params = Some(BufferStyle::new(distance.unwrap()));
+                let distance = f64::try_from(scalar_arg.clone())?;
+                params = Some(BufferStyle::new(distance));
             }
         } else {
             return exec_err!("Invalid distance: {:?}", args[1]);
