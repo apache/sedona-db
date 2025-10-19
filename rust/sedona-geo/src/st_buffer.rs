@@ -32,6 +32,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use wkb::{
+    reader::Wkb,
     writer::{write_geometry, WriteOptions},
     Endianness,
 };
@@ -96,7 +97,6 @@ impl SedonaScalarKernel for STBuffer {
     }
 }
 
-use wkb::reader::Wkb;
 fn invoke_scalar(
     wkb: &Wkb,
     params: BufferStyle<f64>,
