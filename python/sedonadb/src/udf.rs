@@ -21,33 +21,31 @@ use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ArrayRef,
 };
-use arrow_schema::{DataType, FieldRef};
-use datafusion_common::{not_impl_datafusion_err, Result, ScalarValue};
-use datafusion_expr::{
-    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature,
-    TypeSignature, Volatility,
-};
+use datafusion_common::{Result, ScalarValue};
+use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
-    types::{PyCapsule, PyTuple},
+    types::{PyCapsule, PyNone, PyTuple},
     Bound, PyObject, Python,
 };
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
     error::PySedonaError,
-    import_from::{import_arrow_array, import_arrow_field},
+    import_from::{import_arg_matcher, import_arrow_array, import_sedona_type},
     schema::PySedonaType,
 };
 
 #[pyfunction]
 pub fn sedona_scalar_udf<'py>(
     py: Python<'py>,
-    name: &str,
-    py_return_field: PyObject,
     py_invoke_batch: PyObject,
+    py_return_type: PyObject,
+    py_input_types: Option<Vec<PyObject>>,
     volatility: &str,
+    name: &str,
 ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
     let volatility = match volatility {
         "immutable" => Volatility::Immutable,
@@ -60,141 +58,149 @@ pub fn sedona_scalar_udf<'py>(
         }
     };
 
-    let udf_impl = PySedonaScalarUdf {
-        name: name.to_string(),
-        signature: Signature::new(TypeSignature::UserDefined, volatility),
+    let scalar_kernel = sedona_scalar_kernel(py, py_input_types, py_return_type, py_invoke_batch)?;
+    let sedona_scalar_udf =
+        SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility, None);
+    let scalar_udf: ScalarUDF = sedona_scalar_udf.into();
+
+    let name = cr"datafusion_scalar_udf".into();
+    let ffi_udf = FFI_ScalarUDF::from(Arc::new(scalar_udf));
+    Ok(PyCapsule::new(py, ffi_udf, Some(name))?)
+}
+
+fn sedona_scalar_kernel<'py>(
+    py: Python<'py>,
+    input_types: Option<Vec<PyObject>>,
+    py_return_field: PyObject,
+    py_invoke_batch: PyObject,
+) -> Result<PySedonaScalarKernel, PySedonaError> {
+    let matcher = if let Some(input_types) = input_types {
+        let arg_matchers = input_types
+            .iter()
+            .map(|obj| import_arg_matcher(obj.bind(py)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_type = import_sedona_type(py_return_field.bind(py))?;
+        Some(ArgMatcher::new(arg_matchers, return_type))
+    } else {
+        None
+    };
+
+    let kernel_impl = PySedonaScalarKernel {
+        matcher,
         py_return_field,
         py_invoke_batch,
     };
 
-    let name = cr"datafusion_scalar_udf".into();
-    let udf = ScalarUDF::from(udf_impl);
-    let ffi_udf = FFI_ScalarUDF::from(Arc::new(udf));
-    Ok(PyCapsule::new(py, ffi_udf, Some(name))?)
+    Ok(kernel_impl)
 }
 
 #[derive(Debug)]
-struct PySedonaScalarUdf {
-    name: String,
-    signature: Signature,
+struct PySedonaScalarKernel {
+    matcher: Option<ArgMatcher>,
     py_return_field: PyObject,
     py_invoke_batch: PyObject,
 }
 
-impl ScalarUDFImpl for PySedonaScalarUdf {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn signature(&self) -> &Signature {
-        &self.signature
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+impl SedonaScalarKernel for PySedonaScalarKernel {
+    fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
         Err(PySedonaError::SedonaPython("Unexpected call to return_type()".to_string()).into())
     }
 
-    fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
-        Ok(eval_return_field(&self.py_return_field, args)?)
-    }
+    fn return_type_from_args_and_scalars(
+        &self,
+        args: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<SedonaType>> {
+        if let Some(matcher) = &self.matcher {
+            let return_type = matcher.match_args(args)?;
+            return Ok(return_type);
+        }
 
-    fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
-        Ok(arg_types.to_vec())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        Ok(eval_invoke_batch(&self.py_invoke_batch, args)?)
-    }
-}
-
-fn eval_return_field(func: &PyObject, args: ReturnFieldArgs) -> Result<FieldRef, PySedonaError> {
-    let return_field = Python::with_gil(|py| -> Result<FieldRef, PySedonaError> {
-        let py_arg_fields = args
-            .arg_fields
-            .iter()
-            .map(|f| -> Result<_, PySedonaError> {
-                Ok(PySedonaType::new(SedonaType::from_storage_field(f)?))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let py_scalar_values = zip(args.arg_fields, args.scalar_arguments)
-            .map(|(field, maybe_arg)| {
-                maybe_arg.map(|arg| PySedonaValue {
-                    field: field.clone(),
-                    value: ColumnarValue::Scalar(arg.clone()),
-                    num_rows: 1,
+        let return_type = Python::with_gil(|py| -> Result<Option<SedonaType>, PySedonaError> {
+            let py_sedona_types = args
+                .iter()
+                .map(|arg| -> Result<_, PySedonaError> { Ok(PySedonaType::new(arg.clone())) })
+                .collect::<Result<Vec<_>, _>>()?;
+            let py_scalar_values = zip(&py_sedona_types, scalar_args)
+                .map(|(sedona_type, maybe_arg)| {
+                    maybe_arg.map(|arg| PySedonaValue {
+                        sedona_type: sedona_type.clone(),
+                        value: ColumnarValue::Scalar(arg.clone()),
+                        num_rows: 1,
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>();
 
-        let py_return_field = func.call(py, (py_arg_fields, py_scalar_values), None)?;
-        if py_return_field.is_none(py) {
-            return Err(PySedonaError::DF(Box::new(not_impl_datafusion_err!(
-                "Python Udf does not apply to arguments"
-            ))));
-        }
+            let py_return_field =
+                self.py_return_field
+                    .call(py, (py_sedona_types, py_scalar_values), None)?;
+            if py_return_field.is_none(py) {
+                return Ok(None);
+            }
 
-        let return_field = import_arrow_field(py_return_field.bind(py))?;
-        Ok(Arc::new(return_field))
-    })?;
+            let return_type = import_sedona_type(py_return_field.bind(py))?;
+            Ok(Some(return_type))
+        })?;
 
-    Ok(return_field)
-}
-
-fn eval_invoke_batch(
-    func: &PyObject,
-    args: ScalarFunctionArgs,
-) -> Result<ColumnarValue, PySedonaError> {
-    let result = Python::with_gil(|py| -> Result<ArrayRef, PySedonaError> {
-        let py_values = zip(&args.arg_fields, &args.args)
-            .map(|(f, arg)| PySedonaValue {
-                field: f.clone(),
-                value: arg.clone(),
-                num_rows: args.number_rows,
-            })
-            .collect::<Vec<_>>();
-
-        let expected_return_type = SedonaType::from_storage_field(&args.return_field)?;
-        let py_return_type = PySedonaType::new(expected_return_type.clone());
-        let py_args = PyTuple::new(py, py_values)?;
-
-        let result = func.call(py, (py_args, py_return_type, args.number_rows), None)?;
-
-        let (result_field, result_array) = import_arrow_array(result.bind(py))?;
-        let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
-
-        if expected_return_type != result_sedona_type {
-            return Err(PySedonaError::SedonaPython(format!(
-                "Expected {expected_return_type} but got {result_sedona_type}"
-            )));
-        }
-
-        Ok(result_array)
-    })?;
-
-    if args.args.is_empty() {
-        return Ok(ColumnarValue::Array(result));
+        Ok(return_type)
     }
 
-    for arg in &args.args {
-        match arg {
-            ColumnarValue::Array(_) => return Ok(ColumnarValue::Array(result)),
-            ColumnarValue::Scalar(_) => {}
-        }
-    }
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let result = Python::with_gil(|py| -> Result<ArrayRef, PySedonaError> {
+            let py_values = zip(arg_types, args)
+                .map(|(sedona_type, arg)| PySedonaValue {
+                    sedona_type: PySedonaType::new(sedona_type.clone()),
+                    value: arg.clone(),
+                    num_rows: 0,
+                })
+                .collect::<Vec<_>>();
 
-    Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
-        &result, 0,
-    )?))
+            // let expected_return_type = SedonaType::from_storage_field(&args.return_field)?;
+            // let py_return_type = PySedonaType::new(expected_return_type.clone());
+            let py_return_type = PyNone::get(py);
+            let py_args = PyTuple::new(py, py_values)?;
+
+            let result = self
+                .py_invoke_batch
+                .call(py, (py_args, py_return_type, 0), None)?;
+
+            let (_, result_array) = import_arrow_array(result.bind(py))?;
+            // let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
+
+            // if expected_return_type != result_sedona_type {
+            //     return Err(PySedonaError::SedonaPython(format!(
+            //         "Expected {expected_return_type} but got {result_sedona_type}"
+            //     )));
+            // }
+
+            Ok(result_array)
+        })?;
+
+        if args.is_empty() {
+            return Ok(ColumnarValue::Array(result));
+        }
+
+        for arg in args {
+            match arg {
+                ColumnarValue::Array(_) => return Ok(ColumnarValue::Array(result)),
+                ColumnarValue::Scalar(_) => {}
+            }
+        }
+
+        Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+            &result, 0,
+        )?))
+    }
 }
 
 #[pyclass]
 #[derive(Debug)]
 pub struct PySedonaValue {
-    pub field: FieldRef,
+    pub sedona_type: PySedonaType,
     pub value: ColumnarValue,
     pub num_rows: usize,
 }
@@ -203,9 +209,7 @@ pub struct PySedonaValue {
 impl PySedonaValue {
     #[getter]
     fn r#type(&self) -> Result<PySedonaType, PySedonaError> {
-        Ok(PySedonaType::new(SedonaType::from_storage_field(
-            &self.field,
-        )?))
+        Ok(self.sedona_type.clone())
     }
 
     fn is_scalar(&self) -> bool {
@@ -214,7 +218,7 @@ impl PySedonaValue {
 
     fn to_array(&self) -> Result<Self, PySedonaError> {
         Ok(PySedonaValue {
-            field: self.field.clone(),
+            sedona_type: self.sedona_type.clone(),
             value: ColumnarValue::Array(self.value.to_array(self.num_rows)?),
             num_rows: self.num_rows,
         })
@@ -225,7 +229,8 @@ impl PySedonaValue {
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let schema_capsule_name = CString::new("arrow_schema").unwrap();
-        let ffi_schema = FFI_ArrowSchema::try_from(self.field.as_ref().clone())?;
+        let storage_field = self.sedona_type.inner.to_storage_field("", true)?;
+        let ffi_schema = FFI_ArrowSchema::try_from(storage_field)?;
         Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
     }
 
@@ -244,9 +249,9 @@ impl PySedonaValue {
     }
 
     fn __repr__(&self) -> String {
-        let sedona_type = SedonaType::from_storage_field(&self.field)
-            .map(|t| t.to_string())
-            .unwrap_or("<error parsing type>".to_string());
-        format!("PySedonaValue {}[{}]", sedona_type, self.num_rows)
+        format!(
+            "PySedonaValue {}[{}]",
+            self.sedona_type.inner, self.num_rows
+        )
     }
 }

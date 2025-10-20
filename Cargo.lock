@@ -5206,6 +5206,7 @@ dependencies = [
  "pyo3",
  "sedona",
  "sedona-adbc",
+ "sedona-expr",
  "sedona-geoparquet",
  "sedona-proj",
  "sedona-schema",

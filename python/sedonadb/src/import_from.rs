@@ -36,6 +36,10 @@ use pyo3::{
     Bound, PyAny, Python,
 };
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
+use sedona_schema::{
+    datatypes::SedonaType,
+    matchers::{ArgMatcher, TypeMatcher},
+};
 
 use crate::error::PySedonaError;
 
@@ -114,6 +118,34 @@ pub fn import_arrow_array(obj: &Bound<PyAny>) -> Result<(Field, ArrayRef), PySed
     let result_array_data = unsafe { arrow_array::ffi::from_ffi(ffi_array, &ffi_schema)? };
 
     Ok((result_field, make_array(result_array_data)))
+}
+
+pub fn import_arg_matcher(
+    obj: &Bound<PyAny>,
+) -> Result<Arc<dyn TypeMatcher + Send + Sync>, PySedonaError> {
+    if let Ok(string_value) = obj.extract::<String>() {
+        match string_value.as_str() {
+            "geometry" => return Ok(ArgMatcher::is_geometry()),
+            "geography" => return Ok(ArgMatcher::is_geography()),
+            "numeric" => return Ok(ArgMatcher::is_numeric()),
+            "string" => return Ok(ArgMatcher::is_string()),
+            "binary" => return Ok(ArgMatcher::is_binary()),
+            "boolean" => return Ok(ArgMatcher::is_boolean()),
+            v => {
+                return Err(PySedonaError::SedonaPython(format!(
+                    "Can't interpret literal string '{v}' as ArgMatcher"
+                )))
+            }
+        }
+    }
+
+    let sedona_type = import_sedona_type(obj)?;
+    Ok(ArgMatcher::is_exact(sedona_type))
+}
+
+pub fn import_sedona_type(obj: &Bound<PyAny>) -> Result<SedonaType, PySedonaError> {
+    let field = import_arrow_field(obj)?;
+    Ok(SedonaType::from_storage_field(&field)?)
 }
 
 pub fn import_arrow_field(obj: &Bound<PyAny>) -> Result<Field, PySedonaError> {

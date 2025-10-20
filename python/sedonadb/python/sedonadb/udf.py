@@ -15,25 +15,39 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from typing import Literal, Optional
+
 from sedonadb._lib import sedona_scalar_udf
 
 
 class ScalarUdfImpl:
-    @property
-    def name(self):
-        raise NotImplementedError()
+    def __init__(
+        self,
+        invoke_batch,
+        return_type,
+        input_types=None,
+        volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+        name: Optional[str] = None,
+    ):
+        if input_types is None and not callable(return_type):
 
-    @property
-    def volatility(self):
-        return "immutable"
+            def return_type_impl(*args, **kwargs):
+                return return_type
 
-    def return_type(self, arg_types, scalar_args):
-        raise NotImplementedError()
+            self._return_type = return_type_impl
+        else:
+            self._return_type = return_type
 
-    def invoke_batch(self, args, return_type, num_rows):
-        raise NotImplementedError()
+        self._invoke_batch = invoke_batch
+        self._input_types = input_types
+        self._name = name
+        self._volatility = volatility
 
     def __datafusion_scalar_udf__(self):
         return sedona_scalar_udf(
-            self.name, self.return_type, self.invoke_batch, self.volatility
+            self._invoke_batch,
+            self._return_type,
+            self._input_types,
+            self._volatility,
+            self.name,
         )
