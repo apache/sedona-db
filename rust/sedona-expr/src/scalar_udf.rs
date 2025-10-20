@@ -83,6 +83,16 @@ pub trait SedonaScalarKernel: Debug {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue>;
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+    ) -> Result<ColumnarValue> {
+        self.invoke_batch(arg_types, args)
+    }
 }
 
 /// Type definition for a Scalar kernel implementation function
@@ -259,8 +269,8 @@ impl ScalarUDFImpl for SedonaScalarUDF {
             })
             .collect::<Vec<_>>();
 
-        let (kernel, _) = self.return_type_impl(&arg_types, &arg_scalars)?;
-        kernel.invoke_batch(&arg_types, &args.args)
+        let (kernel, return_type) = self.return_type_impl(&arg_types, &arg_scalars)?;
+        kernel.invoke_batch_from_args(&arg_types, &args.args, &return_type, args.number_rows)
     }
 
     fn aliases(&self) -> &[String] {

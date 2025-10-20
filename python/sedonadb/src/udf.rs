@@ -21,12 +21,13 @@ use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ArrayRef,
 };
+use arrow_schema::Field;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
-    types::{PyCapsule, PyNone, PyTuple},
+    types::{PyCapsule, PyTuple},
     Bound, PyObject, Python,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -34,7 +35,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
     error::PySedonaError,
-    import_from::{import_arg_matcher, import_arrow_array, import_sedona_type},
+    import_from::{check_pycapsule, import_arg_matcher, import_arrow_array, import_sedona_type},
     schema::PySedonaType,
 };
 
@@ -106,6 +107,14 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
         Err(PySedonaError::SedonaPython("Unexpected call to return_type()".to_string()).into())
     }
 
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        Err(PySedonaError::SedonaPython("Unexpected call to invoke_batch()".to_string()).into())
+    }
+
     fn return_type_from_args_and_scalars(
         &self,
         args: &[SedonaType],
@@ -145,37 +154,37 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
         Ok(return_type)
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        num_rows: usize,
     ) -> Result<ColumnarValue> {
         let result = Python::with_gil(|py| -> Result<ArrayRef, PySedonaError> {
             let py_values = zip(arg_types, args)
                 .map(|(sedona_type, arg)| PySedonaValue {
                     sedona_type: PySedonaType::new(sedona_type.clone()),
                     value: arg.clone(),
-                    num_rows: 0,
+                    num_rows,
                 })
                 .collect::<Vec<_>>();
 
-            // let expected_return_type = SedonaType::from_storage_field(&args.return_field)?;
-            // let py_return_type = PySedonaType::new(expected_return_type.clone());
-            let py_return_type = PyNone::get(py);
+            let py_return_type = PySedonaType::new(return_type.clone());
             let py_args = PyTuple::new(py, py_values)?;
 
             let result = self
                 .py_invoke_batch
                 .call(py, (py_args, py_return_type, 0), None)?;
 
-            let (_, result_array) = import_arrow_array(result.bind(py))?;
-            // let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
+            let (result_field, result_array) = import_arrow_array(result.bind(py))?;
+            let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
 
-            // if expected_return_type != result_sedona_type {
-            //     return Err(PySedonaError::SedonaPython(format!(
-            //         "Expected {expected_return_type} but got {result_sedona_type}"
-            //     )));
-            // }
+            if return_type != &result_sedona_type {
+                return Err(PySedonaError::SedonaPython(format!(
+                    "Expected {return_type} but got {result_sedona_type}"
+                )));
+            }
 
             Ok(result_array)
         })?;
@@ -237,16 +246,37 @@ impl PySedonaValue {
     fn __arrow_c_array__<'py>(
         &self,
         py: Python<'py>,
-        requsted_schema: PyObject
-    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let schema_capsule_name = CString::new("arrow_array").unwrap();
+        requsted_schema: Option<Bound<PyCapsule>>,
+    ) -> Result<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>), PySedonaError> {
+        if let Some(requested_schema) = requsted_schema {
+            let ffi_requested_schema = unsafe {
+                FFI_ArrowSchema::from_raw(check_pycapsule(&requested_schema, "arrow_schema")? as _)
+            };
+            let requested_type =
+                SedonaType::from_storage_field(&Field::try_from(&ffi_requested_schema)?)?;
+            if requested_type != self.sedona_type.inner {
+                return Err(PySedonaError::SedonaPython(
+                    "requested type is not implemented for PySedonaValue".to_string(),
+                ));
+            }
+        }
+
+        let schema_capsule_name = CString::new("arrow_schema").unwrap();
+        let field = self.sedona_type.inner.to_storage_field("", true)?;
+        let ffi_schema = FFI_ArrowSchema::try_from(&field)?;
+
+        let array_capsule_name = CString::new("arrow_array").unwrap();
         let out_size = match &self.value {
             ColumnarValue::Array(array) => array.len(),
             ColumnarValue::Scalar(_) => 1,
         };
         let array = self.value.to_array(out_size)?;
         let ffi_array = FFI_ArrowArray::new(&array.to_data());
-        Ok(PyCapsule::new(py, ffi_array, Some(schema_capsule_name))?)
+
+        Ok((
+            PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?,
+            PyCapsule::new(py, ffi_array, Some(array_capsule_name))?,
+        ))
     }
 
     fn __repr__(&self) -> String {
