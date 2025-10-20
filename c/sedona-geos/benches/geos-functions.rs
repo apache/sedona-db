@@ -299,6 +299,8 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     benchmark::scalar(c, &f, "geos", "st_isvalidreason", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_isvalidreason", Polygon(500));
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(500));
 }
 
 criterion_group!(benches, criterion_benchmark);

@@ -17,6 +17,7 @@
 use sedona_expr::scalar_udf::ScalarKernelRef;
 
 use crate::st_convexhull::st_convex_hull_impl;
+use crate::st_isvalid::st_is_valid_impl;
 use crate::st_isvalidreason::st_is_valid_reason_impl;
 use crate::{
     distance::st_distance_impl, st_area::st_area_impl, st_buffer::st_buffer_impl,
@@ -57,6 +58,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_within", st_within_impl()),
         ("st_crosses", st_crosses_impl()),
         ("st_overlaps", st_overlaps_impl()),
+        ("st_isvalid", st_is_valid_impl()),
         ("st_isvalidreason", st_is_valid_reason_impl()),
     ]
 }
