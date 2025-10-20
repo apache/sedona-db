@@ -170,6 +170,9 @@ class SedonaContext:
         """
         return DataFrame(self._impl, self._impl.sql(sql), self.options)
 
+    def register_udf(self, udf):
+        self._impl.register_udf(udf)
+
 
 def connect() -> SedonaContext:
     """Create a new [SedonaContext][sedonadb.context.SedonaContext]"""

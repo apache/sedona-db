@@ -237,6 +237,7 @@ impl PySedonaValue {
     fn __arrow_c_array__<'py>(
         &self,
         py: Python<'py>,
+        requsted_schema: PyObject
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let schema_capsule_name = CString::new("arrow_array").unwrap();
         let out_size = match &self.value {
