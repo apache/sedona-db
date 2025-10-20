@@ -27,7 +27,7 @@ use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
-    types::{PyCapsule, PyTuple},
+    types::{PyAnyMethods, PyCapsule, PyTuple},
     Bound, PyObject, Python,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -176,13 +176,21 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             let result = self
                 .py_invoke_batch
                 .call(py, (py_args, py_return_type, 0), None)?;
+            let result_bound = result.bind(py);
+            if !result_bound.hasattr("__arrow_c_array__")? {
+                return Err(
+                    PySedonaError::SedonaPython(
+                        "Expected result of user-defined function to return an object implementing __arrow_c_array__()".to_string()
+                    )
+                );
+            }
 
-            let (result_field, result_array) = import_arrow_array(result.bind(py))?;
+            let (result_field, result_array) = import_arrow_array(result_bound)?;
             let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
 
             if return_type != &result_sedona_type {
                 return Err(PySedonaError::SedonaPython(format!(
-                    "Expected {return_type} but got {result_sedona_type}"
+                    "Expected result of user-defined function to return array of type {return_type} but got {result_sedona_type}"
                 )));
             }
 

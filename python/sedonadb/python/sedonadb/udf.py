@@ -30,11 +30,45 @@ def arrow_udf(
         def func_wrapper(args, return_type, num_rows):
             return func(*args)
 
-        name = func.__name__ if hasattr(func, "__name__") else None
-        return ScalarUdfImpl(func_wrapper, return_type, input_types, volatility, name)
+        name_arg = func.__name__ if name is None and hasattr(func, "__name__") else name
+        return ScalarUdfImpl(
+            func_wrapper, return_type, input_types, volatility, name_arg
+        )
 
     # Decorator must always be used with parentheses
     return decorator
+
+
+class TypeMatcher(str):
+    """Helper class to mark type matchers that can be used as the `input_types` for
+    user-defined functions
+
+    Note that the internal storage of the type matcher (currently a string) is
+    arbitrary and may change in a future release. Use the constants provided by
+    the `udf` module.
+    """
+
+    pass
+
+
+BINARY: TypeMatcher = "binary"
+"""Match any binary argument (i.e., binary, binary view, large binary,
+fixed-size binary)"""
+
+BOOLEAN: TypeMatcher = "boolean"
+"""Match a boolean argument"""
+
+GEOGRAPHY: TypeMatcher = "geometry"
+"""Match a geometry argument"""
+
+GEOMETRY: TypeMatcher = "geography"
+"""Match a geography argument"""
+
+NUMERIC: TypeMatcher = "numeric"
+"""Match any numeric argument"""
+
+STRING: TypeMatcher = "string"
+"""Match any string argument (i.e., string, string view, large string)"""
 
 
 class ScalarUdfImpl:
