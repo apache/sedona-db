@@ -251,6 +251,7 @@ impl PySedonaValue {
         Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
     }
 
+    #[pyo3(signature = (requsted_schema=None))]
     fn __arrow_c_array__<'py>(
         &self,
         py: Python<'py>,

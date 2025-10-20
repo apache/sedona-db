@@ -58,11 +58,11 @@ fixed-size binary)"""
 BOOLEAN: TypeMatcher = "boolean"
 """Match a boolean argument"""
 
-GEOGRAPHY: TypeMatcher = "geometry"
-"""Match a geometry argument"""
-
-GEOMETRY: TypeMatcher = "geography"
+GEOGRAPHY: TypeMatcher = "geography"
 """Match a geography argument"""
+
+GEOMETRY: TypeMatcher = "geometry"
+"""Match a geometry argument"""
 
 NUMERIC: TypeMatcher = "numeric"
 """Match any numeric argument"""
