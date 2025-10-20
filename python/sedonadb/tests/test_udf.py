@@ -49,13 +49,26 @@ def test_udf_any_input(con):
 
 
 def test_udf_return_type_fn(con):
-    udf_impl = udf.arrow_udf(lambda arg_types, arg_scalars: pa.binary())(some_udf)
+    udf_impl = udf.arrow_udf(lambda arg_types, arg_scalars: arg_types[0])(some_udf)
     assert udf_impl._name == "some_udf"
 
     con.register_udf(udf_impl)
     pd.testing.assert_frame_equal(
-        con.sql("SELECT some_udf('abcd', 123) as col").to_pandas(),
-        pd.DataFrame({"col": [b"abcd / 123"]}),
+        con.sql("SELECT some_udf('abcd'::BYTEA, 123) as col").to_pandas(),
+        pd.DataFrame({"col": [b"b'abcd' / 123"]}),
+    )
+
+
+def test_udf_array_input(con):
+    udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
+    assert udf_impl._name == "some_udf"
+
+    con.register_udf(udf_impl)
+    pd.testing.assert_frame_equal(
+        con.sql(
+            "SELECT some_udf(x, 123) as col FROM (VALUES ('a'), ('b'), ('c')) as t(x)"
+        ).to_pandas(),
+        pd.DataFrame({"col": [b"a / 123", b"b / 123", b"c / 123"]}),
     )
 
 
