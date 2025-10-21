@@ -113,7 +113,7 @@ class ScalarUdfImpl:
 
         self._volatility = volatility
 
-    def __datafusion_scalar_udf__(self):
+    def __sedona_internal_udf__(self):
         return sedona_scalar_udf(
             self._invoke_batch,
             self._return_type,

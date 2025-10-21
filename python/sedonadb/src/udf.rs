@@ -24,7 +24,6 @@ use arrow_array::{
 use arrow_schema::Field;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
-use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
     types::{PyAnyMethods, PyCapsule, PyTuple},
@@ -47,7 +46,7 @@ pub fn sedona_scalar_udf<'py>(
     py_input_types: Option<Vec<PyObject>>,
     volatility: &str,
     name: &str,
-) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+) -> Result<PySedonaScalarUdf, PySedonaError> {
     let volatility = match volatility {
         "immutable" => Volatility::Immutable,
         "stable" => Volatility::Stable,
@@ -64,9 +63,7 @@ pub fn sedona_scalar_udf<'py>(
         SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility, None);
     let scalar_udf: ScalarUDF = sedona_scalar_udf.into();
 
-    let name = cr"datafusion_scalar_udf".into();
-    let ffi_udf = FFI_ScalarUDF::from(Arc::new(scalar_udf));
-    Ok(PyCapsule::new(py, ffi_udf, Some(name))?)
+    Ok(PySedonaScalarUdf { inner: scalar_udf })
 }
 
 fn sedona_scalar_kernel<'py>(
@@ -194,6 +191,13 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
                 )));
             }
 
+            if result_array.len() != num_rows {
+                return Err(PySedonaError::SedonaPython(format!(
+                    "Expected result of user-defined function to return array of length {num_rows} but got {}",
+                    result_array.len()
+                )));
+            }
+
             Ok(result_array)
         })?;
 
@@ -212,6 +216,12 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             &result, 0,
         )?))
     }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PySedonaScalarUdf {
+    pub inner: ScalarUDF,
 }
 
 #[pyclass]

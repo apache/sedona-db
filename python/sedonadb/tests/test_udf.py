@@ -97,8 +97,8 @@ def test_udf_name():
 def test_py_sedona_value(con):
     @udf.arrow_udf(pa.int64())
     def fn_arg_only(arg):
-        assert repr(arg) == "PySedonaValue Array Int64[1]"
-        assert arg.is_scalar() is False
+        assert repr(arg) == "PySedonaValue Scalar Int64[1]"
+        assert arg.is_scalar() is True
         assert repr(arg.type) == "SedonaType int64<Int64>"
 
         return pa.array(range(len(pa.array(arg))))
@@ -168,6 +168,6 @@ def test_udf_bad_return_length(con):
     con.register_udf(questionable_udf)
     with pytest.raises(
         ValueError,
-        match="UDF questionable_udf returned a different number of rows than expected. Expected: 1, Got: 2.",
+        match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
