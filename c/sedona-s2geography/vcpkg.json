@@ -4,7 +4,7 @@
     {
       "name": "abseil",
       "features": [
-        "cxx17"
+        "test-helpers"
       ]
     }
   ]
