@@ -173,9 +173,9 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             let py_return_type = PySedonaType::new(return_type.clone());
             let py_args = PyTuple::new(py, py_values)?;
 
-            let result = self
-                .py_invoke_batch
-                .call(py, (py_args, py_return_type, 0), None)?;
+            let result =
+                self.py_invoke_batch
+                    .call(py, (py_args, py_return_type, num_rows), None)?;
             let result_bound = result.bind(py);
             if !result_bound.hasattr("__arrow_c_array__")? {
                 return Err(
@@ -289,8 +289,13 @@ impl PySedonaValue {
     }
 
     fn __repr__(&self) -> String {
+        let label = match &self.value {
+            ColumnarValue::Array(_) => "Array",
+            ColumnarValue::Scalar(_) => "Scalar",
+        };
+
         format!(
-            "PySedonaValue {}[{}]",
+            "PySedonaValue {label} {}[{}]",
             self.sedona_type.inner, self.num_rows
         )
     }

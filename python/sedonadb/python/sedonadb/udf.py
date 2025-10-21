@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import inspect
 from typing import Literal, Optional
 
 from sedonadb._lib import sedona_scalar_udf
@@ -27,15 +28,29 @@ def arrow_udf(
     name: Optional[str] = None,
 ):
     def decorator(func):
-        def func_wrapper(args, return_type, num_rows):
-            return func(*args)
+        kwarg_names = callable_kwarg_only_names(func)
+        if "return_type" in kwarg_names and "num_rows" in kwarg_names:
+
+            def func_wrapper(args, return_type, num_rows):
+                return func(*args, return_type=return_type, num_rows=num_rows)
+        elif "return_type" in kwarg_names:
+
+            def func_wrapper(args, return_type, num_rows):
+                return func(*args, return_type=return_type)
+        elif "num_rows" in kwarg_names:
+
+            def func_wrapper(args, return_type, num_rows):
+                return func(*args, num_rows=num_rows)
+        else:
+
+            def func_wrapper(args, return_type, num_rows):
+                return func(*args)
 
         name_arg = func.__name__ if name is None and hasattr(func, "__name__") else name
         return ScalarUdfImpl(
             func_wrapper, return_type, input_types, volatility, name_arg
         )
 
-    # Decorator must always be used with parentheses
     return decorator
 
 
@@ -106,3 +121,10 @@ class ScalarUdfImpl:
             self._volatility,
             self._name,
         )
+
+
+def callable_kwarg_only_names(f):
+    sig = inspect.signature(f)
+    return [
+        k for k, p in sig.parameters.items() if p.kind == inspect.Parameter.KEYWORD_ONLY
+    ]

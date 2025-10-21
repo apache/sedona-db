@@ -94,6 +94,46 @@ def test_udf_name():
     assert udf_impl._name == "foofy"
 
 
+def test_py_sedona_value(con):
+    @udf.arrow_udf(pa.int64())
+    def fn_arg_only(arg):
+        assert repr(arg) == "PySedonaValue Array Int64[1]"
+        assert arg.is_scalar() is False
+        assert repr(arg.type) == "SedonaType int64<Int64>"
+
+        return pa.array(range(len(pa.array(arg))))
+
+    con.register_udf(fn_arg_only)
+    con.sql("SELECT fn_arg_only(123)").to_arrow_table()
+
+
+def test_udf_kwargs(con):
+    @udf.arrow_udf(pa.int64())
+    def fn_return_type(arg, *, return_type=None):
+        assert repr(return_type) == "SedonaType int64<Int64>"
+        return pa.array(range(len(pa.array(arg))))
+
+    con.register_udf(fn_return_type)
+    con.sql("SELECT fn_return_type('123')").to_arrow_table()
+
+    @udf.arrow_udf(pa.int64())
+    def fn_num_rows(arg, *, num_rows=None):
+        assert num_rows == 1
+        return pa.array(range(len(pa.array(arg))))
+
+    con.register_udf(fn_num_rows)
+    con.sql("SELECT fn_num_rows('123')").to_arrow_table()
+
+    @udf.arrow_udf(pa.int64())
+    def fn_num_rows_and_return_type(arg, *, num_rows=None, return_type=None):
+        assert repr(return_type) == "SedonaType int64<Int64>"
+        assert num_rows == 1
+        return pa.array(range(len(pa.array(arg))))
+
+    con.register_udf(fn_num_rows_and_return_type)
+    con.sql("SELECT fn_num_rows_and_return_type('123')").to_arrow_table()
+
+
 def test_udf_bad_return_object(con):
     @udf.arrow_udf(pa.binary())
     def questionable_udf(arg):
