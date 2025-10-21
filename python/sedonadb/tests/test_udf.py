@@ -94,6 +94,35 @@ def test_udf_name():
     assert udf_impl._name == "foofy"
 
 
+def test_shapely_udf(con):
+    import shapely
+    import geoarrow.pyarrow as ga
+    import numpy as np
+
+    @udf.arrow_udf(ga.wkb(), [udf.GEOMETRY, udf.NUMERIC])
+    def shapely_udf(geom, distance):
+        geom_wkb = pa.array(geom.storage.to_array())
+        distance = pa.array(distance.to_array())
+        geom = shapely.from_wkb(geom_wkb)
+        result_shapely = shapely.buffer(geom, distance)
+        return pa.array(shapely.to_wkb(result_shapely))
+
+    con.register_udf(shapely_udf)
+
+    pd.testing.assert_frame_equal(
+        con.sql("SELECT ST_Area(shapely_udf(ST_Point(0, 0), 2.0)) as col").to_pandas(),
+        pd.DataFrame({"col": [12.485780609032208]}),
+    )
+
+    # Ensure we can propagate a crs
+    pd.testing.assert_frame_equal(
+        con.sql(
+            "SELECT ST_SRID(shapely_udf(ST_SetSRID(ST_Point(0, 0), 3857), 2.0)) as col"
+        ).to_pandas(),
+        pd.DataFrame({"col": [3857]}, dtype=np.uint32),
+    )
+
+
 def test_py_sedona_value(con):
     @udf.arrow_udf(pa.int64())
     def fn_arg_only(arg):
