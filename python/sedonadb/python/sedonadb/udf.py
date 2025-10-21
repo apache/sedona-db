@@ -16,17 +16,160 @@
 # under the License.
 
 import inspect
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from sedonadb._lib import sedona_scalar_udf
+from sedonadb.utility import sedona  # noqa: F401
 
 
 def arrow_udf(
-    return_type,
+    return_type: Any,
     input_types=None,
     volatility: Literal["immutable", "stable", "volatile"] = "immutable",
     name: Optional[str] = None,
 ):
+    """Generic Arrow-based user-defined scalar function decorator
+
+    This decorator may be used to annotate a function that accepts arguments as
+    Arrow array wrappers implementing the
+    [Arrow PyCapsule Interface](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html).
+    The annotated function must return a value of a consistent length of the
+    appropriate type.
+
+    !!! warning
+        SedonaDB will call the provided function from multiple threads. Attempts
+        to modify shared state from the body of the function may crash or cause
+        unusual behaviour.
+
+    SedonaDB Python UDFs are experimental and this interface may change based on
+    user feedback.
+
+    Args:
+        return_type: One of:
+            - A data type (e.g., pyarrow.DataType, arro3.core.DataType, nanoarrow.Schema)
+              if this function returns the same type regardless of its inputs.
+            - A function of `arg_types` (list of data types) and `scalar_args` (list of
+              optional scalars) that returns a data type. This function is also
+              responsible for returning `None` if this function does not apply to the
+              input types.
+        input_types: One of:
+            - A list where each member is a data type or a `TypeMatcher`. The
+              `udf.GEOMETRY` and `udf.GEOGRAPHY` type matchers are the most useful
+              because otherwise the function will only match spatial data types whose
+              coordinate reference system (CRS) also matches (i.e., based on simple
+              equality). Using these type matchers will also ensure input CRS consistency
+              and will automatically propagate input CRSes into the output.
+            - `None`, indicating that this function can accept any number of arguments
+              of any type. Usually this is paired with a functional `return_type` that
+              dynamically computes a return type or returns `None` if the number or
+              types of arguments do not match.
+        volatility: Use "immutable" for functions whose output is always consistent
+            for the same inputs (even between queries); use "stable" for functions
+            whose output is always consistent for the same inputs but only within
+            the same query, and use "volatile" for functions that generate random
+            or otherwise non-deterministic output.
+        name: An optional name for the UDF. If not given, it will be derived from
+            the name of the provided function.
+
+    Examples:
+
+        >>> import pyarrow as pa
+        >>> from sedonadb import udf
+        >>> sd = sedona.db.connect()
+
+        The simplest scalar UDF only specifies return types. This implies that
+        the function can handle input of any type.
+
+        >>> @udf.arrow_udf(pa.string())
+        ... def some_udf(arg0, arg1):
+        ...     arg0, arg1 = (
+        ...         pa.array(arg0.to_array()).to_pylist(),
+        ...         pa.array(arg1.to_array()).to_pylist(),
+        ...     )
+        ...     return pa.array(
+        ...         (f"{item0} / {item1}" for item0, item1 in zip(arg0, arg1)),
+        ...         pa.string(),
+        ...     )
+        ...
+        >>> sd.register_udf(some_udf)
+        >>> sd.sql("SELECT some_udf(123, 'abc') as col").show()
+        ┌───────────┐
+        │    col    │
+        │    utf8   │
+        ╞═══════════╡
+        │ 123 / abc │
+        └───────────┘
+
+        Use the `TypeMatcher` constants where possible to specify input.
+        This ensures that the function can handle the usual range of input
+        types that might exist for a given input.
+
+        >>> @udf.arrow_udf(pa.int64(), [udf.STRING])
+        ... def char_count(arg0):
+        ...     arg0 = pa.array(arg0.to_array())
+        ...
+        ...     return pa.array(
+        ...         (len(item) for item in arg0.to_pylist()),
+        ...         pa.int64()
+        ...     )
+        ...
+        >>> sd.register_udf(char_count)
+        >>> sd.sql("SELECT char_count('abcde') as col").show()
+        ┌───────┐
+        │  col  │
+        │ int64 │
+        ╞═══════╡
+        │     5 │
+        └───────┘
+
+        In this case, the type matcher ensures we can also use the function
+        for string view input which is the usual type SedonaDB emits when
+        reading Parquet files.
+
+        >>> sd.sql("SELECT char_count(arrow_cast('abcde', 'Utf8View')) as col").show()
+        ┌───────┐
+        │  col  │
+        │ int64 │
+        ╞═══════╡
+        │     5 │
+        └───────┘
+
+        Geometry UDFs are best written using Shapely because pyproj (including its use
+        in GeoPandas) is not thread safe and can crash when attempting to look up
+        CRSes when importing an Arrow array. The UDF framework supports returning
+        geometry storage to make this possible. Coordinate reference system metadata
+        is propagated automatically from the input.
+
+        >>> import shapely
+        >>> import geoarrow.pyarrow as ga
+        >>> @udf.arrow_udf(ga.wkb(), [udf.GEOMETRY, udf.NUMERIC])
+        ... def shapely_udf(geom, distance):
+        ...     geom_wkb = pa.array(geom.storage.to_array())
+        ...     distance = pa.array(distance.to_array())
+        ...     geom = shapely.from_wkb(geom_wkb)
+        ...     result_shapely = shapely.buffer(geom, distance)
+        ...     return pa.array(shapely.to_wkb(result_shapely))
+        ...
+        >>>
+        >>> sd.register_udf(shapely_udf)
+        >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_Point(0, 0), 2.0)) as col").show()
+        ┌────────┐
+        │   col  │
+        │ uint32 │
+        ╞════════╡
+        │      0 │
+        └────────┘
+
+        >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_SetSRID(ST_Point(0, 0), 3857), 2.0)) as col").show()
+        ┌────────┐
+        │   col  │
+        │ uint32 │
+        ╞════════╡
+        │   3857 │
+        └────────┘
+
+    """
+
     def decorator(func):
         kwarg_names = _callable_kwarg_only_names(func)
         if "return_type" in kwarg_names and "num_rows" in kwarg_names:
@@ -87,6 +230,14 @@ STRING: TypeMatcher = "string"
 
 
 class ScalarUdfImpl:
+    """Scalar user-defined function wrapper
+
+    This class is a wrapper class used as the return value for user-defined
+    function constructors. This wrapper allows the UDF to be registered with
+    a SedonaDB context or any context that accepts DataFusion Python
+    Scalar UDFs. This object is not intended to be used to call a UDF.
+    """
+
     def __init__(
         self,
         invoke_batch,

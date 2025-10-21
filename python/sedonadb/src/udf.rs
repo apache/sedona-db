@@ -188,9 +188,12 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
 
             if return_type != &result_sedona_type {
-                return Err(PySedonaError::SedonaPython(format!(
-                    "Expected result of user-defined function to return array of type {return_type} but got {result_sedona_type}"
-                )));
+                let return_type_storage = SedonaType::Arrow(return_type.storage_type().clone());
+                if return_type_storage != result_sedona_type {
+                    return Err(PySedonaError::SedonaPython(format!(
+                        "Expected result of user-defined function to return array of type {return_type} or its storage but got {result_sedona_type}"
+                    )));
+                }
             }
 
             if result_array.len() != num_rows {
@@ -256,6 +259,17 @@ impl PySedonaValue {
 
     fn is_scalar(&self) -> bool {
         matches!(&self.value, ColumnarValue::Scalar(_))
+    }
+
+    #[getter]
+    fn storage(&self) -> Result<Self, PySedonaError> {
+        Ok(PySedonaValue {
+            sedona_type: PySedonaType {
+                inner: SedonaType::Arrow(self.sedona_type.inner.storage_type().clone()),
+            },
+            value: self.value.clone(),
+            num_rows: self.num_rows,
+        })
     }
 
     fn to_array(&self) -> Result<Self, PySedonaError> {
