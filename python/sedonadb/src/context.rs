@@ -21,8 +21,11 @@ use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
 
 use crate::{
-    dataframe::InternalDataFrame, error::PySedonaError,
-    import_from::import_table_provider_from_any, runtime::wait_for_future, udf::PySedonaScalarUdf,
+    dataframe::InternalDataFrame,
+    error::PySedonaError,
+    import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
+    runtime::wait_for_future,
+    udf::PySedonaScalarUdf,
 };
 
 #[pyclass]
@@ -117,8 +120,20 @@ impl InternalContext {
         Ok(())
     }
 
-    pub fn register_udf(&self, udf: PySedonaScalarUdf) -> Result<(), PySedonaError> {
-        self.inner.ctx.register_udf(udf.inner);
+    pub fn register_udf(&self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
+        if udf.hasattr("__sedona_internal_udf__")? {
+            let py_scalar_udf = udf
+                .getattr("__sedona_internal_udf__")?
+                .call0()?
+                .extract::<PySedonaScalarUdf>()?;
+            self.inner.ctx.register_udf(py_scalar_udf.inner);
+            return Ok(());
+        } else if udf.hasattr("__datafusion_scalar_udf__")? {
+            let scalar_udf = import_ffi_scalar_udf(&udf)?;
+            self.inner.ctx.register_udf(scalar_udf);
+            return Ok(());
+        }
+
         Ok(())
     }
 }
