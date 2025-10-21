@@ -28,7 +28,7 @@ def arrow_udf(
     name: Optional[str] = None,
 ):
     def decorator(func):
-        kwarg_names = callable_kwarg_only_names(func)
+        kwarg_names = _callable_kwarg_only_names(func)
         if "return_type" in kwarg_names and "num_rows" in kwarg_names:
 
             def func_wrapper(args, return_type, num_rows):
@@ -122,8 +122,11 @@ class ScalarUdfImpl:
             self._name,
         )
 
+    def __datafusion_scalar_udf__(self):
+        return self.__sedona_internal_udf__().__datafusion_scalar_udf__()
 
-def callable_kwarg_only_names(f):
+
+def _callable_kwarg_only_names(f):
     sig = inspect.signature(f)
     return [
         k for k, p in sig.parameters.items() if p.kind == inspect.Parameter.KEYWORD_ONLY

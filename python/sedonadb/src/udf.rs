@@ -24,6 +24,7 @@ use arrow_array::{
 use arrow_schema::Field;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
+use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
     types::{PyAnyMethods, PyCapsule, PyTuple},
@@ -46,7 +47,7 @@ pub fn sedona_scalar_udf<'py>(
     py_input_types: Option<Vec<PyObject>>,
     volatility: &str,
     name: &str,
-) -> Result<PySedonaScalarUdf, PySedonaError> {
+) -> Result<PyScalarUdf, PySedonaError> {
     let volatility = match volatility {
         "immutable" => Volatility::Immutable,
         "stable" => Volatility::Stable,
@@ -63,7 +64,9 @@ pub fn sedona_scalar_udf<'py>(
         SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility, None);
     let scalar_udf: ScalarUDF = sedona_scalar_udf.into();
 
-    Ok(PySedonaScalarUdf { inner: scalar_udf })
+    Ok(PyScalarUdf {
+        inner: Arc::new(scalar_udf),
+    })
 }
 
 fn sedona_scalar_kernel<'py>(
@@ -220,8 +223,20 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
 
 #[pyclass]
 #[derive(Clone)]
-pub struct PySedonaScalarUdf {
-    pub inner: ScalarUDF,
+pub struct PyScalarUdf {
+    pub inner: Arc<ScalarUDF>,
+}
+
+#[pymethods]
+impl PyScalarUdf {
+    fn __datafusion_scalar_udf__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
+        let ffi_scalar_udf = FFI_ScalarUDF::from(self.inner.clone());
+        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
+    }
 }
 
 #[pyclass]

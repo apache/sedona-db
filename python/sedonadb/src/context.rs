@@ -25,7 +25,7 @@ use crate::{
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
-    udf::PySedonaScalarUdf,
+    udf::PyScalarUdf,
 };
 
 #[pyclass]
@@ -125,8 +125,10 @@ impl InternalContext {
             let py_scalar_udf = udf
                 .getattr("__sedona_internal_udf__")?
                 .call0()?
-                .extract::<PySedonaScalarUdf>()?;
-            self.inner.ctx.register_udf(py_scalar_udf.inner);
+                .extract::<PyScalarUdf>()?;
+            self.inner
+                .ctx
+                .register_udf(py_scalar_udf.inner.as_ref().clone());
             return Ok(());
         } else if udf.hasattr("__datafusion_scalar_udf__")? {
             let scalar_udf = import_ffi_scalar_udf(&udf)?;
