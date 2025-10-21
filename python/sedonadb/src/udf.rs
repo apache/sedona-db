@@ -290,13 +290,13 @@ impl PySedonaValue {
         Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
     }
 
-    #[pyo3(signature = (requsted_schema=None))]
+    #[pyo3(signature = (requested_schema=None))]
     fn __arrow_c_array__<'py>(
         &self,
         py: Python<'py>,
-        requsted_schema: Option<Bound<PyCapsule>>,
+        requested_schema: Option<Bound<PyCapsule>>,
     ) -> Result<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>), PySedonaError> {
-        if let Some(requested_schema) = requsted_schema {
+        if let Some(requested_schema) = requested_schema {
             let ffi_requested_schema = unsafe {
                 FFI_ArrowSchema::from_raw(check_pycapsule(&requested_schema, "arrow_schema")? as _)
             };
