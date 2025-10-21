@@ -184,7 +184,11 @@ def test_udf_bad_return_type(con):
     con.register_udf(questionable_udf)
     with pytest.raises(
         ValueError,
-        match="Expected result of user-defined function to return array of type Binary but got Utf8",
+        match=(
+            "Expected result of user-defined function to "
+            "return array of type Binary or its storage "
+            "but got Utf8"
+        ),
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
 
