@@ -171,3 +171,61 @@ def test_udf_bad_return_length(con):
         match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
+
+
+def test_udf_datafusion_to_sedonadb(con):
+    udf_impl = udf.arrow_udf(
+        pa.binary(), [udf.STRING, udf.NUMERIC], name="some_external_udf"
+    )(some_udf)
+
+    class UdfWrapper:
+        def __init__(self, obj):
+            self.obj = obj
+
+        def __datafusion_scalar_udf__(self):
+            return self.obj.__datafusion_scalar_udf__()
+
+    con.register_udf(UdfWrapper(udf_impl))
+    pd.testing.assert_frame_equal(
+        con.sql("SELECT some_external_udf('abcd', 123) as col").to_pandas(),
+        pd.DataFrame({"col": [b"abcd / 123"]}),
+    )
+
+
+def test_udf_sedonadb_registry_function_to_datafusion(con):
+    datafusion = pytest.importorskip("datafusion")
+    udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
+
+    # Register with our session
+    con.register_udf(udf_impl)
+
+    # Create a datafusion session, fetch our udf and register with the other session
+    datafusion_ctx = datafusion.SessionContext()
+    datafusion_ctx.register_udf(
+        datafusion.ScalarUDF.from_pycapsule(con._impl.scalar_udf("some_udf"))
+    )
+
+    # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
+    batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
+    assert len(batches) == 1
+    pd.testing.assert_frame_equal(
+        batches[0].to_pandas(),
+        pd.DataFrame({"col": [b"abcd / 123"]}),
+    )
+
+
+def test_udf_sedonadb_to_datafusion():
+    datafusion = pytest.importorskip("datafusion")
+    udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
+
+    # Create a datafusion session, register udf_impl directly
+    datafusion_ctx = datafusion.SessionContext()
+    datafusion_ctx.register_udf(datafusion.ScalarUDF.from_pycapsule(udf_impl))
+
+    # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
+    batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
+    assert len(batches) == 1
+    pd.testing.assert_frame_equal(
+        batches[0].to_pandas(),
+        pd.DataFrame({"col": [b"abcd / 123"]}),
+    )

@@ -16,6 +16,7 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
+use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
@@ -25,7 +26,7 @@ use crate::{
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
-    udf::PyScalarUdf,
+    udf::PySedonaScalarUdf,
 };
 
 #[pyclass]
@@ -120,15 +121,36 @@ impl InternalContext {
         Ok(())
     }
 
-    pub fn register_udf(&self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
+    pub fn scalar_udf(&self, name: &str) -> Result<PySedonaScalarUdf, PySedonaError> {
+        if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(name) {
+            Ok(PySedonaScalarUdf {
+                inner: sedona_scalar_udf.clone(),
+            })
+        } else {
+            Err(PySedonaError::SedonaPython(format!(
+                "Sedona scalar UDF with name {name} was not found"
+            )))
+        }
+    }
+
+    pub fn register_udf(&mut self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
         if udf.hasattr("__sedona_internal_udf__")? {
             let py_scalar_udf = udf
                 .getattr("__sedona_internal_udf__")?
                 .call0()?
-                .extract::<PyScalarUdf>()?;
+                .extract::<PySedonaScalarUdf>()?;
+            let name = py_scalar_udf.inner.name();
             self.inner
-                .ctx
-                .register_udf(py_scalar_udf.inner.as_ref().clone());
+                .functions
+                .insert_scalar_udf(py_scalar_udf.inner.clone());
+            self.inner.ctx.register_udf(
+                self.inner
+                    .functions
+                    .scalar_udf(name)
+                    .unwrap()
+                    .clone()
+                    .into(),
+            );
             return Ok(());
         } else if udf.hasattr("__datafusion_scalar_udf__")? {
             let scalar_udf = import_ffi_scalar_udf(&udf)?;
@@ -136,6 +158,9 @@ impl InternalContext {
             return Ok(());
         }
 
-        Ok(())
+        Err(PySedonaError::SedonaPython(
+            "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
+                .to_string(),
+        ))
     }
 }
