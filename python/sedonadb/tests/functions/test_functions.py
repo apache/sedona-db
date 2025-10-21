@@ -285,6 +285,36 @@ def test_st_convexhull(eng, geom, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT (0 0)", "POINT (0 0)"),
+        ("POINT EMPTY", "POINT (nan nan)"),
+        ("LINESTRING (0 0, 1 1, 2 2)", "LINESTRING (0 0, 1 1, 2 2)"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+        ("MULTIPOINT ((0 0), (1 1), (2 2))", "MULTIPOINT (0 0, 1 1, 2 2)"),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((1 0, 2 0, 2 1, 1 1, 1 0)))",
+            "POLYGON ((0 0, 0 1, 1 1, 2 1, 2 0, 1 0, 0 0))",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
+            "MULTIPOLYGON (((0 1, 1 1, 1 0, 0 0, 0 1)), ((2 3, 3 3, 3 2, 2 2, 2 3)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), POLYGON ((1 0, 2 0, 2 1, 1 1, 1 0)))",
+            "POLYGON ((0 0, 0 1, 1 1, 2 1, 2 0, 1 0, 0 0))",
+        ),
+    ],
+)
+def test_st_unaryunion(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_UnaryUnion({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_makeline(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
