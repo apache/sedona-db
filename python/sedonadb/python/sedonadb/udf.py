@@ -45,14 +45,14 @@ def arrow_udf(
     user feedback.
 
     Args:
-        return_type: One of:
+        return_type: One of
             - A data type (e.g., pyarrow.DataType, arro3.core.DataType, nanoarrow.Schema)
               if this function returns the same type regardless of its inputs.
             - A function of `arg_types` (list of data types) and `scalar_args` (list of
               optional scalars) that returns a data type. This function is also
               responsible for returning `None` if this function does not apply to the
               input types.
-        input_types: One of:
+        input_types: One of
             - A list where each member is a data type or a `TypeMatcher`. The
               `udf.GEOMETRY` and `udf.GEOGRAPHY` type matchers are the most useful
               because otherwise the function will only match spatial data types whose
