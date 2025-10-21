@@ -1,11 +1,3 @@
 {
-  "dependencies": [
-    "openssl",
-    {
-      "name": "abseil",
-      "features": [
-        "test-helpers"
-      ]
-    }
-  ]
+  "dependencies": ["openssl", "abseil"]
 }
