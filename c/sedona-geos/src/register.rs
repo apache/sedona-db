@@ -16,11 +16,10 @@
 // under the License.
 use sedona_expr::scalar_udf::ScalarKernelRef;
 
-use crate::st_convexhull::st_convex_hull_impl;
-use crate::st_isvalid::st_is_valid_impl;
 use crate::{
     distance::st_distance_impl, st_area::st_area_impl, st_buffer::st_buffer_impl,
-    st_centroid::st_centroid_impl, st_dwithin::st_dwithin_impl, st_length::st_length_impl,
+    st_centroid::st_centroid_impl, st_convexhull::st_convex_hull_impl, st_dwithin::st_dwithin_impl,
+    st_isring::st_is_ring_impl, st_isvalid::st_is_valid_impl, st_length::st_length_impl,
     st_perimeter::st_perimeter_impl,
 };
 
@@ -42,14 +41,17 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_convexhull", st_convex_hull_impl()),
         ("st_coveredby", st_covered_by_impl()),
         ("st_covers", st_covers_impl()),
+        ("st_crosses", st_crosses_impl()),
         ("st_difference", st_difference_impl()),
         ("st_disjoint", st_disjoint_impl()),
         ("st_distance", st_distance_impl()),
         ("st_dwithin", st_dwithin_impl()),
         ("st_equals", st_equals_impl()),
-        ("st_length", st_length_impl()),
         ("st_intersection", st_intersection_impl()),
         ("st_intersects", st_intersects_impl()),
+        ("st_isring", st_is_ring_impl()),
+        ("st_length", st_length_impl()),
+        ("st_overlaps", st_overlaps_impl()),
         ("st_perimeter", st_perimeter_impl()),
         ("st_symdifference", st_sym_difference_impl()),
         ("st_touches", st_touches_impl()),
