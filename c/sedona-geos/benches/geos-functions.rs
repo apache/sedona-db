@@ -46,42 +46,27 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_centroid", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_centroid", Polygon(500));
 
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_contains",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_contains",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
+
     benchmark::scalar(c, &f, "geos", "st_convexhull", MultiPoint(10));
 
     benchmark::scalar(
         c,
         &f,
         "geos",
-        "st_distance",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_distance",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_contains",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_contains",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
         "st_coveredby",
         ArrayScalar(Polygon(10), Polygon(10)),
     );
@@ -112,10 +97,24 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "geos",
+        "st_crosses",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_crosses",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
         "st_difference",
         ArrayScalar(Polygon(10), Polygon(10)),
     );
-
     benchmark::scalar(
         c,
         &f,
@@ -136,6 +135,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "geos",
         "st_disjoint",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_distance",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_distance",
         ArrayScalar(Polygon(10), Polygon(500)),
     );
 
@@ -146,7 +160,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_dwithin",
         ArrayArrayScalar(Polygon(10), Polygon(10), Float64(1.0, 2.0)),
     );
-
     benchmark::scalar(
         c,
         &f,
@@ -200,8 +213,29 @@ fn criterion_benchmark(c: &mut Criterion) {
         ArrayScalar(Polygon(10), Polygon(500)),
     );
 
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(500));
+
+    benchmark::scalar(c, &f, "geos", "st_isvalidreason", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_isvalidreason", Polygon(500));
+
     benchmark::scalar(c, &f, "geos", "st_length", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_length", LineString(500));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_overlaps",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_overlaps",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
 
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(500));
@@ -213,7 +247,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_symdifference",
         ArrayScalar(Polygon(10), Polygon(10)),
     );
-
     benchmark::scalar(
         c,
         &f,
@@ -237,69 +270,38 @@ fn criterion_benchmark(c: &mut Criterion) {
         ArrayScalar(Polygon(10), Polygon(500)),
     );
 
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_union",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_union",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_within",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_within",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_crosses",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_crosses",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_overlaps",
-        ArrayScalar(Polygon(10), Polygon(10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "geos",
-        "st_overlaps",
-        ArrayScalar(Polygon(10), Polygon(500)),
-    );
-    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(10));
-    benchmark::scalar(c, &f, "geos", "st_isvalid", Polygon(500));
-
     benchmark::scalar(c, &f, "geos", "st_unaryunion", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_unaryunion", Polygon(500));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_union",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_union",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_within",
+        ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_within",
+        ArrayScalar(Polygon(10), Polygon(500)),
+    );
 }
 
 criterion_group!(benches, criterion_benchmark);

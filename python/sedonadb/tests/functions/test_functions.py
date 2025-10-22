@@ -16,7 +16,7 @@
 # under the License.
 import pytest
 import shapely
-from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
+from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -696,6 +696,61 @@ def test_st_isclosed(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        # Valid rings (closed + simple)
+        ("LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)", True),
+        ("LINESTRING(0 0, 1 0, 1 1, 0 0)", True),
+        ("LINESTRING(0 0, 2 2, 1 2, 0 0)", True),
+        # Closed but self-intersecting - bowtie shape (not simple)
+        ("LINESTRING(0 0, 0 1, 1 0, 1 1, 0 0)", False),
+        # Not closed
+        ("LINESTRING(0 0, 1 1)", False),
+        ("LINESTRING(2 0, 2 2, 3 3)", False),
+        ("LINESTRING(0 0, 2 2)", False),
+        # Empty geometries
+        ("LINESTRING EMPTY", False),
+        ("POINT EMPTY", False),
+        ("POLYGON EMPTY", False),
+        ("MULTIPOLYGON EMPTY", False),
+        ("GEOMETRYCOLLECTION EMPTY", False),
+    ],
+)
+def test_st_isring(eng, geom, expected):
+    """Test ST_IsRing with LineString geometries.
+
+    ST_IsRing returns true if the geometry is a closed and simple LineString.
+    """
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsRing({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom"),
+    [
+        "POINT(0 0)",
+        "MULTIPOINT((0 0), (1 1))",
+        "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))",
+        "MULTILINESTRING((0 0, 0 1, 1 1, 1 0, 0 0))",
+        "GEOMETRYCOLLECTION(LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0))",
+    ],
+)
+def test_st_isring_non_linestring_error(eng, geom):
+    """Test that ST_IsRing throws errors for non-LineString non-empty geometries.
+
+    Both SedonaDB and PostGIS throw errors when ST_IsRing is called on
+    non-LineString geometry types (PostGIS compatibility).
+    """
+    eng = eng.create_or_skip()
+
+    with pytest.raises(Exception, match="linear|linestring"):
+        eng.assert_query_result(f"SELECT ST_IsRing(ST_GeomFromText('{geom}'))", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT EMPTY", 0),
         ("LINESTRING EMPTY", 0),
         ("POINT (0 0)", 0),
@@ -1195,3 +1250,24 @@ def test_st_mmin(eng, geom, expected):
 def test_st_mmax(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_MMax({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT (0 0)", "Valid Geometry"),
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
+        ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", "Self-intersection%"),
+        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
+    ],
+)
+def test_st_isvalidreason(eng, geom, expected):
+    eng = eng.create_or_skip()
+    if expected is not None and "%" in str(expected):
+        query = f"SELECT ST_IsValidReason({geom_or_null(geom)}) LIKE '{expected}'"
+        eng.assert_query_result(query, True)
+    else:
+        query = f"SELECT ST_IsValidReason({geom_or_null(geom)})"
+        eng.assert_query_result(query, expected)
