@@ -16,15 +16,27 @@
 # under the License.
 
 import inspect
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, List, Union
 
 from sedonadb._lib import sedona_scalar_udf
 from sedonadb.utility import sedona  # noqa: F401
 
 
+class TypeMatcher(str):
+    """Helper class to mark type matchers that can be used as the `input_types` for
+    user-defined functions
+
+    Note that the internal storage of the type matcher (currently a string) is
+    arbitrary and may change in a future release. Use the constants provided by
+    the `udf` module.
+    """
+
+    pass
+
+
 def arrow_udf(
     return_type: Any,
-    input_types=None,
+    input_types: List[Union[TypeMatcher, Any]] = None,
     volatility: Literal["immutable", "stable", "volatile"] = "immutable",
     name: Optional[str] = None,
 ):
@@ -195,18 +207,6 @@ def arrow_udf(
         )
 
     return decorator
-
-
-class TypeMatcher(str):
-    """Helper class to mark type matchers that can be used as the `input_types` for
-    user-defined functions
-
-    Note that the internal storage of the type matcher (currently a string) is
-    arbitrary and may change in a future release. Use the constants provided by
-    the `udf` module.
-    """
-
-    pass
 
 
 BINARY: TypeMatcher = "binary"
