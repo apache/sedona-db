@@ -290,7 +290,7 @@ def test_st_convexhull(eng, geom, expected):
     [
         (None, None),
         ("POINT (0 0)", "POINT (0 0)"),
-        ("POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING (0 0, 1 1, 2 2)", "LINESTRING (0 0, 1 1, 2 2)"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
@@ -311,7 +311,18 @@ def test_st_convexhull(eng, geom, expected):
 )
 def test_st_unaryunion(eng, geom, expected):
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_UnaryUnion({geom_or_null(geom)})", expected)
+
+    if expected is None:
+        eng.assert_query_result(f"SELECT ST_UnaryUnion({geom_or_null(geom)})", expected)
+    elif "EMPTY" in expected.upper():
+        eng.assert_query_result(
+            f"SELECT ST_IsEmpty(ST_UnaryUnion({geom_or_null(geom)}))", True
+        )
+    else:
+        eng.assert_query_result(
+            f"SELECT ST_Equals(ST_UnaryUnion({geom_or_null(geom)}), {geom_or_null(expected)})",
+            True,
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

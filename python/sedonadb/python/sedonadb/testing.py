@@ -269,74 +269,11 @@ class DBEngine:
             result_pandas = self.result_to_pandas(result)
             pandas.testing.assert_frame_equal(result_pandas, expected, **kwargs)
         elif isinstance(expected, list):
-            result_table = self.result_to_table(result)
-            geom_cols_schema = _geometry_columns(result_table.schema)
-
-            if geom_cols_schema:
-                import shapely
-
-                result_tuples = self.result_to_tuples(result, **kwargs)
-                if len(result_tuples) != len(expected):
-                    raise AssertionError(
-                        f"Expected {len(expected)} rows, got {len(result_tuples)}"
-                    )
-
-                is_geom_col = [
-                    name in geom_cols_schema for name in result_table.schema.names
-                ]
-
-                for i, (row_result, row_expected) in enumerate(
-                    zip(result_tuples, expected)
-                ):
-                    if len(row_result) != len(row_expected):
-                        raise AssertionError(
-                            f"Expected {len(row_expected)} columns in row {i}, got {len(row_result)}"
-                        )
-                    for j, (val_result, val_expected) in enumerate(
-                        zip(row_result, row_expected)
-                    ):
-                        if not is_geom_col[j]:
-                            if val_result != val_expected:
-                                raise AssertionError(
-                                    f"Non-geometry value mismatch at row {i}, col {j}:\n"
-                                    f"Expected:\n  {val_expected}\n"
-                                    f"Got:\n  {val_result}"
-                                )
-                            continue
-
-                        if val_result is None and val_expected is None:
-                            continue
-                        elif val_result is None or val_expected is None:
-                            raise AssertionError(
-                                f"Null mismatch at row {i}, col {j}:\n"
-                                f"Expected:\n  {val_expected}\n"
-                                f"Got:\n  {val_result}"
-                            )
-
-                        if "EMPTY" in val_expected and "nan" in val_result:
-                            continue
-
-                        try:
-                            shape_result = shapely.from_wkt(val_result)
-                            shape_expected = shapely.from_wkt(val_expected)
-                        except Exception as e:
-                            raise AssertionError(
-                                f"Failed to parse WKT at row {i}, col {j}: {e}"
-                            )
-
-                        if not shape_result.equals(shape_expected):
-                            raise AssertionError(
-                                f"Geometry mismatch at row {i}, col {j}:\n"
-                                f"Expected:\n  {val_expected}\n"
-                                f"Got:\n  {val_result}"
-                            )
-
-            else:
-                result_tuples = self.result_to_tuples(result, **kwargs)
-                if result_tuples != expected:
-                    raise AssertionError(
-                        f"Expected:\n  {expected}\nGot:\n  {result_tuples}"
-                    )
+            result_tuples = self.result_to_tuples(result, **kwargs)
+            if result_tuples != expected:
+                raise AssertionError(
+                    f"Expected:\n  {expected}\nGot:\n  {result_tuples}"
+                )
         elif isinstance(expected, tuple):
             self.assert_result(result, [expected], **kwargs)
         elif isinstance(expected, str):
