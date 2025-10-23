@@ -180,6 +180,34 @@ def arrow_udf(
         │   3857 │
         └────────┘
 
+        Annotated functions may also declare keyword arguments `return_type` and/or `num_rows`,
+        which will be passed the appropriate value by the UDF framework. This facilitates writing
+        generic UDFs and/or UDFs with no arguments.
+
+        >>> import numpy as np
+        >>> def random_impl(return_type, num_rows):
+        ...     pa_type = pa.field(return_type).type
+        ...     return pa.array(np.random.random(num_rows), pa_type)
+        ...
+        >>> @udf.arrow_udf(pa.float32(), [])
+        ... def random_f32(*, return_type=None, num_rows=None):
+        ...     return random_impl(return_type, num_rows)
+        ...
+        >>> @udf.arrow_udf(pa.float64(), [])
+        ... def random_f64(*, return_type=None, num_rows=None):
+        ...     return random_impl(return_type, num_rows)
+        ...
+        >>> np.random.seed(487)
+        >>> sd.register_udf(random_f32)
+        >>> sd.register_udf(random_f64)
+        >>> sd.sql("SELECT random_f32() AS f32, random_f64() as f64;").show()
+        ┌────────────┬─────────────────────┐
+        │     f32    ┆         f64         │
+        │   float32  ┆       float64       │
+        ╞════════════╪═════════════════════╡
+        │ 0.35385555 ┆ 0.24793247139474195 │
+        └────────────┴─────────────────────┘
+
     """
 
     def decorator(func):
