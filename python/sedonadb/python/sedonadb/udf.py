@@ -274,6 +274,10 @@ class ScalarUdfImpl:
         volatility: Literal["immutable", "stable", "volatile"] = "immutable",
         name: Optional[str] = None,
     ):
+        # If the input_types are None, the return_type must be callable when passed
+        # to the internals. In the Python API we allow a data type as the return type
+        # to the argument easier to understand, which means we may have to wrap
+        # it in a callable here.
         if input_types is None and not callable(return_type):
 
             def return_type_impl(*args, **kwargs):
