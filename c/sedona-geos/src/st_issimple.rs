@@ -68,9 +68,9 @@ impl SedonaScalarKernel for STIsSimple {
 }
 
 fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<bool> {
-    Ok(geos_geom.is_simple().map_err(|e| {
+    geos_geom.is_simple().map_err(|e| {
         DataFusionError::Execution(format!("Failed to check if geometry is simple: {e}"))
-    })?)
+    })
 }
 
 #[cfg(test)]
