@@ -216,6 +216,123 @@ def test_st_centroid(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        # POINTS - Always simple (single point has no self-intersections)
+        ("POINT (1 1)", True),
+        ("POINT EMPTY", True),  # Empty geometry is simple
+        # MULTIPOINTS
+        ("MULTIPOINT (1 1, 2 2, 3 3)", True),  # Distinct points
+        ("MULTIPOINT (1 1, 2 2, 1 1)", False),  # Duplicate points make it non-simple
+        ("MULTIPOINT EMPTY", True),  # Empty multipoint
+        ("MULTIPOINT (1 1, 2 2, 3 3)", True),
+        # LINESTRINGS
+        ("LINESTRING (0 0, 1 1)", True),  # Simple straight line
+        ("LINESTRING (0 0, 1 1, 2 2)", True),  # Simple line, collinear points
+        ("LINESTRING (0 0, 1 1, 0 1, 1 0)", False),  # Self-intersecting (bowtie shape)
+        ("LINESTRING(1 1,2 2,2 3.5,1 3,1 2,2 1)", False),  # Complex self-intersection
+        (
+            "LINESTRING (0 0, 1 1, 0 0)",
+            False,
+        ),  # Closed loop with repeated start/end but intersects at interior
+        ("LINESTRING (0 0, 1 1, 1 0, 0 0)", True),  # Simple closed ring (triangle)
+        ("LINESTRING EMPTY", True),  # Empty linestring
+        # POLYGONS
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", True),  # Simple rectangle
+        (
+            "POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))",
+            False,
+        ),  # Bowtie polygon - self-intersecting
+        (
+            "POLYGON((1 2, 3 4, 5 6, 1 2))",
+            False,
+        ),  # Degenerate polygon - zero-area Triangle
+        (
+            "Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))",
+            False,
+        ),  # Star shape with self-intersection
+        (
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))",
+            True,
+        ),  # Polygon with hole, valid
+        (
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 0 2, 2 2, 1 1))",
+            True,
+        ),  # Valid OGC Polygon (is also considered 'Simple' by OGC standard)
+        # MULTILINESTRINGS
+        (
+            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+            True,
+        ),  # Touching at endpoints only
+        ("MULTILINESTRING ((0 0, 2 2), (0 2, 2 0))", False),  # Lines cross in middle
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", True),  # Disjoint lines
+        (
+            "MULTILINESTRING ((0 0, 1 1, 2 2), (2 2, 3 3))",
+            True,
+        ),  # Connected at endpoint
+        (
+            "MULTILINESTRING ((0 0, 2 0, 2 2, 0 2, 0 0), (1 1, 3 1, 3 3, 1 3, 1 1))",
+            False,
+        ),  # Not simple: The two rings overlap and intersect (2 1), violating the MULTILINESTRING simplicity rule.
+        ("MULTILINESTRING ((0 0, 2 2), (1 0, 1 2))", False),  # Lines intersect at (1,1)
+        ("MULTILINESTRING EMPTY", True),  # Empty multilinestring
+        # MULTIPOLYGONS
+        ("MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)))", True),  # Single simple polygon
+        (
+            "MULTIPOLYGON (((0 0, 0 2, 2 2, 2 0, 0 0)), ((3 0, 3 2, 5 2, 5 0, 3 0)))",
+            True,
+        ),  # Two disjoint polygons
+        (
+            "MULTIPOLYGON (((0 0, 0 2, 2 2, 2 0, 0 0)), ((1 1, 1 3, 3 3, 3 1, 1 1)))",
+            True,
+        ),  # Touching at point
+        (
+            "MULTIPOLYGON (((0 0, 0 3, 3 3, 3 0, 0 0)), ((1 1, 1 2, 2 2, 2 1, 1 1)))",
+            True,
+        ),  # One inside another (donut)
+        (
+            "MULTIPOLYGON (((0 0, 0 2, 2 2, 2 0, 0 0)), ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            True,
+        ),  # Simple: The boundaries do not cross
+        ("MULTIPOLYGON EMPTY", True),  # Empty multipolygon
+        # GEOMETRYCOLLECTIONS
+        (
+            "GEOMETRYCOLLECTION (POINT (1 1), LINESTRING (0 0, 1 1))",
+            True,
+        ),  # Simple components
+        (
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 2 2), LINESTRING (0 2, 2 0))",
+            True,
+        ),
+        ("GEOMETRYCOLLECTION EMPTY", True),  # Empty collection
+        # EDGE CASES
+        ("POINT (1 1)", True),  # Repeated for completeness
+        (
+            "LINESTRING (1 1, 1 1)",
+            True,
+        ),  # Simple: Start and end points are the only intersecting points.
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0), (0.2 0.2, 0.2 0.8, 0.8 0.8, 0.8 0.2, 0.2 0.2))",
+            True,
+        ),  # Proper hole
+        (
+            "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0), (0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))",
+            True,
+        ),  # Another valid hole
+        (
+            "LINESTRING (0 0, 1 0, 1 1, 0 1, 0.5 1, 0.5 0)",
+            False,
+        ),  # Self-touching at non-endpoint
+    ],
+)
+def test_st_issimple(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsSimple({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT (0 0)", True),
         ("POINT EMPTY", True),
         ("LINESTRING (0 0, 1 1)", True),
