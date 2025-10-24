@@ -165,21 +165,12 @@ pip install maturin
 
 ### Rust
 
-Debugging Rust code is most easily done by writing or finding a test that triggers
-the desired behavior and running it using the *Debug* selection in
-[VSCode](https://code.visualstudio.com/) with the
-[rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-extension. Rust code can also be debugged using the CLI by finding the `main()` function in
+Debugging Rust code is most easily done by writing or finding a test that triggers the desired behavior and running it using the *Debug* selection in [VSCode](https://code.visualstudio.com/) with the [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) extension. Rust code can also be debugged using the CLI by finding the `main()` function in
 `sedona-cli` and choosing the *Debug* run option.
 
 ### Python, C, and C++
 
-Installation of Python bindings with `maturin develop` ensures a debug-friendly build for
-debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in
-any IDE that supports debugging an editable Python package installation (e.g., VSCode);
-Rust, C, or C++ code can be debugged using the
-[CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
-*Attach to Process...* command from the command palette in VSCode.
+Installation of Python bindings with `maturin develop` ensures a debug-friendly build for debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in any IDE that supports debugging an editable Python package installation (e.g., VSCode); Rust, C, or C++ code can be debugged using the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) *Attach to Process...* command from the command palette in VSCode.
 
 ## Testing
 
@@ -217,11 +208,7 @@ Remember that you need to run `maturin develop` to update your python installati
 
 ## Low-level benchmarking
 
-Low-level Rust benchmarks use [criterion](https://github.com/bheisler/criterion.rs).
-In general, there is at least one benchmark for every implementation of a function
-(some functions have more than one implementation provided by different libraries),
-and a few other benchmarks for low-level iteration where work was done to optimize
-specific cases.
+Low-level Rust benchmarks use [criterion](https://github.com/bheisler/criterion.rs). In general, there is at least one benchmark for every implementation of a function (some functions have more than one implementation provided by different libraries), and a few other benchmarks for low-level iteration where work was done to optimize specific cases.
 
 ### Running benchmarks
 
@@ -232,9 +219,7 @@ cd rust/sedona-geo
 cargo bench
 ```
 
-Benchmarks for a specific function can be run with a filter. These can be run
-from the workspace or a specific crate (although the output is usually easier
-to read for a specific crate).
+Benchmarks for a specific function can be run with a filter. These can be run from the workspace or a specific crate (although the output is usually easier to read for a specific crate).
 
 ```shell
 cargo bench -- st_area
@@ -242,9 +227,7 @@ cargo bench -- st_area
 
 ### Managing results
 
-By default, criterion saves the last run and will report the difference between the
-current benchmark and the last time it was run (although there are options to
-save and load various baselines).
+By default, criterion saves the last run and will report the difference between the current benchmark and the last time it was run (although there are options to save and load various baselines).
 
 A report of the latest results for all benchmarks can be opened with the following command:
 
