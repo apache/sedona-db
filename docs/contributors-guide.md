@@ -206,6 +206,26 @@ pytest python/sedonadb/tests
 
 Remember that you need to run `maturin develop` to update your python installation after changes in Rust code.
 
+## Linting
+
+Install pre-commit. This will automatically run various checks (e.g formatting) that will be needed to pass CI.
+
+```shell
+pre-commit install
+```
+
+If pre-commit is not already installed, you can install it using pip.
+
+```shell
+pip install pre-commit
+```
+
+Additionally, you should run clippy to catch common lints before pushing new Rust changes. This is not included in `pre-commit`, so this should be run manually. Fix any suggestions it makes, and run it again to make sure there are no other changes to make.
+
+```shell
+cargo clippy
+```
+
 ## Low-level benchmarking
 
 Low-level Rust benchmarks use [criterion](https://github.com/bheisler/criterion.rs). In general, there is at least one benchmark for every implementation of a function (some functions have more than one implementation provided by different libraries), and a few other benchmarks for low-level iteration where work was done to optimize specific cases.
