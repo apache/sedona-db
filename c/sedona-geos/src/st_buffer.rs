@@ -19,7 +19,7 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_common::{internal_err, DataFusionError};
+use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
 use geos::{BufferParams, Geom};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
