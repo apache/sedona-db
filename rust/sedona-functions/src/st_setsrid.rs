@@ -232,6 +232,7 @@ mod test {
     use std::rc::Rc;
 
     use arrow_schema::Field;
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
     use sedona_geometry::{error::SedonaGeometryError, transform::CrsTransform};
     use sedona_schema::{
@@ -374,6 +375,7 @@ mod test {
             arg_fields,
             number_rows: 1,
             return_field,
+            config_options: Arc::new(ConfigOptions::default()),
         };
 
         let value = udf.invoke_with_args(args)?;

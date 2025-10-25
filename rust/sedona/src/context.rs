@@ -539,7 +539,7 @@ mod tests {
                     "|   plan_type   |               plan              |",
                     "+---------------+---------------------------------+",
                     "| logical_plan  | Projection: Int64(1) AS one     |",
-                    "|               |   EmptyRelation                 |",
+                    "|               |   EmptyRelation: rows=1         |",
                     "| physical_plan | ProjectionExec: expr=[1 as one] |",
                     "|               |   PlaceholderRowExec            |",
                     "|               |                                 |",

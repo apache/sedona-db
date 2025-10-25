@@ -133,7 +133,8 @@ impl OptimizerRule for SpatialJoinOptimizer {
         plan: LogicalPlan,
         config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
-        let Some(extension) = config.options().extensions.get::<SedonaOptions>() else {
+        let options = config.options();
+        let Some(extension) = options.extensions.get::<SedonaOptions>() else {
             return Ok(Transformed::no(plan));
         };
         if !extension.spatial_join.enable {
@@ -1166,6 +1167,7 @@ mod tests {
             Arc::clone(&udf),
             args,
             field,
+            Arc::new(ConfigOptions::default()),
         ))
     }
 

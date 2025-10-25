@@ -24,7 +24,7 @@ use datafusion::{
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
-            parquet::{fetch_parquet_metadata, ParquetFormat, ParquetFormatFactory},
+            parquet::{ParquetFormat, ParquetFormatFactory},
             FileFormat, FileFormatFactory,
         },
         physical_plan::{
@@ -34,6 +34,7 @@ use datafusion::{
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
+use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
@@ -182,13 +183,11 @@ impl FileFormat for GeoParquetFormat {
         // copy more ParquetFormat code. It may be that caching at the object
         // store level is the way to go here.
         let metadatas: Vec<_> = futures::stream::iter(objects)
-            .map(|object| {
-                fetch_parquet_metadata(
-                    store.as_ref(),
-                    object,
-                    self.inner().metadata_size_hint(),
-                    None,
-                )
+            .map(|object| async move {
+                DFParquetMetadata::new(store.as_ref(), object)
+                    .with_metadata_size_hint(self.inner().metadata_size_hint())
+                    .fetch_metadata()
+                    .await
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
             .buffered(state.config_options().execution.meta_fetch_concurrency)

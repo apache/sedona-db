@@ -199,7 +199,7 @@ impl TableProvider for RandomGeometryProvider {
         // We're required to handle the projection or we'll get an execution error
         if let Some(projection) = projection {
             let schema = self.schema();
-            let exprs = projection
+            let exprs: Vec<_> = projection
                 .iter()
                 .map(|index| -> (Arc<dyn PhysicalExpr>, String) {
                     let name = schema.field(*index).name();

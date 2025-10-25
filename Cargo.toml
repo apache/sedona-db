@@ -56,30 +56,30 @@ rust-version = "1.82"
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
-adbc_core = "0.20.0"
-adbc_ffi = "0.20.0"
+adbc_core = ">=0.20.0"
+adbc_ffi = ">=0.20.0"
 lru = "0.12"
-arrow = { version = "55.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "55.1.0" }
-arrow-cast = { version = "55.1.0" }
-arrow-data = { version = "55.1.0" }
-arrow-json = { version = "55.1.0" }
-arrow-schema = { version = "55.1.0" }
+arrow = { version = "56.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "56.0.0" }
+arrow-cast = { version = "56.0.0" }
+arrow-data = { version = "56.0.0" }
+arrow-json = { version = "56.0.0" }
+arrow-schema = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
 byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
 comfy-table = { version = "7.0" }
 criterion = { version = "0.5", features = ["html_reports"] }
-datafusion = { version = "49.0.0", default-features = false }
-datafusion-catalog = { version = "49.0.0" }
-datafusion-common = { version = "49.0.0", default-features = false }
-datafusion-common-runtime = { version = "49.0.0", default-features = false }
-datafusion-execution = { version = "49.0.0", default-features = false }
-datafusion-expr = { version = "49.0.0" }
-datafusion-ffi = {  version = "49.0.0" }
-datafusion-physical-expr = { version = "49.0.0" }
-datafusion-physical-plan = { version = "49.0.0" }
+datafusion = { version = "50.2.0", default-features = false }
+datafusion-catalog = { version = "50.2.0" }
+datafusion-common = { version = "50.2.0", default-features = false }
+datafusion-common-runtime = { version = "50.2.0", default-features = false }
+datafusion-execution = { version = "50.2.0", default-features = false }
+datafusion-expr = { version = "50.2.0" }
+datafusion-ffi = {  version = "50.2.0" }
+datafusion-physical-expr = { version = "50.2.0" }
+datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
 futures = { version = "0.3" }
@@ -102,7 +102,7 @@ wkb = "0.9.1"
 wkt = "0.14.0"
 
 parking_lot = "0.12"
-parquet = { version = "55.1.0", default-features = false, features = [
+parquet = { version = "56.0.0", default-features = false, features = [
     "arrow",
     "async",
     "object_store",
@@ -119,16 +119,9 @@ tokio = { version = "1.44" }
 url = "2.5.4"
 
 [patch.crates-io]
-# For R package build on Windows (can be removed when we upgrade to DataFusion main/51.0.0)
-datafusion = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion" }
-datafusion-catalog = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-catalog" }
-datafusion-common = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common" }
-datafusion-common-runtime = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common-runtime" }
-datafusion-execution = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-execution" }
-datafusion-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-expr" }
-datafusion-ffi = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-ffi" }
-datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-expr" }
-datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
 
 # TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
 geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }

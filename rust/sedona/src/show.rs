@@ -21,7 +21,7 @@ use comfy_table::{Cell, CellAlignment, ColumnConstraint, ContentArrangement, Row
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
-use datafusion_common::{DataFusionError, ScalarValue};
+use datafusion_common::{config::ConfigOptions, DataFusionError, ScalarValue};
 use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -252,7 +252,8 @@ impl<'a> DisplayTable<'a> {
             }
         }
 
-        table.set_truncation_indicator(self.truncation_indicator());
+        // TODO: set_truncation_indicator method was removed in comfy_table 7.x
+        // table.set_truncation_indicator(self.truncation_indicator());
 
         let mut columns = self
             .columns
@@ -495,6 +496,7 @@ impl DisplayColumn {
                 arg_fields,
                 number_rows: array.len(),
                 return_field,
+                config_options: Arc::new(ConfigOptions::default()),
             };
 
             let format_proxy_value = format_udf.invoke_with_args(args)?;

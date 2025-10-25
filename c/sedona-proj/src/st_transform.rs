@@ -331,6 +331,7 @@ mod tests {
     use super::*;
     use arrow_array::ArrayRef;
     use arrow_schema::{DataType, Field};
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl};
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
@@ -608,6 +609,7 @@ mod tests {
             arg_fields: arg_fields.to_vec(),
             number_rows: row_count,
             return_field,
+            config_options: Arc::new(ConfigOptions::default()),
         };
 
         let value = udf.invoke_with_args(args)?;

@@ -19,7 +19,7 @@ use std::{any::Any, sync::Arc};
 use abi_stable::StableAbi;
 use arrow_schema::{DataType, Field, FieldRef, Schema};
 use datafusion::physical_plan::{expressions::Column, PhysicalExpr};
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::{config::ConfigOptions, DataFusionError, Result, ScalarValue};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDF, AggregateUDFImpl, ColumnarValue, ReturnFieldArgs,
@@ -87,6 +87,20 @@ struct ExportedScalarKernel {
     name: String,
     signature: Signature,
     sedona_impl: ScalarKernelRef,
+}
+
+impl PartialEq for ExportedScalarKernel {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for ExportedScalarKernel {}
+
+impl std::hash::Hash for ExportedScalarKernel {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 impl From<ScalarKernelRef> for ExportedScalarKernel {
@@ -196,6 +210,7 @@ impl SedonaScalarKernel for ImportedScalarKernel {
             number_rows: arg_rows.unwrap_or(1),
             // Wrapper code on the other side of this doesn't use this value
             return_field: Field::new("", DataType::Null, true).into(),
+            config_options: Arc::new(ConfigOptions::default()),
         };
 
         // DataFusion's FFI_ScalarUDF always returns array output but
@@ -271,6 +286,20 @@ struct ExportedSedonaAccumulator {
     name: String,
     signature: Signature,
     sedona_impl: SedonaAccumulatorRef,
+}
+
+impl PartialEq for ExportedSedonaAccumulator {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for ExportedSedonaAccumulator {}
+
+impl std::hash::Hash for ExportedSedonaAccumulator {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 impl From<SedonaAccumulatorRef> for ExportedSedonaAccumulator {

@@ -18,7 +18,7 @@ use std::{iter::zip, sync::Arc};
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{FieldRef, Schema};
-use datafusion_common::{Result, ScalarValue};
+use datafusion_common::{config::ConfigOptions, Result, ScalarValue};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDF, ColumnarValue, Expr, Literal, ReturnFieldArgs, ScalarFunctionArgs,
@@ -404,6 +404,7 @@ impl ScalarUdfTester {
             arg_fields: self.arg_fields(),
             number_rows,
             return_field: self.return_type()?.to_storage_field("", true)?.into(),
+            config_options: Arc::new(ConfigOptions::default()),
         };
 
         self.udf.invoke_with_args(args)

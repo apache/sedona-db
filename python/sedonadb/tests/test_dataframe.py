@@ -444,7 +444,7 @@ def test_show_explained(con, capsys):
 │      utf8     ┆               utf8              │
 ╞═══════════════╪═════════════════════════════════╡
 │ logical_plan  ┆ Projection: Int64(1) AS one     │
-│               ┆   EmptyRelation                 │
+│               ┆   EmptyRelation: rows=1         │
 ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ physical_plan ┆ ProjectionExec: expr=[1 as one] │
 │               ┆   PlaceholderRowExec            │
@@ -462,7 +462,7 @@ def test_explain(con, capsys):
 │      utf8     ┆               utf8              │
 ╞═══════════════╪═════════════════════════════════╡
 │ logical_plan  ┆ Projection: Int64(1) AS one     │
-│               ┆   EmptyRelation                 │
+│               ┆   EmptyRelation: rows=1         │
 ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
 │ physical_plan ┆ ProjectionExec: expr=[1 as one] │
 │               ┆   PlaceholderRowExec            │

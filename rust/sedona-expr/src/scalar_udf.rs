@@ -41,6 +41,20 @@ pub struct SedonaScalarUDF {
     aliases: Vec<String>,
 }
 
+impl PartialEq for SedonaScalarUDF {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for SedonaScalarUDF {}
+
+impl std::hash::Hash for SedonaScalarUDF {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
 /// User-defined function implementation
 ///
 /// A `SedonaScalarUdf` is comprised of one or more kernels, to which it dispatches
