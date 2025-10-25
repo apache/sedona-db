@@ -1399,3 +1399,49 @@ def test_st_isvalidreason(eng, geom, expected):
     else:
         query = f"SELECT ST_IsValidReason({geom_or_null(geom)})"
         eng.assert_query_result(query, expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "tolerance", "expected"),
+    [
+        # Basic linestring simplification
+        (
+            "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",
+            2,
+            "LINESTRING(0 0,0 51,50 20,30 20,7 32)",
+        ),
+        # Short linestring preserves endpoints
+        (
+            "LINESTRING (0 0, 0 10)",
+            20,
+            "LINESTRING(0 0,0 10)",
+        ),
+        # Null handling
+        (None, 2, None),
+        (None, None, None),
+        ("LINESTRING (0 0, 0 10)", None, None),
+        # Empty geometries
+        ("LINESTRING EMPTY", 2, "LINESTRING EMPTY"),
+        ("POINT EMPTY", 2, "POINT EMPTY"),
+        ("POLYGON EMPTY", 2, "POLYGON EMPTY"),
+        # POLYGON with hole - topology preserved, both rings simplified
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0),(5 5, 5 6, 6 6, 8 5, 5 5))",
+            20,
+            "POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,5 6,8 5,5 5))",
+        ),
+        # MULTIPOLYGON - both polygons preserved with topology preservation
+        (
+            "MULTIPOLYGON (((100 100, 100 130, 130 130, 130 100, 100 100)),((0 0, 10 0, 10 10, 0 10, 0 0),(5 5, 5 6, 6 6, 8 5, 5 5)))",
+            20,
+            "MULTIPOLYGON(((100 100,100 130,130 130,130 100,100 100)),((0 0,10 0,10 10,0 10,0 0),(5 5,5 6,8 5,5 5)))",
+        ),
+    ],
+)
+def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_AsText(ST_SimplifyPreserveTopology({geom_or_null(geom)}, {val_or_null(tolerance)}))",
+        expected,
+    )
