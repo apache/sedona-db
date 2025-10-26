@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
+use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
@@ -55,35 +56,28 @@ impl SedonaScalarKernel for STSimplifyPreserveTopology {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let tolerance: Option<f64>;
-        let arg1 = args[1].cast_to(&DataType::Float64, None)?;
-        if let ColumnarValue::Scalar(scalar_arg) = &arg1 {
-            if scalar_arg.is_null() {
-                tolerance = None;
-            } else {
-                tolerance = Some(f64::try_from(scalar_arg.clone())?);
-            }
-        } else {
-            return Err(DataFusionError::Execution(format!(
-                "Invalid tolerance: {:?}",
-                args[1]
-            )));
-        }
-
         let executor = GeosExecutor::new(arg_types, args);
+
+        let tolerance_value = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(executor.num_iterations())?;
+        let tolerance_array = as_float64_array(&tolerance_value)?;
+
+        let mut tolerance_iter = tolerance_array.iter();
+
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
+
         executor.execute_wkb_void(|wkb| {
-            match (wkb, tolerance) {
+            match (wkb, tolerance_iter.next().unwrap()) {
                 (Some(wkb), Some(tolerance)) => {
                     invoke_scalar(&wkb, tolerance, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
             }
-
             Ok(())
         })?;
 
@@ -198,6 +192,42 @@ mod tests {
         assert_array_equal(
             &tester.invoke_wkb_array_scalar(input_wkt_t20, 20.0).unwrap(),
             &expected_t20,
+        );
+
+        // Test array tolerance input - same geometry with different tolerance values
+        let input_wkt_array = vec![
+            Some("LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)"),
+            Some("LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)"),
+            Some("LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)"),
+            None,
+        ];
+
+        use arrow_array::Float64Array;
+        let tolerance_array: Arc<Float64Array> = Arc::new(Float64Array::from(vec![
+            Some(2.0),
+            Some(10.0),
+            Some(50.0),
+            Some(5.0),
+        ]));
+
+        let expected_array = create_array(
+            &[
+                Some("LINESTRING (0 0, 0 51, 50 20, 30 20, 7 32)"), // Tolerance 2.0
+                Some("LINESTRING (0 0, 0 51, 50 20, 7 32)"),        // Tolerance 10.0
+                Some("LINESTRING (0 0, 7 32)"),                     // Tolerance 50.0
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester
+                .invoke_arrays(vec![
+                    create_array(&input_wkt_array, &sedona_type),
+                    tolerance_array,
+                ])
+                .unwrap(),
+            &expected_array,
         );
     }
 }
