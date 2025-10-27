@@ -178,6 +178,115 @@ def test_st_buffer(eng, geom, dist, expected_area):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "dist", "buffer_style_parameters", "expected_area"),
+    [
+        (None, None, None, None),
+        ("POINT(100 90)", 50, "'quad_segs=8'", 7803.612880645131),
+        (
+            "LINESTRING(50 50,150 150,150 50)",
+            10,
+            "'endcap=round join=round'",
+            5016.204476944362,
+        ),
+        (
+            "POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))",
+            2,
+            "'join=miter'",
+            196.0,
+        ),
+        (
+            "LINESTRING(0 0, 10 0)",
+            5,
+            "'endcap=square'",
+            200.0,
+        ),
+        (
+            "POINT(0 0)",
+            10,
+            "'quad_segs=4'",
+            306.1467458920718,
+        ),
+        (
+            "POINT(0 0)",
+            10,
+            "'quad_segs=16'",
+            313.654849054594,
+        ),
+        (
+            "LINESTRING(0 0, 100 0, 100 100)",
+            5,
+            "'join=bevel'",
+            2065.536128806451,
+        ),
+        (
+            "LINESTRING(0 0, 50 0)",
+            10,
+            "'endcap=flat'",
+            1000.0,
+        ),
+        (
+            "POLYGON((0 0, 0 20, 20 20, 20 0, 0 0))",
+            -2,
+            "'join=round'",
+            256.0,
+        ),
+        (
+            "POLYGON((0 0, 0 100, 100 100, 100 0, 0 0), (20 20, 20 80, 80 80, 80 20, 20 20))",
+            5,
+            "'join=round quad_segs=4'",
+            9576.536686473019,
+        ),
+        (
+            "MULTIPOINT((10 10), (30 30))",
+            5,
+            "'quad_segs=8'",
+            156.0722576129026,
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(50 50, 60 60))",
+            3,
+            "'endcap=round join=round'",
+            141.0388264830308,
+        ),
+        (
+            "POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))",
+            0,
+            "'join=miter'",
+            100.0,
+        ),
+        (
+            "POINT(0 0)",
+            0.1,
+            "'quad_segs=8'",
+            0.031214451522580514,
+        ),
+        (
+            "LINESTRING(0 0, 50 0, 50 50)",
+            10,
+            "'join=miter miter_limit=2'",
+            2312.1445152258043,
+        ),
+        (
+            "LINESTRING(0 0, 0 100)",
+            10,
+            "'side=left'",
+            1000.0,
+        ),
+    ],
+)
+def test_st_buffer_style_parameters(
+    eng, geom, dist, buffer_style_parameters, expected_area
+):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Area(ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)}, {val_or_null(buffer_style_parameters)}))",
+        expected_area,
+        numeric_epsilon=1e-9,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
