@@ -122,12 +122,10 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     executor.execute_wkb_void(|wkb| {
         match (wkb, distance_iter.next().unwrap()) {
             (Some(wkb), Some(distance)) => {
-                invoke_scalar(&wkb, distance, &params, &mut builder)?;
-                builder.append_value([]);
+                builder.append_value(invoke_scalar(&wkb, distance, &params)?);
             }
             _ => builder.append_null(),
         }
-
         Ok(())
     })?;
 
@@ -138,8 +136,7 @@ fn invoke_scalar(
     geos_geom: &geos::Geometry,
     distance: f64,
     params: &BufferParams,
-    writer: &mut impl std::io::Write,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let geometry = geos_geom
         .buffer_with_params(distance, params)
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
@@ -147,8 +144,7 @@ fn invoke_scalar(
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
 
-    writer.write_all(wkb.as_ref())?;
-    Ok(())
+    Ok(wkb.into())
 }
 
 fn extract_optional_string(arg: Option<&ColumnarValue>) -> Result<Option<String>> {
