@@ -14,24 +14,32 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::DataFusionError;
-use datafusion_common::{error::Result, exec_err};
+use datafusion_common::{error::Result, exec_err, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::{BufferParams, Geom};
+use geo::algorithm::buffer::{Buffer, BufferStyle};
+use geo_types::Polygon;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_functions::executor::WkbExecutor;
+use sedona_geometry::is_empty::is_geometry_empty;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
+use wkb::{
+    reader::Wkb,
+    writer::{write_geometry, WriteOptions},
+    Endianness,
+};
 
-use crate::executor::GeosExecutor;
+use crate::to_geo::item_to_geometry;
 
-/// ST_Buffer() implementation using the geos crate
+/// ST_Buffer() implementation using buffer calculation
 pub fn st_buffer_impl() -> ScalarKernelRef {
     Arc::new(STBuffer {})
 }
@@ -54,35 +62,29 @@ impl SedonaScalarKernel for STBuffer {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Default params
-        let params_builder = BufferParams::builder();
-
-        let params = params_builder
-            .build()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
         // Extract the constant scalar value before looping over the input geometries
-        let distance: Option<f64>;
+        let params: Option<BufferStyle<f64>>;
         let arg1 = args[1].cast_to(&DataType::Float64, None)?;
         if let ColumnarValue::Scalar(scalar_arg) = &arg1 {
             if scalar_arg.is_null() {
-                distance = None;
+                params = None;
             } else {
-                distance = Some(f64::try_from(scalar_arg.clone())?);
+                let distance = f64::try_from(scalar_arg.clone())?;
+                params = Some(BufferStyle::new(distance));
             }
         } else {
             return exec_err!("Invalid distance: {:?}", args[1]);
         }
 
-        let executor = GeosExecutor::new(arg_types, args);
+        let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
-        executor.execute_wkb_void(|wkb| {
-            match (wkb, distance) {
-                (Some(wkb), Some(distance)) => {
-                    invoke_scalar(&wkb, distance, &params, &mut builder)?;
+        executor.execute_wkb_void(|maybe_wkb| {
+            match (maybe_wkb, params.clone()) {
+                (Some(wkb), Some(params)) => {
+                    invoke_scalar(&wkb, params, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -96,19 +98,40 @@ impl SedonaScalarKernel for STBuffer {
 }
 
 fn invoke_scalar(
-    geos_geom: &geos::Geometry,
-    distance: f64,
-    params: &BufferParams,
+    wkb: &Wkb,
+    params: BufferStyle<f64>,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let geometry = geos_geom
-        .buffer_with_params(distance, params)
+    // PostGIS returns POLYGON EMPTY for all empty geometries
+    let is_empty = is_geometry_empty(wkb).map_err(|e| DataFusionError::External(Box::new(e)))?;
+    if is_empty {
+        let empty_polygon = Polygon::<f64>::empty();
+        write_geometry(
+            writer,
+            &empty_polygon,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
+        return Ok(());
+    }
 
-    writer.write_all(wkb.as_ref())?;
+    let geom = item_to_geometry(wkb)?;
+
+    let buffer = geom.buffer_with_style(params);
+
+    // Convert type to geo::Geometry
+    let geometry = geo::Geometry::MultiPolygon(buffer);
+
+    write_geometry(
+        writer,
+        &geometry,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .map_err(|e| DataFusionError::External(Box::new(e)))?;
     Ok(())
 }
 
