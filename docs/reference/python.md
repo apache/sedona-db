@@ -25,3 +25,5 @@
 ::: sedonadb.testing
 
 ::: sedonadb.dbapi
+
+::: sedonadb.udf

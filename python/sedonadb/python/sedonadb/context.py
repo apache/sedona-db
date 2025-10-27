@@ -170,6 +170,40 @@ class SedonaContext:
         """
         return DataFrame(self._impl, self._impl.sql(sql), self.options)
 
+    def register_udf(self, udf: Any):
+        """Register a user-defined function
+
+        Args:
+            udf: An object implementing the DataFusion PyCapsule protocol
+                (i.e., `__datafusion_scalar_udf__`) or a function annotated
+                with [arrow_udf][sedonadb.udf.arrow_udf].
+
+        Examples:
+
+            >>> import pyarrow as pa
+            >>> from sedonadb import udf
+            >>> sd = sedona.db.connect()
+            >>> @udf.arrow_udf(pa.int64(), [udf.STRING])
+            ... def char_count(arg0):
+            ...     arg0 = pa.array(arg0.to_array())
+            ...
+            ...     return pa.array(
+            ...         (len(item) for item in arg0.to_pylist()),
+            ...         pa.int64()
+            ...     )
+            ...
+            >>> sd.register_udf(char_count)
+            >>> sd.sql("SELECT char_count('abcde') as col").show()
+            ┌───────┐
+            │  col  │
+            │ int64 │
+            ╞═══════╡
+            │     5 │
+            └───────┘
+
+        """
+        self._impl.register_udf(udf)
+
 
 def connect() -> SedonaContext:
     """Create a new [SedonaContext][sedonadb.context.SedonaContext]"""

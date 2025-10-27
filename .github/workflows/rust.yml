@@ -48,6 +48,7 @@ env:
 jobs:
   rust:
     strategy:
+      fail-fast: false
       matrix:
         name: ["clippy", "docs", "test", "build"]
 

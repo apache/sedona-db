@@ -150,9 +150,12 @@ impl ArgMatcher {
 
     /// Matches the given Arrow type using PartialEq
     pub fn is_arrow(data_type: DataType) -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsExact {
-            exact_type: SedonaType::Arrow(data_type),
-        })
+        Self::is_exact(SedonaType::Arrow(data_type))
+    }
+
+    /// Matches the given [SedonaType] using PartialEq
+    pub fn is_exact(exact_type: SedonaType) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsExact { exact_type })
     }
 
     /// Matches any geography or geometry argument without considering Crs
