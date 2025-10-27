@@ -184,30 +184,27 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
             )));
         };
 
-        match key.to_lowercase().as_str() {
-            "endcap" => {
-                params_builder = params_builder.end_cap_style(parse_cap_style(value)?);
-            }
-            "join" => {
-                params_builder = params_builder.join_style(parse_join_style(value)?);
-            }
-            "side" => {
-                params_builder = params_builder.single_sided(parse_side(value)?);
-            }
-            "mitre_limit" | "miter_limit" => {
-                let limit: f64 = parse_number(value, "mitre_limit")?;
-                params_builder = params_builder.mitre_limit(limit);
-            }
-            "quad_segs" | "quadrant_segments" => {
-                let segs = parse_number(value, "quadrant_segments")?;
-                params_builder = params_builder.quadrant_segments(segs);
-            }
-            _ => {
-                return Err(DataFusionError::Execution(format!(
-                    "Invalid buffer parameter: {} (accept: 'endcap', 'join', 'mitre_limit', 'miter_limit', 'quad_segs' and 'side')",
-                    key.to_lowercase()
-                )));
-            }
+        if key.eq_ignore_ascii_case("endcap") {
+            params_builder = params_builder.end_cap_style(parse_cap_style(value)?);
+        } else if key.eq_ignore_ascii_case("join") {
+            params_builder = params_builder.join_style(parse_join_style(value)?);
+        } else if key.eq_ignore_ascii_case("side") {
+            params_builder = params_builder.single_sided(is_single_sided(value)?);
+        } else if key.eq_ignore_ascii_case("mitre_limit") || key.eq_ignore_ascii_case("miter_limit")
+        {
+            let limit: f64 = parse_number(value, "mitre_limit")?;
+            params_builder = params_builder.mitre_limit(limit);
+        } else if key.eq_ignore_ascii_case("quad_segs")
+            || key.eq_ignore_ascii_case("quadrant_segments")
+        {
+            let segs = parse_number(value, "quadrant_segments")?;
+            params_builder = params_builder.quadrant_segments(segs);
+        } else {
+            return Err(DataFusionError::Execution(format!(
+                "Invalid buffer parameter: {} \
+                (accept: 'endcap', 'join', 'mitre_limit', 'miter_limit', 'quad_segs', 'quadrant_segments' and 'side')",
+                key
+            )));
         }
     }
 
@@ -217,37 +214,45 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
 }
 
 fn parse_cap_style(value: &str) -> Result<CapStyle> {
-    match value.to_lowercase().as_str() {
-        "round" => Ok(CapStyle::Round),
-        "flat" | "butt" => Ok(CapStyle::Flat),
-        "square" => Ok(CapStyle::Square),
-        _ => Err(DataFusionError::Execution(format!(
+    if value.eq_ignore_ascii_case("round") {
+        Ok(CapStyle::Round)
+    } else if value.eq_ignore_ascii_case("flat") {
+        Ok(CapStyle::Flat)
+    } else if value.eq_ignore_ascii_case("square") {
+        Ok(CapStyle::Square)
+    } else {
+        Err(DataFusionError::Execution(format!(
             "Invalid endcap style: '{}'. Valid options: round, flat, butt, square",
             value
-        ))),
+        )))
     }
 }
 
 fn parse_join_style(value: &str) -> Result<JoinStyle> {
-    match value.to_lowercase().as_str() {
-        "round" => Ok(JoinStyle::Round),
-        "mitre" | "miter" => Ok(JoinStyle::Mitre),
-        "bevel" => Ok(JoinStyle::Bevel),
-        _ => Err(DataFusionError::Execution(format!(
+    if value.eq_ignore_ascii_case("round") {
+        Ok(JoinStyle::Round)
+    } else if value.eq_ignore_ascii_case("mitre") || value.eq_ignore_ascii_case("miter") {
+        Ok(JoinStyle::Mitre)
+    } else if value.eq_ignore_ascii_case("bevel") {
+        Ok(JoinStyle::Bevel)
+    } else {
+        Err(DataFusionError::Execution(format!(
             "Invalid join style: '{}'. Valid options: round, mitre, miter, bevel",
             value
-        ))),
+        )))
     }
 }
 
-fn parse_side(value: &str) -> Result<bool> {
-    match value.to_lowercase().as_str() {
-        "both" => Ok(false),
-        "left" | "right" => Ok(true),
-        _ => Err(DataFusionError::Execution(format!(
+fn is_single_sided(value: &str) -> Result<bool> {
+    if value.eq_ignore_ascii_case("both") {
+        Ok(false)
+    } else if value.eq_ignore_ascii_case("left") || value.eq_ignore_ascii_case("right") {
+        Ok(true)
+    } else {
+        Err(DataFusionError::Execution(format!(
             "Invalid side: '{}'. Valid options: both, left, right",
             value
-        ))),
+        )))
     }
 }
 
@@ -489,7 +494,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             err.message(),
-            "Invalid buffer parameter: unknown_param (accept: 'endcap', 'join', 'mitre_limit', 'miter_limit', 'quad_segs' and 'side')"
+            "Invalid buffer parameter: unknown_param (accept: 'endcap', 'join', 'mitre_limit', 'miter_limit', 'quad_segs', 'quadrant_segments' and 'side')"
         );
     }
 
