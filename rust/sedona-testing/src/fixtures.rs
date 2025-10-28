@@ -42,9 +42,6 @@ pub const MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB: [u8; 38] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z-coordinate of point
 ];
 
-/// EWKB (Extended WKB) fixtures with SRID information
-/// These are hard-coded EWKB byte arrays for testing SRID functionality
-
 /// EWKB for POINT (1 2) with SRID 4326
 /// Little endian, geometry type 1 (POINT) with SRID flag (0x20000000)
 pub const POINT_WITH_SRID_4326_EWKB: [u8; 25] = [
@@ -140,7 +137,7 @@ pub const MULTIPOINT_WITH_SRID_4326_EWKB: [u8; 55] = [
 
 /// EWKB for GEOMETRYCOLLECTION (POINT (1 2)) with SRID 4326
 /// Little endian, geometry type 7 (GEOMETRYCOLLECTION) with SRID flag
-pub const GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB: [u8; 34] = [
+pub const GEOMETRYCOLLECTION_POINT_WITH_SRID_4326_EWKB: [u8; 34] = [
     0x01, // byte-order
     0x07, 0x00, 0x00, 0x20, // geometry type 7 (GEOMETRYCOLLECTION) with SRID flag
     0xe6, 0x10, 0x00, 0x00, // SRID 4326
@@ -150,6 +147,52 @@ pub const GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB: [u8; 34] = [
     0x01, 0x00, 0x00, 0x00, // geometry type 1 (POINT) - no SRID flag
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // x = 1.0
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+];
+
+/// EWKB for GEOMETRYCOLLECTION (POINT Z (1 2 3)) with SRID 4326
+/// Little endian, geometry type 7 (GEOMETRYCOLLECTION) with SRID flag; nested POINT Z (Z flag set)
+pub const GEOMETRYCOLLECTION_POINT_Z_WITH_SRID_4326_EWKB: [u8; 42] = [
+    0x01, // byte-order
+    0x07, 0x00, 0x00, 0x20, // geometry type 7 (GEOMETRYCOLLECTION) with SRID flag
+    0xe6, 0x10, 0x00, 0x00, // SRID 4326
+    0x01, 0x00, 0x00, 0x00, // number of geometries (1)
+    // Nested POINT Z
+    0x01, // byte-order
+    0x01, 0x00, 0x00, 0x80, // geometry type 1 (POINT) with Z flag
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // x = 1.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z = 3.0
+];
+
+/// EWKB for GEOMETRYCOLLECTION (POINT M (1 2 4)) with SRID 4326
+/// Little endian, geometry type 7 (GEOMETRYCOLLECTION) with SRID flag; nested POINT M (M flag set)
+pub const GEOMETRYCOLLECTION_POINT_M_WITH_SRID_4326_EWKB: [u8; 42] = [
+    0x01, // byte-order
+    0x07, 0x00, 0x00, 0x20, // geometry type 7 (GEOMETRYCOLLECTION) with SRID flag
+    0xe6, 0x10, 0x00, 0x00, // SRID 4326
+    0x01, 0x00, 0x00, 0x00, // number of geometries (1)
+    // Nested POINT M
+    0x01, // byte-order
+    0x01, 0x00, 0x00, 0x40, // geometry type 1 (POINT) with M flag
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // x = 1.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x40, // m = 4.0
+];
+
+/// EWKB for GEOMETRYCOLLECTION (POINT ZM (1 2 3 4)) with SRID 4326
+/// Little endian, geometry type 7 (GEOMETRYCOLLECTION) with SRID flag; nested POINT ZM (Z and M flags set)
+pub const GEOMETRYCOLLECTION_POINT_ZM_WITH_SRID_4326_EWKB: [u8; 50] = [
+    0x01, // byte-order
+    0x07, 0x00, 0x00, 0x20, // geometry type 7 (GEOMETRYCOLLECTION) with SRID flag
+    0xe6, 0x10, 0x00, 0x00, // SRID 4326
+    0x01, 0x00, 0x00, 0x00, // number of geometries (1)
+    // Nested POINT ZM
+    0x01, // byte-order
+    0x01, 0x00, 0x00, 0xc0, // geometry type 1 (POINT) with Z and M flags
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // x = 1.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y = 2.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // z = 3.0
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x40, // m = 4.0
 ];
 
 /// EWKB for POINT EMPTY with SRID 4326

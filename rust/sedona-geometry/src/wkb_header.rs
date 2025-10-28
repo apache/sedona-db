@@ -519,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn ewkb_basic() {
+    fn ewkb() {
         use sedona_testing::fixtures::*;
 
         // Test POINT with SRID 4326
@@ -549,6 +549,57 @@ mod tests {
         assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
         assert_eq!(header.first_xy(), (1.0, 2.0));
         assert_eq!(header.dimensions().unwrap(), Dimensions::Xyzm);
+
+        // Test GEOMETRYCOLLECTION with SRID 4326
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_POINT_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
+
+        // Test GEOMETRYCOLLECTION Z with SRID 4326
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_POINT_Z_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        // Outer dimension specified as Xy, but inner dimension is Xyz
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xyz);
+
+        // Test GEOMETRYCOLLECTION M with SRID 4326
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_POINT_M_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        // Outer dimension specified as Xy, but inner dimension is Xym
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xym);
+
+        // Test GEOMETRYCOLLECTION ZM with SRID 4326
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_POINT_ZM_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        // Outer dimension specified as Xy, but inner dimension is Xyzm
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xyzm);
     }
 
     #[test]
@@ -593,21 +644,21 @@ mod tests {
         assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
     }
 
-    #[test]
-    fn geometrycollection_with_srid() {
-        use sedona_testing::fixtures::*;
+    // #[test]
+    // fn geometrycollection_with_srid() {
+    //     use sedona_testing::fixtures::*;
 
-        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB).unwrap();
-        assert_eq!(header.srid(), 4326);
-        assert_eq!(
-            header.geometry_type_id().unwrap(),
-            GeometryTypeId::GeometryCollection
-        );
-        assert_eq!(header.size(), 1);
-        assert_eq!(header.first_xy(), (1.0, 2.0));
-        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
-        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
-    }
+    //     let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB).unwrap();
+    //     assert_eq!(header.srid(), 4326);
+    //     assert_eq!(
+    //         header.geometry_type_id().unwrap(),
+    //         GeometryTypeId::GeometryCollection
+    //     );
+    //     assert_eq!(header.size(), 1);
+    //     assert_eq!(header.first_xy(), (1.0, 2.0));
+    //     assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+    //     assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
+    // }
 
     #[test]
     fn srid_empty_geometries_with_srid() {
