@@ -224,28 +224,24 @@ impl<'a> WkbBuffer<'a> {
             self.read_u32()?;
         }
 
-        if matches!(
-            geometry_type_id,
-            GeometryTypeId::LineString | GeometryTypeId::Polygon
-        ) {
-            let size = self.read_u32()?;
-
-            // (NaN, NaN) for empty geometries
-            if size == 0 {
-                return Ok((f64::NAN, f64::NAN));
+        match geometry_type_id {
+            GeometryTypeId::LineString => {
+                let size = self.read_u32()?;
+                if size == 0 {
+                    return Ok((f64::NAN, f64::NAN));
+                }
             }
-
-            // For POLYGON, after the number of rings, the next 4 bytes are the
-            // number of points in the exterior ring. We must skip that count to
-            // land on the first coordinate's x value.
-            if geometry_type_id == GeometryTypeId::Polygon {
+            GeometryTypeId::Polygon => {
+                let size = self.read_u32()?;
+                if size == 0 {
+                    return Ok((f64::NAN, f64::NAN));
+                }
                 let ring0_num_points = self.read_u32()?;
-
-                // (NaN, NaN) for empty first ring
                 if ring0_num_points == 0 {
                     return Ok((f64::NAN, f64::NAN));
                 }
             }
+            _ => {}
         }
 
         let x = self.read_coord()?;
@@ -643,22 +639,6 @@ mod tests {
         assert_eq!(header.first_xy(), (1.0, 2.0));
         assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
     }
-
-    // #[test]
-    // fn geometrycollection_with_srid() {
-    //     use sedona_testing::fixtures::*;
-
-    //     let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB).unwrap();
-    //     assert_eq!(header.srid(), 4326);
-    //     assert_eq!(
-    //         header.geometry_type_id().unwrap(),
-    //         GeometryTypeId::GeometryCollection
-    //     );
-    //     assert_eq!(header.size(), 1);
-    //     assert_eq!(header.first_xy(), (1.0, 2.0));
-    //     assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
-    //     assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
-    // }
 
     #[test]
     fn srid_empty_geometries_with_srid() {
