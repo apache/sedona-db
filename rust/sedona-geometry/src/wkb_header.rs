@@ -74,11 +74,14 @@ impl WkbHeader {
 
         let mut wkb_buffer = WkbBuffer::new(buf); // Reset: TODO: clean up later
 
-        let first_geom_idx = wkb_buffer.first_geom_idx()?; // ERROR HERE
+        let first_geom_idx = wkb_buffer.first_geom_idx()?;
         if let Some(i) = first_geom_idx {
             // For parse_dimensions, we need to pass the buffer starting from the geometry header
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
-            first_geom_dimensions = Some(wkb_buffer.parse_dimensions()?);
+                                                            // Parse dimension
+            wkb_buffer.read_endian()?;
+            let code = wkb_buffer.read_u32()?;
+            first_geom_dimensions = Some(calc_dimensions(code)?);
 
             // For first_xy_coord, we need to pass the buffer starting from the geometry header
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
@@ -245,8 +248,8 @@ impl<'a> WkbBuffer<'a> {
             }
         }
 
-        let x = self.parse_coord()?;
-        let y = self.parse_coord()?;
+        let x = self.read_coord()?;
+        let y = self.read_coord()?;
         Ok((x, y))
     }
 
@@ -297,7 +300,7 @@ impl<'a> WkbBuffer<'a> {
     }
 
     // Given a buffer starting at the coordinate itself, parse the x and y coordinates
-    fn parse_coord(&mut self) -> Result<f64, SedonaGeometryError> {
+    fn read_coord(&mut self) -> Result<f64, SedonaGeometryError> {
         if self.remaining < 8 {
             return Err(SedonaGeometryError::Invalid(format!(
                 "Invalid WKB: buffer too small. At offset: {}. Need 8 bytes.",
@@ -339,14 +342,6 @@ impl<'a> WkbBuffer<'a> {
 
         Ok(coord)
     }
-
-    // Parses the top-level dimension of the geometry
-    fn parse_dimensions(&mut self) -> Result<Dimensions, SedonaGeometryError> {
-        self.read_endian()?;
-
-        let code = self.read_u32()?;
-        calc_dimensions(code)
-    }
 }
 
 fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
@@ -374,7 +369,7 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
         2 => Ok(Dimensions::Xym),
         3 => Ok(Dimensions::Xyzm),
         _ => Err(SedonaGeometryError::Invalid(format!(
-            "Unexpected code parse_dimensions: {:?}",
+            "Unexpected code: {:?}",
             code
         ))),
     }
