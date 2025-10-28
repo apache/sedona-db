@@ -52,7 +52,7 @@ pub fn st_start_point_udf() -> SedonaScalarUDF {
 fn st_start_point_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the start point of a LINESTRING geometry. Returns NULL if the geometry is not a LINESTRING.",
+        "Returns the start point of a geometry. Returns NULL if the geometry is empty.",
         "ST_StartPoint (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry")
@@ -75,7 +75,7 @@ pub fn st_end_point_udf() -> SedonaScalarUDF {
 fn st_end_point_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the end point of a LINESTRING geometry. Returns NULL if the geometry is not a LINESTRING.",
+        "Returns the end point of a LINESTRING geometry. Returns NULL if the geometry is empty or not a LINESTRING.",
         "ST_EndPoint (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry")
@@ -114,8 +114,8 @@ impl SedonaScalarKernel for STStartOrEndPoint {
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                if let Some(coord) = extract_first_geometry(&wkb, self.from_start) {
-                    if write_wkb_start_point(&mut builder, coord).is_err() {
+                if let Some(coord) = extract_start_or_end_coord(&wkb, self.from_start) {
+                    if write_wkb_point_from_coord(&mut builder, coord).is_err() {
                         return sedona_internal_err!("Failed to write WKB point header");
                     };
                     builder.append_value([]);
@@ -131,8 +131,7 @@ impl SedonaScalarKernel for STStartOrEndPoint {
     }
 }
 
-fn write_wkb_coord(
-
+fn write_wkb_point_from_coord(
     buf: &mut impl Write,
     coord: impl CoordTrait<T = f64>,
 ) -> Result<(), SedonaGeometryError> {
@@ -143,7 +142,6 @@ fn write_wkb_coord(
 // - ST_StartPoint returns result for all types of geometries
 // - ST_EndPoint returns result only for LINESTRING
 fn extract_start_or_end_coord<'a>(
-
     wkb: &'a wkb::reader::Wkb<'a>,
     from_start: bool,
 ) -> Option<wkb::reader::Coord<'a>> {
@@ -151,7 +149,10 @@ fn extract_start_or_end_coord<'a>(
         (geo_traits::GeometryType::Point(point), true) => point.coord(),
         (geo_traits::GeometryType::LineString(line_string), true) => line_string.coord(0),
         (geo_traits::GeometryType::LineString(line_string), false) => {
-            line_string.coord(line_string.num_coords() - 1)
+            match line_string.num_coords() {
+                0 => None,
+                n => line_string.coord(n - 1),
+            }
         }
         (geo_traits::GeometryType::Polygon(polygon), true) => match polygon.exterior() {
             Some(ring) => ring.coord(0),
@@ -178,7 +179,7 @@ fn extract_start_or_end_coord<'a>(
         }
         (geo_traits::GeometryType::GeometryCollection(geometry_collection), true) => {
             match geometry_collection.geometry(0) {
-                Some(geometry) => extract_first_geometry(geometry, from_start),
+                Some(geometry) => extract_start_or_end_coord(geometry, from_start),
                 None => None,
             }
         }
@@ -230,6 +231,13 @@ mod tests {
                 Some("MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))"),
                 Some("MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)))"),
                 Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))"),
+                Some("POINT EMPTY"),
+                Some("LINESTRING EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("MULTIPOINT EMPTY"),
+                Some("MULTILINESTRING EMPTY"),
+                Some("MULTIPOLYGON EMPTY"),
+                Some("GEOMETRYCOLLECTION EMPTY"),
                 None,
             ],
             &sedona_type,
@@ -248,6 +256,13 @@ mod tests {
                 Some("POINT (0 0)"),
                 Some("POINT (1 2)"),
                 None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             &WKB_GEOMETRY,
         );
@@ -261,6 +276,13 @@ mod tests {
                 Some("POINT Z (5 6 7)"),
                 Some("POINT M (5 6 7)"),
                 Some("POINT ZM (5 6 7 8)"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
