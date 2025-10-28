@@ -131,7 +131,7 @@ impl RasterBuilder {
     /// # Examples
     /// ```
     /// use sedona_raster::builder::{RasterBuilder, RasterMetadata, BoundingBox};
-    /// 
+    ///
     /// let mut builder = RasterBuilder::new(10);
     /// let metadata = RasterMetadata {
     ///     width: 100, height: 100,
@@ -486,7 +486,7 @@ pub trait MetadataRef {
 pub trait BoundingBoxRef {
     /// Minimum X coordinate
     fn min_x(&self) -> f64;
-    /// Minimum Y coordinate  
+    /// Minimum Y coordinate
     fn min_y(&self) -> f64;
     /// Maximum X coordinate
     fn max_x(&self) -> f64;
@@ -740,7 +740,7 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 }
 
-/// Implementation of BandsRef for accessing all bands in a raster  
+/// Implementation of BandsRef for accessing all bands in a raster
 struct BandsRefImpl<'a> {
     bands_list: &'a ListArray,
     raster_index: usize,
@@ -756,13 +756,20 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
     /// Get a specific band by number (1-based index)
     fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, String> {
         if number == 0 {
-            return Err(format!("Invalid band number {}: band numbers must be 1-based", number));
+            return Err(format!(
+                "Invalid band number {}: band numbers must be 1-based",
+                number
+            ));
         }
         // By convention, band numbers are 1-based.
         // Convert to zero-based index.
         let index = number - 1;
         if index >= self.len() {
-            return Err(format!("Band number {} is out of range: this raster has {} bands", number, self.len()));
+            return Err(format!(
+                "Band number {} is out of range: this raster has {} bands",
+                number,
+                self.len()
+            ));
         }
 
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
@@ -1009,7 +1016,9 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     }
 
     fn bounding_box(&self) -> Option<&dyn BoundingBoxRef> {
-        self.bbox.as_ref().map(|bbox_ref| bbox_ref as &dyn BoundingBoxRef)
+        self.bbox
+            .as_ref()
+            .map(|bbox_ref| bbox_ref as &dyn BoundingBoxRef)
     }
 
     fn bands(&self) -> &dyn BandsRef {
