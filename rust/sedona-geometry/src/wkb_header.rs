@@ -54,12 +54,10 @@ impl WkbHeader {
 
         let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
 
-        // let mut i = 5;
         let mut srid = 0;
         // if EWKB
         if geometry_type & SRID_FLAG_BIT != 0 {
             srid = wkb_buffer.read_u32()?;
-            // i = 9;
         }
 
         let size = if geometry_type_id == GeometryTypeId::Point {
@@ -68,9 +66,6 @@ impl WkbHeader {
         } else {
             wkb_buffer.read_u32()?
         };
-        // println!("geometry_type_id: {geometry_type_id:?}");
-        // println!("size: {size}");
-        // println!("buf: {:?}", &wkb_buffer.buf[wkb_buffer.offset..]);
 
         // Default values for empty geometries
         let first_x;
@@ -81,78 +76,18 @@ impl WkbHeader {
 
         let first_geom_idx = wkb_buffer.first_geom_idx()?; // ERROR HERE
         if let Some(i) = first_geom_idx {
-            // For simple geometries (POINT, LINESTRING, POLYGON), first_geom_idx returns 0
-            // But we need to skip the SRID if it's present
-            let mut buffer_start = i;
-            if geometry_type & SRID_FLAG_BIT != 0 {
-                // Skip endian (1) + geometry_type (4) + SRID (4) = 9 bytes
-                buffer_start = 9;
-            } else {
-                // Skip endian (1) + geometry_type (4) = 5 bytes
-                buffer_start = 5;
-            }
-
             // For parse_dimensions, we need to pass the buffer starting from the geometry header
-            println!("starting parse_dimensions buf: {:?}", &buf[i..]);
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
             first_geom_dimensions = Some(wkb_buffer.parse_dimensions()?);
-            // (first_x, first_y) = self.first_xy_coord(&buf[i..])?;
 
             // For first_xy_coord, we need to pass the buffer starting from the geometry header
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
-            println!(
-                "first_xy_coord: buf: {:?}",
-                &wkb_buffer.buf[wkb_buffer.offset..]
-            );
             (first_x, first_y) = wkb_buffer.first_xy_coord()?;
         } else {
             first_geom_dimensions = None;
             first_x = f64::NAN;
             first_y = f64::NAN;
         }
-
-        // if buf.len() < 5 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small".to_string(),
-        //     ));
-        // };
-
-        // let byte_order = buf[0];
-
-        // // Parse geometry type
-        // let geometry_type = self.read_u32(&buf[1..5], byte_order)?;
-
-        // let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
-
-        // let mut i = 5;
-        // let mut srid = 0;
-        // // if EWKB
-        // if geometry_type & SRID_FLAG_BIT != 0 {
-        //     srid = self.read_u32(&buf[5..9], byte_order)?;
-        //     i = 9;
-        // }
-
-        // let size = if geometry_type_id == GeometryTypeId::Point {
-        //     // Dummy value for a point
-        //     1
-        // } else {
-        //     self.read_u32(&buf[i..i + 4], byte_order)?
-        // };
-
-        // // Default values for empty geometries
-        // let first_x;
-        // let first_y;
-        // let first_geom_dimensions: Option<Dimensions>;
-
-        // let first_geom_idx = self.first_geom_idx(buf)?;
-        // if let Some(i) = first_geom_idx {
-        //     first_geom_dimensions = Some(self.parse_dimensions(&buf[i..])?);
-        //     (first_x, first_y) = self.first_xy_coord(&buf[i..])?;
-        // } else {
-        //     first_geom_dimensions = None;
-        //     first_x = f64::NAN;
-        //     first_y = f64::NAN;
-        // }
 
         Ok(Self {
             geometry_type,
@@ -246,14 +181,11 @@ impl<'a> WkbBuffer<'a> {
             | GeometryTypeId::MultiLineString
             | GeometryTypeId::MultiPolygon
             | GeometryTypeId::GeometryCollection => {
-                // let mut i = 9;
                 if geometry_type & SRID_FLAG_BIT != 0 {
-                    // i += 4;
                     // Skip the SRID
                     self.read_u32()?;
                 }
 
-                // let num_geometries = self.read_u32(&buf[5..9], byte_order)?;
                 let num_geometries = self.read_u32()?;
 
                 if num_geometries == 0 {
@@ -262,24 +194,17 @@ impl<'a> WkbBuffer<'a> {
 
                 // Recursive call to get the first geom of the first nested geometry
                 // Add to current offset of i
-                // let off = self.first_geom_idx(&buf[i..])?;
-                // if self.offset >= self.buf.len() {
-                //     return Ok(None);
-                // }
                 let mut nested_buffer = WkbBuffer::new(&self.buf[self.offset..]);
                 let off = nested_buffer.first_geom_idx()?;
-                // let off = self.first_geom_idx()?;
                 if let Some(off) = off {
                     Ok(Some(self.offset + off))
                 } else {
                     Ok(None)
                 }
             }
-            _ => {
-                return Err(SedonaGeometryError::Invalid(format!(
-                    "Unexpected geometry type: {geometry_type_id:?}"
-                )))
-            }
+            _ => Err(SedonaGeometryError::Invalid(format!(
+                "Unexpected geometry type: {geometry_type_id:?}"
+            ))),
         }
     }
 
@@ -291,12 +216,8 @@ impl<'a> WkbBuffer<'a> {
 
         let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
 
-        // 1 (byte_order) + 4 (geometry_type) = 5
-        // let mut i = 5;
-
         // Skip the SRID if it's present
         if geometry_type & SRID_FLAG_BIT != 0 {
-            // i += 4;
             self.read_u32()?;
         }
 
@@ -315,14 +236,12 @@ impl<'a> WkbBuffer<'a> {
             // number of points in the exterior ring. We must skip that count to
             // land on the first coordinate's x value.
             if geometry_type_id == GeometryTypeId::Polygon {
-                // let ring0_num_points = self.read_u32(&buf[i..i + 4], byte_order)?;
                 let ring0_num_points = self.read_u32()?;
 
                 // (NaN, NaN) for empty first ring
                 if ring0_num_points == 0 {
                     return Ok((f64::NAN, f64::NAN));
                 }
-                // i += 4;
             }
         }
 
@@ -423,15 +342,8 @@ impl<'a> WkbBuffer<'a> {
 
     // Parses the top-level dimension of the geometry
     fn parse_dimensions(&mut self) -> Result<Dimensions, SedonaGeometryError> {
-        // let byte_order = buf[0];
         self.read_endian()?;
-        println!("here: endian: {:?}", self.last_endian);
 
-        // let code = self.read_u32(&buf[1..5], byte_order)?;
-        println!(
-            "here: code: {:?}",
-            &self.buf[self.offset..self.offset + 4].to_vec()
-        );
         let code = self.read_u32()?;
         calc_dimensions(code)
     }
@@ -461,12 +373,10 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
         1 => Ok(Dimensions::Xyz),
         2 => Ok(Dimensions::Xym),
         3 => Ok(Dimensions::Xyzm),
-        _ => {
-            return Err(SedonaGeometryError::Invalid(format!(
-                "Unexpected code parse_dimensions: {:?}",
-                code
-            )))
-        }
+        _ => Err(SedonaGeometryError::Invalid(format!(
+            "Unexpected code parse_dimensions: {:?}",
+            code
+        ))),
     }
 }
 
