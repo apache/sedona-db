@@ -1020,6 +1020,14 @@ def test_st_pointm(eng, x, y, m, expected):
 @pytest.mark.parametrize(
     ("geometry", "expected"),
     [
+        (None, None),
+        ("POINT EMPTY", None),
+        ("LINESTRING EMPTY", None),
+        ("POLYGON EMPTY", None),
+        ("MULTIPOINT EMPTY", None),
+        ("MULTILINESTRING EMPTY", None),
+        ("MULTIPOLYGON EMPTY", None),
+        ("GEOMETRYCOLLECTION EMPTY", None),
         ("LINESTRING (1 2, 3 4, 5 6)", "POINT (1 2)"),
         ("LINESTRING Z (1 2 3, 3 4 5, 5 6 7)", "POINT Z (1 2 3)"),
         ("LINESTRING M (1 2 3, 3 4 5, 5 6 7)", "POINT M (1 2 3)"),

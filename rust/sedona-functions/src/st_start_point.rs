@@ -131,7 +131,8 @@ impl SedonaScalarKernel for STStartOrEndPoint {
     }
 }
 
-fn write_wkb_start_point(
+fn write_wkb_coord(
+
     buf: &mut impl Write,
     coord: impl CoordTrait<T = f64>,
 ) -> Result<(), SedonaGeometryError> {
@@ -141,7 +142,8 @@ fn write_wkb_start_point(
 
 // - ST_StartPoint returns result for all types of geometries
 // - ST_EndPoint returns result only for LINESTRING
-fn extract_first_geometry<'a>(
+fn extract_start_or_end_coord<'a>(
+
     wkb: &'a wkb::reader::Wkb<'a>,
     from_start: bool,
 ) -> Option<wkb::reader::Coord<'a>> {
