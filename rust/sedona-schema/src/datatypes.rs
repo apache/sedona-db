@@ -19,9 +19,11 @@ use datafusion_common::error::{DataFusionError, Result};
 use sedona_common::sedona_internal_err;
 use serde_json::Value;
 use std::fmt::{Debug, Display};
+use std::sync::LazyLock;
 
 use crate::crs::{deserialize_crs, Crs};
 use crate::extension_type::ExtensionType;
+use crate::raster::RasterSchema;
 
 /// Data types supported by Sedona that resolve to a concrete Arrow DataType
 #[derive(Debug, PartialEq, Clone)]
@@ -29,6 +31,7 @@ pub enum SedonaType {
     Arrow(DataType),
     Wkb(Edges, Crs),
     WkbView(Edges, Crs),
+    Raster(RasterSchema),
 }
 
 impl From<DataType> for SedonaType {
@@ -72,6 +75,16 @@ pub const WKB_GEOGRAPHY: SedonaType = SedonaType::Wkb(Edges::Spherical, Crs::Non
 /// See [`WKB_GEOGRAPHY`]
 pub const WKB_VIEW_GEOGRAPHY: SedonaType = SedonaType::WkbView(Edges::Spherical, Crs::None);
 
+/// Sentinel for [`Sedona::RasterSchema`]
+///
+/// The CRS is stored within the raster schema.
+pub const RASTER: SedonaType = SedonaType::Raster(RasterSchema);
+
+/// Create a static value for the [`SedonaType::Raster`] that's initialized exactly once,
+/// on first access
+static RASTER_DATATYPE: LazyLock<DataType> =
+    LazyLock::new(|| DataType::Struct(RasterSchema::fields()));
+
 // Implementation details
 
 impl SedonaType {
@@ -88,6 +101,15 @@ impl SedonaType {
         let (edges, crs) = deserialize_edges_and_crs(&extension.extension_metadata)?;
         if extension.extension_name == "geoarrow.wkb" {
             sedona_type_wkb(edges, crs, extension.storage_type)
+        } else if extension.extension_name == "sedona.raster" {
+            if extension.storage_type == *RASTER_DATATYPE {
+                Ok(RASTER)
+            } else {
+                sedona_internal_err!(
+                    "Extension type sedona.raster has unexpected storage type: {}",
+                    extension.storage_type
+                )
+            }
         } else {
             sedona_internal_err!(
                 "Extension type not implemented: <{}>:{}",
@@ -111,6 +133,7 @@ impl SedonaType {
             SedonaType::Arrow(data_type) => data_type,
             SedonaType::Wkb(_, _) => &DataType::Binary,
             SedonaType::WkbView(_, _) => &DataType::BinaryView,
+            SedonaType::Raster(_) => &RASTER_DATATYPE,
         }
     }
 
@@ -119,6 +142,7 @@ impl SedonaType {
         match self {
             SedonaType::Arrow(_) => None,
             SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => Some("geoarrow.wkb"),
+            SedonaType::Raster(_) => Some("sedona.raster"),
         }
     }
 
@@ -132,6 +156,11 @@ impl SedonaType {
                     Some(serialize_edges_and_crs(edges, crs)),
                 ))
             }
+            SedonaType::Raster(_) => Some(ExtensionType::new(
+                self.extension_name().unwrap(),
+                self.storage_type().clone(),
+                None,
+            )),
             _ => None,
         }
     }
@@ -150,6 +179,7 @@ impl SedonaType {
             SedonaType::Wkb(Edges::Spherical, _) | SedonaType::WkbView(Edges::Spherical, _) => {
                 "geography".to_string()
             }
+            SedonaType::Raster(_) => "raster".to_string(),
             SedonaType::Arrow(data_type) => match data_type {
                 DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => "utf8".to_string(),
                 DataType::Binary
@@ -195,6 +225,7 @@ impl SedonaType {
             (SedonaType::WkbView(edges, _), SedonaType::WkbView(other_edges, _)) => {
                 edges == other_edges
             }
+            (SedonaType::Raster(_), SedonaType::Raster(_)) => true,
             _ => false,
         }
     }
@@ -208,6 +239,7 @@ impl Display for SedonaType {
             SedonaType::Arrow(data_type) => Display::fmt(data_type, f),
             SedonaType::Wkb(edges, crs) => display_geometry("Wkb", edges, crs, f),
             SedonaType::WkbView(edges, crs) => display_geometry("WkbView", edges, crs, f),
+            SedonaType::Raster(_) => write!(f, "Raster"),
         }
     }
 }

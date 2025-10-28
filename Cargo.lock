@@ -5118,6 +5118,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-raster"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "sedona-common",
+ "sedona-schema",
+]
+
+[[package]]
 name = "sedona-s2geography"
 version = "0.2.0"
 dependencies = [
