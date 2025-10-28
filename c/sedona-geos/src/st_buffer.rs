@@ -119,9 +119,28 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     // Build BufferParams based on style parameters
     let params = parse_buffer_params(buffer_style_params.as_deref())?;
 
+    let is_single_sided = buffer_style_params
+        .as_ref()
+        .map(|s| s.eq_ignore_ascii_case("side="))
+        .unwrap_or(false);
+
+    let is_left = buffer_style_params
+        .as_ref()
+        .map(|s| s.eq_ignore_ascii_case("left"))
+        .unwrap_or(false);
+
+    let is_right = buffer_style_params
+        .as_ref()
+        .map(|s| s.eq_ignore_ascii_case("right"))
+        .unwrap_or(false);
+
     executor.execute_wkb_void(|wkb| {
         match (wkb, distance_iter.next().unwrap()) {
-            (Some(wkb), Some(distance)) => {
+            (Some(wkb), Some(mut distance)) => {
+                if is_single_sided && ((is_left && distance < 0.0) || (is_right && distance > 0.0))
+                {
+                    distance = -distance;
+                }
                 builder.append_value(invoke_scalar(&wkb, distance, &params)?);
             }
             _ => builder.append_null(),
@@ -170,6 +189,7 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
     };
 
     let mut params_builder = BufferParams::builder();
+    let mut end_cap_specified = false;
 
     for param in params_str.split_whitespace() {
         let Some((key, value)) = param.split_once('=') else {
@@ -180,10 +200,15 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
 
         if key.eq_ignore_ascii_case("endcap") {
             params_builder = params_builder.end_cap_style(parse_cap_style(value)?);
+            end_cap_specified = true;
         } else if key.eq_ignore_ascii_case("join") {
             params_builder = params_builder.join_style(parse_join_style(value)?);
         } else if key.eq_ignore_ascii_case("side") {
-            params_builder = params_builder.single_sided(is_single_sided(value)?);
+            let single_sided = is_single_sided(value)?;
+            if single_sided && !end_cap_specified {
+                params_builder = params_builder.end_cap_style(CapStyle::Square)
+            }
+            params_builder = params_builder.single_sided(single_sided);
         } else if key.eq_ignore_ascii_case("mitre_limit") || key.eq_ignore_ascii_case("miter_limit")
         {
             let limit: f64 = parse_number(value, "mitre_limit")?;
@@ -209,7 +234,7 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
 fn parse_cap_style(value: &str) -> Result<CapStyle> {
     if value.eq_ignore_ascii_case("round") {
         Ok(CapStyle::Round)
-    } else if value.eq_ignore_ascii_case("flat") {
+    } else if value.eq_ignore_ascii_case("flat") || value.eq_ignore_ascii_case("butt") {
         Ok(CapStyle::Flat)
     } else if value.eq_ignore_ascii_case("square") {
         Ok(CapStyle::Square)
@@ -495,5 +520,76 @@ mod tests {
     fn test_parse_buffer_params_quad_segs_out_of_range() {
         let result = parse_buffer_params(Some("quad_segs=-5"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_buffer_params_side_functional() {
+        let wkt_line = "LINESTRING(50 50, 150 150 ,150 50)";
+        let line = geos::Geometry::new_from_wkt(wkt_line).unwrap();
+        let buffer_distance = 100.0;
+
+        // BufferParams don't implement types that makes them testable
+        let result_params = parse_buffer_params(Some("side=right")).unwrap();
+        let expected_params = BufferParams::builder()
+            .end_cap_style(CapStyle::Square)
+            .single_sided(true)
+            .build()
+            .unwrap();
+
+        // Testing via behavior here
+        let result_buffer = line
+            .buffer_with_params(buffer_distance, &result_params)
+            .unwrap();
+        let expected_buffer = line
+            .buffer_with_params(buffer_distance, &expected_params)
+            .unwrap();
+
+        // Assert: Compare the resulting Geometry
+        assert!(result_buffer.equals_exact(&expected_buffer, 0.1).unwrap());
+    }
+
+    #[test]
+    fn test_parse_buffer_params_non_default_cap_with_side() {
+        let wkt_line = "LINESTRING(50 50, 150 150 ,150 50)";
+        let line = geos::Geometry::new_from_wkt(wkt_line).unwrap();
+        let result_params = parse_buffer_params(Some("side=right endcap=round")).unwrap();
+
+        // Assert (Expected): The cap should be Flat, and it should be single-sided
+        let expected_params = BufferParams::builder()
+            .end_cap_style(CapStyle::Round)
+            .single_sided(true)
+            .build()
+            .unwrap();
+
+        // Check functional equivalence by generating and comparing geometries
+        let buffer_distance = 84.3;
+
+        let result_buffer = line
+            .buffer_with_params(buffer_distance, &result_params)
+            .unwrap();
+        let expected_buffer = line
+            .buffer_with_params(buffer_distance, &expected_params)
+            .unwrap();
+
+        assert!(result_buffer.equals_exact(&expected_buffer, 0.1).unwrap());
+    }
+
+    #[test]
+    fn test_parse_buffer_params_explicit_default_side() {
+        let wkt_line = "LINESTRING (0 0, 1 0)";
+        let line = geos::Geometry::new_from_wkt(wkt_line).unwrap();
+        let buffer_distance = 0.1;
+
+        let result_params = parse_buffer_params(Some("side=both")).unwrap();
+        let expected_params = BufferParams::builder().build().unwrap();
+
+        let result_buffer = line
+            .buffer_with_params(buffer_distance, &result_params)
+            .unwrap();
+        let expected_buffer = line
+            .buffer_with_params(buffer_distance, &expected_params)
+            .unwrap();
+
+        assert!(result_buffer.equals_exact(&expected_buffer, 0.1).unwrap());
     }
 }

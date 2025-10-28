@@ -272,6 +272,25 @@ def test_st_buffer(eng, geom, dist, expected_area):
             "'side=left'",
             1000.0,
         ),
+        ("LINESTRING (50 50, 150 150, 150 50)", 100, "'side=right'", 16285.07633336958),
+        (
+            "POLYGON ((50 50, 50 150, 150 150, 150 50, 50 50))",
+            20,
+            "'side=left'",
+            19248.578060903223,
+        ),
+        (
+            "POLYGON ((50 50, 50 150, 150 150, 150 50, 50 50))",
+            20,
+            "'side=right endcap=flat'",
+            3600.0,
+        ),
+        (
+            "LINESTRING (50 50, 150 150, 150 50)",
+            100,
+            "'side=both'",
+            69888.089291866,
+        ),
     ],
 )
 def test_st_buffer_style_parameters(
