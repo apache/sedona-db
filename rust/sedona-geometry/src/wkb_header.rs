@@ -20,10 +20,13 @@ use geo_traits::Dimensions;
 use crate::error::SedonaGeometryError;
 use crate::types::GeometryTypeId;
 
+const Z_FLAG_BIT: u32 = 0x80000000;
+const M_FLAG_BIT: u32 = 0x40000000;
 const SRID_FLAG_BIT: u32 = 0x20000000;
 
 /// Fast-path WKB header parser
 /// Performs operations lazily and caches them after the first computation
+#[derive(Debug)]
 pub struct WkbHeader {
     geometry_type: u32,
     // Not applicable for a point
@@ -78,13 +81,24 @@ impl WkbHeader {
 
         let first_geom_idx = wkb_buffer.first_geom_idx()?; // ERROR HERE
         if let Some(i) = first_geom_idx {
-            // first_geom_dimensions = Some(self.parse_dimensions(&buf[i..])?);
+            // For simple geometries (POINT, LINESTRING, POLYGON), first_geom_idx returns 0
+            // But we need to skip the SRID if it's present
+            let mut buffer_start = i;
+            if geometry_type & SRID_FLAG_BIT != 0 {
+                // Skip endian (1) + geometry_type (4) + SRID (4) = 9 bytes
+                buffer_start = 9;
+            } else {
+                // Skip endian (1) + geometry_type (4) = 5 bytes
+                buffer_start = 5;
+            }
 
+            // For parse_dimensions, we need to pass the buffer starting from the geometry header
             println!("starting parse_dimensions buf: {:?}", &buf[i..]);
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
             first_geom_dimensions = Some(wkb_buffer.parse_dimensions()?);
             // (first_x, first_y) = self.first_xy_coord(&buf[i..])?;
 
+            // For first_xy_coord, we need to pass the buffer starting from the geometry header
             let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
             println!(
                 "first_xy_coord: buf: {:?}",
@@ -189,19 +203,7 @@ impl WkbHeader {
 
     /// Returns the top-level dimension of the WKB
     pub fn dimensions(&self) -> Result<Dimensions, SedonaGeometryError> {
-        let dimensions = match self.geometry_type / 1000 {
-            0 => Dimensions::Xy,
-            1 => Dimensions::Xyz,
-            2 => Dimensions::Xym,
-            3 => Dimensions::Xyzm,
-            _ => {
-                return Err(SedonaGeometryError::Invalid(format!(
-                    "Unexpected code: {}",
-                    self.geometry_type
-                )))
-            }
-        };
-        Ok(dimensions)
+        calc_dimensions(self.geometry_type)
     }
 
     /// Returns the dimensions of the first coordinate of the geometry
@@ -232,19 +234,9 @@ impl<'a> WkbBuffer<'a> {
     // non-collection geometry (POINT, LINESTRING, or POLYGON), or None if empty
     // For POINT, LINESTRING, POLYGON, returns 0 as it already is a non-collection geometry
     fn first_geom_idx(&mut self) -> Result<Option<usize>, SedonaGeometryError> {
-        // if buf.len() < 5 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small".to_string(),
-        //     ));
-        // }
-
-        // let byte_order = buf[0];
-        // let geometry_type = self.read_u32(&buf[1..5], byte_order)?;
-        println!("first_geom_idx: buf: {:?}", &self.buf[self.offset..]);
         self.read_endian()?;
         let geometry_type = self.read_u32()?;
         let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
-        println!("geometry_type_id: {geometry_type_id:?}");
 
         match geometry_type_id {
             GeometryTypeId::Point | GeometryTypeId::LineString | GeometryTypeId::Polygon => {
@@ -254,19 +246,6 @@ impl<'a> WkbBuffer<'a> {
             | GeometryTypeId::MultiLineString
             | GeometryTypeId::MultiPolygon
             | GeometryTypeId::GeometryCollection => {
-                // if buf.len() < 9 {
-                //     return Err(SedonaGeometryError::Invalid(
-                //         "Invalid WKB: buffer too small".to_string(),
-                //     ));
-                // }
-                // let num_geometries = self.read_u32(&buf[5..9], byte_order)?;
-                let num_geometries = self.read_u32()?;
-
-                if num_geometries == 0 {
-                    return Ok(None);
-                    // return Ok(Some(0))
-                }
-
                 // let mut i = 9;
                 if geometry_type & SRID_FLAG_BIT != 0 {
                     // i += 4;
@@ -274,9 +253,19 @@ impl<'a> WkbBuffer<'a> {
                     self.read_u32()?;
                 }
 
+                // let num_geometries = self.read_u32(&buf[5..9], byte_order)?;
+                let num_geometries = self.read_u32()?;
+
+                if num_geometries == 0 {
+                    return Ok(None);
+                }
+
                 // Recursive call to get the first geom of the first nested geometry
                 // Add to current offset of i
                 // let off = self.first_geom_idx(&buf[i..])?;
+                // if self.offset >= self.buf.len() {
+                //     return Ok(None);
+                // }
                 let mut nested_buffer = WkbBuffer::new(&self.buf[self.offset..]);
                 let off = nested_buffer.first_geom_idx()?;
                 // let off = self.first_geom_idx()?;
@@ -297,15 +286,7 @@ impl<'a> WkbBuffer<'a> {
     // Given a point, linestring, or polygon, return the first xy coordinate
     // If the geometry, is empty, (NaN, NaN) is returned
     fn first_xy_coord(&mut self) -> Result<(f64, f64), SedonaGeometryError> {
-        // if buf.len() < 5 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small -> first_xy".to_string(),
-        //     ));
-        // }
-
-        // let byte_order = buf[0];
         self.read_endian()?;
-        // let geometry_type = self.read_u32(&buf[1..5], byte_order)?;
         let geometry_type = self.read_u32()?;
 
         let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
@@ -323,34 +304,17 @@ impl<'a> WkbBuffer<'a> {
             geometry_type_id,
             GeometryTypeId::LineString | GeometryTypeId::Polygon
         ) {
-            // if buf.len() < i + 4 {
-            //     return Err(SedonaGeometryError::Invalid(format!(
-            //         "Invalid WKB: buffer too small -> first_xy3 {} is not < {}",
-            //         buf.len(),
-            //         i + 4
-            //     )));
-            // }
-            // let size = self.read_u32(&buf[i..i + 4], byte_order)?;
             let size = self.read_u32()?;
 
             // (NaN, NaN) for empty geometries
             if size == 0 {
                 return Ok((f64::NAN, f64::NAN));
             }
-            // + 4 for size
-            // i += 4;
 
             // For POLYGON, after the number of rings, the next 4 bytes are the
             // number of points in the exterior ring. We must skip that count to
             // land on the first coordinate's x value.
             if geometry_type_id == GeometryTypeId::Polygon {
-                // if buf.len() < i + 4 {
-                //     return Err(SedonaGeometryError::Invalid(format!(
-                //         "Invalid WKB: buffer too small -> polygon first ring size {} is not < {}",
-                //         buf.len(),
-                //         i + 4
-                //     )));
-                // }
                 // let ring0_num_points = self.read_u32(&buf[i..i + 4], byte_order)?;
                 let ring0_num_points = self.read_u32()?;
 
@@ -362,15 +326,6 @@ impl<'a> WkbBuffer<'a> {
             }
         }
 
-        // if buf.len() < i + 8 {
-        //     return Err(SedonaGeometryError::Invalid(format!(
-        //         "Invalid WKB: buffer too small -> first_xy4 {} is not < {}",
-        //         i + 8,
-        //         buf.len()
-        //     )));
-        // }
-        // let x = self.parse_coord(&buf[i..], byte_order)?;
-        // let y = self.parse_coord(&buf[i + 8..], byte_order)?;
         let x = self.parse_coord()?;
         let y = self.parse_coord()?;
         Ok((x, y))
@@ -396,11 +351,6 @@ impl<'a> WkbBuffer<'a> {
                 self.offset
             )));
         }
-        // if buf.len() < 4 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small".to_string(),
-        //     ));
-        // }
 
         let off = self.offset;
         let num = match self.last_endian {
@@ -429,11 +379,6 @@ impl<'a> WkbBuffer<'a> {
 
     // Given a buffer starting at the coordinate itself, parse the x and y coordinates
     fn parse_coord(&mut self) -> Result<f64, SedonaGeometryError> {
-        // if buf.len() < 8 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small -> parse_coord".to_string(),
-        //     ));
-        // }
         if self.remaining < 8 {
             return Err(SedonaGeometryError::Invalid(format!(
                 "Invalid WKB: buffer too small. At offset: {}. Need 8 bytes.",
@@ -478,28 +423,49 @@ impl<'a> WkbBuffer<'a> {
 
     // Parses the top-level dimension of the geometry
     fn parse_dimensions(&mut self) -> Result<Dimensions, SedonaGeometryError> {
-        // if buf.len() < 9 {
-        //     return Err(SedonaGeometryError::Invalid(
-        //         "Invalid WKB: buffer too small -> parse_dimensions".to_string(),
-        //     ));
-        // }
-
         // let byte_order = buf[0];
         self.read_endian()?;
+        println!("here: endian: {:?}", self.last_endian);
 
         // let code = self.read_u32(&buf[1..5], byte_order)?;
+        println!(
+            "here: code: {:?}",
+            &self.buf[self.offset..self.offset + 4].to_vec()
+        );
         let code = self.read_u32()?;
+        calc_dimensions(code)
+    }
+}
 
-        match code / 1000 {
-            0 => Ok(Dimensions::Xy),
-            1 => Ok(Dimensions::Xyz),
-            2 => Ok(Dimensions::Xym),
-            3 => Ok(Dimensions::Xyzm),
-            _ => {
-                return Err(SedonaGeometryError::Invalid(format!(
-                    "Unexpected code: {code:?}"
-                )))
-            }
+fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
+    // Check for EWKB Z and M flags
+    let hasz = (code & Z_FLAG_BIT) != 0;
+    let hasm = (code & M_FLAG_BIT) != 0;
+
+    match (hasz, hasm) {
+        (false, false) => {}
+        // If either flag is set, this must be EWKB (and not ISO WKB)
+        (true, false) => return Ok(Dimensions::Xyz),
+        (false, true) => return Ok(Dimensions::Xym),
+        (true, true) => return Ok(Dimensions::Xyzm),
+    }
+
+    // if SRID flag is set, then it must be EWKB with no z or m
+    if code & SRID_FLAG_BIT != 0 {
+        return Ok(Dimensions::Xy);
+    }
+
+    // Interpret as ISO WKB
+    match code / 1000 {
+        0 => Ok(Dimensions::Xy),
+        1 => Ok(Dimensions::Xyz),
+        2 => Ok(Dimensions::Xym),
+        3 => Ok(Dimensions::Xyzm),
+        _ => {
+            return Err(SedonaGeometryError::Invalid(format!(
+                "Unexpected code parse_dimensions: {:?}",
+                code
+            )))
         }
     }
 }
@@ -642,14 +608,126 @@ mod tests {
         assert_eq!(header.size(), 0);
     }
 
-    // #[test]
-    // fn srid() {
-    //     // This doesn't work
-    //     let wkb = make_wkb("SRID=4326;POINT (1 2)");
-    //     println!("wkb: {:?}", wkb);
-    //     let header = WkbHeader::try_new(&wkb).unwrap();
-    //     assert_eq!(header.srid(), 4326);
-    // }
+    #[test]
+    fn ewkb_basic() {
+        use sedona_testing::fixtures::*;
+
+        // Test POINT with SRID 4326
+        let header = WkbHeader::try_new(&POINT_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+
+        // Test POINT Z with SRID 3857
+        let header = WkbHeader::try_new(&POINT_Z_WITH_SRID_3857_EWKB).unwrap();
+        assert_eq!(header.srid(), 3857);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xyz);
+
+        // Test POINT M with SRID 4326
+        let header = WkbHeader::try_new(&POINT_M_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xym);
+
+        // Test POINT ZM with SRID 4326
+        let header = WkbHeader::try_new(&POINT_ZM_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xyzm);
+    }
+
+    #[test]
+    fn srid_linestring() {
+        use sedona_testing::fixtures::*;
+
+        let header = WkbHeader::try_new(&LINESTRING_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::LineString
+        );
+        assert_eq!(header.size(), 2);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+    }
+
+    #[test]
+    fn srid_polygon() {
+        use sedona_testing::fixtures::*;
+
+        let header = WkbHeader::try_new(&POLYGON_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Polygon);
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (0.0, 0.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+    }
+
+    #[test]
+    fn multipoint_with_srid() {
+        use sedona_testing::fixtures::*;
+
+        let header = WkbHeader::try_new(&MULTIPOINT_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::MultiPoint
+        );
+        assert_eq!(header.size(), 2);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+    }
+
+    #[test]
+    fn geometrycollection_with_srid() {
+        use sedona_testing::fixtures::*;
+
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
+    }
+
+    #[test]
+    fn srid_empty_geometries_with_srid() {
+        use sedona_testing::fixtures::*;
+
+        // Test POINT EMPTY with SRID
+        let header = WkbHeader::try_new(&POINT_EMPTY_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Point);
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+
+        // Test GEOMETRYCOLLECTION EMPTY with SRID
+        let header = WkbHeader::try_new(&GEOMETRYCOLLECTION_EMPTY_WITH_SRID_4326_EWKB).unwrap();
+        assert_eq!(header.srid(), 4326);
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 0);
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions(), None);
+    }
+
+    #[test]
+    fn srid_no_srid_flag() {
+        // Test that regular WKB (without SRID flag) returns 0 for SRID
+        let wkb = make_wkb("POINT (1 2)");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert_eq!(header.srid(), 0);
+    }
 
     #[test]
     fn first_xy() {
@@ -881,5 +959,97 @@ mod tests {
         let wkb = make_wkb("GEOMETRYCOLLECTION ZM EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.first_geom_dimensions(), None);
+    }
+
+    #[test]
+    fn incomplete_buffers() {
+        // Test various incomplete buffer scenarios to ensure proper error handling
+
+        // Empty buffer
+        let result = WkbHeader::try_new(&[]);
+        assert!(result.is_err());
+
+        // Endian Byte only, missing geometry type
+        let result = WkbHeader::try_new(&[0x01]);
+        assert!(result.is_err());
+
+        // Partial geometry type
+        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00]);
+        assert!(result.is_err());
+
+        // Point with only a endian and geometry type
+        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00, 0x00, 0x20]);
+        assert!(result.is_err());
+
+        // Point with only half a coordinate
+        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        assert!(result.is_err());
+
+        // Point with exactly one coordinate (i.e. x, but no y)
+        let result = WkbHeader::try_new(&[
+            0x01, // endian
+            0x01, 0x00, 0x00, 0x00, // geometry type
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
+        ]);
+        assert!(result.is_err());
+
+        // GeometryCollection with an incomplete point
+        let result = WkbHeader::try_new(&[
+            0x01, 0x07, 0x00, 0x00, 0x00,
+            // 0xe6, 0x10, 0x00, 0x00, // SRID 4326 (little endian)
+            0x01, 0x00, 0x00, 0x00, // number of geometries (1)
+            // Nested (incomplete) POINT
+            0x01, // endian
+            0x01, 0x00, 0x00, 0x00, // geometry type
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // coord
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn incomplete_ewkb_buffers() {
+        // Test incomplete EWKB buffers specifically
+
+        // EWKB with SRID flag but missing the extra 4 bytes for the SRID
+        let result = WkbHeader::try_new(&[
+            0x01, // endian
+            0x01, 0x00, 0x00, 0x20, // SRID flag is set
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
+        ]);
+        assert!(result.is_err());
+
+        // Nested geometry (MultiPoint) has SRID flag set, but missing the extra 4 bytes for it
+        let result = WkbHeader::try_new(&[
+            0x01, // endian
+            0x04, 0x00, 0x00, 0x20, // geometry type with SRID flag is set
+            0xe6, 0x10, 0x00, 0x00, // SRID 4326
+            // Nested point
+            0x01, // endian
+            0x01, 0x00, 0x00, 0x20, // geometry type withSRID flag is set
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
+        ]);
+        assert!(result.is_err());
+
+        // GeometryCollection with an incomplete linestring
+        let result = WkbHeader::try_new(&[
+            0x01, 0x07, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, // SRID 4326
+            0x01, 0x00, 0x00, 0x00, // number of geometries (1)
+            0x01, 0x02, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, // SRID 4326
+            0x01, 0x00, 0x00, 0x00, // size
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_byte_order() {
+        // Test invalid byte order values
+        let result = WkbHeader::try_new(&[0x02, 0x01, 0x00, 0x00, 0x00]);
+        assert!(result.is_err());
+
+        let result = WkbHeader::try_new(&[0xff, 0x01, 0x00, 0x00, 0x00]);
+        assert!(result.is_err());
     }
 }
