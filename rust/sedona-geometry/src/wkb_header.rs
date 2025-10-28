@@ -72,19 +72,19 @@ impl WkbHeader {
         let first_y;
         let first_geom_dimensions: Option<Dimensions>;
 
-        let mut wkb_buffer = WkbBuffer::new(buf); // Reset: TODO: clean up later
+        wkb_buffer.set_offset(0);
 
         let first_geom_idx = wkb_buffer.first_geom_idx()?;
         if let Some(i) = first_geom_idx {
-            // For parse_dimensions, we need to pass the buffer starting from the geometry header
-            let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
-                                                            // Parse dimension
+            // Reset to first_geom_idx and parse the dimensions
+            wkb_buffer.set_offset(i);
+            // Parse dimension
             wkb_buffer.read_endian()?;
             let code = wkb_buffer.read_u32()?;
             first_geom_dimensions = Some(calc_dimensions(code)?);
 
             // For first_xy_coord, we need to pass the buffer starting from the geometry header
-            let mut wkb_buffer = WkbBuffer::new(&buf[i..]); // Reset: TODO: clean up later
+            wkb_buffer.set_offset(i);
             (first_x, first_y) = wkb_buffer.first_xy_coord()?;
         } else {
             first_geom_dimensions = None;
@@ -341,6 +341,11 @@ impl<'a> WkbBuffer<'a> {
         self.offset += 8;
 
         Ok(coord)
+    }
+
+    fn set_offset(&mut self, offset: usize) {
+        self.offset = offset;
+        self.remaining = self.buf.len() - offset;
     }
 }
 
