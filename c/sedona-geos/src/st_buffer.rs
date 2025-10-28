@@ -157,8 +157,7 @@ fn extract_optional_string(arg: Option<&ColumnarValue>) -> Result<Option<String>
         ColumnarValue::Scalar(scalar) if scalar.is_null() => Ok(None),
         ColumnarValue::Scalar(_) => Ok(None),
         _ => Err(DataFusionError::Execution(format!(
-            "Expected scalar bufferStyleParameters, got: {:?}",
-            arg
+            "Expected scalar bufferStyleParameters, got: {arg:?}",
         ))),
     }
 }
@@ -175,8 +174,7 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
     for param in params_str.split_whitespace() {
         let Some((key, value)) = param.split_once('=') else {
             return Err(DataFusionError::Execution(format!(
-                "Missing value for buffer parameter: {}",
-                param
+                "Missing value for buffer parameter: {param}",
             )));
         };
 
@@ -197,9 +195,8 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
             params_builder = params_builder.quadrant_segments(segs);
         } else {
             return Err(DataFusionError::Execution(format!(
-                "Invalid buffer parameter: {} \
+                "Invalid buffer parameter: {key} \
                 (accept: 'endcap', 'join', 'mitre_limit', 'miter_limit', 'quad_segs', 'quadrant_segments' and 'side')",
-                key
             )));
         }
     }
@@ -218,8 +215,7 @@ fn parse_cap_style(value: &str) -> Result<CapStyle> {
         Ok(CapStyle::Square)
     } else {
         Err(DataFusionError::Execution(format!(
-            "Invalid endcap style: '{}'. Valid options: round, flat, butt, square",
-            value
+            "Invalid endcap style: '{value}'. Valid options: round, flat, butt, square",
         )))
     }
 }
@@ -233,8 +229,7 @@ fn parse_join_style(value: &str) -> Result<JoinStyle> {
         Ok(JoinStyle::Bevel)
     } else {
         Err(DataFusionError::Execution(format!(
-            "Invalid join style: '{}'. Valid options: round, mitre, miter, bevel",
-            value
+            "Invalid join style: '{value}'. Valid options: round, mitre, miter, bevel",
         )))
     }
 }
@@ -246,8 +241,7 @@ fn is_single_sided(value: &str) -> Result<bool> {
         Ok(true)
     } else {
         Err(DataFusionError::Execution(format!(
-            "Invalid side: '{}'. Valid options: both, left, right",
-            value
+            "Invalid side: '{value}'. Valid options: both, left, right",
         )))
     }
 }
@@ -255,8 +249,7 @@ fn is_single_sided(value: &str) -> Result<bool> {
 fn parse_number<T: std::str::FromStr>(value: &str, param_name: &str) -> Result<T> {
     value.parse().map_err(|_| {
         DataFusionError::Execution(format!(
-            "Invalid {} value: '{}'. Expected a valid number",
-            param_name, value
+            "Invalid {param_name} value: '{value}'. Expected a valid number",
         ))
     })
 }
