@@ -237,9 +237,7 @@ impl Display for SedonaType {
             SedonaType::Arrow(data_type) => Display::fmt(data_type, f),
             SedonaType::Wkb(edges, crs) => display_geometry("Wkb", edges, crs, f),
             SedonaType::WkbView(edges, crs) => display_geometry("WkbView", edges, crs, f),
-            SedonaType::Raster() => {
-                unimplemented!("Display for Raster type not yet implemented")
-            }
+            SedonaType::Raster() => Display::fmt("Raster", f),
         }
     }
 }
