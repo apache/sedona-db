@@ -1018,6 +1018,49 @@ def test_st_pointm(eng, x, y, m, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geometry", "n", "expected"),
+    [
+        ("LINESTRING (1 2, 3 4, 5 6)", 1, "POINT (1 2)"),
+        ("LINESTRING (1 2, 3 4, 5 6)", 2, "POINT (3 4)"),
+        ("LINESTRING (1 2, 3 4, 5 6)", -1, "POINT (5 6)"),
+        ("LINESTRING Z (1 2 3, 3 4 5, 5 6 7)", 1, "POINT Z (1 2 3)"),
+        ("LINESTRING Z (1 2 3, 3 4 5, 5 6 7)", 2, "POINT Z (3 4 5)"),
+        ("LINESTRING Z (1 2 3, 3 4 5, 5 6 7)", -1, "POINT Z (5 6 7)"),
+        ("LINESTRING ZM (1 2 3 4, 3 4 5 6, 5 6 7 8)", 1, "POINT ZM (1 2 3 4)"),
+        ("LINESTRING ZM (1 2 3 4, 3 4 5 6, 5 6 7 8)", 2, "POINT ZM (3 4 5 6)"),
+        ("LINESTRING ZM (1 2 3 4, 3 4 5 6, 5 6 7 8)", -1, "POINT ZM (5 6 7 8)"),
+        # invalid n
+        ("LINESTRING (1 2, 3 4, 5 6)", 0, None),
+        ("LINESTRING (1 2, 3 4, 5 6)", 4, None),
+        ("LINESTRING (1 2, 3 4, 5 6)", -4, None),
+        # other geometries
+        ("POINT (1 2)", 1, None),
+        ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))", 1, None),
+        ("MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))", 1, None),
+        ("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))", 1, None),
+        # empty geometries
+        ("POINT EMPTY", 1, None),
+        ("LINESTRING EMPTY", 1, None),
+        ("POLYGON EMPTY", 1, None),
+        ("MULTIPOINT EMPTY", 1, None),
+        ("MULTILINESTRING EMPTY", 1, None),
+        ("MULTIPOLYGON EMPTY", 1, None),
+        ("GEOMETRYCOLLECTION EMPTY", 1, None),
+        # null
+        (None, None, None),
+        (None, 1, None),
+    ],
+)
+def test_st_pointn(eng, geometry, n, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_PointN({geom_or_null(geometry)}, {val_or_null(n)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geometry", "expected"),
     [
         (None, None),
