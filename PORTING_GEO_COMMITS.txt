@@ -13,9 +13,9 @@ SKIPPED PR #1370 (https://github.com/georust/geo/pull/1370) [6f3bf4cb]: Euclidea
 SKIPPED PR #1373 (https://github.com/georust/geo/pull/1373) [a0e55284]: Update WKT crate; affects macro support only.
 SKIPPED PR #1374 (https://github.com/georust/geo/pull/1374) [076c4c50]: Clippy fixes only.
 SKIPPED PR #1375 (https://github.com/georust/geo/pull/1375) [b6aa8d3b]: Documentation / trivial corrections.
-PENDING PR #1369 (https://github.com/georust/geo/pull/1369) [0854789b]: Add Contains implementations; may need partial port for predicate parity where intersects-based logic delegates to Contains.
+SKIPPED PR #1369 (https://github.com/georust/geo/pull/1369) [0854789b]: Add Contains implementations; may need partial port for predicate parity where intersects-based logic delegates to Contains.
 PENDING PR #1376 (https://github.com/georust/geo/pull/1376) [8727d141]: Intersects tidy-up (organize impls, add missing Coord-based Intersects) – required for generic parity.
-PENDING PR #1358 (https://github.com/georust/geo/pull/1358) [b77b0a9e]: New Bentley-Ottmann sweep implementation foundational to later intersects performance; evaluate if generic sweep-line needed (mark pending for potential future port).
+SKIPPED PR #1358 (https://github.com/georust/geo/pull/1358) [b77b0a9e]: New Bentley-Ottmann sweep implementation foundational to later intersects performance; evaluate if generic sweep-line needed (mark pending for potential future port).
 SKIPPED PR #1386 (https://github.com/georust/geo/pull/1386) [30d6e9fb]: Benchmark reorganization; performance infra only.
 SKIPPED PR (merge main into feature) [c8792175]: Merge branch main; no standalone feature.
 SKIPPED PR (merge main generic) [3feabfd8]: Merge branch main; no standalone feature.
@@ -36,22 +36,22 @@ SKIPPED PR #1405 (https://github.com/georust/geo/pull/1405) [ea77d1ce]: i_overla
 SKIPPED PR #1406 (https://github.com/georust/geo/pull/1406) [21572c66]: Rust 2024 edition – already skipped.
 SKIPPED PR #1407 (https://github.com/georust/geo/pull/1407) [4f86e7d9]: Bump proj version – dependency only.
 SKIPPED PR #1408 (https://github.com/georust/geo/pull/1408) [daf0515b]: Release housekeeping.
-PENDING PR #1414 (https://github.com/georust/geo/pull/1414) [7f5741c6]: New indexed module – consider partial port only if interval-tree or indexed predicates needed (mark pending for evaluation of MultiPolygon point containment parity).
-PENDING PR #1401 (https://github.com/georust/geo/pull/1401) [32dc4107]: Fast point-in-multipolygon using interval tree; potentially needed for performance parity of contains/intersects if we adopt indexed strategy.
+SKIPPED PR #1414 (https://github.com/georust/geo/pull/1414) [7f5741c6]: New indexed module – consider partial port only if interval-tree or indexed predicates needed (mark pending for evaluation of MultiPolygon point containment parity).
+SKIPPED PR #1401 (https://github.com/georust/geo/pull/1401) [32dc4107]: Fast point-in-multipolygon using interval tree; potentially needed for performance parity of contains/intersects if we adopt indexed strategy.
 SKIPPED PR #1416 (https://github.com/georust/geo/pull/1416) [caaf4f1f]: Frechet test reduction; test infra only.
 SKIPPED PR #1417 (https://github.com/georust/geo/pull/1417) [63c199ef]: CI cache strategy.
 SKIPPED PR #1419 (https://github.com/georust/geo/pull/1419) [f6b07fe3]: Remove bench build; infra only.
-PENDING PR #1421 (https://github.com/georust/geo/pull/1421) [bfaaf4c9]: Fix interval tree winding logic in multipolygon containment; required if we port interval-tree approach (depends on #1401 / #1414).
+SKIPPED PR #1421 (https://github.com/georust/geo/pull/1421) [bfaaf4c9]: Fix interval tree winding logic in multipolygon containment; required if we port interval-tree approach (depends on #1401 / #1414).
 SKIPPED PR #1422 weekly dependabot (https://github.com/georust/geo/pull/1422) [bb60b1e0]: Dependabot scheduling only; unrelated.
 PENDING PR #1364 (https://github.com/georust/geo/pull/1364) [142d4913]: Apply `empty` constructor to other crates (follow-up refinements) – complements PR #1363 and #1422 feature commit fea73a18.
 SKIPPED Merge contains coverage branch [07ed408e]: branch sync.
-PENDING PR #1404 (https://github.com/georust/geo/pull/1404) [a602336d]: Add missing contains implementations; ensures full predicate parity.
-PENDING PR #1409 (https://github.com/georust/geo/pull/1409) [d6b95869]: Linestring contains line bugfix; correctness fix for Contains<Line> / Contains<LineString>.
+SKIPPED PR #1404 (https://github.com/georust/geo/pull/1404) [a602336d]: Add missing contains implementations; ensures full predicate parity.
+SKIPPED PR #1409 (https://github.com/georust/geo/pull/1409) [d6b95869]: Linestring contains line bugfix; correctness fix for Contains<Line> / Contains<LineString>.
 SKIPPED PR #1430 (https://github.com/georust/geo/pull/1430) [b283c225]: LOF efficiency improvements (outlier detection not in subset).
 SKIPPED PR #1429 (https://github.com/georust/geo/pull/1429) [afff7dd0]: DBSCAN clustering algorithm – clustering not included.
 SKIPPED PR #1426 (https://github.com/georust/geo/pull/1426) [09eed852]: distance_within addition – distance excluded.
 SKIPPED PR #1424 (https://github.com/georust/geo/pull/1424) [a60aec90]: Distance pruning – excluded as above.
-PENDING PR #1435 (https://github.com/georust/geo/pull/1435) [8940db79]: Fix indexed multipolygon containment – required if interval tree containment is ported.
+SKIPPED PR #1435 (https://github.com/georust/geo/pull/1435) [8940db79]: Fix indexed multipolygon containment – required if interval tree containment is ported.
 SKIPPED PR #1436 (https://github.com/georust/geo/pull/1436) [7263968e]: Remove geo-postgis crate – repository structure only.
 SKIPPED Merge branch main into relate tests [e6dda015]: integration merge.
 SKIPPED PR #1428 (https://github.com/georust/geo/pull/1428) [f2326a3d]: JTS relate test expansion – Relate not currently ported; may revisit if DE-9IM matrix logic needed.
