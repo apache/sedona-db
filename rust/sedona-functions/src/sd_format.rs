@@ -149,7 +149,7 @@ fn sedona_type_to_formatted_type(sedona_type: &SedonaType) -> Result<SedonaType>
                 _ => Ok(sedona_type.clone()),
             }
         }
-        SedonaType::Raster() => internal_err!("SD_Format does not support Raster types"),
+        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
     }
 }
 
@@ -211,7 +211,7 @@ fn columnar_value_to_formatted_value(
             },
             _ => Ok(columnar_value.clone()),
         },
-        SedonaType::Raster() => internal_err!("SD_Format does not support Raster types"),
+        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
     }
 }
 
