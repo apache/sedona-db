@@ -14,7 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::builder::BinaryBuilder;
+use arrow_array::builder::{BinaryBuilder, UInt64Builder};
+use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
@@ -48,7 +49,7 @@ pub fn st_points_udf() -> SedonaScalarUDF {
         "st_points",
         vec![Arc::new(STPoints::new())],
         Volatility::Immutable,
-        Some(st_points_doc()),
+        Some(st_npoints_doc()),
     )
 }
 
@@ -104,6 +105,70 @@ impl SedonaScalarKernel for STPoints {
                 };
 
                 builder.append_value([]);
+            } else {
+                builder.append_null();
+            }
+
+            Ok(())
+        })?;
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+/// ST_NPoints() scalar UDF
+///
+/// Native implementation to count all the points of a geometry
+pub fn st_npoints_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_npoints",
+        vec![Arc::new(STNPoints::new())],
+        Volatility::Immutable,
+        Some(st_points_doc()),
+    )
+}
+
+fn st_npoints_doc() -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Returns the count of the points of a geometry.",
+        "ST_Points (geom: Geometry)",
+    )
+    .with_argument("geom", "geometry: Input geometry")
+    .with_sql_example("SELECT ST_NPoints(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'))")
+    .build()
+}
+
+#[derive(Debug)]
+struct STNPoints;
+
+impl STNPoints {
+    fn new() -> Self {
+        Self
+    }
+}
+
+impl SedonaScalarKernel for STNPoints {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry()],
+            SedonaType::Arrow(DataType::UInt64),
+        );
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+
+        executor.execute_wkb_void(|maybe_wkb| {
+            if let Some(wkb) = maybe_wkb {
+                builder.append_value(count_wkb_points_recursively(&wkb) as u64);
             } else {
                 builder.append_null();
             }
@@ -239,6 +304,8 @@ fn write_wkb_points_recursively<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
@@ -253,11 +320,19 @@ mod tests {
         let st_points_udf: ScalarUDF = st_points_udf().into();
         assert_eq!(st_points_udf.name(), "st_points");
         assert!(st_points_udf.documentation().is_some());
+
+        let st_npoints_udf: ScalarUDF = st_npoints_udf().into();
+        assert_eq!(st_npoints_udf.name(), "st_npoints");
+        assert!(st_npoints_udf.documentation().is_some());
     }
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        use arrow_array::UInt64Array;
+
         let tester_points = ScalarUdfTester::new(st_points_udf().into(), vec![sedona_type.clone()]);
+        let tester_npoints =
+            ScalarUdfTester::new(st_npoints_udf().into(), vec![sedona_type.clone()]);
 
         let input = create_array(
             &[
@@ -318,5 +393,33 @@ mod tests {
 
         let result_points = tester_points.invoke_array(input.clone()).unwrap();
         assert_array_equal(&result_points, &expected_points);
+
+        let expected_npoints: Arc<dyn arrow_array::Array> = Arc::new(UInt64Array::from(vec![
+            Some(1),
+            Some(3),
+            Some(5),
+            Some(9),
+            // Some("MULTIPOINT (1 2, 3 4, 5 6)"),
+            Some(4),
+            Some(13),
+            Some(3),
+            // 3d and 4d
+            Some(3),
+            Some(3),
+            Some(3),
+            // empty returns 0
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(0),
+            // null
+            None,
+        ]));
+
+        let result_points = tester_npoints.invoke_array(input.clone()).unwrap();
+        assert_array_equal(&result_points, &expected_npoints);
     }
 }

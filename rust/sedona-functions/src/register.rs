@@ -85,6 +85,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,
         crate::st_points::st_points_udf,
+        crate::st_points::st_npoints_udf,
         crate::st_pointzm::st_pointz_udf,
         crate::st_pointzm::st_pointm_udf,
         crate::st_pointzm::st_pointzm_udf,
