@@ -97,6 +97,9 @@ where
 
     /// Returns the four outer edges as line segments.
     fn to_lines(&self) -> [Line<<Self as GeometryTrait>::T>; 4] {
+        // Order: right, top, left, bottom (clockwise starting from bottom-right)
+        // Matches assumptions in some intersection optimizations.
+
         let min_coord = self.min_coord();
         let max_coord = self.max_coord();
         [

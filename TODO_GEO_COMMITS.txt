@@ -1,6 +1,6 @@
 PENDING PR #1368 (https://github.com/georust/geo/pull/1368) [a83b4d50,bbacf118]: Rect corner rename (bbacf118) merged; keep in sync for future rect-based optimizations.
 PENDING PR #1376 (https://github.com/georust/geo/pull/1376) [8727d141]: Intersects tidy-up (organize impls, add missing Coord-based Intersects) – required for generic parity.
-PENDING PR #1377 (https://github.com/georust/geo/pull/1377) [e841973]: Faster Intersection for Rect v. Polygon and Rect v. Triangle
+SKIPPED PR #1377 (https://github.com/georust/geo/pull/1377) [e841973]: Faster Intersection for Rect v. Polygon and Rect v. Triangle (complex refactor conflicts with generic trait architecture; reverted to maintain stability)
 PENDING PR #1378 (https://github.com/georust/geo/pull/1378) [06302689,1faf998e,11c626fb]: Polygon–Polygon intersection overhaul + skip interior-interior proof for correctness/performance.
 PENDING PR #1379 (https://github.com/georust/geo/pull/1379) [77ff3e6f,75964389,7a976890,a9e047d2,31ee4388]: LineString/MultiLineString intersects refactor & perf.
 PENDING PR #1364 (https://github.com/georust/geo/pull/1364) [142d4913]: Apply `empty` constructor to other crates (follow-up refinements) – complements PR #1363 and #1422 feature commit fea73a18.
