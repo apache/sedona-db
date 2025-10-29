@@ -62,8 +62,6 @@ fn st_pointn_doc() -> Documentation {
 #[derive(Debug)]
 struct STPointN;
 
-impl STPointN {}
-
 impl SedonaScalarKernel for STPointN {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
