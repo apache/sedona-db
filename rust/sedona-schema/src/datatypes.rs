@@ -436,6 +436,7 @@ mod tests {
             SedonaType::Wkb(Edges::Planar, projjson_crs).to_string(),
             "Wkb({...})"
         );
+        assert_eq!(RASTER.to_string(), "Raster");
     }
 
     #[test]
