@@ -41,7 +41,7 @@ use crate::executor::WkbExecutor;
 pub fn st_pointn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_pointn",
-        vec![Arc::new(STPointN::new())],
+        vec![Arc::new(STPointN)],
         Volatility::Immutable,
         Some(st_pointn_doc()),
     )
