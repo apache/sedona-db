@@ -164,13 +164,17 @@ impl<'a> WkbBuffer<'a> {
     // non-collection geometry (POINT, LINESTRING, or POLYGON), or None if empty
     // For POINT, LINESTRING, POLYGON, returns 0 as it already is a non-collection geometry
     fn first_geom_idx(&mut self) -> Result<Option<usize>, SedonaGeometryError> {
+        // Record the start of this geometry header so we can return an absolute index
+        let start_offset = self.offset;
+
         self.read_endian()?;
         let geometry_type = self.read_u32()?;
         let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
 
         match geometry_type_id {
             GeometryTypeId::Point | GeometryTypeId::LineString | GeometryTypeId::Polygon => {
-                Ok(Some(0))
+                // Return absolute offset to the start of this geometry header
+                Ok(Some(start_offset))
             }
             GeometryTypeId::MultiPoint
             | GeometryTypeId::MultiLineString
@@ -187,14 +191,8 @@ impl<'a> WkbBuffer<'a> {
                     return Ok(None);
                 }
 
-                // Recursive call to get the first geom of the first nested geometry
-                let curr_offset = self.offset;
-                let off = self.first_geom_idx()?;
-                if let Some(off) = off {
-                    Ok(Some(curr_offset + off))
-                } else {
-                    Ok(None)
-                }
+                // Recursive call to get first non-collection geometry
+                self.first_geom_idx()
             }
             _ => Err(SedonaGeometryError::Invalid(format!(
                 "Unexpected geometry type: {geometry_type_id:?}"
@@ -985,5 +983,30 @@ mod tests {
 
         let result = WkbHeader::try_new(&[0xff, 0x01, 0x00, 0x00, 0x00]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn nested_geometry_collections() {
+        let wkb = make_wkb("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (1 2)))");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xy);
+
+        let wkb = make_wkb("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT ZM (1 2 3 4)))");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert_eq!(
+            header.geometry_type_id().unwrap(),
+            GeometryTypeId::GeometryCollection
+        );
+        assert_eq!(header.size(), 1);
+        assert_eq!(header.first_xy(), (1.0, 2.0));
+        assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
+        assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xyzm);
     }
 }
