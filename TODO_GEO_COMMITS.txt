@@ -1,4 +1,3 @@
-PENDING PR #1371 (https://github.com/georust/geo/pull/1371) [6a8ca5d7]: MultiLineString contains Coord; adds Contains<Coord> needed for completeness of containment predicates if we choose to support Contains generically.
 PENDING PR #1368 (https://github.com/georust/geo/pull/1368) [a83b4d50,bbacf118]: Rect corner rename (bbacf118) merged; keep in sync for future rect-based optimizations.
 PENDING PR #1376 (https://github.com/georust/geo/pull/1376) [8727d141]: Intersects tidy-up (organize impls, add missing Coord-based Intersects) – required for generic parity.
 PENDING PR #1378 (https://github.com/georust/geo/pull/1378) [06302689,1faf998e,11c626fb]: Polygon–Polygon intersection overhaul + skip interior-interior proof for correctness/performance.
