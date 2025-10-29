@@ -1,12 +1,16 @@
-PENDING fea73a18 (https://github.com/georust/geo/commit/fea73a18): apply `empty` to other crates (affects centroid.rs, dimensions.rs, intersects/mod.rs; review empty-related logic for HasDimensions / is_empty semantics)
-PENDING 77ff3e6f (https://github.com/georust/geo/commit/77ff3e6f): extract duplicate intersects impls into a macro (intersects/line_string.rs)
-PENDING 75964389 (https://github.com/georust/geo/commit/75964389): fix truncated copy/paste (intersects/line_string.rs)
-PENDING 7a976890 (https://github.com/georust/geo/commit/7a976890): remove unnecessary bounds (intersects/line_string.rs)
-PENDING a9e047d2 (https://github.com/georust/geo/commit/a9e047d2): remove unnecessary constraints (intersects/line_string.rs)
-PENDING 31ee4388 (https://github.com/georust/geo/commit/31ee4388): Faster LineString intersects ~Polygon (intersects/collections.rs performance changes)
-PENDING 8727d141 (https://github.com/georust/geo/commit/8727d141): organize intersects impls by caller; add missing implementations for Coord (multiple intersects/* files)
-PENDING 11c626fb (https://github.com/georust/geo/commit/11c626fb6d1437969e02a581cb59309428e86765): Merge pull request #1378 intersects-poly-poly (introduces Polygon-v-Polygon intersection refactor groundwork; includes macro symmetry adjustments/tests)
-PENDING 06302689 (https://github.com/georust/geo/commit/06302689): new poly poly intersection (intersects/polygon.rs algorithm overhaul)
-PENDING 1faf998e (https://github.com/georust/geo/commit/1faf998e): proof that int-int can be skipped (intersects/polygon.rs adjustments & comments)
-PENDING e8419735 (https://github.com/georust/geo/commit/e8419735): Faster Intersection for Rect v. Polygon and Rect v. Triangle (intersects/rect.rs & triangle.rs logic changes)
-PENDING bbacf118 (https://github.com/georust/geo/commit/bbacf118): rename rectangle corners (intersects/rect.rs minor change)
+PENDING PR #1376 (https://github.com/georust/geo/pull/1376) Merge: 9bb1332f intersects-tidy
+  - 8727d141: organize intersects impls by caller; add missing implementations for Coord (intersects/*)
+PENDING PR #1379 (https://github.com/georust/geo/pull/1379) Merge: 1e5520bc intersects-linestring-poly
+  - 77ff3e6f: extract duplicate intersects impls into a macro (intersects/line_string.rs)
+  - 75964389: fix truncated copy/paste (intersects/line_string.rs)
+  - 7a976890: remove unnecessary bounds (intersects/line_string.rs)
+  - a9e047d2: remove unnecessary constraints (intersects/line_string.rs)
+  - 31ee4388: Faster LineString intersects ~Polygon (intersects/collections.rs performance changes)
+PENDING PR #1378 (https://github.com/georust/geo/pull/1378) Merge: 11c626fb intersects-poly-poly
+  - 06302689: new poly poly intersection (intersects/polygon.rs)
+  - 1faf998e: proof that int-int can be skipped (intersects/polygon.rs)
+PENDING PR #1377 / #1376 follow-up (https://github.com/georust/geo/pull/1377) Faster Rect/Triangle/Polygon intersections
+  - e8419735: Faster Intersection for Rect v. Polygon and Rect v. Triangle (intersects/rect.rs & triangle.rs)
+  - bbacf118: rename rectangle corners (intersects/rect.rs minor change)
+PENDING PR #1422 related empty propagation (https://github.com/georust/geo/pull/1422) apply empty to other crates
+  - fea73a18: apply `empty` to other crates (centroid.rs, dimensions.rs, intersects/mod.rs)
