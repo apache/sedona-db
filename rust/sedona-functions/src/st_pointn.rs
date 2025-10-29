@@ -62,11 +62,7 @@ fn st_pointn_doc() -> Documentation {
 #[derive(Debug)]
 struct STPointN;
 
-impl STPointN {
-    fn new() -> Self {
-        Self
-    }
-}
+impl STPointN {}
 
 impl SedonaScalarKernel for STPointN {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {

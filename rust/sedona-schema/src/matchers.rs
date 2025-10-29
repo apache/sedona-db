@@ -378,7 +378,7 @@ impl TypeMatcher for IsInteger {
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
-        Some(SedonaType::Arrow(DataType::Float64))
+        Some(SedonaType::Arrow(DataType::Int64))
     }
 }
 
@@ -394,7 +394,7 @@ impl TypeMatcher for IsUnsignedInteger {
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
-        Some(SedonaType::Arrow(DataType::Float64))
+        Some(SedonaType::Arrow(DataType::UInt64))
     }
 }
 
