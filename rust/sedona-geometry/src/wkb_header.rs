@@ -910,78 +910,80 @@ mod tests {
         let result = WkbHeader::try_new(&[]);
         assert!(result.is_err());
 
-        // Endian Byte only, missing geometry type
-        let result = WkbHeader::try_new(&[0x01]);
-        assert!(result.is_err());
+        // Test truncation of a simple POINT
+        let wkb = make_wkb("POINT (1 2)");
+        for i in 1..wkb.len() - 1 {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
 
-        // Partial geometry type
-        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00]);
-        assert!(result.is_err());
+        // Test truncation of a POINT ZM
+        // Iterate through all i that is less than the number needed for the first_xy coord
+        // 1 byte_order + 4 geometry type + 8 x + 8 y
+        let last_i = 1 + 4 + 8 + 8;
+        let wkb = make_wkb("POINT ZM (1 2 3 4)");
+        for i in 1..last_i {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
 
-        // Point with only a endian and geometry type
-        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00, 0x00, 0x20]);
-        assert!(result.is_err());
-
-        // Point with only half a coordinate
-        let result = WkbHeader::try_new(&[0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        assert!(result.is_err());
-
-        // Point with exactly one coordinate (i.e. x, but no y)
-        let result = WkbHeader::try_new(&[
-            0x01, // endian
-            0x01, 0x00, 0x00, 0x00, // geometry type
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
-        ]);
-        assert!(result.is_err());
-
-        // GeometryCollection with an incomplete point
-        let result = WkbHeader::try_new(&[
-            0x01, 0x07, 0x00, 0x00, 0x00,
-            // 0xe6, 0x10, 0x00, 0x00, // SRID 4326 (little endian)
-            0x01, 0x00, 0x00, 0x00, // number of geometries (1)
-            // Nested (incomplete) POINT
-            0x01, // endian
-            0x01, 0x00, 0x00, 0x00, // geometry type
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // coord
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]);
-        assert!(result.is_err());
+        // Test truncation of a GEOMETRYCOLLECTION with nested geometries
+        // Iterate through all i that is less than the number needed for the first_xy coord
+        // 1 byte_order + 4 geometry type + 4 size + 8 x + 8 y
+        let last_i = 1 + 4 + 4 + 8 + 8;
+        let wkb = make_wkb("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 3 4))");
+        for i in 1..last_i {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
     }
 
     #[test]
     fn incomplete_ewkb_buffers() {
-        // Test incomplete EWKB buffers specifically
+        use sedona_testing::fixtures::*;
+        // Test incomplete EWKB buffers
 
-        // EWKB with SRID flag but missing the extra 4 bytes for the SRID
-        let result = WkbHeader::try_new(&[
-            0x01, // endian
-            0x01, 0x00, 0x00, 0x20, // SRID flag is set
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
-        ]);
-        assert!(result.is_err());
+        // 1 byte_order + 4 geometry type + 4 srid + 8 x + 8 y
+        let wkb = POINT_WITH_SRID_4326_EWKB;
+        let last_i = 1 + 4 + 4 + 8 + 8;
+        for i in 1..last_i {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
 
-        // Nested geometry (MultiPoint) has SRID flag set, but missing the extra 4 bytes for it
-        let result = WkbHeader::try_new(&[
-            0x01, // endian
-            0x04, 0x00, 0x00, 0x20, // geometry type with SRID flag is set
-            0xe6, 0x10, 0x00, 0x00, // SRID 4326
-            // Nested point
-            0x01, // endian
-            0x01, 0x00, 0x00, 0x20, // geometry type withSRID flag is set
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // coord
-        ]);
-        assert!(result.is_err());
+        // 1 byte_order + 4 geometry type + 4 srid + 4 size + 1 byte_order + 4 geometry type + 8 x + 8 y
+        let last_i = 1 + 4 + 4 + 4 + 1 + 4 + 8 + 8;
+        let wkb = MULTIPOINT_WITH_SRID_4326_EWKB;
+        for i in 1..last_i {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
 
-        // GeometryCollection with an incomplete linestring
-        let result = WkbHeader::try_new(&[
-            0x01, 0x07, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, // SRID 4326
-            0x01, 0x00, 0x00, 0x00, // number of geometries (1)
-            0x01, 0x02, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, // SRID 4326
-            0x01, 0x00, 0x00, 0x00, // size
-        ]);
-        assert!(result.is_err());
+        // 1 byte_order + 4 geometry type + 4 srid + 4 size + 1 byte_order + 4 geometry type + 8 x + 8 y
+        let last_i = 1 + 4 + 4 + 4 + 1 + 4 + 8 + 8;
+        let wkb = GEOMETRYCOLLECTION_POINT_ZM_WITH_SRID_4326_EWKB;
+        for i in 1..last_i {
+            assert!(
+                WkbHeader::try_new(&wkb[0..i]).is_err(),
+                "0..{} unexpectedly succeeded",
+                i
+            );
+        }
     }
 
     #[test]
