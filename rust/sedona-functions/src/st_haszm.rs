@@ -106,7 +106,6 @@ impl SedonaScalarKernel for STHasZm {
     }
 }
 
-/// Fast-path inference of geometry type name from raw WKB bytes
 fn invoke_scalar(buf: &[u8], dim_index: usize) -> Result<Option<bool>> {
     let header = WkbHeader::try_new(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
     let top_level_dimensions = header
