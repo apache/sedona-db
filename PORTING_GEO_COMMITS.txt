@@ -5,7 +5,7 @@ SKIPPED PR #1351 (https://github.com/georust/geo/pull/1351) [25adfb83]: geo-trai
 SKIPPED PR #1356 (https://github.com/georust/geo/pull/1356) [4516cec5]: Minor trait patch (geo-traits release); no algorithm changes.
 SKIPPED PR #1360 (https://github.com/georust/geo/pull/1360) [e41230dc]: Efficient outlier iterators (outlier_detection not included in generic subset).
 SKIPPED PR #1357 (https://github.com/georust/geo/pull/1357) [d3a23895]: General maintenance commit; no relevant alg changes to port subset.
-PENDING PR #1363 (https://github.com/georust/geo/pull/1363) [94fa54f1]: Add `empty` constructors; need parity for constructing empty geometries used in dimensions/intersects logic.
+SKIPPED PR #1363 (https://github.com/georust/geo/pull/1363) [94fa54f1]: Add `empty` constructors; need parity for constructing empty geometries used in dimensions/intersects logic.
 PENDING PR #1371 (https://github.com/georust/geo/pull/1371) [6a8ca5d7]: MultiLineString contains Coord; adds Contains<Coord> needed for completeness of containment predicates if we choose to support Contains generically.
 PENDING PR #1368 (https://github.com/georust/geo/pull/1368) [a83b4d50,bbacf118]: Rect corner rename (bbacf118) merged; keep in sync for future rect-based optimizations.
 SKIPPED PR #1365 (https://github.com/georust/geo/pull/1365) [7b3056be]: Geometry buffering (buffer.rs) outside current generic algorithm scope.
