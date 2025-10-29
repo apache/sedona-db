@@ -15,6 +15,7 @@ SKIPPED PR #1374 (https://github.com/georust/geo/pull/1374) [076c4c50]: Clippy f
 SKIPPED PR #1375 (https://github.com/georust/geo/pull/1375) [b6aa8d3b]: Documentation / trivial corrections.
 SKIPPED PR #1369 (https://github.com/georust/geo/pull/1369) [0854789b]: Add Contains implementations; may need partial port for predicate parity where intersects-based logic delegates to Contains.
 PENDING PR #1376 (https://github.com/georust/geo/pull/1376) [8727d141]: Intersects tidy-up (organize impls, add missing Coord-based Intersects) – required for generic parity.
+PENDING PR #1377 (https://github.com/georust/geo/pull/1377) [e841973]: Faster Intersection for Rect v. Polygon and Rect v. Triangle
 SKIPPED PR #1358 (https://github.com/georust/geo/pull/1358) [b77b0a9e]: New Bentley-Ottmann sweep implementation foundational to later intersects performance; evaluate if generic sweep-line needed (mark pending for potential future port).
 SKIPPED PR #1386 (https://github.com/georust/geo/pull/1386) [30d6e9fb]: Benchmark reorganization; performance infra only.
 SKIPPED PR (merge main into feature) [c8792175]: Merge branch main; no standalone feature.
