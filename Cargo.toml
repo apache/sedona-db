@@ -66,6 +66,7 @@ arrow-cast = { version = "56.0.0" }
 arrow-data = { version = "56.0.0" }
 arrow-json = { version = "56.0.0" }
 arrow-schema = { version = "56.0.0" }
+arrow-buffer = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
 byteorder = "1"

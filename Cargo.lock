@@ -5121,8 +5121,8 @@ dependencies = [
 name = "sedona-raster"
 version = "0.2.0"
 dependencies = [
- "arrow",
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "datafusion-common",
  "sedona-common",

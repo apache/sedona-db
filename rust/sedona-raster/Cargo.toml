@@ -30,7 +30,7 @@ result_large_err = "allow"
 [dependencies]
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
-arrow = { workspace = true }
+arrow-buffer = { workspace = true }
 datafusion-common = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-schema = { path = "../sedona-schema" }

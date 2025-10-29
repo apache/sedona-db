@@ -15,26 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_array::BinaryViewArray;
 use arrow_array::{
     builder::{
-        BinaryBuilder, BinaryViewBuilder, Float64Builder, ListBuilder, StringBuilder,
-        StringViewBuilder, StructBuilder, UInt32Builder, UInt64Builder,
+        BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder, StringBuilder,
+        StringViewBuilder, UInt32Builder, UInt64Builder,
     },
-    Array, BinaryArray, Float64Array, ListArray, StringArray, StringViewArray, StructArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, ListArray, StringArray,
+    StringViewArray, StructArray, UInt32Array, UInt64Array,
 };
-use arrow_schema::{ArrowError, DataType, Field};
+use arrow_buffer::{OffsetBuffer, ScalarBuffer};
+use arrow_schema::{ArrowError, DataType};
 use datafusion_common::error::Result;
-use sedona_schema::raster::{
-    band_indices, band_metadata_indices, bounding_box_indices, column, metadata_indices,
-    raster_indices, BandDataType, RasterSchema, StorageType,
-};
+use std::sync::Arc;
 
-/// Builder for constructing raster arrays with zero-copy band data writing
-pub struct RasterBuilder {
-    main_builder: StructBuilder,
-}
+use sedona_schema::raster::{
+    band_indices, band_metadata_indices, bounding_box_indices, metadata_indices, raster_indices,
+    BandDataType, StorageType, RasterSchema,
+};
 
 /// Metadata for a raster
 #[derive(Debug, Clone)]
@@ -70,83 +67,141 @@ pub struct BandMetadata {
     pub outdb_band_id: Option<u32>,
 }
 
+/// Builder for constructing raster arrays with zero-copy band data writing
+///
+/// Required steps to build a raster:
+/// 1. Create a RasterBuilder with a specified capacity
+/// 2. For each raster to add:
+///    - Call `start_raster` with the appropriate metadata, CRS, and bounding box
+///    - For each band in the raster:
+///       - Call `start_band` with the band metadata
+///       - Use `band_data_writer` to get a BinaryViewBuilder and write the band data
+///       - Call `finish_band` to complete the band
+///    - Call `finish_raster` to complete the raster
+/// 3. After all rasters are added, call `finish` to get the final StructArray
+///
+/// Example usage:
+/// ```
+/// use sedona_raster::builder::{RasterBuilder, RasterMetadata, BoundingBox, BandMetadata};
+/// use sedona_schema::raster::{StorageType, BandDataType};
+///
+/// let mut builder = RasterBuilder::new(1);
+/// let metadata = RasterMetadata {
+///     width: 100, height: 100,
+///     upperleft_x: 0.0, upperleft_y: 0.0,
+///     scale_x: 1.0, scale_y: -1.0,
+///     skew_x: 0.0, skew_y: 0.0,
+/// };
+/// let bbox = BoundingBox { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 100.0 };
+///
+/// // Start a raster:
+/// // From RasterMetadata struct with separate bounding box
+/// builder.start_raster(&metadata, Some("EPSG:4326"), Some(&bbox)).unwrap();
+///
+/// // Add a band:
+/// let band_metadata = BandMetadata {
+///     nodata_value: Some(vec![0u8]),
+///     storage_type: StorageType::InDb,
+///     datatype: BandDataType::UInt8,
+///     outdb_url: None,
+///     outdb_band_id: None,
+/// };
+/// builder.start_band(band_metadata).unwrap();
+/// let band_writer = builder.band_data_writer();
+/// band_writer.append_value(&vec![/* band data bytes */]);
+/// builder.finish_band().unwrap();
+///
+/// // Finish the raster
+/// builder.finish_raster().unwrap();
+///
+/// // Finish building and get the StructArray
+/// let raster_array = builder.finish().unwrap();
+/// ```
+
+pub struct RasterBuilder {
+    // Metadata fields
+    width: UInt64Builder,
+    height: UInt64Builder,
+    upper_left_x: Float64Builder,
+    upper_left_y: Float64Builder,
+    scale_x: Float64Builder,
+    scale_y: Float64Builder,
+    skew_x: Float64Builder,
+    skew_y: Float64Builder,
+
+    // CRS field
+    crs: StringViewBuilder,
+
+    // Bounding box fields
+    bbox_min_x: Float64Builder,
+    bbox_min_y: Float64Builder,
+    bbox_max_x: Float64Builder,
+    bbox_max_y: Float64Builder,
+    bbox_validity: BooleanBuilder, // Track which bboxes are null
+
+    // Band metadata fields
+    band_nodata: BinaryBuilder,
+    band_storage_type: UInt32Builder,
+    band_datatype: UInt32Builder,
+    band_outdb_url: StringBuilder,
+    band_outdb_band_id: UInt32Builder,
+
+    // Band data field
+    band_data: BinaryViewBuilder,
+
+    // List structure tracking
+    band_offsets: Vec<i32>,  // Track where each raster's bands start/end
+    current_band_count: i32, // Track bands in current raster
+
+    raster_validity: BooleanBuilder, // Track which rasters are null
+}
+
 impl RasterBuilder {
     /// Create a new raster builder with the specified capacity
     pub fn new(capacity: usize) -> Self {
-        let metadata_builder = StructBuilder::from_fields(
-            match RasterSchema::metadata_type() {
-                DataType::Struct(fields) => fields,
-                _ => panic!("Expected struct type for metadata"),
-            },
-            capacity,
-        );
+        Self {
+            // Metadata builders
+            width: UInt64Builder::with_capacity(capacity),
+            height: UInt64Builder::with_capacity(capacity),
+            upper_left_x: Float64Builder::with_capacity(capacity),
+            upper_left_y: Float64Builder::with_capacity(capacity),
+            scale_x: Float64Builder::with_capacity(capacity),
+            scale_y: Float64Builder::with_capacity(capacity),
+            skew_x: Float64Builder::with_capacity(capacity),
+            skew_y: Float64Builder::with_capacity(capacity),
 
-        let crs_builder = StringViewBuilder::new();
+            // CRS builder
+            crs: StringViewBuilder::with_capacity(capacity),
 
-        let bbox_builder = StructBuilder::from_fields(
-            match RasterSchema::bounding_box_type() {
-                DataType::Struct(fields) => fields,
-                _ => panic!("Expected struct type for bounding box"),
-            },
-            capacity,
-        );
+            // Bounding box builders
+            bbox_min_x: Float64Builder::with_capacity(capacity),
+            bbox_min_y: Float64Builder::with_capacity(capacity),
+            bbox_max_x: Float64Builder::with_capacity(capacity),
+            bbox_max_y: Float64Builder::with_capacity(capacity),
+            // Bounding box validity (keeps track of null bounding boxes)
+            bbox_validity: BooleanBuilder::with_capacity(capacity),
 
-        let band_struct_builder = StructBuilder::from_fields(
-            match RasterSchema::band_type() {
-                DataType::Struct(fields) => fields,
-                _ => panic!("Expected struct type for band"),
-            },
-            0,
-        );
+            // Band builders - estimate some bands per raster
+            // The capacity is at raster level, but each raster has multiple bands and
+            // are large. We may want to add an optional parameter to control expected
+            // bands per raster or even band size in the future
+            band_nodata: BinaryBuilder::with_capacity(capacity, capacity),
+            band_storage_type: UInt32Builder::with_capacity(capacity),
+            band_datatype: UInt32Builder::with_capacity(capacity),
+            band_outdb_url: StringBuilder::with_capacity(capacity, capacity),
+            band_outdb_band_id: UInt32Builder::with_capacity(capacity),
+            band_data: BinaryViewBuilder::with_capacity(capacity),
 
-        let bands_builder = ListBuilder::new(band_struct_builder).with_field(Field::new(
-            column::BAND,
-            RasterSchema::band_type(),
-            false,
-        ));
+            // List tracking
+            band_offsets: vec![0],
+            current_band_count: 0,
 
-        // Now create the main builder with pre-built components
-        let main_builder = StructBuilder::new(
-            RasterSchema::fields(),
-            vec![
-                Box::new(metadata_builder),
-                Box::new(crs_builder),
-                Box::new(bbox_builder),
-                Box::new(bands_builder),
-            ],
-        );
-
-        Self { main_builder }
+            // Raster-level validity (keeps track of null rasters)
+            raster_validity: BooleanBuilder::with_capacity(capacity),
+        }
     }
 
     /// Start a new raster with metadata, optional CRS, and optional bounding box
-    ///
-    /// This is the unified method for starting a raster with all optional parameters.
-    ///
-    /// # Arguments
-    /// * `metadata` - Raster metadata (dimensions, geotransform parameters)
-    /// * `crs` - Optional coordinate reference system as string
-    /// * `bbox` - Optional bounding box coordinates
-    ///
-    /// # Examples
-    /// ```
-    /// use sedona_raster::builder::{RasterBuilder, RasterMetadata, BoundingBox};
-    ///
-    /// let mut builder = RasterBuilder::new(10);
-    /// let metadata = RasterMetadata {
-    ///     width: 100, height: 100,
-    ///     upperleft_x: 0.0, upperleft_y: 0.0,
-    ///     scale_x: 1.0, scale_y: -1.0,
-    ///     skew_x: 0.0, skew_y: 0.0,
-    /// };
-    ///
-    /// // From RasterMetadata struct with separate bounding box
-    /// let bbox = BoundingBox { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 100.0 };
-    /// builder.start_raster(&metadata, Some("EPSG:4326"), Some(&bbox)).unwrap();
-    ///
-    /// // Minimal - just metadata
-    /// builder.start_raster(&metadata, None, None).unwrap();
-    /// ```
     pub fn start_raster(
         &mut self,
         metadata: &dyn MetadataRef,
@@ -157,60 +212,36 @@ impl RasterBuilder {
         self.append_crs(crs)?;
         self.append_bounding_box(bbox)?;
 
+        // Reset band count for this raster
+        self.current_band_count = 0;
+
         Ok(())
     }
 
     /// Start a new band - this must be called before writing band data
     pub fn start_band(&mut self, band_metadata: BandMetadata) -> Result<(), ArrowError> {
-        let bands_builder = self
-            .main_builder
-            .field_builder::<ListBuilder<StructBuilder>>(raster_indices::BANDS)
-            .unwrap();
-        let band_builder = bands_builder.values();
-
-        // Get the metadata builder and populate its fields
-        {
-            let metadata_builder = band_builder
-                .field_builder::<StructBuilder>(band_indices::METADATA)
-                .unwrap();
-
-            let nodata_builder = metadata_builder
-                .field_builder::<BinaryBuilder>(band_metadata_indices::NODATAVALUE)
-                .unwrap();
-            match band_metadata.nodata_value {
-                Some(nodata) => nodata_builder.append_value(&nodata),
-                None => nodata_builder.append_null(),
-            }
-
-            let storage_type_builder = metadata_builder
-                .field_builder::<UInt32Builder>(band_metadata_indices::STORAGE_TYPE)
-                .unwrap();
-            storage_type_builder.append_value(band_metadata.storage_type as u32);
-
-            let datatype_builder = metadata_builder
-                .field_builder::<UInt32Builder>(band_metadata_indices::DATATYPE)
-                .unwrap();
-            datatype_builder.append_value(band_metadata.datatype as u32);
-
-            let outdb_url_builder = metadata_builder
-                .field_builder::<StringBuilder>(band_metadata_indices::OUTDB_URL)
-                .unwrap();
-            match band_metadata.outdb_url {
-                Some(url) => outdb_url_builder.append_value(&url),
-                None => outdb_url_builder.append_null(),
-            }
-
-            let outdb_band_id_builder = metadata_builder
-                .field_builder::<UInt32Builder>(band_metadata_indices::OUTDB_BAND_ID)
-                .unwrap();
-            match band_metadata.outdb_band_id {
-                Some(band_id) => outdb_band_id_builder.append_value(band_id),
-                None => outdb_band_id_builder.append_null(),
-            }
-
-            // Finish the metadata struct
-            metadata_builder.append(true);
+        // Append band metadata
+        match band_metadata.nodata_value {
+            Some(nodata) => self.band_nodata.append_value(&nodata),
+            None => self.band_nodata.append_null(),
         }
+
+        self.band_storage_type
+            .append_value(band_metadata.storage_type as u32);
+        self.band_datatype
+            .append_value(band_metadata.datatype as u32);
+
+        match band_metadata.outdb_url {
+            Some(url) => self.band_outdb_url.append_value(&url),
+            None => self.band_outdb_url.append_null(),
+        }
+
+        match band_metadata.outdb_band_id {
+            Some(band_id) => self.band_outdb_band_id.append_value(band_id),
+            None => self.band_outdb_band_id.append_null(),
+        }
+
+        self.current_band_count += 1;
 
         Ok(())
     }
@@ -218,161 +249,66 @@ impl RasterBuilder {
     /// Get direct access to the BinaryViewBuilder for writing the current band's data
     /// Must be called after start_band() to write data to the current band
     pub fn band_data_writer(&mut self) -> &mut BinaryViewBuilder {
-        let bands_builder = self
-            .main_builder
-            .field_builder::<ListBuilder<StructBuilder>>(raster_indices::BANDS)
-            .unwrap();
-        let band_builder = bands_builder.values();
-        band_builder
-            .field_builder::<BinaryViewBuilder>(band_indices::DATA)
-            .unwrap()
+        &mut self.band_data
     }
 
     /// Finish writing the current band
     pub fn finish_band(&mut self) -> Result<(), ArrowError> {
-        let bands_builder = self
-            .main_builder
-            .field_builder::<ListBuilder<StructBuilder>>(raster_indices::BANDS)
-            .unwrap();
-        let band_builder = bands_builder.values();
-
-        // Finish the band - both metadata and data should already be populated
-        band_builder.append(true);
+        // Band data should already be written via band_data_writer
+        // Nothing additional needed here since we're building flat
         Ok(())
     }
 
     /// Finish all bands for the current raster
     pub fn finish_raster(&mut self) -> Result<(), ArrowError> {
-        let bands_builder = self
-            .main_builder
-            .field_builder::<ListBuilder<StructBuilder>>(raster_indices::BANDS)
-            .unwrap();
-        bands_builder.append(true);
-        // Mark this raster as valid (not null) in the main struct
-        self.main_builder.append(true);
+        // Record the end offset for this raster's bands
+        let next_offset = self.band_offsets.last().unwrap() + self.current_band_count;
+        self.band_offsets.push(next_offset);
+
+        self.raster_validity.append_value(true);
+
         Ok(())
     }
 
     /// Append raster metadata from a MetadataRef trait object
     fn append_metadata_from_ref(&mut self, metadata: &dyn MetadataRef) -> Result<(), ArrowError> {
-        let metadata_builder = self
-            .main_builder
-            .field_builder::<StructBuilder>(raster_indices::METADATA)
-            .unwrap();
-
-        // Width
-        metadata_builder
-            .field_builder::<UInt64Builder>(metadata_indices::WIDTH)
-            .unwrap()
-            .append_value(metadata.width());
-
-        // Height
-        metadata_builder
-            .field_builder::<UInt64Builder>(metadata_indices::HEIGHT)
-            .unwrap()
-            .append_value(metadata.height());
-
-        // Geotransform parameters
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::UPPERLEFT_X)
-            .unwrap()
-            .append_value(metadata.upper_left_x());
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::UPPERLEFT_Y)
-            .unwrap()
-            .append_value(metadata.upper_left_y());
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SCALE_X)
-            .unwrap()
-            .append_value(metadata.scale_x());
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SCALE_Y)
-            .unwrap()
-            .append_value(metadata.scale_y());
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SKEW_X)
-            .unwrap()
-            .append_value(metadata.skew_x());
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SKEW_Y)
-            .unwrap()
-            .append_value(metadata.skew_y());
-
-        metadata_builder.append(true);
+        self.width.append_value(metadata.width());
+        self.height.append_value(metadata.height());
+        self.upper_left_x.append_value(metadata.upper_left_x());
+        self.upper_left_y.append_value(metadata.upper_left_y());
+        self.scale_x.append_value(metadata.scale_x());
+        self.scale_y.append_value(metadata.scale_y());
+        self.skew_x.append_value(metadata.skew_x());
+        self.skew_y.append_value(metadata.skew_y());
 
         Ok(())
     }
 
     /// Set the CRS for the current raster
     pub fn append_crs(&mut self, crs: Option<&str>) -> Result<(), ArrowError> {
-        let crs_builder = self
-            .main_builder
-            .field_builder::<StringViewBuilder>(raster_indices::CRS)
-            .unwrap();
         match crs {
-            Some(crs_data) => crs_builder.append_value(crs_data),
-            None => crs_builder.append_null(),
+            Some(crs_data) => self.crs.append_value(crs_data),
+            None => self.crs.append_null(),
         }
         Ok(())
     }
 
     /// Append a bounding box to the current raster
     pub fn append_bounding_box(&mut self, bbox: Option<&BoundingBox>) -> Result<(), ArrowError> {
-        let bbox_builder = self
-            .main_builder
-            .field_builder::<StructBuilder>(raster_indices::BBOX)
-            .unwrap();
-
         if let Some(bbox) = bbox {
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MIN_X)
-                .unwrap()
-                .append_value(bbox.min_x);
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MIN_Y)
-                .unwrap()
-                .append_value(bbox.min_y);
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MAX_X)
-                .unwrap()
-                .append_value(bbox.max_x);
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MAX_Y)
-                .unwrap()
-                .append_value(bbox.max_y);
-
-            bbox_builder.append(true);
+            self.bbox_min_x.append_value(bbox.min_x);
+            self.bbox_min_y.append_value(bbox.min_y);
+            self.bbox_max_x.append_value(bbox.max_x);
+            self.bbox_max_y.append_value(bbox.max_y);
+            self.bbox_validity.append_value(true);
         } else {
-            // Append null bounding box - need to fill in null values for all fields
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MIN_X)
-                .unwrap()
-                .append_null();
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MIN_Y)
-                .unwrap()
-                .append_null();
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MAX_X)
-                .unwrap()
-                .append_null();
-
-            bbox_builder
-                .field_builder::<Float64Builder>(bounding_box_indices::MAX_Y)
-                .unwrap()
-                .append_null();
-
-            bbox_builder.append(false);
+            // For null bounding box, append default values since fields are non-nullable
+            // but mark the struct as null via validity buffer
+            self.bbox_min_x.append_value(0.0);
+            self.bbox_min_y.append_value(0.0);
+            self.bbox_max_x.append_value(0.0);
+            self.bbox_max_y.append_value(0.0);
+            self.bbox_validity.append_value(false);
         }
         Ok(())
     }
@@ -380,81 +316,182 @@ impl RasterBuilder {
     /// Append a null raster
     pub fn append_null(&mut self) -> Result<(), ArrowError> {
         // Since metadata fields are non-nullable, provide default values
-        let metadata_builder = self
-            .main_builder
-            .field_builder::<StructBuilder>(raster_indices::METADATA)
-            .unwrap();
+        self.width.append_value(0u64);
+        self.height.append_value(0u64);
+        self.upper_left_x.append_value(0.0f64);
+        self.upper_left_y.append_value(0.0f64);
+        self.scale_x.append_value(0.0f64);
+        self.scale_y.append_value(0.0f64);
+        self.skew_x.append_value(0.0f64);
+        self.skew_y.append_value(0.0f64);
 
-        metadata_builder
-            .field_builder::<UInt64Builder>(metadata_indices::WIDTH)
-            .unwrap()
-            .append_value(0u64);
-
-        metadata_builder
-            .field_builder::<UInt64Builder>(metadata_indices::HEIGHT)
-            .unwrap()
-            .append_value(0u64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::UPPERLEFT_X)
-            .unwrap()
-            .append_value(0.0f64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::UPPERLEFT_Y)
-            .unwrap()
-            .append_value(0.0f64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SCALE_X)
-            .unwrap()
-            .append_value(0.0f64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SCALE_Y)
-            .unwrap()
-            .append_value(0.0f64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SKEW_X)
-            .unwrap()
-            .append_value(0.0f64);
-
-        metadata_builder
-            .field_builder::<Float64Builder>(metadata_indices::SKEW_Y)
-            .unwrap()
-            .append_value(0.0f64);
-
-        // Mark the metadata struct as valid since it has valid values
-        metadata_builder.append(true);
-
-        // Append null CRS (now using StringViewBuilder to match schema)
-        let crs_builder = self
-            .main_builder
-            .field_builder::<StringViewBuilder>(raster_indices::CRS)
-            .unwrap();
-        crs_builder.append_null();
+        // Append null CRS
+        self.crs.append_null();
 
         // Append null bounding box
         self.append_bounding_box(None)?;
 
-        // Append null bands
-        let bands_builder = self
-            .main_builder
-            .field_builder::<ListBuilder<StructBuilder>>(raster_indices::BANDS)
-            .unwrap();
-        bands_builder.append(false);
+        // No bands for null raster
+        let current_offset = *self.band_offsets.last().unwrap();
+        self.band_offsets.push(current_offset);
 
-        // Mark this raster as null in the main struct
-        self.main_builder.append(false);
+        // Mark raster as null
+        self.raster_validity.append_value(false);
 
         Ok(())
     }
 
     /// Finish building and return the constructed StructArray
     pub fn finish(mut self) -> Result<StructArray, ArrowError> {
-        Ok(self.main_builder.finish())
+        // Build the metadata struct using the schema
+        let metadata_fields = if let DataType::Struct(fields) = RasterSchema::metadata_type() {
+            fields
+        } else {
+            return Err(ArrowError::SchemaError(
+                "Expected struct type for metadata".to_string(),
+            ));
+        };
+
+        let metadata_arrays: Vec<ArrayRef> = vec![
+            Arc::new(self.width.finish()),
+            Arc::new(self.height.finish()),
+            Arc::new(self.upper_left_x.finish()),
+            Arc::new(self.upper_left_y.finish()),
+            Arc::new(self.scale_x.finish()),
+            Arc::new(self.scale_y.finish()),
+            Arc::new(self.skew_x.finish()),
+            Arc::new(self.skew_y.finish()),
+        ];
+        let metadata_array = StructArray::new(metadata_fields, metadata_arrays, None);
+
+        // Build the bounding box struct using the schema
+        let bbox_fields = if let DataType::Struct(fields) = RasterSchema::bounding_box_type() {
+            fields
+        } else {
+            return Err(ArrowError::SchemaError(
+                "Expected struct type for bounding box".to_string(),
+            ));
+        };
+
+        let bbox_arrays: Vec<ArrayRef> = vec![
+            Arc::new(self.bbox_min_x.finish()),
+            Arc::new(self.bbox_min_y.finish()),
+            Arc::new(self.bbox_max_x.finish()),
+            Arc::new(self.bbox_max_y.finish()),
+        ];
+        let bbox_validity = self.bbox_validity.finish();
+        let bbox_array = StructArray::new(bbox_fields, bbox_arrays, bbox_validity.nulls().cloned());
+
+        // Build the band metadata struct using the schema
+        let band_metadata_fields =
+            if let DataType::Struct(fields) = RasterSchema::band_metadata_type() {
+                fields
+            } else {
+                return Err(ArrowError::SchemaError(
+                    "Expected struct type for band metadata".to_string(),
+                ));
+            };
+
+        let band_metadata_arrays: Vec<ArrayRef> = vec![
+            Arc::new(self.band_nodata.finish()),
+            Arc::new(self.band_storage_type.finish()),
+            Arc::new(self.band_datatype.finish()),
+            Arc::new(self.band_outdb_url.finish()),
+            Arc::new(self.band_outdb_band_id.finish()),
+        ];
+        let band_metadata_array =
+            StructArray::new(band_metadata_fields, band_metadata_arrays, None);
+
+        // Build the band struct using the schema
+        let band_fields = if let DataType::Struct(fields) = RasterSchema::band_type() {
+            fields
+        } else {
+            return Err(ArrowError::SchemaError(
+                "Expected struct type for band".to_string(),
+            ));
+        };
+
+        let band_arrays: Vec<ArrayRef> = vec![
+            Arc::new(band_metadata_array),
+            Arc::new(self.band_data.finish()),
+        ];
+        let band_struct_array = StructArray::new(band_fields, band_arrays, None);
+
+        // Build the bands list array using the schema
+        let band_field = if let DataType::List(field) = RasterSchema::bands_type() {
+            field
+        } else {
+            return Err(ArrowError::SchemaError(
+                "Expected list type for bands".to_string(),
+            ));
+        };
+
+        let offsets = OffsetBuffer::new(ScalarBuffer::from(self.band_offsets));
+        let bands_list = ListArray::new(band_field, offsets, Arc::new(band_struct_array), None);
+
+        // Build the final raster struct using the schema
+        let raster_fields = RasterSchema::fields();
+        let raster_arrays: Vec<ArrayRef> = vec![
+            Arc::new(metadata_array),
+            Arc::new(self.crs.finish()),
+            Arc::new(bbox_array),
+            Arc::new(bands_list),
+        ];
+
+        let raster_validity_array = self.raster_validity.finish();
+        let raster_nulls = raster_validity_array.nulls().cloned();
+
+        Ok(StructArray::new(raster_fields, raster_arrays, raster_nulls))
     }
+}
+
+/// Trait for accessing individual band metadata
+pub trait BandMetadataRef {
+    /// No-data value as raw bytes (None if null)
+    fn nodata_value(&self) -> Option<&[u8]>;
+    /// Storage type (InDb, OutDbRef, etc)
+    fn storage_type(&self) -> StorageType;
+    /// Band data type (UInt8, Float32, etc.)
+    fn data_type(&self) -> BandDataType;
+    /// OutDb URL (only used when storage_type == OutDbRef)
+    fn outdb_url(&self) -> Option<&str>;
+    /// OutDb band ID (only used when storage_type == OutDbRef)
+    fn outdb_band_id(&self) -> Option<u32>;
+}
+
+/// Trait for accessing individual band data
+pub trait BandRef {
+    /// Band metadata accessor
+    fn metadata(&self) -> &dyn BandMetadataRef;
+    /// Raw band data as bytes (zero-copy access)
+    fn data(&self) -> &[u8];
+}
+
+/// Trait for accessing all bands in a raster
+pub trait BandsRef {
+    /// Number of bands in the raster
+    fn len(&self) -> usize;
+    /// Check if no bands are present
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Get a specific band by number (returns Error if out of bounds)
+    /// By convention, band numbers are 1-based
+    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, String>;
+    /// Iterator over all bands
+    fn iter(&self) -> BandIterator<'_>;
+}
+
+/// Trait for accessing complete raster data
+pub trait RasterRef {
+    /// Raster metadata accessor
+    fn metadata(&self) -> &dyn MetadataRef;
+    /// CRS accessor
+    fn crs(&self) -> Option<&str>;
+    /// Bounding box accessor (optional)
+    fn bounding_box(&self) -> Option<&dyn BoundingBoxRef>;
+    /// Bands accessor
+    fn bands(&self) -> &dyn BandsRef;
 }
 
 /// Iterator and accessor traits for reading raster data from Arrow arrays.
@@ -536,55 +573,6 @@ impl BoundingBoxRef for BoundingBox {
     fn max_y(&self) -> f64 {
         self.max_y
     }
-}
-
-/// Trait for accessing individual band metadata
-pub trait BandMetadataRef {
-    /// No-data value as raw bytes (None if null)
-    fn nodata_value(&self) -> Option<&[u8]>;
-    /// Storage type (InDb, OutDbRef, etc)
-    fn storage_type(&self) -> StorageType;
-    /// Band data type (UInt8, Float32, etc.)
-    fn data_type(&self) -> BandDataType;
-    /// OutDb URL (only used when storage_type == OutDbRef)
-    fn outdb_url(&self) -> Option<&str>;
-    /// OutDb band ID (only used when storage_type == OutDbRef)
-    fn outdb_band_id(&self) -> Option<u32>;
-}
-
-/// Trait for accessing individual band data
-pub trait BandRef {
-    /// Band metadata accessor
-    fn metadata(&self) -> &dyn BandMetadataRef;
-    /// Raw band data as bytes (zero-copy access)
-    fn data(&self) -> &[u8];
-}
-
-/// Trait for accessing all bands in a raster
-pub trait BandsRef {
-    /// Number of bands in the raster
-    fn len(&self) -> usize;
-    /// Check if no bands are present
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    /// Get a specific band by number (returns Error if out of bounds)
-    /// By convention, band numbers are 1-based
-    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, String>;
-    /// Iterator over all bands
-    fn iter(&self) -> BandIterator<'_>;
-}
-
-/// Trait for accessing complete raster data
-pub trait RasterRef {
-    /// Raster metadata accessor
-    fn metadata(&self) -> &dyn MetadataRef;
-    /// CRS accessor
-    fn crs(&self) -> Option<&str>;
-    /// Bounding box accessor (optional)
-    fn bounding_box(&self) -> Option<&dyn BoundingBoxRef>;
-    /// Bands accessor
-    fn bands(&self) -> &dyn BandsRef;
 }
 
 /// Implementation of MetadataRef for Arrow StructArray
@@ -1026,18 +1014,13 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     }
 }
 
-/// Iterator over raster structs in an Arrow StructArray
+/// Iterate over raster structs in an Arrow StructArray
 ///
 /// This provides efficient, zero-copy access to raster data stored in Arrow format.
 /// Each iteration yields a `RasterRefImpl` that provides access to both metadata and band data.
 pub struct RasterStructIterator<'a> {
     raster_array: &'a StructArray,
     current_row: usize,
-}
-
-/// Create a raster iterator for a StructArray containing raster data
-pub fn raster_iterator(raster_array: &StructArray) -> RasterStructIterator<'_> {
-    RasterStructIterator::new(raster_array)
 }
 
 impl<'a> RasterStructIterator<'a> {
@@ -1093,6 +1076,7 @@ impl<'a> ExactSizeIterator for RasterStructIterator<'a> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sedona_schema::raster::{BandDataType, StorageType};
 
     #[test]
     fn test_iterator_basic_functionality() {
@@ -1140,7 +1124,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the iterator
-        let mut iterator = raster_iterator(&raster_array);
+        let mut iterator = RasterStructIterator::new(&raster_array);
 
         assert_eq!(iterator.len(), 1);
         assert!(!iterator.is_empty());
@@ -1180,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_multi_band_iterator() {
-        let mut builder = RasterBuilder::new(10);
+        let mut builder = RasterBuilder::new(3);
 
         let metadata = RasterMetadata {
             width: 5,
@@ -1216,7 +1200,7 @@ mod tests {
 
         let raster_array = builder.finish().unwrap();
 
-        let mut iterator = raster_iterator(&raster_array);
+        let mut iterator = RasterStructIterator::new(&raster_array);
         let raster = iterator.next().unwrap();
         let bands = raster.bands();
 
@@ -1287,12 +1271,11 @@ mod tests {
 
         let source_array = source_builder.finish().unwrap();
 
-        // Now create a new raster using metadata from the iterator - this is the key feature!
+        // Create a new raster using metadata from the iterator
         let mut target_builder = RasterBuilder::new(10);
-        let iterator = raster_iterator(&source_array);
+        let iterator = RasterStructIterator::new(&source_array);
         let source_raster = iterator.get(0).unwrap();
 
-        // Use metadata directly from the iterator (zero-copy!)
         target_builder
             .start_raster(
                 source_raster.metadata(),
@@ -1323,7 +1306,7 @@ mod tests {
         let target_array = target_builder.finish().unwrap();
 
         // Verify the metadata was copied correctly
-        let target_iterator = raster_iterator(&target_array);
+        let target_iterator = RasterStructIterator::new(&target_array);
         let target_raster = target_iterator.get(0).unwrap();
         let target_metadata = target_raster.metadata();
 
@@ -1430,7 +1413,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the data type conversion for each band
-        let iterator = raster_iterator(&raster_array);
+        let iterator = RasterStructIterator::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1512,7 +1495,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Verify the band metadata
-        let iterator = raster_iterator(&raster_array);
+        let iterator = RasterStructIterator::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1572,7 +1555,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let raster_array = builder.finish().unwrap();
-        let iterator = raster_iterator(&raster_array);
+        let iterator = RasterStructIterator::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
