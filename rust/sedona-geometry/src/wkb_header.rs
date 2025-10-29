@@ -112,10 +112,11 @@ impl WkbHeader {
     }
 
     /// Returns the size of the geometry
-    /// Not applicable for a point
-    /// Number of points for a linestring
-    /// Number of rings for a polygon
-    /// Number of geometries for a MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, or GEOMETRYCOLLECTION
+    ///
+    /// - 1 for Points
+    /// - Number of points for a linestring
+    /// - Number of rings for a polygon
+    /// - Number of geometries for a MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, or GEOMETRYCOLLECTION
     pub fn size(&self) -> u32 {
         self.size
     }
