@@ -87,10 +87,10 @@ where
     RHS: LineTraitExt<T = T>,
 {
     fn intersects_trait(&self, rhs: &RHS) -> bool {
-        let lt = self.min_coord();
-        let rb = self.max_coord();
-        let lb = Coord::from((lt.x, rb.y));
-        let rt = Coord::from((rb.x, lt.y));
+        let lb = self.min_coord();
+        let rt = self.max_coord();
+        let lt = Coord::from((lb.x, rt.y));
+        let rb = Coord::from((rt.x, lb.y));
 
         // If either rhs.{start,end} lies inside Rect, then true
         self.intersects_trait(&rhs.start_ext())
