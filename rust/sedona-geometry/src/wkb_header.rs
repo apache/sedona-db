@@ -101,16 +101,7 @@ impl WkbHeader {
         })
     }
 
-    /// Returns the geometry type id of the WKB by only parsing the header instead of the entire WKB
-    /// 1 -> Point
-    /// 2 -> LineString
-    /// 3 -> Polygon
-    /// 4 -> MultiPoint
-    /// 5 -> MultiLineString
-    /// 6 -> MultiPolygon
-    /// 7 -> GeometryCollection
-    ///
-    /// Spec: https://libgeos.org/specifications/wkb/
+    /// Returns the [GeometryTypeId] of the WKB by only parsing the header instead of the entire WKB
     pub fn geometry_type_id(&self) -> Result<GeometryTypeId, SedonaGeometryError> {
         // Only low 3 bits is for the base type, high bits include additional info
         let code = self.geometry_type & 0x7;
