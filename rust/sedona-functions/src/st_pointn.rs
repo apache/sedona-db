@@ -90,7 +90,7 @@ impl SedonaScalarKernel for STPointN {
         );
 
         let maybe_n: Option<i64> = match &args[1].cast_to(&DataType::Int64, None)? {
-            ColumnarValue::Scalar(ScalarValue::Int64(maybe_n)) => maybe_n.clone(),
+            ColumnarValue::Scalar(ScalarValue::Int64(maybe_n)) => *maybe_n,
             _ => None, // pass invalid n value so that all
         };
 
