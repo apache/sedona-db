@@ -1,16 +1,10 @@
-PENDING PR #1376 (https://github.com/georust/geo/pull/1376) Merge: 9bb1332f intersects-tidy
-  - 8727d141: organize intersects impls by caller; add missing implementations for Coord (intersects/*)
-PENDING PR #1379 (https://github.com/georust/geo/pull/1379) Merge: 1e5520bc intersects-linestring-poly
-  - 77ff3e6f: extract duplicate intersects impls into a macro (intersects/line_string.rs)
-  - 75964389: fix truncated copy/paste (intersects/line_string.rs)
-  - 7a976890: remove unnecessary bounds (intersects/line_string.rs)
-  - a9e047d2: remove unnecessary constraints (intersects/line_string.rs)
-  - 31ee4388: Faster LineString intersects ~Polygon (intersects/collections.rs performance changes)
-PENDING PR #1378 (https://github.com/georust/geo/pull/1378) Merge: 11c626fb intersects-poly-poly
-  - 06302689: new poly poly intersection (intersects/polygon.rs)
-  - 1faf998e: proof that int-int can be skipped (intersects/polygon.rs)
-PENDING PR #1377 / #1376 follow-up (https://github.com/georust/geo/pull/1377) Faster Rect/Triangle/Polygon intersections
-  - e8419735: Faster Intersection for Rect v. Polygon and Rect v. Triangle (intersects/rect.rs & triangle.rs)
-  - bbacf118: rename rectangle corners (intersects/rect.rs minor change)
-PENDING PR #1422 related empty propagation (https://github.com/georust/geo/pull/1422) apply empty to other crates
-  - fea73a18: apply `empty` to other crates (centroid.rs, dimensions.rs, intersects/mod.rs)
+PENDING PR #1376 (https://github.com/georust/geo/pull/1376) [8727d141]: Intersects tidy-up; organize impls by caller; adds missing Coord-based Intersects (intersects/*) for generic parity.
+PENDING PR #1379 (https://github.com/georust/geo/pull/1379) [77ff3e6f,75964389,7a976890,a9e047d2,31ee4388]: LineString/MultiLineString intersects refactor & perf (macro extraction, constraint/bounds cleanups, collections speedup) – required for efficient generic LineString vs area types.
+PENDING PR #1378 (https://github.com/georust/geo/pull/1378) [06302689,1faf998e,11c626fb]: Polygon–Polygon intersection overhaul + skip interior-interior proof; improves correctness & performance of generic polygon intersects.
+PENDING PR #1377 (https://github.com/georust/geo/pull/1377) [e8419735,bbacf118]: Faster Rect/Triangle vs Polygon intersects; specialized implementations reduce allocations and add tests to mirror.
+PENDING PR #1422 (https://github.com/georust/geo/pull/1422) [fea73a18]: Apply `empty` semantics across centroid/dimensions/intersects for consistent emptiness detection in generic traits.
+SKIPPED PR #1406 (https://github.com/georust/geo/pull/1406) [9eed5bfd]: Rust 2024 edition upgrade; no algorithmic changes needed for generic port.
+SKIPPED PR #1424 (https://github.com/georust/geo/pull/1424) [a60aec90]: Disjoint polygon distance pruning; excluded (distance algorithms not ported; different implementation strategy).
+SKIPPED PR #1426 (https://github.com/georust/geo/pull/1426) [33f4e6e0]: Adds distance_within to Distance trait; distance-related changes omitted per guidelines.
+SKIPPED PR #1370 (https://github.com/georust/geo/pull/1370) [6f3bf4cb]: Euclidean Bearing/Destination additions; excluded (distance/Bearing not in generic scope).
+SKIPPED PR #1365 (https://github.com/georust/geo/pull/1365) [7b3056be]: Geometry buffering feature; buffer algorithm not part of current generic subset.
