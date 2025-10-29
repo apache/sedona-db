@@ -200,7 +200,7 @@ fn count_wkb_points_recursively<'a>(wkb: &'a wkb::reader::Wkb<'a>) -> usize {
             n
         }
         geo_traits::GeometryType::MultiPoint(multi_point) => {
-            multi_point.points().map(|p| !p.is_empty()).count()
+            multi_point.points().filter(|p| !p.is_empty()).count()
         }
         geo_traits::GeometryType::MultiLineString(multi_line_string) => multi_line_string
             .line_strings()
@@ -251,17 +251,17 @@ fn write_wkb_points_recursively<'a>(
     wkb: &'a wkb::reader::Wkb<'a>,
 ) -> Result<(), SedonaGeometryError> {
     match wkb.as_type() {
-        geo_traits::GeometryType::Point(point) => match point.coord() {
-            Some(coord) => write_wkb_point_from_coord(buf, coord)?,
-            None => {}
-        },
+        geo_traits::GeometryType::Point(point) => {
+            if let Some(coord) = point.coord() {
+                write_wkb_point_from_coord(buf, coord)?
+            }
+        }
         geo_traits::GeometryType::LineString(line_string) => {
             write_wkb_points_from_coords(buf, line_string.coords())?;
         }
         geo_traits::GeometryType::Polygon(polygon) => {
-            match polygon.exterior() {
-                Some(ring) => write_wkb_points_from_coords(buf, ring.coords())?,
-                None => {}
+            if let Some(ring) = polygon.exterior() {
+                write_wkb_points_from_coords(buf, ring.coords())?
             }
             for ring in polygon.interiors() {
                 write_wkb_points_from_coords(buf, ring.coords())?;
@@ -269,9 +269,8 @@ fn write_wkb_points_recursively<'a>(
         }
         geo_traits::GeometryType::MultiPoint(multi_point) => {
             for point in multi_point.points() {
-                match point.coord() {
-                    Some(coord) => write_wkb_point_from_coord(buf, coord)?,
-                    None => {}
+                if let Some(coord) = point.coord() {
+                    write_wkb_point_from_coord(buf, coord)?
                 }
             }
         }
@@ -282,9 +281,8 @@ fn write_wkb_points_recursively<'a>(
         }
         geo_traits::GeometryType::MultiPolygon(multi_polygon) => {
             for polygon in multi_polygon.polygons() {
-                match polygon.exterior() {
-                    Some(ring) => write_wkb_points_from_coords(buf, ring.coords())?,
-                    None => {}
+                if let Some(ring) = polygon.exterior() {
+                    write_wkb_points_from_coords(buf, ring.coords())?
                 }
                 for ring in polygon.interiors() {
                     write_wkb_points_from_coords(buf, ring.coords())?;
