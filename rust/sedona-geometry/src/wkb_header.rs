@@ -188,11 +188,10 @@ impl<'a> WkbBuffer<'a> {
                 }
 
                 // Recursive call to get the first geom of the first nested geometry
-                // Add to current offset of i
-                let mut nested_buffer = WkbBuffer::new(&self.buf[self.offset..]);
-                let off = nested_buffer.first_geom_idx()?;
+                let curr_offset = self.offset;
+                let off = self.first_geom_idx()?;
                 if let Some(off) = off {
-                    Ok(Some(self.offset + off))
+                    Ok(Some(curr_offset + off))
                 } else {
                     Ok(None)
                 }
