@@ -25,12 +25,11 @@ use arrow_array::{
 };
 use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_schema::{ArrowError, DataType};
-use datafusion_common::error::Result;
 use std::sync::Arc;
 
 use sedona_schema::raster::{
     band_indices, band_metadata_indices, bounding_box_indices, metadata_indices, raster_indices,
-    BandDataType, StorageType, RasterSchema,
+    BandDataType, RasterSchema, StorageType,
 };
 
 /// Metadata for a raster
@@ -499,6 +498,7 @@ pub trait RasterRef {
 /// These traits provide a zero-copy interface for accessing raster metadata and band data
 /// from the Arrow-based storage format. The implementation handles both InDb and OutDbRef
 /// storage types seamlessly.
+
 /// Trait for accessing raster metadata (dimensions, geotransform, bounding box, etc.)
 pub trait MetadataRef {
     /// Width of the raster in pixels
