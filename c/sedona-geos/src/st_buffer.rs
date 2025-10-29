@@ -119,29 +119,17 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     // Build BufferParams based on style parameters
     let params = parse_buffer_params(buffer_style_params.as_deref())?;
 
-    let is_single_sided = buffer_style_params
-        .as_ref()
-        .map(|s| s.eq_ignore_ascii_case("side="))
-        .unwrap_or(false);
-
-    let is_left = buffer_style_params
-        .as_ref()
-        .map(|s| s.eq_ignore_ascii_case("left"))
-        .unwrap_or(false);
-
-    let is_right = buffer_style_params
-        .as_ref()
-        .map(|s| s.eq_ignore_ascii_case("right"))
-        .unwrap_or(false);
+    // Parse 'side' from the style parameters
+    let (is_left, is_right) = parse_buffer_side_style(buffer_style_params.as_deref());
 
     executor.execute_wkb_void(|wkb| {
         match (wkb, distance_iter.next().unwrap()) {
             (Some(wkb), Some(mut distance)) => {
-                if is_single_sided && ((is_left && distance < 0.0) || (is_right && distance > 0.0))
-                {
+                if (is_left && distance < 0.0) || (is_right && distance > 0.0) {
                     distance = -distance;
                 }
-                builder.append_value(invoke_scalar(&wkb, distance, &params)?);
+                invoke_scalar(&wkb, distance, &params, &mut builder)?;
+                builder.append_value([]);
             }
             _ => builder.append_null(),
         }
@@ -155,15 +143,18 @@ fn invoke_scalar(
     geos_geom: &geos::Geometry,
     distance: f64,
     params: &BufferParams,
-) -> Result<Vec<u8>> {
+    writer: &mut impl std::io::Write,
+) -> Result<()> {
     let geometry = geos_geom
         .buffer_with_params(distance, params)
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
     let wkb = geometry
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
 
-    Ok(wkb.into())
+    writer.write_all(wkb.as_ref())?;
+    Ok(())
 }
 
 fn extract_optional_string(arg: Option<&ColumnarValue>) -> Result<Option<String>> {
@@ -179,6 +170,29 @@ fn extract_optional_string(arg: Option<&ColumnarValue>) -> Result<Option<String>
             "Expected scalar bufferStyleParameters, got: {arg:?}",
         ))),
     }
+}
+
+fn parse_buffer_side_style(params: Option<&str>) -> (bool, bool) {
+    params
+        .map(|s| {
+            let mut left = false;
+            let mut right = false;
+            for tok in s.split_whitespace() {
+                if let Some((k, v)) = tok.split_once('=') {
+                    if k.eq_ignore_ascii_case("side") {
+                        if v.eq_ignore_ascii_case("left") {
+                            left = true;
+                            right = false;
+                        } else if v.eq_ignore_ascii_case("right") {
+                            right = true;
+                            left = false;
+                        }
+                    }
+                }
+            }
+            (left, right)
+        })
+        .unwrap_or((false, false))
 }
 
 fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
@@ -206,7 +220,7 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
         } else if key.eq_ignore_ascii_case("side") {
             let single_sided = is_single_sided(value)?;
             if single_sided && !end_cap_specified {
-                params_builder = params_builder.end_cap_style(CapStyle::Square)
+                params_builder = params_builder.end_cap_style(CapStyle::Square);
             }
             params_builder = params_builder.single_sided(single_sided);
         } else if key.eq_ignore_ascii_case("mitre_limit") || key.eq_ignore_ascii_case("miter_limit")
@@ -216,7 +230,7 @@ fn parse_buffer_params(params_str: Option<&str>) -> Result<BufferParams> {
         } else if key.eq_ignore_ascii_case("quad_segs")
             || key.eq_ignore_ascii_case("quadrant_segments")
         {
-            let segs = parse_number(value, "quadrant_segments")?;
+            let segs: i32 = parse_number(value, "quadrant_segments")?;
             params_builder = params_builder.quadrant_segments(segs);
         } else {
             return Err(DataFusionError::Execution(format!(
@@ -591,5 +605,94 @@ mod tests {
             .unwrap();
 
         assert!(result_buffer.equals_exact(&expected_buffer, 0.1).unwrap());
+    }
+
+    #[test]
+    fn test_side_right_geos_3_13() {
+        let wkt = "LINESTRING(50 50, 150 150, 150 50)";
+        let line = geos::Geometry::new_from_wkt(wkt).unwrap();
+        let distance = 100.0;
+
+        // Test single-sided buffer (GEOS 3.13+ removes artifacts, giving 12713.61)
+        // PostGIS with GEOS 3.9 returns 16285.08 due to including geometric artifacts
+        // GEOS 3.12+ improvements: https://github.com/libgeos/geos/commit/091f6d99
+        let params_single = BufferParams::builder().single_sided(true).build().unwrap();
+
+        let buffer_right = line.buffer_with_params(-distance, &params_single).unwrap();
+        let area_right = buffer_right.area().unwrap();
+
+        // Expected area with GEOS 3.13 (improved algorithm without artifacts)
+        assert!(
+            (area_right - 12713.605978550266).abs() < 0.1,
+            "Expected GEOS 3.13+ area ~12713.61, got {}",
+            area_right
+        );
+    }
+
+    #[test]
+    fn test_empty_and_invalid_input() {
+        assert_eq!(
+            parse_buffer_side_style(None),
+            (false, false),
+            "Should return (false, false) for None."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("")),
+            (false, false),
+            "Should return (false, false) for an empty string."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("mitre_limit=5.0")),
+            (false, false),
+            "Should return (false, false) for an invalid key."
+        );
+    }
+
+    #[test]
+    fn test_single_side_and_case_insensitivity() {
+        assert_eq!(
+            parse_buffer_side_style(Some("side=left")),
+            (true, false),
+            "Should detect 'left'."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("side=RIGHT")),
+            (false, true),
+            "Should detect 'RIGHT' case-insensitively."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("SiDe=LeFt")),
+            (true, false),
+            "Should handle mixed case key and value."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("join=mitre SIDE=RIGHT mitre_limit=5.0")),
+            (false, true),
+            "Should ignore other params and detect 'RIGHT'."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("side=center")),
+            (false, false),
+            "Should ignore invalid side values."
+        );
+    }
+
+    #[test]
+    fn test_both_sides_present() {
+        assert_eq!(
+            parse_buffer_side_style(Some("side=left side=right")),
+            (false, true),
+            "Should detect both left and right."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("side=right side=left join=round")),
+            (true, false),
+            "Should detect both regardless of order."
+        );
+        assert_eq!(
+            parse_buffer_side_style(Some("SIDE=RIGHT endcap=round side=left")),
+            (true, false),
+            "Should handle complex string with both sides."
+        );
     }
 }
