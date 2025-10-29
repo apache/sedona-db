@@ -1118,7 +1118,7 @@ mod tests {
             max_y: 0.0,
         };
         builder
-            .start_raster(&metadata, Some(&epsg4326), Some(&bbox))
+            .start_raster(&metadata, Some(epsg4326), Some(&bbox))
             .unwrap();
 
         let band_metadata = BandMetadata {
@@ -1437,7 +1437,7 @@ mod tests {
         assert_eq!(bands.len(), 7, "Expected 7 bands for all data types");
 
         // Verify each band returns the correct data type
-        let expected_types = vec![
+        let expected_types = [
             BandDataType::UInt8,
             BandDataType::UInt16,
             BandDataType::Int16,
@@ -1505,7 +1505,7 @@ mod tests {
 
         builder.start_band(outdb_band_metadata).unwrap();
         // For OutDbRef, data field could be empty or contain metadata/thumbnail
-        builder.band_data_writer().append_value(&[]);
+        builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
 
         builder.finish_raster().unwrap();
@@ -1567,7 +1567,7 @@ mod tests {
         };
 
         builder.start_band(band_metadata).unwrap();
-        builder.band_data_writer().append_value(&[1u8; 100]);
+        builder.band_data_writer().append_value([1u8; 100]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
