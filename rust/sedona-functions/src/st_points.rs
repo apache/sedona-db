@@ -47,7 +47,7 @@ use crate::executor::WkbExecutor;
 pub fn st_points_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_points",
-        vec![Arc::new(STPoints::new())],
+        vec![Arc::new(STPoints)],
         Volatility::Immutable,
         Some(st_npoints_doc()),
     )
@@ -66,12 +66,6 @@ fn st_points_doc() -> Documentation {
 
 #[derive(Debug)]
 struct STPoints;
-
-impl STPoints {
-    fn new() -> Self {
-        Self
-    }
-}
 
 impl SedonaScalarKernel for STPoints {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -122,7 +116,7 @@ impl SedonaScalarKernel for STPoints {
 pub fn st_npoints_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_npoints",
-        vec![Arc::new(STNPoints::new())],
+        vec![Arc::new(STNPoints)],
         Volatility::Immutable,
         Some(st_points_doc()),
     )
@@ -141,12 +135,6 @@ fn st_npoints_doc() -> Documentation {
 
 #[derive(Debug)]
 struct STNPoints;
-
-impl STNPoints {
-    fn new() -> Self {
-        Self
-    }
-}
 
 impl SedonaScalarKernel for STNPoints {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
