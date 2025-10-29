@@ -89,17 +89,20 @@ impl SedonaScalarKernel for STPointN {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let n = match &args[1].cast_to(&DataType::Int64, None)? {
-            ColumnarValue::Scalar(ScalarValue::Int64(Some(n))) => *n,
-            _ => 0, // pass invalid n value so that all
+        let maybe_n: Option<i64> = match &args[1].cast_to(&DataType::Int64, None)? {
+            ColumnarValue::Scalar(ScalarValue::Int64(maybe_n)) => maybe_n.clone(),
+            _ => None, // pass invalid n value so that all
         };
 
         executor.execute_wkb_void(|maybe_wkb| {
-            // n is 1-origin, so 0 is invalid value
-            if n == 0 {
-                builder.append_null();
-                return Ok(());
-            }
+            let n = match maybe_n {
+                // n is 1-origin, so 0 is invalid value
+                Some(n) if n != 0 => n,
+                _ => {
+                    builder.append_null();
+                    return Ok(());
+                }
+            };
 
             if let Some(wkb) = maybe_wkb {
                 if let geo_traits::GeometryType::LineString(line_string) = wkb.as_type() {
