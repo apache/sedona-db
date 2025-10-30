@@ -383,22 +383,6 @@ impl TypeMatcher for IsInteger {
 }
 
 #[derive(Debug)]
-struct IsUnsignedInteger {}
-
-impl TypeMatcher for IsUnsignedInteger {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Arrow(data_type) => data_type.is_unsigned_integer(),
-            _ => false,
-        }
-    }
-
-    fn type_if_null(&self) -> Option<SedonaType> {
-        Some(SedonaType::Arrow(DataType::UInt64))
-    }
-}
-
-#[derive(Debug)]
 struct IsString {}
 
 impl TypeMatcher for IsString {
@@ -500,12 +484,6 @@ mod tests {
         assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::UInt32)));
         assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Int32)));
         assert!(!ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Float64)));
-
-        assert!(ArgMatcher::is_unsigned_integer().match_type(&SedonaType::Arrow(DataType::UInt32)));
-        assert!(!ArgMatcher::is_unsigned_integer().match_type(&SedonaType::Arrow(DataType::Int32)));
-        assert!(
-            !ArgMatcher::is_unsigned_integer().match_type(&SedonaType::Arrow(DataType::Float64))
-        );
 
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8View)));
