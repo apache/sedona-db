@@ -17,7 +17,7 @@
 //! Generic Dimensions (HasDimensions) algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::dimensions`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/dimensions.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/dimensions.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use core::borrow::Borrow;
 use sedona_geo_traits_ext::*;
@@ -73,7 +73,7 @@ pub trait HasDimensions {
     /// ]);
     /// assert!(!line_string.is_empty());
     ///
-    /// let empty_line_string: LineString = LineString::new(vec![]);
+    /// let empty_line_string: LineString = LineString::empty();
     /// assert!(empty_line_string.is_empty());
     ///
     /// let point = Point::new(0.0, 0.0);
@@ -112,7 +112,7 @@ pub trait HasDimensions {
     /// assert_eq!(Dimensions::ZeroDimensional, point.dimensions());
     ///
     /// // An `Empty` dimensionality is distinct from, and less than, being 0-dimensional
-    /// let empty_collection = GeometryCollection::<f32>::new_from(vec![]);
+    /// let empty_collection = GeometryCollection::<f32>::empty();
     /// assert_eq!(Dimensions::Empty, empty_collection.dimensions());
     /// assert!(empty_collection.dimensions() < point.dimensions());
     /// ```
@@ -147,7 +147,7 @@ pub trait HasDimensions {
     /// let geometry_collection = GeometryCollection::new_from(vec![degenerate_line_rect.into(), degenerate_point_rect.into()]);
     /// assert_eq!(Dimensions::ZeroDimensional, geometry_collection.boundary_dimensions());
     ///
-    /// let geometry_collection = GeometryCollection::<f32>::new_from(vec![]);
+    /// let geometry_collection = GeometryCollection::<f32>::empty();
     /// assert_eq!(Dimensions::Empty, geometry_collection.boundary_dimensions());
     /// ```
     fn boundary_dimensions(&self) -> Dimensions;

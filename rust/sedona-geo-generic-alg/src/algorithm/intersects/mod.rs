@@ -17,7 +17,7 @@
 //! Generic Intersects algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::intersects` (and its submodules):
-//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/intersects>.
+//! <https://github.com/georust/geo/tree/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/intersects>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::GeoTraitExtWithTypeTag;
 
@@ -174,7 +174,7 @@ mod test {
     #[test]
     fn empty_linestring2_test() {
         let linestring = line_string![(x: 3., y: 2.), (x: 7., y: 6.)];
-        assert!(!linestring.intersects(&LineString::new(Vec::new())));
+        assert!(!linestring.intersects(&LineString::empty()));
     }
     #[test]
     fn empty_all_linestring_test() {

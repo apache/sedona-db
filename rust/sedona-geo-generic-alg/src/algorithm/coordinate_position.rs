@@ -17,7 +17,7 @@
 //! Generic Coordinate Position algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::coordinate_position`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/coordinate_position.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/coordinate_position.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use core::borrow::Borrow;
 use std::cmp::Ordering;
@@ -589,7 +589,7 @@ mod test {
 
     #[test]
     fn test_empty_poly() {
-        let square_poly: Polygon<f64> = Polygon::new(LineString::new(vec![]), vec![]);
+        let square_poly: Polygon<f64> = Polygon::empty();
         assert_eq!(
             square_poly.coordinate_position(&Coord::zero()),
             CoordPos::Outside

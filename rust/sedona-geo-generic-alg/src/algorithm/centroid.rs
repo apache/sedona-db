@@ -17,7 +17,7 @@
 //! Generic Centroid algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::centroid`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/centroid.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/centroid.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use core::borrow::Borrow;
 use std::cmp::Ordering;
@@ -870,7 +870,7 @@ mod test {
     // Tests: Centroid of MultiLineString
     #[test]
     fn empty_multilinestring_test() {
-        let mls: MultiLineString = MultiLineString::new(vec![]);
+        let mls: MultiLineString = MultiLineString::empty();
         let centroid = mls.centroid();
         assert!(centroid.is_none());
     }
@@ -1049,7 +1049,7 @@ mod test {
     fn empty_interior_polygon_test() {
         let poly = Polygon::new(
             LineString::from(vec![p(0., 0.), p(0., 1.), p(1., 1.), p(1., 0.), p(0., 0.)]),
-            vec![LineString::new(vec![])],
+            vec![LineString::empty()],
         );
         assert_eq!(poly.centroid(), Some(p(0.5, 0.5)));
     }
@@ -1072,7 +1072,7 @@ mod test {
     // Tests: Centroid of MultiPolygon
     #[test]
     fn empty_multipolygon_polygon_test() {
-        assert!(MultiPolygon::<f64>::new(Vec::new()).centroid().is_none());
+        assert!(MultiPolygon::<f64>::empty().centroid().is_none());
     }
 
     #[test]
