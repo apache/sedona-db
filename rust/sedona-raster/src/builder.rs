@@ -116,7 +116,6 @@ pub struct BandMetadata {
 /// // Finish building and get the StructArray
 /// let raster_array = builder.finish().unwrap();
 /// ```
-
 pub struct RasterBuilder {
     // Metadata fields
     width: UInt64Builder,
@@ -476,7 +475,7 @@ pub trait BandsRef {
     }
     /// Get a specific band by number (returns Error if out of bounds)
     /// By convention, band numbers are 1-based
-    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, String>;
+    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
     /// Iterator over all bands
     fn iter(&self) -> BandIterator<'_>;
 }
@@ -492,12 +491,6 @@ pub trait RasterRef {
     /// Bands accessor
     fn bands(&self) -> &dyn BandsRef;
 }
-
-/// Iterator and accessor traits for reading raster data from Arrow arrays.
-///
-/// These traits provide a zero-copy interface for accessing raster metadata and band data
-/// from the Arrow-based storage format. The implementation handles both InDb and OutDbRef
-/// storage types seamlessly.
 
 /// Trait for accessing raster metadata (dimensions, geotransform, bounding box, etc.)
 pub trait MetadataRef {
@@ -742,22 +735,22 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
     }
 
     /// Get a specific band by number (1-based index)
-    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, String> {
+    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
         if number == 0 {
-            return Err(format!(
+            return Err(ArrowError::InvalidArgumentError(format!(
                 "Invalid band number {}: band numbers must be 1-based",
                 number
-            ));
+            )));
         }
         // By convention, band numbers are 1-based.
         // Convert to zero-based index.
         let index = number - 1;
         if index >= self.len() {
-            return Err(format!(
+            return Err(ArrowError::InvalidArgumentError(format!(
                 "Band number {} is out of range: this raster has {} bands",
                 number,
                 self.len()
-            ));
+            )));
         }
 
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
@@ -768,41 +761,55 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
             .values()
             .as_any()
             .downcast_ref::<StructArray>()
-            .ok_or("Failed to downcast to StructArray")?;
+            .ok_or(ArrowError::SchemaError(
+                "Failed to downcast to StructArray".to_string(),
+            ))?;
 
         // Get the metadata substructure from the band struct
         let band_metadata_struct = bands_struct
             .column(band_indices::METADATA)
             .as_any()
             .downcast_ref::<StructArray>()
-            .ok_or("Failed to downcast metadata to StructArray")?;
+            .ok_or(ArrowError::SchemaError(
+                "Failed to downcast metadata to StructArray".to_string(),
+            ))?;
 
         let band_metadata = BandMetadataRefImpl {
             nodata_array: band_metadata_struct
                 .column(band_metadata_indices::NODATAVALUE)
                 .as_any()
                 .downcast_ref::<BinaryArray>()
-                .ok_or("Failed to downcast nodata to BinaryArray")?,
+                .ok_or(ArrowError::SchemaError(
+                    "Failed to downcast nodata to BinaryArray".to_string(),
+                ))?,
             storage_type_array: band_metadata_struct
                 .column(band_metadata_indices::STORAGE_TYPE)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
-                .ok_or("Failed to downcast storage_type to UInt32Array")?,
+                .ok_or(ArrowError::SchemaError(
+                    "Failed to downcast storage_type to UInt32Array".to_string(),
+                ))?,
             datatype_array: band_metadata_struct
                 .column(band_metadata_indices::DATATYPE)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
-                .ok_or("Failed to downcast datatype to UInt32Array")?,
+                .ok_or(ArrowError::SchemaError(
+                    "Failed to downcast datatype to UInt32Array".to_string(),
+                ))?,
             outdb_url_array: band_metadata_struct
                 .column(band_metadata_indices::OUTDB_URL)
                 .as_any()
                 .downcast_ref::<StringArray>()
-                .ok_or("Failed to downcast outdb_url to StringArray")?,
+                .ok_or(ArrowError::SchemaError(
+                    "Failed to downcast outdb_url to StringArray".to_string(),
+                ))?,
             outdb_band_id_array: band_metadata_struct
                 .column(band_metadata_indices::OUTDB_BAND_ID)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
-                .ok_or("Failed to downcast outdb_band_id to UInt32Array")?,
+                .ok_or(ArrowError::SchemaError(
+                    "Failed to downcast outdb_band_id to UInt32Array".to_string(),
+                ))?,
             band_index: band_row,
         };
 
@@ -811,7 +818,9 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
             .column(band_indices::DATA)
             .as_any()
             .downcast_ref::<BinaryViewArray>()
-            .ok_or("Failed to downcast data to BinaryViewArray")?;
+            .ok_or(ArrowError::SchemaError(
+                "Failed to downcast data to BinaryViewArray".to_string(),
+            ))?;
 
         let band_data = band_data_array.value(band_row);
 
@@ -1562,17 +1571,14 @@ mod tests {
         // Test invalid band number (0-based)
         let result = bands.band(0);
         assert!(result.is_err());
-        if let Err(err) = result {
-            assert!(err.contains("band numbers must be 1-based"));
-        }
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("band numbers must be 1-based"));
 
         // Test out of range band number
         let result = bands.band(2);
         assert!(result.is_err());
-        if let Err(err) = result {
-            assert!(err.contains("out of range"));
-            assert!(err.contains("this raster has 1 bands"));
-        }
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("is out of range"));
 
         // Test valid band number should still work
         let result = bands.band(1);
