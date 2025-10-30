@@ -327,7 +327,6 @@ mod tests {
                 Some("LINESTRING (1 2, 3 4, 5 6)"),
                 Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))"),
                 Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 3 1, 1 3, 1 1))"),
-                // Some("MULTIPOINT (1 2, EMPTY, 3 4, 5 6)"), // TODO: cannot parse EMPTY?
                 Some("MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))"),
                 Some("MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), ((0 0, 5 0, 0 5, 0 0), (1 1, 3 1, 1 3, 1 1)))"),
                 Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING EMPTY, LINESTRING (3 4, 5 6))"),
@@ -355,7 +354,6 @@ mod tests {
                 Some("MULTIPOINT (1 2, 3 4, 5 6)"),
                 Some("MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0)"),
                 Some("MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 1 1, 3 1, 1 3, 1 1)"),
-                // Some("MULTIPOINT (1 2, 3 4, 5 6)"),
                 Some("MULTIPOINT (1 2, 3 4, 5 6, 7 8)"),
                 Some("MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 0 0, 5 0, 0 5, 0 0, 1 1, 3 1, 1 3, 1 1)"),
                 Some("MULTIPOINT (1 2, 3 4, 5 6)"),
@@ -385,7 +383,6 @@ mod tests {
             Some(3),
             Some(5),
             Some(9),
-            // Some("MULTIPOINT (1 2, 3 4, 5 6)"),
             Some(4),
             Some(13),
             Some(3),
