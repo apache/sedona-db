@@ -211,6 +211,24 @@ class TestBenchFunctions(TestBenchBase):
         "table",
         [
             "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_points(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_Points(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
             "segments_large",
         ],
     )

@@ -1018,6 +1018,67 @@ def test_st_pointm(eng, x, y, m, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geometry", "expected", "expected_n"),
+    [
+        ("POINT (1 2)", "MULTIPOINT (1 2)", 1),
+        ("LINESTRING (1 2, 3 4, 5 6)", "MULTIPOINT (1 2, 3 4, 5 6)", 3),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0)",
+            5,
+        ),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 3 1, 1 3, 1 1))",
+            "MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 1 1, 3 1, 1 3, 1 1)",
+            9,
+        ),
+        ("MULTIPOINT (1 2, 3 4, 5 6, 7 8)", "MULTIPOINT (1 2, 3 4, 5 6, 7 8)", 4),
+        (
+            "MULTILINESTRING ((1 2, 3 4), EMPTY, (5 6, 7 8))",
+            "MULTIPOINT (1 2, 3 4, 5 6, 7 8)",
+            4,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), EMPTY, ((0 0, 5 0, 0 5, 0 0), (1 1, 3 1, 1 3, 1 1)))",
+            "MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 0 0, 5 0, 0 5, 0 0, 1 1, 3 1, 1 3, 1 1)",
+            13,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING EMPTY, LINESTRING (3 4, 5 6))",
+            "MULTIPOINT (1 2, 3 4, 5 6)",
+            3,
+        ),
+        ("LINESTRING Z (1 2 3, 4 5 6, 7 8 9)", "MULTIPOINT Z (1 2 3, 4 5 6, 7 8 9)", 3),
+        ("LINESTRING M (1 2 3, 4 5 6, 7 8 9)", "MULTIPOINT M (1 2 3, 4 5 6, 7 8 9)", 3),
+        (
+            "LINESTRING ZM (1 2 3 4, 5 6 7 8, 9 0 1 2)",
+            "MULTIPOINT ZM (1 2 3 4, 5 6 7 8, 9 0 1 2)",
+            3,
+        ),
+        ("POINT EMPTY", "MULTIPOINT EMPTY", 0),
+        ("LINESTRING EMPTY", "MULTIPOINT EMPTY", 0),
+        ("POLYGON EMPTY", "MULTIPOINT EMPTY", 0),
+        ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY", 0),
+        ("MULTILINESTRING EMPTY", "MULTIPOINT EMPTY", 0),
+        ("MULTIPOLYGON EMPTY", "MULTIPOINT EMPTY", 0),
+        ("GEOMETRYCOLLECTION EMPTY", "MULTIPOINT EMPTY", 0),
+        (None, None, None),
+    ],
+)
+def test_st_points(eng, geometry, expected, expected_n):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Points({geom_or_null(geometry)})",
+        expected,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_NPoints({geom_or_null(geometry)})",
+        expected_n,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geometry", "expected"),
     [
         (None, None),
