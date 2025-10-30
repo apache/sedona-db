@@ -188,11 +188,6 @@ impl ArgMatcher {
         Arc::new(IsInteger {})
     }
 
-    /// Matches any unsigned integer argument
-    pub fn is_unsigned_integer() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsUnsignedInteger {})
-    }
-
     /// Matches any string argument
     pub fn is_string() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsString {})
