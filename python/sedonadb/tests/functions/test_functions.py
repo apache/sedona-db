@@ -1651,3 +1651,33 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
         f"SELECT ST_SimplifyPreserveTopology({geom_or_null(geom)}, {val_or_null(tolerance)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", 0),
+        ("POINT Z EMPTY", 2),
+        ("POINT M EMPTY", 1),
+        ("POINT ZM EMPTY", 3),
+        ("POINT Z (0 0 0)", 2),
+        ("POINT M (0 0 0)", 1),
+        ("POINT ZM (0 0 0 0)", 3),
+        ("LINESTRING EMPTY", 0),
+        ("LINESTRING Z EMPTY", 2),
+        ("LINESTRING Z (0 0 0, 1 1 1)", 2),
+        ("POLYGON EMPTY", 0),
+        ("MULTIPOINT ((0 0), (1 1))", 0),
+        ("MULTIPOINT Z ((0 0 0))", 2),
+        ("MULTIPOINT ZM ((0 0 0 0))", 3),
+        ("GEOMETRYCOLLECTION EMPTY", 0),
+        ("GEOMETRYCOLLECTION (POINT Z (0 0 0))", 2),
+        ("GEOMETRYCOLLECTION Z (POINT Z (0 0 0))", 2),
+        ("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT Z (0 0 0)))", 2),
+    ],
+)
+def test_st_zmflag(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ZmFlag({geom_or_null(geom)})", expected)

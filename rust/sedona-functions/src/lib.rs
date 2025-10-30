@@ -54,3 +54,4 @@ mod st_transform;
 pub mod st_union_aggr;
 mod st_xyzm;
 mod st_xyzm_minmax;
+mod st_zmflag;
