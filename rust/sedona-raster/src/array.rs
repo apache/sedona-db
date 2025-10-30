@@ -231,6 +231,9 @@ impl<'a> BandRef for BandRefImpl<'a> {
 struct BandsRefImpl<'a> {
     bands_list: &'a ListArray,
     raster_index: usize,
+    // Direct references to the metadata and data structs
+    band_metadata_struct: &'a StructArray,
+    band_data_array: &'a BinaryViewArray,
 }
 
 impl<'a> BandsRef for BandsRefImpl<'a> {
@@ -262,54 +265,41 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
 
-        let bands_struct = self
-            .bands_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .ok_or(ArrowError::SchemaError(
-                "Failed to downcast to StructArray".to_string(),
-            ))?;
-
-        // Get the metadata substructure from the band struct
-        let band_metadata_struct = bands_struct
-            .column(band_indices::METADATA)
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .ok_or(ArrowError::SchemaError(
-                "Failed to downcast metadata to StructArray".to_string(),
-            ))?;
-
         let band_metadata = BandMetadataRefImpl {
-            nodata_array: band_metadata_struct
+            nodata_array: self
+                .band_metadata_struct
                 .column(band_metadata_indices::NODATAVALUE)
                 .as_any()
                 .downcast_ref::<BinaryArray>()
                 .ok_or(ArrowError::SchemaError(
                     "Failed to downcast nodata to BinaryArray".to_string(),
                 ))?,
-            storage_type_array: band_metadata_struct
+            storage_type_array: self
+                .band_metadata_struct
                 .column(band_metadata_indices::STORAGE_TYPE)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
                 .ok_or(ArrowError::SchemaError(
                     "Failed to downcast storage_type to UInt32Array".to_string(),
                 ))?,
-            datatype_array: band_metadata_struct
+            datatype_array: self
+                .band_metadata_struct
                 .column(band_metadata_indices::DATATYPE)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
                 .ok_or(ArrowError::SchemaError(
                     "Failed to downcast datatype to UInt32Array".to_string(),
                 ))?,
-            outdb_url_array: band_metadata_struct
+            outdb_url_array: self
+                .band_metadata_struct
                 .column(band_metadata_indices::OUTDB_URL)
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or(ArrowError::SchemaError(
                     "Failed to downcast outdb_url to StringArray".to_string(),
                 ))?,
-            outdb_band_id_array: band_metadata_struct
+            outdb_band_id_array: self
+                .band_metadata_struct
                 .column(band_metadata_indices::OUTDB_BAND_ID)
                 .as_any()
                 .downcast_ref::<UInt32Array>()
@@ -319,16 +309,7 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
             band_index: band_row,
         };
 
-        // Get band data from the Binary column within the band struct
-        let band_data_array = bands_struct
-            .column(band_indices::DATA)
-            .as_any()
-            .downcast_ref::<BinaryViewArray>()
-            .ok_or(ArrowError::SchemaError(
-                "Failed to downcast data to BinaryViewArray".to_string(),
-            ))?;
-
-        let band_data = band_data_array.value(band_row);
+        let band_data = self.band_data_array.value(band_row);
 
         Ok(Box::new(BandRefImpl {
             band_metadata,
@@ -459,9 +440,30 @@ impl<'a> RasterRefImpl<'a> {
             index: raster_index,
         };
 
+        // Extract the band structs for direct access
+        let bands_struct = bands_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let band_metadata_struct = bands_struct
+            .column(band_indices::METADATA)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let band_data_array = bands_struct
+            .column(band_indices::DATA)
+            .as_any()
+            .downcast_ref::<BinaryViewArray>()
+            .unwrap();
+
         let bands = BandsRefImpl {
             bands_list,
             raster_index,
+            band_metadata_struct,
+            band_data_array,
         };
 
         // Create optional bounding box ref if not null
