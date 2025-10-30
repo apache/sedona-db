@@ -15,4 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod array;
 pub mod builder;
+pub mod traits;
