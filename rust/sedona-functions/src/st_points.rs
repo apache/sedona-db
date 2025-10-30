@@ -49,7 +49,7 @@ pub fn st_points_udf() -> SedonaScalarUDF {
         "st_points",
         vec![Arc::new(STPoints)],
         Volatility::Immutable,
-        Some(st_npoints_doc()),
+        Some(st_points_doc()),
     )
 }
 
@@ -118,7 +118,7 @@ pub fn st_npoints_udf() -> SedonaScalarUDF {
         "st_npoints",
         vec![Arc::new(STNPoints)],
         Volatility::Immutable,
-        Some(st_points_doc()),
+        Some(st_npoints_doc()),
     )
 }
 
