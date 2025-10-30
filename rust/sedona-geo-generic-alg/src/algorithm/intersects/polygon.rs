@@ -76,38 +76,6 @@ symmetric_intersects_trait_impl!(
     MultiLineStringTag
 );
 
-impl<T, LHS, RHS> IntersectsTrait<PolygonTag, RectTag, RHS> for LHS
-where
-    T: GeoNum,
-    LHS: PolygonTraitExt<T = T>,
-    RHS: RectTraitExt<T = T>,
-{
-    fn intersects_trait(&self, rhs: &RHS) -> bool {
-        self.intersects_trait(&rhs.to_polygon())
-    }
-}
-
-symmetric_intersects_trait_impl!(GeoNum, RectTraitExt, RectTag, PolygonTraitExt, PolygonTag);
-
-impl<T, LHS, RHS> IntersectsTrait<PolygonTag, TriangleTag, RHS> for LHS
-where
-    T: GeoNum,
-    LHS: PolygonTraitExt<T = T>,
-    RHS: TriangleTraitExt<T = T>,
-{
-    fn intersects_trait(&self, rhs: &RHS) -> bool {
-        self.intersects_trait(&rhs.to_polygon())
-    }
-}
-
-symmetric_intersects_trait_impl!(
-    GeoNum,
-    TriangleTraitExt,
-    TriangleTag,
-    PolygonTraitExt,
-    PolygonTag
-);
-
 impl<T, LHS, RHS> IntersectsTrait<PolygonTag, PolygonTag, RHS> for LHS
 where
     T: GeoNum,
