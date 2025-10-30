@@ -157,6 +157,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_mmin", LineString(10));
     benchmark::scalar(c, &f, "native", "st_mmax", LineString(10));
 
+    benchmark::scalar(c, &f, "native", "st_zmflag", Point);
+    benchmark::scalar(c, &f, "native", "st_zmflag", LineString(10));
+
     benchmark::scalar(
         c,
         &f,

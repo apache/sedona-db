@@ -84,6 +84,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_perimeter::st_perimeter_udf,
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,
+        crate::st_pointn::st_pointn_udf,
         crate::st_points::st_points_udf,
         crate::st_points::st_npoints_udf,
         crate::st_pointzm::st_pointz_udf,
@@ -109,6 +110,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm_minmax::st_mmin_udf,
         crate::st_xyzm_minmax::st_mmax_udf,
         crate::st_isclosed::st_isclosed_udf,
+        crate::st_zmflag::st_zmflag_udf,
     );
 
     register_aggregate_udfs!(

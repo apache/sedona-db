@@ -16,19 +16,17 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
+use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::GeometryCollectionTrait;
-use geo_traits::{Dimensions, GeometryTrait};
-use sedona_common::sedona_internal_err;
+use geo_traits::Dimensions;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::wkb_header::WkbHeader;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use wkb::reader::Wkb;
 
 pub fn st_hasz_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
@@ -91,13 +89,13 @@ impl SedonaScalarKernel for STHasZm {
             _ => unreachable!(),
         };
 
-        let executor = WkbExecutor::new(arg_types, args);
+        let executor = WkbBytesExecutor::new(arg_types, args);
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
 
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    builder.append_option(invoke_scalar(&item, dim_index)?);
+                    builder.append_option(invoke_scalar(item, dim_index)?);
                 }
                 None => builder.append_null(),
             }
@@ -108,27 +106,34 @@ impl SedonaScalarKernel for STHasZm {
     }
 }
 
-fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<bool>> {
-    match item.as_type() {
-        geo_traits::GeometryType::GeometryCollection(collection) => {
-            if collection.num_geometries() == 0 {
-                Ok(Some(false))
-            } else {
-                // PostGIS doesn't allow creating a GeometryCollection with geometries of different dimensions
-                // so we can just check the dimension of the first one
-                let first_geom = unsafe { collection.geometry_unchecked(0) };
-                invoke_scalar(first_geom, dim_index)
-            }
-        }
-        _ => {
-            let geom_dim = item.dim();
-            match dim_index {
-                2 => Ok(Some(matches!(geom_dim, Dimensions::Xyz | Dimensions::Xyzm))),
-                3 => Ok(Some(matches!(geom_dim, Dimensions::Xym | Dimensions::Xyzm))),
-                _ => sedona_internal_err!("unexpected dim_index"),
-            }
-        }
+fn invoke_scalar(buf: &[u8], dim_index: usize) -> Result<Option<bool>> {
+    let header = WkbHeader::try_new(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
+    let top_level_dimensions = header
+        .dimensions()
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+    // Infer dimension based on first coordinate dimension for cases where it differs from top-level
+    // e.g GEOMETRYCOLLECTION (POINT Z (1 2 3))
+    let dimensions;
+    if let Some(first_geom_dimensions) = header.first_geom_dimensions() {
+        dimensions = first_geom_dimensions;
+    } else {
+        dimensions = top_level_dimensions;
     }
+
+    if dim_index == 2 {
+        return Ok(Some(matches!(
+            dimensions,
+            Dimensions::Xyz | Dimensions::Xyzm
+        )));
+    }
+    if dim_index == 3 {
+        return Ok(Some(matches!(
+            dimensions,
+            Dimensions::Xym | Dimensions::Xyzm
+        )));
+    }
+    Ok(Some(false))
 }
 
 #[cfg(test)]
@@ -137,7 +142,9 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_testing::{
+        fixtures::MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB, testers::ScalarUdfTester,
+    };
 
     use super::*;
 
@@ -184,8 +191,16 @@ mod tests {
         let result = m_tester.invoke_wkb_scalar(None).unwrap();
         m_tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
+        // Z-dimension specified only in the nested geometry, but not the geom collection level
         let result = z_tester
             .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION (POINT Z (1 2 3))"))
+            .unwrap();
+        z_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(true)));
+
+        // Z-dimension specified on both the geom collection and nested geometry level
+        // Geometry collection with Z dimension both on the geom collection and nested geometry level
+        let result = z_tester
+            .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION Z (POINT Z (1 2 3))"))
             .unwrap();
         z_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(true)));
 
@@ -203,5 +218,32 @@ mod tests {
             .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION EMPTY"))
             .unwrap();
         m_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(false)));
+
+        // Empty geometry collections with Z or M dimensions
+        let result = z_tester
+            .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION Z EMPTY"))
+            .unwrap();
+        z_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(true)));
+
+        let result = m_tester
+            .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION M EMPTY"))
+            .unwrap();
+        m_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(true)));
+    }
+
+    #[test]
+    fn multipoint_with_inferred_z_dimension() {
+        let z_tester = ScalarUdfTester::new(st_hasz_udf().into(), vec![WKB_GEOMETRY]);
+        let m_tester = ScalarUdfTester::new(st_hasm_udf().into(), vec![WKB_GEOMETRY]);
+
+        let scalar = ScalarValue::Binary(Some(MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB.to_vec()));
+        assert_eq!(
+            z_tester.invoke_scalar(scalar.clone()).unwrap(),
+            ScalarValue::Boolean(Some(true))
+        );
+        assert_eq!(
+            m_tester.invoke_scalar(scalar.clone()).unwrap(),
+            ScalarValue::Boolean(Some(false))
+        );
     }
 }
