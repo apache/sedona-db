@@ -1023,22 +1023,17 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     }
 }
 
-/// Iterate over raster structs in an Arrow StructArray
+/// Access rasters from the Arrow StructArray
 ///
 /// This provides efficient, zero-copy access to raster data stored in Arrow format.
-/// Each iteration yields a `RasterRefImpl` that provides access to both metadata and band data.
-pub struct RasterStructIterator<'a> {
+pub struct RasterStructArray<'a> {
     raster_array: &'a StructArray,
-    current_row: usize,
 }
 
-impl<'a> RasterStructIterator<'a> {
-    /// Create a new iterator over the raster struct array
+impl<'a> RasterStructArray<'a> {
+    /// Create a new RasterStructArray from an existing StructArray
     pub fn new(raster_array: &'a StructArray) -> Self {
-        Self {
-            raster_array,
-            current_row: 0,
-        }
+        Self { raster_array }
     }
 
     /// Get the total number of rasters in the array
@@ -1060,27 +1055,6 @@ impl<'a> RasterStructIterator<'a> {
         Some(RasterRefImpl::new(self.raster_array, index))
     }
 }
-
-impl<'a> Iterator for RasterStructIterator<'a> {
-    type Item = RasterRefImpl<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_row >= self.raster_array.len() {
-            return None;
-        }
-
-        let item = RasterRefImpl::new(self.raster_array, self.current_row);
-        self.current_row += 1;
-        Some(item)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.raster_array.len() - self.current_row;
-        (remaining, Some(remaining))
-    }
-}
-
-impl<'a> ExactSizeIterator for RasterStructIterator<'a> {}
 
 #[cfg(test)]
 mod tests {
@@ -1133,12 +1107,12 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the iterator
-        let mut iterator = RasterStructIterator::new(&raster_array);
+        let rasters = RasterStructArray::new(&raster_array);
 
-        assert_eq!(iterator.len(), 1);
-        assert!(!iterator.is_empty());
+        assert_eq!(rasters.len(), 1);
+        assert!(!rasters.is_empty());
 
-        let raster = iterator.next().unwrap();
+        let raster = rasters.get(0).unwrap();
         let metadata = raster.metadata();
 
         assert_eq!(metadata.width(), 10);
@@ -1209,8 +1183,8 @@ mod tests {
 
         let raster_array = builder.finish().unwrap();
 
-        let mut iterator = RasterStructIterator::new(&raster_array);
-        let raster = iterator.next().unwrap();
+        let rasters = RasterStructArray::new(&raster_array);
+        let raster = rasters.get(0).unwrap();
         let bands = raster.bands();
 
         assert_eq!(bands.len(), 3);
@@ -1282,7 +1256,7 @@ mod tests {
 
         // Create a new raster using metadata from the iterator
         let mut target_builder = RasterBuilder::new(10);
-        let iterator = RasterStructIterator::new(&source_array);
+        let iterator = RasterStructArray::new(&source_array);
         let source_raster = iterator.get(0).unwrap();
 
         target_builder
@@ -1315,7 +1289,7 @@ mod tests {
         let target_array = target_builder.finish().unwrap();
 
         // Verify the metadata was copied correctly
-        let target_iterator = RasterStructIterator::new(&target_array);
+        let target_iterator = RasterStructArray::new(&target_array);
         let target_raster = target_iterator.get(0).unwrap();
         let target_metadata = target_raster.metadata();
 
@@ -1422,7 +1396,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the data type conversion for each band
-        let iterator = RasterStructIterator::new(&raster_array);
+        let iterator = RasterStructArray::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1504,7 +1478,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Verify the band metadata
-        let iterator = RasterStructIterator::new(&raster_array);
+        let iterator = RasterStructArray::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1564,7 +1538,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let raster_array = builder.finish().unwrap();
-        let iterator = RasterStructIterator::new(&raster_array);
+        let iterator = RasterStructArray::new(&raster_array);
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
