@@ -60,17 +60,17 @@ impl MetadataRef for RasterMetadata {
 
 /// Implement BoundingBoxRef for BoundingBox to allow direct use with traits
 impl BoundingBoxRef for BoundingBox {
-    fn min_x(&self) -> f64 {
-        self.min_x
+    fn min_lon(&self) -> f64 {
+        self.min_lon
     }
-    fn min_y(&self) -> f64 {
-        self.min_y
+    fn min_lat(&self) -> f64 {
+        self.min_lat
     }
-    fn max_x(&self) -> f64 {
-        self.max_x
+    fn max_lon(&self) -> f64 {
+        self.max_lon
     }
-    fn max_y(&self) -> f64 {
-        self.max_y
+    fn max_lat(&self) -> f64 {
+        self.max_lat
     }
 }
 
@@ -123,28 +123,28 @@ impl<'a> MetadataRef for MetadataRefImpl<'a> {
 
 /// Implementation of BoundingBoxRef for Arrow StructArray
 struct BoundingBoxRefImpl<'a> {
-    min_x_array: &'a Float64Array,
-    min_y_array: &'a Float64Array,
-    max_x_array: &'a Float64Array,
-    max_y_array: &'a Float64Array,
+    min_lon_array: &'a Float64Array,
+    min_lat_array: &'a Float64Array,
+    max_lon_array: &'a Float64Array,
+    max_lat_array: &'a Float64Array,
     index: usize,
 }
 
 impl<'a> BoundingBoxRef for BoundingBoxRefImpl<'a> {
-    fn min_x(&self) -> f64 {
-        self.min_x_array.value(self.index)
+    fn min_lon(&self) -> f64 {
+        self.min_lon_array.value(self.index)
     }
 
-    fn min_y(&self) -> f64 {
-        self.min_y_array.value(self.index)
+    fn min_lat(&self) -> f64 {
+        self.min_lat_array.value(self.index)
     }
 
-    fn max_x(&self) -> f64 {
-        self.max_x_array.value(self.index)
+    fn max_lon(&self) -> f64 {
+        self.max_lon_array.value(self.index)
     }
 
-    fn max_y(&self) -> f64 {
-        self.max_y_array.value(self.index)
+    fn max_lat(&self) -> f64 {
+        self.max_lat_array.value(self.index)
     }
 }
 
@@ -471,23 +471,23 @@ impl<'a> RasterRefImpl<'a> {
             None
         } else {
             Some(BoundingBoxRefImpl {
-                min_x_array: bbox
-                    .column(bounding_box_indices::MIN_X)
+                min_lon_array: bbox
+                    .column(bounding_box_indices::MIN_LON)
                     .as_any()
                     .downcast_ref::<Float64Array>()
                     .unwrap(),
-                min_y_array: bbox
-                    .column(bounding_box_indices::MIN_Y)
+                min_lat_array: bbox
+                    .column(bounding_box_indices::MIN_LAT)
                     .as_any()
                     .downcast_ref::<Float64Array>()
                     .unwrap(),
-                max_x_array: bbox
-                    .column(bounding_box_indices::MAX_X)
+                max_lon_array: bbox
+                    .column(bounding_box_indices::MAX_LON)
                     .as_any()
                     .downcast_ref::<Float64Array>()
                     .unwrap(),
-                max_y_array: bbox
-                    .column(bounding_box_indices::MAX_Y)
+                max_lat_array: bbox
+                    .column(bounding_box_indices::MAX_LAT)
                     .as_any()
                     .downcast_ref::<Float64Array>()
                     .unwrap(),
@@ -506,10 +506,10 @@ impl<'a> RasterRefImpl<'a> {
     /// Access the bounding box for this raster
     pub fn bounding_box(&self) -> Option<BoundingBox> {
         self.bbox.as_ref().map(|bbox_ref| BoundingBox {
-            min_x: bbox_ref.min_x(),
-            min_y: bbox_ref.min_y(),
-            max_x: bbox_ref.max_x(),
-            max_y: bbox_ref.max_y(),
+            min_lon: bbox_ref.min_lon(),
+            min_lat: bbox_ref.min_lat(),
+            max_lon: bbox_ref.max_lon(),
+            max_lat: bbox_ref.max_lat(),
         })
     }
 }
@@ -596,10 +596,10 @@ mod tests {
 
         let epsg4326 = "EPSG:4326";
         let bbox = BoundingBox {
-            min_x: 0.0,
-            min_y: -10.0,
-            max_x: 10.0,
-            max_y: 0.0,
+            min_lon: 0.0,
+            min_lat: -10.0,
+            max_lon: 10.0,
+            max_lat: 0.0,
         };
         builder
             .start_raster(&metadata, Some(epsg4326), Some(&bbox))
@@ -638,8 +638,8 @@ mod tests {
         assert_eq!(metadata.scale_y(), -1.0);
 
         let bbox = raster.bounding_box().unwrap();
-        assert_eq!(bbox.min_x, 0.0);
-        assert_eq!(bbox.max_x, 10.0);
+        assert_eq!(bbox.min_lon, 0.0);
+        assert_eq!(bbox.max_lon, 10.0);
 
         let bands = raster.bands();
         assert_eq!(bands.len(), 1);

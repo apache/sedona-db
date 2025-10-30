@@ -46,7 +46,7 @@ use crate::traits::{BandMetadata, BoundingBox, MetadataRef};
 /// Example usage:
 /// ```
 /// use sedona_raster::traits::{RasterMetadata, BoundingBox, BandMetadata};
-/// use sedona_raster::builder::{RasterBuilder};
+/// use sedona_raster::builder::{RasterBuilder, RasterMetadata, BoundingBox, BandMetadata};
 /// use sedona_schema::raster::{StorageType, BandDataType};
 ///
 /// let mut builder = RasterBuilder::new(1);
@@ -56,7 +56,7 @@ use crate::traits::{BandMetadata, BoundingBox, MetadataRef};
 ///     scale_x: 1.0, scale_y: -1.0,
 ///     skew_x: 0.0, skew_y: 0.0,
 /// };
-/// let bbox = BoundingBox { min_x: 0.0, min_y: 0.0, max_x: 100.0, max_y: 100.0 };
+/// let bbox = BoundingBox { min_lon: 0.0, min_lat: 0.0, max_lon: 100.0, max_lat: 100.0 };
 ///
 /// // Start a raster:
 /// // From RasterMetadata struct with separate bounding box
@@ -95,11 +95,11 @@ pub struct RasterBuilder {
     // CRS field
     crs: StringViewBuilder,
 
-    // Bounding box fields
-    bbox_min_x: Float64Builder,
-    bbox_min_y: Float64Builder,
-    bbox_max_x: Float64Builder,
-    bbox_max_y: Float64Builder,
+    // Bounding box fields (WGS84 lon/lat coordinates)
+    bbox_min_lon: Float64Builder,
+    bbox_min_lat: Float64Builder,
+    bbox_max_lon: Float64Builder,
+    bbox_max_lat: Float64Builder,
     bbox_validity: BooleanBuilder, // Track which bboxes are null
 
     // Band metadata fields
@@ -137,10 +137,10 @@ impl RasterBuilder {
             crs: StringViewBuilder::with_capacity(capacity),
 
             // Bounding box builders
-            bbox_min_x: Float64Builder::with_capacity(capacity),
-            bbox_min_y: Float64Builder::with_capacity(capacity),
-            bbox_max_x: Float64Builder::with_capacity(capacity),
-            bbox_max_y: Float64Builder::with_capacity(capacity),
+            bbox_min_lon: Float64Builder::with_capacity(capacity),
+            bbox_min_lat: Float64Builder::with_capacity(capacity),
+            bbox_max_lon: Float64Builder::with_capacity(capacity),
+            bbox_max_lat: Float64Builder::with_capacity(capacity),
             // Bounding box validity (keeps track of null bounding boxes)
             bbox_validity: BooleanBuilder::with_capacity(capacity),
 
@@ -259,18 +259,18 @@ impl RasterBuilder {
     /// Append a bounding box to the current raster
     pub fn append_bounding_box(&mut self, bbox: Option<&BoundingBox>) -> Result<(), ArrowError> {
         if let Some(bbox) = bbox {
-            self.bbox_min_x.append_value(bbox.min_x);
-            self.bbox_min_y.append_value(bbox.min_y);
-            self.bbox_max_x.append_value(bbox.max_x);
-            self.bbox_max_y.append_value(bbox.max_y);
+            self.bbox_min_lon.append_value(bbox.min_lon);
+            self.bbox_min_lat.append_value(bbox.min_lat);
+            self.bbox_max_lon.append_value(bbox.max_lon);
+            self.bbox_max_lat.append_value(bbox.max_lat);
             self.bbox_validity.append_value(true);
         } else {
             // For null bounding box, append default values since fields are non-nullable
             // but mark the struct as null via validity buffer
-            self.bbox_min_x.append_value(0.0);
-            self.bbox_min_y.append_value(0.0);
-            self.bbox_max_x.append_value(0.0);
-            self.bbox_max_y.append_value(0.0);
+            self.bbox_min_lon.append_value(0.0);
+            self.bbox_min_lat.append_value(0.0);
+            self.bbox_max_lon.append_value(0.0);
+            self.bbox_max_lat.append_value(0.0);
             self.bbox_validity.append_value(false);
         }
         Ok(())
@@ -337,10 +337,10 @@ impl RasterBuilder {
         };
 
         let bbox_arrays: Vec<ArrayRef> = vec![
-            Arc::new(self.bbox_min_x.finish()),
-            Arc::new(self.bbox_min_y.finish()),
-            Arc::new(self.bbox_max_x.finish()),
-            Arc::new(self.bbox_max_y.finish()),
+            Arc::new(self.bbox_min_lon.finish()),
+            Arc::new(self.bbox_min_lat.finish()),
+            Arc::new(self.bbox_max_lon.finish()),
+            Arc::new(self.bbox_max_lat.finish()),
         ];
         let bbox_validity = self.bbox_validity.finish();
         let bbox_array = StructArray::new(bbox_fields, bbox_arrays, bbox_validity.nulls().cloned());
@@ -433,10 +433,10 @@ mod tests {
 
         let epsg4326 = "EPSG:4326";
         let bbox = BoundingBox {
-            min_x: 0.0,
-            min_y: -10.0,
-            max_x: 10.0,
-            max_y: 0.0,
+            min_lon: 0.0,
+            min_lat: -10.0,
+            max_lon: 10.0,
+            max_lat: 0.0,
         };
         builder
             .start_raster(&metadata, Some(epsg4326), Some(&bbox))
@@ -475,8 +475,8 @@ mod tests {
         assert_eq!(metadata.scale_y(), -1.0);
 
         let bbox = raster.bounding_box().unwrap();
-        assert_eq!(bbox.min_x, 0.0);
-        assert_eq!(bbox.max_x, 10.0);
+        assert_eq!(bbox.min_lon, 0.0);
+        assert_eq!(bbox.max_lon, 10.0);
 
         let bands = raster.bands();
         assert_eq!(bands.len(), 1);
@@ -582,10 +582,10 @@ mod tests {
         };
 
         let original_bbox = BoundingBox {
-            min_x: -122.0,
-            min_y: 35.4,
-            max_x: -120.0,
-            max_y: 37.8,
+            min_lon: -122.0,
+            min_lat: 35.4,
+            max_lon: -120.0,
+            max_lat: 37.8,
         };
 
         source_builder
@@ -656,8 +656,8 @@ mod tests {
         assert_eq!(target_metadata.scale_y(), -0.1);
 
         let target_bbox = target_raster.bounding_box().unwrap();
-        assert_eq!(target_bbox.min_x, -122.0);
-        assert_eq!(target_bbox.max_x, -120.0);
+        assert_eq!(target_bbox.min_lon, -122.0);
+        assert_eq!(target_bbox.max_lon, -120.0);
 
         // But band data and metadata should be different
         let target_band = target_raster.bands().band(1).unwrap();

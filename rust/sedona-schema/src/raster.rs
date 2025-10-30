@@ -47,13 +47,13 @@ impl RasterSchema {
         ]))
     }
 
-    /// Bounding box schema
+    /// Bounding box schema (WGS84 lon/lat coordinates)
     pub fn bounding_box_type() -> DataType {
         DataType::Struct(Fields::from(vec![
-            Field::new(column::MIN_X, DataType::Float64, false),
-            Field::new(column::MIN_Y, DataType::Float64, false),
-            Field::new(column::MAX_X, DataType::Float64, false),
-            Field::new(column::MAX_Y, DataType::Float64, false),
+            Field::new(column::MIN_LON, DataType::Float64, false),
+            Field::new(column::MIN_LAT, DataType::Float64, false),
+            Field::new(column::MAX_LON, DataType::Float64, false),
+            Field::new(column::MAX_LAT, DataType::Float64, false),
         ]))
     }
 
@@ -152,10 +152,10 @@ pub mod metadata_indices {
 }
 
 pub mod bounding_box_indices {
-    pub const MIN_X: usize = 0;
-    pub const MIN_Y: usize = 1;
-    pub const MAX_X: usize = 2;
-    pub const MAX_Y: usize = 3;
+    pub const MIN_LON: usize = 0;
+    pub const MIN_LAT: usize = 1;
+    pub const MAX_LON: usize = 2;
+    pub const MAX_LAT: usize = 3;
 }
 
 pub mod band_metadata_indices {
@@ -198,11 +198,11 @@ pub mod column {
     pub const BBOX: &str = "bbox";
     pub const CRS: &str = "crs";
 
-    // Bounding box fields
-    pub const MIN_X: &str = "min_x";
-    pub const MIN_Y: &str = "min_y";
-    pub const MAX_X: &str = "max_x";
-    pub const MAX_Y: &str = "max_y";
+    // Bounding box fields (WGS84 lon/lat coordinates)
+    pub const MIN_LON: &str = "min_lon";
+    pub const MIN_LAT: &str = "min_lat";
+    pub const MAX_LON: &str = "max_lon";
+    pub const MAX_LAT: &str = "max_lat";
 
     // Band metadata fields
     pub const NODATAVALUE: &str = "nodata_value";
@@ -316,24 +316,24 @@ mod tests {
                 "Expected exactly 4 bounding box fields"
             );
             assert_eq!(
-                bbox_fields[bounding_box_indices::MIN_X].name(),
-                column::MIN_X,
-                "Bounding box min_x index mismatch"
+                bbox_fields[bounding_box_indices::MIN_LON].name(),
+                column::MIN_LON,
+                "Bounding box min_lon index mismatch"
             );
             assert_eq!(
-                bbox_fields[bounding_box_indices::MIN_Y].name(),
-                column::MIN_Y,
-                "Bounding box min_y index mismatch"
+                bbox_fields[bounding_box_indices::MIN_LAT].name(),
+                column::MIN_LAT,
+                "Bounding box min_lat index mismatch"
             );
             assert_eq!(
-                bbox_fields[bounding_box_indices::MAX_X].name(),
-                column::MAX_X,
-                "Bounding box max_x index mismatch"
+                bbox_fields[bounding_box_indices::MAX_LON].name(),
+                column::MAX_LON,
+                "Bounding box max_lon index mismatch"
             );
             assert_eq!(
-                bbox_fields[bounding_box_indices::MAX_Y].name(),
-                column::MAX_Y,
-                "Bounding box max_y index mismatch"
+                bbox_fields[bounding_box_indices::MAX_LAT].name(),
+                column::MAX_LAT,
+                "Bounding box max_lat index mismatch"
             );
         } else {
             panic!("Expected Struct type for bounding box");
