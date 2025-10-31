@@ -624,8 +624,7 @@ mod tests {
         // Expected area with GEOS 3.13 (improved algorithm without artifacts)
         assert!(
             (area_right - 12713.605978550266).abs() < 0.1,
-            "Expected GEOS 3.13+ area ~12713.61, got {}",
-            area_right
+            "Expected GEOS 3.13+ area ~12713.61, got {area_right}"
         );
     }
 

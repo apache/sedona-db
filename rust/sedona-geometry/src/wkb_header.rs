@@ -359,8 +359,7 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
         2 => Ok(Dimensions::Xym),
         3 => Ok(Dimensions::Xyzm),
         _ => Err(SedonaGeometryError::Invalid(format!(
-            "Unexpected code: {:?}",
-            code
+            "Unexpected code: {code:?}"
         ))),
     }
 }
@@ -904,8 +903,7 @@ mod tests {
         for i in 1..wkb.len() - 1 {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
 
@@ -917,8 +915,7 @@ mod tests {
         for i in 1..last_i {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
 
@@ -930,8 +927,7 @@ mod tests {
         for i in 1..last_i {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
     }
@@ -947,8 +943,7 @@ mod tests {
         for i in 1..last_i {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
 
@@ -958,8 +953,7 @@ mod tests {
         for i in 1..last_i {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
 
@@ -969,8 +963,7 @@ mod tests {
         for i in 1..last_i {
             assert!(
                 WkbHeader::try_new(&wkb[0..i]).is_err(),
-                "0..{} unexpectedly succeeded",
-                i
+                "0..{i} unexpectedly succeeded"
             );
         }
     }
