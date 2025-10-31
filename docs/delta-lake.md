@@ -214,8 +214,8 @@ cities.to_view("cities", True)
 
 ```python
 df = sd.sql("""
-select 
-    name, 
+select
+    name,
     ST_AsBinary(geometry) as geometry_wkb,
     STRUCT(
         ST_XMin(geometry) as xmin,
@@ -277,4 +277,3 @@ sd.sql("select name, ST_GeomFromWKB(geometry_wkb) as geom from us_east_cities").
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ New York         ┆ POINT(-73.99571754361698 40.72156174972766)  │
     └──────────────────┴──────────────────────────────────────────────┘
-
