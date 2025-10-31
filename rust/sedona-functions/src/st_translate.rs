@@ -24,7 +24,7 @@ use datafusion_expr::{
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
-    transform::{self, CrsTransform},
+    transform::{transform, CrsTransform},
     wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{
@@ -103,7 +103,7 @@ impl SedonaScalarKernel for STTranslate {
             match (maybe_wkb, deltax, deltay) {
                 (Some(wkb), Some(deltax), Some(deltay)) => {
                     let trans = Translate { deltax, deltay };
-                    transform::transform(wkb, &trans, &mut builder)
+                    transform(wkb, &trans, &mut builder)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                     builder.append_value([]);
                 }
