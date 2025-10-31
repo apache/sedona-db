@@ -19,14 +19,11 @@ from test_bench_base import TestBenchBase
 from sedonadb.testing import (
     DuckDBSingleThread,
     SedonaDBSingleThread,
-    PostGISSingleThread,
 )
 
 
 class TestBenchTransform(TestBenchBase):
-    @pytest.mark.parametrize(
-        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
-    )
+    @pytest.mark.parametrize("eng", [SedonaDBSingleThread, DuckDBSingleThread])
     @pytest.mark.parametrize(
         "table",
         [
