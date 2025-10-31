@@ -93,3 +93,32 @@ def test_st_crs_sedonadb(eng):
         "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), NULL))",
         None,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "dx", "dy", "expected"),
+    [
+        (None, None, None, None),
+        ("POINT (0 1)", 1.0, None, None),
+        ("POINT (0 1)", None, 2.0, None),
+        # WKT output of geoarrow-c is causing this (both correctly output
+        # empties)
+        ("POINT EMPTY", 1.0, 2.0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 1.0, 2.0, "POINT Z (nan nan nan)"),
+        ("POINT (0 1)", 1.0, 2.0, "POINT (1 3)"),
+        ("POINT Z (0 1 2)", 1.0, 2.0, "POINT Z (1 3 2)"),
+        ("LINESTRING EMPTY", 1.0, 2.0, "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", 1.0, 2.0, "POLYGON EMPTY"),
+        ("MULTIPOINT EMPTY", 1.0, 2.0, "MULTIPOINT EMPTY"),
+        ("MULTILINESTRING EMPTY", 1.0, 2.0, "MULTILINESTRING EMPTY"),
+        ("MULTIPOLYGON EMPTY", 1.0, 2.0, "MULTIPOLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", 1.0, 2.0, "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_translate(eng, geom, dx, dy, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Translate({geom_or_null(geom)}, {val_or_null(dx)}, {val_or_null(dy)})",
+        expected,
+    )
