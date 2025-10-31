@@ -78,6 +78,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geomfromwkt::st_geomfromwkt_udf,
         crate::st_haszm::st_hasm_udf,
         crate::st_haszm::st_hasz_udf,
+        crate::st_isclosed::st_isclosed_udf,
+        crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
         crate::st_length::st_length_udf,
         crate::st_makeline::st_makeline_udf,
@@ -109,7 +111,6 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm_minmax::st_zmax_udf,
         crate::st_xyzm_minmax::st_mmin_udf,
         crate::st_xyzm_minmax::st_mmax_udf,
-        crate::st_isclosed::st_isclosed_udf,
         crate::st_zmflag::st_zmflag_udf,
     );
 

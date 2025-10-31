@@ -965,6 +965,37 @@ def test_st_isclosed(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        ("POINT EMPTY", False),
+        ("LINESTRING EMPTY", False),
+        ("POLYGON EMPTY", False),
+        ("MULTIPOINT EMPTY", True),
+        ("MULTILINESTRING EMPTY", True),
+        ("MULTIPOLYGON EMPTY", True),
+        ("GEOMETRYCOLLECTION EMPTY", True),
+        ("GEOMETRYCOLLECTION (LINESTRING EMPTY)", True),
+        ("POINT(0 0)", False),
+        ("LINESTRING(0 0, 1 1)", False),
+        ("POLYGON((0 0, 1 0, 0 1, 0 0))", False),
+        ("MULTIPOINT((0 0), (1 1))", True),
+        ("MULTILINESTRING((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", True),
+        ("MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)))", True),
+        ("GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0))", True),
+        (
+            "GEOMETRYCOLLECTION (LINESTRING(0 0, 0 1, 1 1, 0 0), MULTIPOINT((2 2), (3 3)))",
+            True,
+        ),
+    ],
+)
+def test_st_iscollection(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsCollection({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         # Valid rings (closed + simple)
         ("LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)", True),
         ("LINESTRING(0 0, 1 0, 1 1, 0 0)", True),
