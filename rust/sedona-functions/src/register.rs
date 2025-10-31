@@ -112,14 +112,6 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm::st_x_udf,
         crate::st_xyzm::st_y_udf,
         crate::st_xyzm::st_z_udf,
-        crate::st_xyzm_minmax::st_xmin_udf,
-        crate::st_xyzm_minmax::st_ymin_udf,
-        crate::st_xyzm_minmax::st_xmax_udf,
-        crate::st_xyzm_minmax::st_ymax_udf,
-        crate::st_xyzm_minmax::st_zmin_udf,
-        crate::st_xyzm_minmax::st_zmax_udf,
-        crate::st_xyzm_minmax::st_mmin_udf,
-        crate::st_xyzm_minmax::st_mmax_udf,
         crate::st_zmflag::st_zmflag_udf,
     );
 
