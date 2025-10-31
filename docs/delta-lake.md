@@ -27,6 +27,7 @@ Make sure you run `pip install deltalake` to run the code snippets below.
 ```python
 from deltalake import write_deltalake, DeltaTable
 import sedona.db
+import pyarrow.compute as pc
 
 sd = sedona.db.connect()
 ```
@@ -200,51 +201,80 @@ WKB is binary, can be compressed more effectively than WKT, and results in small
 
 The following example shows how to store the cities dataset in a Delta table with the geometry data stored as WKB.
 
+It also demonstrates how to add a `bbox` column to the Delta table, enabling more efficient filtering.
+
 
 ```python
 cities = sd.read_parquet(
     "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"
 )
+cities.to_view("cities", True)
 ```
 
 
 ```python
-df = sd.sql("select name, ST_AsBinary(geometry) as geometry_wkb from countries")
+df = sd.sql("""
+select 
+    name, 
+    ST_AsBinary(geometry) as geometry_wkb,
+    STRUCT(
+        ST_XMin(geometry) as xmin,
+        ST_YMin(geometry) as ymin,
+        ST_XMax(geometry) as xmax,
+        ST_YMax(geometry) as ymax
+    ) as bbox
+from cities
+""")
 table_path = "/tmp/delta_with_wkb"
-write_deltalake(table_path, df.to_pandas(), mode="overwrite")
+write_deltalake(table_path, df.to_pandas(), mode="overwrite", schema_mode="overwrite")
 ```
+
+Read the Delta table and filter it to only include cities in the eastern half of North America.
 
 
 ```python
 dt = DeltaTable(table_path)
-arrow_table = dt.to_pyarrow_table()
-df = sd.create_data_frame(arrow_table)
-df.to_view("cities", True)
-sd.sql("select name, ST_GeomFromWKB(geometry_wkb) from cities").show()
+dataset = dt.to_pyarrow_dataset()
+filter_expr = (
+    (pc.field("bbox", "xmax") >= -97.0) &
+    (pc.field("bbox", "xmin") <= -67.0) &
+    (pc.field("bbox", "ymax") >= 25.0) &
+    (pc.field("bbox", "ymin") <= 50.0)
+)
+filtered_table = dataset.to_table(filter=filter_expr)
 ```
 
-    ┌─────────────────────────────┬────────────────────────────────────────────────────────────────────┐
-    │             name            ┆                 st_geomfromwkb(cities.geometry_wkb)                │
-    │             utf8            ┆                              geometry                              │
-    ╞═════════════════════════════╪════════════════════════════════════════════════════════════════════╡
-    │ Fiji                        ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.555216566639196,17… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ United Republic of Tanzania ┆ POLYGON((33.90371119710453 -0.9500000000000001,34.07261999999997 … │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Western Sahara              ┆ POLYGON((-8.665589565454809 27.656425889592356,-8.665124477564191… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Canada                      ┆ MULTIPOLYGON(((-122.84000000000003 49.000000000000114,-122.974210… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ United States of America    ┆ MULTIPOLYGON(((-122.84000000000003 49.000000000000114,-120 49.000… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Kazakhstan                  ┆ POLYGON((87.35997033076265 49.21498078062912,86.59877648310336 48… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Uzbekistan                  ┆ POLYGON((55.96819135928291 41.30864166926936,55.928917270741096 4… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Papua New Guinea            ┆ MULTIPOLYGON(((141.00021040259185 -2.60015105551566,142.735246616… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Indonesia                   ┆ MULTIPOLYGON(((141.00021040259185 -2.60015105551566,141.017056919… │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Argentina                   ┆ MULTIPOLYGON(((-68.63401022758323 -52.63637045887449,-68.25 -53.1… │
-    └─────────────────────────────┴────────────────────────────────────────────────────────────────────┘
+
+```python
+df = sd.create_data_frame(filtered_table.to_pandas())
+```
+
+
+```python
+df.to_view("us_east_cities", True)
+sd.sql("select name, ST_GeomFromWKB(geometry_wkb) as geom from us_east_cities").show()
+```
+
+    ┌──────────────────┬──────────────────────────────────────────────┐
+    │       name       ┆                     geom                     │
+    │       utf8       ┆                   geometry                   │
+    ╞══════════════════╪══════════════════════════════════════════════╡
+    │ Ottawa           ┆ POINT(-75.7019612 45.4186427)                │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Nassau           ┆ POINT(-77.3500438 25.0833901)                │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Houston          ┆ POINT(-95.34843625672217 29.741272831862542) │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Miami            ┆ POINT(-80.2260519 25.7895566)                │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Atlanta          ┆ POINT(-84.36764186571386 33.73945728378348)  │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Chicago          ┆ POINT(-87.63523655322338 41.847961283364114) │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Toronto          ┆ POINT(-79.38945855491194 43.66464454743429)  │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Washington, D.C. ┆ POINT(-77.0113644 38.9014952)                │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ New York         ┆ POINT(-73.99571754361698 40.72156174972766)  │
+    └──────────────────┴──────────────────────────────────────────────┘
 
