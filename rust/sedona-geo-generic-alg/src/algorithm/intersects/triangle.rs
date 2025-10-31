@@ -105,7 +105,7 @@ where
             return false;
         }
 
-        // empty polygon cannot intersect with rectangle
+        // empty polygon cannot intersect with triangle
         let Some(exterior) = rhs.exterior_ext() else {
             return false;
         };
@@ -113,20 +113,20 @@ where
             return false;
         }
 
-        // if any of the polygon's corners intersect the rectangle
+        // if any of the polygon's corners intersect the triangle
         let first_coord = unsafe { exterior.geo_coord_unchecked(0) };
         if self.intersects(&first_coord) {
             return true;
         }
 
-        // or any point of the rectangle intersects the polygon
+        // or any point of the triangle intersects the polygon
         if self.first_coord().intersects(rhs) {
             return true;
         }
 
         let rect_lines = self.to_lines();
 
-        // or any of the polygon's lines intersect the rectangle's lines
+        // or any of the polygon's lines intersect the triangle's lines
         if exterior.lines().any(|rhs_line| {
             rect_lines
                 .iter()
@@ -165,7 +165,7 @@ where
             return false;
         }
 
-        // if any of the triangle's corners intersect the rectangle
+        // if any of the rectangle's corners intersect the triangle
         self.intersects(&rhs.min_coord())
 
         // or some corner of the triangle intersects the rectangle
