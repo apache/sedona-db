@@ -56,7 +56,7 @@ fn st_translate_doc() -> Documentation {
     .with_argument("geom", "geometry: Input geometry")
     .with_argument("deltax", "numeric: X value difference")
     .with_argument("deltay", "numeric: Y value difference")
-    .with_sql_example("SELECT ST_Translate(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'), 2, 3)")
+    .with_sql_example("SELECT ST_Translate(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'), 2.0, 3.0)")
     .build()
 }
 
@@ -88,10 +88,10 @@ impl SedonaScalarKernel for STTranslate {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let deltax = args[0]
+        let deltax = args[1]
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
-        let deltay = args[1]
+        let deltay = args[2]
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
         let deltax_array = as_float64_array(&deltax)?;
@@ -135,12 +135,13 @@ impl CrsTransform for Translate {
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::create_array;
     use datafusion_expr::ScalarUDF;
-    // use rstest::rstest;
-    // use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
-    // use sedona_testing::{
-    //     compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
-    // };
+    use rstest::rstest;
+    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_testing::{
+        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+    };
 
     use super::*;
 
@@ -151,38 +152,74 @@ mod tests {
         assert!(st_translate_udf.documentation().is_some());
     }
 
-    // #[rstest]
-    // fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-    //     let tester_translate = ScalarUdfTester::new(
-    //         st_translate_udf().into(),
-    //         vec![sedona_type.clone(), SedonaType::Arrow(DataType::Int64)],
-    //     );
+    #[rstest]
+    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_translate_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester.assert_return_type(WKB_GEOMETRY);
 
-    //     // valid cases
-    //     let input_linestrings = create_array(
-    //         &[
-    //             Some("LINESTRING (11 12, 21 22, 31 32, 41 42)"),
-    //             Some("LINESTRING Z (11 12 13, 21 22 23, 31 32 33, 41 42 43)"),
-    //             Some("LINESTRING M (11 12 13, 21 22 23, 31 32 33, 41 42 43)"),
-    //             Some("LINESTRING ZM (11 12 13 14, 21 22 23 24, 31 32 33 34, 41 42 43 44)"),
-    //         ],
-    //         &sedona_type,
-    //     );
+        let points = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT EMPTY"),
+                Some("POINT EMPTY"),
+                Some("POINT Z EMPTY"),
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("POINT Z (4 5 6)"),
+            ],
+            &sedona_type,
+        );
 
-    //     // first points
-    //     let expected1 = create_array(
-    //         &[
-    //             Some("POINT (11 12)"),
-    //             Some("POINT Z (11 12 13)"),
-    //             Some("POINT M (11 12 13)"),
-    //             Some("POINT ZM (11 12 13 14)"),
-    //         ],
-    //         &WKB_GEOMETRY,
-    //     );
+        let dx = create_array!(
+            Float64,
+            [
+                Some(1.0),
+                None,
+                Some(1.0),
+                Some(1.0),
+                Some(1.0),
+                Some(1.0),
+                Some(1.0),
+                Some(1.0)
+            ]
+        );
+        let dy = create_array!(
+            Float64,
+            [
+                Some(2.0),
+                Some(2.0),
+                None,
+                Some(2.0),
+                Some(2.0),
+                Some(2.0),
+                Some(2.0),
+                Some(2.0)
+            ]
+        );
 
-    //     let result1 = tester_translate
-    //         .invoke_array_scalar(input_linestrings.clone(), ScalarValue::Int64(Some(1)))
-    //         .unwrap();
-    //     assert_array_equal(&result1, &expected1);
-    // }
+        let expected = create_array(
+            &[
+                None,
+                None,
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT Z EMPTY"),
+                Some("POINT (1 3)"),
+                Some("POINT (3 5)"),
+                Some("POINT Z (5 7 6)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_arrays(vec![points, dx, dy]).unwrap();
+        assert_array_equal(&result, &expected);
+    }
 }
