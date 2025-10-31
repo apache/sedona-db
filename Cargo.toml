@@ -30,6 +30,7 @@ members = [
     "rust/sedona-geo",
     "rust/sedona-geometry",
     "rust/sedona-geoparquet",
+    "rust/sedona-raster",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-testing",
@@ -65,6 +66,7 @@ arrow-cast = { version = "56.0.0" }
 arrow-data = { version = "56.0.0" }
 arrow-json = { version = "56.0.0" }
 arrow-schema = { version = "56.0.0" }
+arrow-buffer = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
 byteorder = "1"

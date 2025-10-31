@@ -41,6 +41,7 @@ mod st_geomfromwkt;
 mod st_haszm;
 pub mod st_intersection_aggr;
 pub mod st_isclosed;
+mod st_iscollection;
 pub mod st_isempty;
 mod st_length;
 mod st_makeline;

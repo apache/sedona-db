@@ -203,6 +203,23 @@ class TestBenchFunctions(TestBenchBase):
 
         benchmark(queries)
 
+    # DuckDB does not support this st_iscollection
+    @pytest.mark.parametrize("eng", [SedonaDBSingleThread, PostGISSingleThread])
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_iscollection(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_IsCollection(geom1) from {table}")
+
+        benchmark(queries)
+
     @pytest.mark.parametrize(
         "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
     )
