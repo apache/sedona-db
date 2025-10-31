@@ -28,14 +28,14 @@ use std::sync::Arc;
 
 use sedona_schema::raster::RasterSchema;
 
-use crate::traits::{BandMetadata, BoundingBox, MetadataRef};
+use crate::traits::{BandMetadata, MetadataRef};
 
 /// Builder for constructing raster arrays with zero-copy band data writing
 ///
 /// Required steps to build a raster:
 /// 1. Create a RasterBuilder with a specified capacity
 /// 2. For each raster to add:
-///    - Call `start_raster` with the appropriate metadata, CRS, and bounding box
+///    - Call `start_raster` with the appropriate metadata, CRS
 ///    - For each band in the raster:
 ///       - Call `start_band` with the band metadata
 ///       - Use `band_data_writer` to get a BinaryViewBuilder and write the band data
@@ -45,9 +45,9 @@ use crate::traits::{BandMetadata, BoundingBox, MetadataRef};
 ///
 /// Example usage:
 /// ```
-/// use sedona_raster::traits::{RasterMetadata, BoundingBox, BandMetadata};
-/// use sedona_raster::builder::{RasterBuilder, RasterMetadata, BoundingBox, BandMetadata};
+/// use sedona_raster::traits::{RasterMetadata, BandMetadata};
 /// use sedona_schema::raster::{StorageType, BandDataType};
+/// use sedona_raster::builder::RasterBuilder;
 ///
 /// let mut builder = RasterBuilder::new(1);
 /// let metadata = RasterMetadata {
@@ -56,11 +56,8 @@ use crate::traits::{BandMetadata, BoundingBox, MetadataRef};
 ///     scale_x: 1.0, scale_y: -1.0,
 ///     skew_x: 0.0, skew_y: 0.0,
 /// };
-/// let bbox = BoundingBox { min_lon: 0.0, min_lat: 0.0, max_lon: 100.0, max_lat: 100.0 };
-///
-/// // Start a raster:
-/// // From RasterMetadata struct with separate bounding box
-/// builder.start_raster(&metadata, Some("EPSG:4326"), Some(&bbox)).unwrap();
+/// // Start a raster from RasterMetadata struct
+/// builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
 ///
 /// // Add a band:
 /// let band_metadata = BandMetadata {
@@ -94,13 +91,6 @@ pub struct RasterBuilder {
 
     // CRS field
     crs: StringViewBuilder,
-
-    // Bounding box fields (WGS84 lon/lat coordinates)
-    bbox_min_lon: Float64Builder,
-    bbox_min_lat: Float64Builder,
-    bbox_max_lon: Float64Builder,
-    bbox_max_lat: Float64Builder,
-    bbox_validity: BooleanBuilder, // Track which bboxes are null
 
     // Band metadata fields
     band_nodata: BinaryBuilder,
@@ -136,14 +126,6 @@ impl RasterBuilder {
             // CRS builder
             crs: StringViewBuilder::with_capacity(capacity),
 
-            // Bounding box builders
-            bbox_min_lon: Float64Builder::with_capacity(capacity),
-            bbox_min_lat: Float64Builder::with_capacity(capacity),
-            bbox_max_lon: Float64Builder::with_capacity(capacity),
-            bbox_max_lat: Float64Builder::with_capacity(capacity),
-            // Bounding box validity (keeps track of null bounding boxes)
-            bbox_validity: BooleanBuilder::with_capacity(capacity),
-
             // Band builders - estimate some bands per raster
             // The capacity is at raster level, but each raster has multiple bands and
             // are large. We may want to add an optional parameter to control expected
@@ -164,16 +146,14 @@ impl RasterBuilder {
         }
     }
 
-    /// Start a new raster with metadata, optional CRS, and optional bounding box
+    /// Start a new raster with metadata and optional CRS
     pub fn start_raster(
         &mut self,
         metadata: &dyn MetadataRef,
         crs: Option<&str>,
-        bbox: Option<&BoundingBox>,
     ) -> Result<(), ArrowError> {
         self.append_metadata_from_ref(metadata)?;
         self.append_crs(crs)?;
-        self.append_bounding_box(bbox)?;
 
         // Reset band count for this raster
         self.current_band_count = 0;
@@ -256,26 +236,6 @@ impl RasterBuilder {
         Ok(())
     }
 
-    /// Append a bounding box to the current raster
-    pub fn append_bounding_box(&mut self, bbox: Option<&BoundingBox>) -> Result<(), ArrowError> {
-        if let Some(bbox) = bbox {
-            self.bbox_min_lon.append_value(bbox.min_lon);
-            self.bbox_min_lat.append_value(bbox.min_lat);
-            self.bbox_max_lon.append_value(bbox.max_lon);
-            self.bbox_max_lat.append_value(bbox.max_lat);
-            self.bbox_validity.append_value(true);
-        } else {
-            // For null bounding box, append default values since fields are non-nullable
-            // but mark the struct as null via validity buffer
-            self.bbox_min_lon.append_value(0.0);
-            self.bbox_min_lat.append_value(0.0);
-            self.bbox_max_lon.append_value(0.0);
-            self.bbox_max_lat.append_value(0.0);
-            self.bbox_validity.append_value(false);
-        }
-        Ok(())
-    }
-
     /// Append a null raster
     pub fn append_null(&mut self) -> Result<(), ArrowError> {
         // Since metadata fields are non-nullable, provide default values
@@ -290,9 +250,6 @@ impl RasterBuilder {
 
         // Append null CRS
         self.crs.append_null();
-
-        // Append null bounding box
-        self.append_bounding_box(None)?;
 
         // No bands for null raster
         let current_offset = *self.band_offsets.last().unwrap();
@@ -326,24 +283,6 @@ impl RasterBuilder {
             Arc::new(self.skew_y.finish()),
         ];
         let metadata_array = StructArray::new(metadata_fields, metadata_arrays, None);
-
-        // Build the bounding box struct using the schema
-        let bbox_fields = if let DataType::Struct(fields) = RasterSchema::bounding_box_type() {
-            fields
-        } else {
-            return Err(ArrowError::SchemaError(
-                "Expected struct type for bounding box".to_string(),
-            ));
-        };
-
-        let bbox_arrays: Vec<ArrayRef> = vec![
-            Arc::new(self.bbox_min_lon.finish()),
-            Arc::new(self.bbox_min_lat.finish()),
-            Arc::new(self.bbox_max_lon.finish()),
-            Arc::new(self.bbox_max_lat.finish()),
-        ];
-        let bbox_validity = self.bbox_validity.finish();
-        let bbox_array = StructArray::new(bbox_fields, bbox_arrays, bbox_validity.nulls().cloned());
 
         // Build the band metadata struct using the schema
         let band_metadata_fields =
@@ -397,7 +336,6 @@ impl RasterBuilder {
         let raster_arrays: Vec<ArrayRef> = vec![
             Arc::new(metadata_array),
             Arc::new(self.crs.finish()),
-            Arc::new(bbox_array),
             Arc::new(bands_list),
         ];
 
@@ -432,15 +370,7 @@ mod tests {
         };
 
         let epsg4326 = "EPSG:4326";
-        let bbox = BoundingBox {
-            min_lon: 0.0,
-            min_lat: -10.0,
-            max_lon: 10.0,
-            max_lat: 0.0,
-        };
-        builder
-            .start_raster(&metadata, Some(epsg4326), Some(&bbox))
-            .unwrap();
+        builder.start_raster(&metadata, Some(epsg4326)).unwrap();
 
         let band_metadata = BandMetadata {
             nodata_value: Some(vec![255u8]),
@@ -473,10 +403,6 @@ mod tests {
         assert_eq!(metadata.height(), 10);
         assert_eq!(metadata.scale_x(), 1.0);
         assert_eq!(metadata.scale_y(), -1.0);
-
-        let bbox = raster.bounding_box().unwrap();
-        assert_eq!(bbox.min_lon, 0.0);
-        assert_eq!(bbox.max_lon, 10.0);
 
         let bands = raster.bands();
         assert_eq!(bands.len(), 1);
@@ -514,7 +440,7 @@ mod tests {
             skew_y: 0.0,
         };
 
-        builder.start_raster(&metadata, None, None).unwrap();
+        builder.start_raster(&metadata, None).unwrap();
 
         // Add three bands using the correct API
         for band_idx in 0..3 {
@@ -581,15 +507,8 @@ mod tests {
             skew_y: 0.0,
         };
 
-        let original_bbox = BoundingBox {
-            min_lon: -122.0,
-            min_lat: 35.4,
-            max_lon: -120.0,
-            max_lat: 37.8,
-        };
-
         source_builder
-            .start_raster(&original_metadata, None, Some(&original_bbox))
+            .start_raster(&original_metadata, None)
             .unwrap();
 
         let band_metadata = BandMetadata {
@@ -614,11 +533,7 @@ mod tests {
         let source_raster = iterator.get(0).unwrap();
 
         target_builder
-            .start_raster(
-                source_raster.metadata(),
-                source_raster.crs(),
-                source_raster.bounding_box().as_ref(),
-            )
+            .start_raster(source_raster.metadata(), source_raster.crs())
             .unwrap();
 
         // Add new band data while preserving original metadata
@@ -655,10 +570,6 @@ mod tests {
         assert_eq!(target_metadata.scale_x(), 0.1);
         assert_eq!(target_metadata.scale_y(), -0.1);
 
-        let target_bbox = target_raster.bounding_box().unwrap();
-        assert_eq!(target_bbox.min_lon, -122.0);
-        assert_eq!(target_bbox.max_lon, -120.0);
-
         // But band data and metadata should be different
         let target_band = target_raster.bands().band(1).unwrap();
         let target_band_meta = target_band.metadata();
@@ -689,7 +600,7 @@ mod tests {
             skew_y: 0.0,
         };
 
-        builder.start_raster(&metadata, None, None).unwrap();
+        builder.start_raster(&metadata, None).unwrap();
 
         // Test all BandDataType variants
         let test_cases = vec![
@@ -798,7 +709,7 @@ mod tests {
             skew_y: 0.0,
         };
 
-        builder.start_raster(&metadata, None, None).unwrap();
+        builder.start_raster(&metadata, None).unwrap();
 
         // Test InDb band (should have null OutDb fields)
         let indb_band_metadata = BandMetadata {
@@ -876,7 +787,7 @@ mod tests {
             skew_y: 0.0,
         };
 
-        builder.start_raster(&metadata, None, None).unwrap();
+        builder.start_raster(&metadata, None).unwrap();
 
         let band_metadata = BandMetadata {
             nodata_value: None,

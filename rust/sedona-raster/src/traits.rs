@@ -32,15 +32,6 @@ pub struct RasterMetadata {
     pub skew_y: f64,
 }
 
-/// WGS84 LonLat Bounding box coordinates
-#[derive(Debug, Clone)]
-pub struct BoundingBox {
-    pub min_lon: f64,
-    pub min_lat: f64,
-    pub max_lon: f64,
-    pub max_lat: f64,
-}
-
 /// Metadata for a single band
 #[derive(Debug, Clone)]
 pub struct BandMetadata {
@@ -59,8 +50,6 @@ pub trait RasterRef {
     fn metadata(&self) -> &dyn MetadataRef;
     /// CRS accessor
     fn crs(&self) -> Option<&str>;
-    /// Bounding box accessor (optional)
-    fn bounding_box(&self) -> Option<&dyn BoundingBoxRef>;
     /// Bands accessor
     fn bands(&self) -> &dyn BandsRef;
 }
@@ -84,19 +73,6 @@ pub trait MetadataRef {
     /// Y-direction skew/rotation
     fn skew_y(&self) -> f64;
 }
-
-/// Trait for accessing raster bounding box coordinates (WGS84 lon/lat)
-pub trait BoundingBoxRef {
-    /// Minimum longitude coordinate
-    fn min_lon(&self) -> f64;
-    /// Minimum latitude coordinate
-    fn min_lat(&self) -> f64;
-    /// Maximum longitude coordinate
-    fn max_lon(&self) -> f64;
-    /// Maximum latitude coordinate
-    fn max_lat(&self) -> f64;
-}
-
 /// Trait for accessing all bands in a raster
 pub trait BandsRef {
     /// Number of bands in the raster

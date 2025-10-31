@@ -26,7 +26,6 @@ impl RasterSchema {
         Fields::from(vec![
             Field::new(column::METADATA, Self::metadata_type(), false),
             Field::new(column::CRS, Self::crs_type(), true), // Optional: may be inferred from data
-            Field::new(column::BBOX, Self::bounding_box_type(), true), // Optional: can be computed from data
             Field::new(column::BANDS, Self::bands_type(), true),
         ])
     }
@@ -44,16 +43,6 @@ impl RasterSchema {
             Field::new(column::SCALE_Y, DataType::Float64, false),
             Field::new(column::SKEW_X, DataType::Float64, false),
             Field::new(column::SKEW_Y, DataType::Float64, false),
-        ]))
-    }
-
-    /// Bounding box schema (WGS84 lon/lat coordinates)
-    pub fn bounding_box_type() -> DataType {
-        DataType::Struct(Fields::from(vec![
-            Field::new(column::MIN_LON, DataType::Float64, false),
-            Field::new(column::MIN_LAT, DataType::Float64, false),
-            Field::new(column::MAX_LON, DataType::Float64, false),
-            Field::new(column::MAX_LAT, DataType::Float64, false),
         ]))
     }
 
@@ -151,13 +140,6 @@ pub mod metadata_indices {
     pub const SKEW_Y: usize = 7;
 }
 
-pub mod bounding_box_indices {
-    pub const MIN_LON: usize = 0;
-    pub const MIN_LAT: usize = 1;
-    pub const MAX_LON: usize = 2;
-    pub const MAX_LAT: usize = 3;
-}
-
 pub mod band_metadata_indices {
     pub const NODATAVALUE: usize = 0;
     pub const STORAGE_TYPE: usize = 1;
@@ -174,8 +156,7 @@ pub mod band_indices {
 pub mod raster_indices {
     pub const METADATA: usize = 0;
     pub const CRS: usize = 1;
-    pub const BBOX: usize = 2;
-    pub const BANDS: usize = 3;
+    pub const BANDS: usize = 2;
 }
 
 /// Column name constants used throughout the raster schema definition.
@@ -195,15 +176,9 @@ pub mod column {
     pub const SCALE_Y: &str = "scale_y";
     pub const SKEW_X: &str = "skew_x";
     pub const SKEW_Y: &str = "skew_y";
-    pub const BBOX: &str = "bbox";
+
+    // Raster CRS field
     pub const CRS: &str = "crs";
-
-    // Bounding box fields (WGS84 lon/lat coordinates)
-    pub const MIN_LON: &str = "min_lon";
-    pub const MIN_LAT: &str = "min_lat";
-    pub const MAX_LON: &str = "max_lon";
-    pub const MAX_LAT: &str = "max_lat";
-
     // Band metadata fields
     pub const NODATAVALUE: &str = "nodata_value";
     pub const STORAGE_TYPE: &str = "storage_type";
@@ -219,11 +194,10 @@ mod tests {
     #[test]
     fn test_raster_schema_fields() {
         let fields = RasterSchema::fields();
-        assert_eq!(fields.len(), 4);
+        assert_eq!(fields.len(), 3);
         assert_eq!(fields[0].name(), column::METADATA);
         assert_eq!(fields[1].name(), column::CRS);
-        assert_eq!(fields[2].name(), column::BBOX);
-        assert_eq!(fields[3].name(), column::BANDS);
+        assert_eq!(fields[2].name(), column::BANDS);
     }
 
     /// Comprehensive test to verify all hard-coded indices match the actual schema.
@@ -233,7 +207,7 @@ mod tests {
     fn test_hardcoded_indices_match_schema() {
         // Test raster-level indices
         let raster_fields = RasterSchema::fields();
-        assert_eq!(raster_fields.len(), 4, "Expected exactly 4 raster fields");
+        assert_eq!(raster_fields.len(), 3, "Expected exactly 3 raster fields");
         assert_eq!(
             raster_fields[raster_indices::METADATA].name(),
             column::METADATA,
@@ -245,14 +219,9 @@ mod tests {
             "Raster CRS index mismatch"
         );
         assert_eq!(
-            raster_fields[raster_indices::BBOX].name(),
-            column::BBOX,
-            "Raster BBOX index mismatch"
-        );
-        assert_eq!(
             raster_fields[raster_indices::BANDS].name(),
             column::BANDS,
-            "Raster bands index mismatch"
+            "Raster BANDS index mismatch"
         );
 
         // Test metadata indices
@@ -305,38 +274,6 @@ mod tests {
             );
         } else {
             panic!("Expected Struct type for metadata");
-        }
-
-        // Test bounding box indices
-        let bbox_type = RasterSchema::bounding_box_type();
-        if let DataType::Struct(bbox_fields) = bbox_type {
-            assert_eq!(
-                bbox_fields.len(),
-                4,
-                "Expected exactly 4 bounding box fields"
-            );
-            assert_eq!(
-                bbox_fields[bounding_box_indices::MIN_LON].name(),
-                column::MIN_LON,
-                "Bounding box min_lon index mismatch"
-            );
-            assert_eq!(
-                bbox_fields[bounding_box_indices::MIN_LAT].name(),
-                column::MIN_LAT,
-                "Bounding box min_lat index mismatch"
-            );
-            assert_eq!(
-                bbox_fields[bounding_box_indices::MAX_LON].name(),
-                column::MAX_LON,
-                "Bounding box max_lon index mismatch"
-            );
-            assert_eq!(
-                bbox_fields[bounding_box_indices::MAX_LAT].name(),
-                column::MAX_LAT,
-                "Bounding box max_lat index mismatch"
-            );
-        } else {
-            panic!("Expected Struct type for bounding box");
         }
 
         // Test band metadata indices

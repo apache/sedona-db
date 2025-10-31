@@ -22,12 +22,11 @@ use arrow_array::{
 use arrow_schema::ArrowError;
 
 use crate::traits::{
-    BandIterator, BandMetadataRef, BandRef, BandsRef, BoundingBox, BoundingBoxRef, MetadataRef,
-    RasterMetadata, RasterRef,
+    BandIterator, BandMetadataRef, BandRef, BandsRef, MetadataRef, RasterMetadata, RasterRef,
 };
 use sedona_schema::raster::{
-    band_indices, band_metadata_indices, bounding_box_indices, metadata_indices, raster_indices,
-    BandDataType, StorageType,
+    band_indices, band_metadata_indices, metadata_indices, raster_indices, BandDataType,
+    StorageType,
 };
 
 /// Implement MetadataRef for RasterMetadata to allow direct use with builder
@@ -58,21 +57,7 @@ impl MetadataRef for RasterMetadata {
     }
 }
 
-/// Implement BoundingBoxRef for BoundingBox to allow direct use with traits
-impl BoundingBoxRef for BoundingBox {
-    fn min_lon(&self) -> f64 {
-        self.min_lon
-    }
-    fn min_lat(&self) -> f64 {
-        self.min_lat
-    }
-    fn max_lon(&self) -> f64 {
-        self.max_lon
-    }
-    fn max_lat(&self) -> f64 {
-        self.max_lat
-    }
-}
+//
 
 /// Implementation of MetadataRef for Arrow StructArray
 struct MetadataRefImpl<'a> {
@@ -118,33 +103,6 @@ impl<'a> MetadataRef for MetadataRefImpl<'a> {
 
     fn skew_y(&self) -> f64 {
         self.skew_y_array.value(self.index)
-    }
-}
-
-/// Implementation of BoundingBoxRef for Arrow StructArray
-struct BoundingBoxRefImpl<'a> {
-    min_lon_array: &'a Float64Array,
-    min_lat_array: &'a Float64Array,
-    max_lon_array: &'a Float64Array,
-    max_lat_array: &'a Float64Array,
-    index: usize,
-}
-
-impl<'a> BoundingBoxRef for BoundingBoxRefImpl<'a> {
-    fn min_lon(&self) -> f64 {
-        self.min_lon_array.value(self.index)
-    }
-
-    fn min_lat(&self) -> f64 {
-        self.min_lat_array.value(self.index)
-    }
-
-    fn max_lon(&self) -> f64 {
-        self.max_lon_array.value(self.index)
-    }
-
-    fn max_lat(&self) -> f64 {
-        self.max_lat_array.value(self.index)
     }
 }
 
@@ -365,7 +323,6 @@ impl ExactSizeIterator for BandIteratorImpl<'_> {}
 pub struct RasterRefImpl<'a> {
     metadata: MetadataRefImpl<'a>,
     crs: &'a StringViewArray,
-    bbox: Option<BoundingBoxRefImpl<'a>>,
     bands: BandsRefImpl<'a>,
 }
 
@@ -382,12 +339,6 @@ impl<'a> RasterRefImpl<'a> {
             .column(raster_indices::CRS)
             .as_any()
             .downcast_ref::<StringViewArray>()
-            .unwrap();
-
-        let bbox = raster_struct
-            .column(raster_indices::BBOX)
-            .as_any()
-            .downcast_ref::<StructArray>()
             .unwrap();
 
         let bands_list = raster_struct
@@ -466,51 +417,11 @@ impl<'a> RasterRefImpl<'a> {
             band_data_array,
         };
 
-        // Create optional bounding box ref if not null
-        let bbox_ref = if bbox.is_null(raster_index) {
-            None
-        } else {
-            Some(BoundingBoxRefImpl {
-                min_lon_array: bbox
-                    .column(bounding_box_indices::MIN_LON)
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap(),
-                min_lat_array: bbox
-                    .column(bounding_box_indices::MIN_LAT)
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap(),
-                max_lon_array: bbox
-                    .column(bounding_box_indices::MAX_LON)
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap(),
-                max_lat_array: bbox
-                    .column(bounding_box_indices::MAX_LAT)
-                    .as_any()
-                    .downcast_ref::<Float64Array>()
-                    .unwrap(),
-                index: raster_index,
-            })
-        };
-
         Self {
             metadata,
             crs,
-            bbox: bbox_ref,
             bands,
         }
-    }
-
-    /// Access the bounding box for this raster
-    pub fn bounding_box(&self) -> Option<BoundingBox> {
-        self.bbox.as_ref().map(|bbox_ref| BoundingBox {
-            min_lon: bbox_ref.min_lon(),
-            min_lat: bbox_ref.min_lat(),
-            max_lon: bbox_ref.max_lon(),
-            max_lat: bbox_ref.max_lat(),
-        })
     }
 }
 
@@ -525,12 +436,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         } else {
             Some(self.crs.value(self.bands.raster_index))
         }
-    }
-
-    fn bounding_box(&self) -> Option<&dyn BoundingBoxRef> {
-        self.bbox
-            .as_ref()
-            .map(|bbox_ref| bbox_ref as &dyn BoundingBoxRef)
     }
 
     fn bands(&self) -> &dyn BandsRef {
@@ -575,7 +480,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
-    use crate::traits::{BandMetadata, BoundingBox, RasterMetadata};
+    use crate::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::raster::{BandDataType, StorageType};
 
     #[test]
@@ -595,15 +500,8 @@ mod tests {
         };
 
         let epsg4326 = "EPSG:4326";
-        let bbox = BoundingBox {
-            min_lon: 0.0,
-            min_lat: -10.0,
-            max_lon: 10.0,
-            max_lat: 0.0,
-        };
-        builder
-            .start_raster(&metadata, Some(epsg4326), Some(&bbox))
-            .unwrap();
+
+        builder.start_raster(&metadata, Some(epsg4326)).unwrap();
 
         let band_metadata = BandMetadata {
             nodata_value: Some(vec![255u8]),
@@ -636,10 +534,6 @@ mod tests {
         assert_eq!(metadata.height(), 10);
         assert_eq!(metadata.scale_x(), 1.0);
         assert_eq!(metadata.scale_y(), -1.0);
-
-        let bbox = raster.bounding_box().unwrap();
-        assert_eq!(bbox.min_lon, 0.0);
-        assert_eq!(bbox.max_lon, 10.0);
 
         let bands = raster.bands();
         assert_eq!(bands.len(), 1);
@@ -677,7 +571,7 @@ mod tests {
             skew_y: 0.0,
         };
 
-        builder.start_raster(&metadata, None, None).unwrap();
+        builder.start_raster(&metadata, None).unwrap();
 
         // Add three bands using the correct API
         for band_idx in 0..3 {
