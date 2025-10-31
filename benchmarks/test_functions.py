@@ -173,6 +173,42 @@ class TestBenchFunctions(TestBenchBase):
     @pytest.mark.parametrize(
         "table",
         [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_hasm(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_HasM(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_hasz(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_HasZ(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
             "segments_large",
             "collections_simple",
             "collections_complex",
@@ -201,5 +237,95 @@ class TestBenchFunctions(TestBenchBase):
 
         def queries():
             eng.execute_and_collect(f"SELECT ST_Perimeter(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_points(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_Points(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "segments_large",
+        ],
+    )
+    def test_st_pointn(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_PointN(geom1, 3) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "segments_large",
+        ],
+    )
+    def test_st_start_point(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_StartPoint(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "segments_large",
+        ],
+    )
+    def test_st_end_point(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_EndPoint(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_zmflag(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_ZmFlag(geom1) from {table}")
 
         benchmark(queries)

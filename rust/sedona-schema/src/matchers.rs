@@ -183,6 +183,11 @@ impl ArgMatcher {
         Arc::new(IsNumeric {})
     }
 
+    /// Matches any integer argument
+    pub fn is_integer() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsInteger {})
+    }
+
     /// Matches any string argument
     pub fn is_string() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsString {})
@@ -357,6 +362,22 @@ impl TypeMatcher for IsNumeric {
 }
 
 #[derive(Debug)]
+struct IsInteger {}
+
+impl TypeMatcher for IsInteger {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        match arg {
+            SedonaType::Arrow(data_type) => data_type.is_integer(),
+            _ => false,
+        }
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Int64))
+    }
+}
+
+#[derive(Debug)]
 struct IsString {}
 
 impl TypeMatcher for IsString {
@@ -454,6 +475,10 @@ mod tests {
             ArgMatcher::is_numeric().type_if_null(),
             Some(SedonaType::Arrow(DataType::Float64))
         );
+
+        assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::UInt32)));
+        assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Int32)));
+        assert!(!ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Float64)));
 
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8View)));

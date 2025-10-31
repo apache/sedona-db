@@ -39,10 +39,11 @@ use serde_json::Value;
 ///
 /// In contrast to the _user-specified API_, which is just "WKB" or "Native", here we need to know
 /// the actual written encoding type so that we can save that in the metadata.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum GeoParquetColumnEncoding {
     /// Serialized Well-known Binary encoding
+    #[default]
     WKB,
     /// Native Point encoding
     #[serde(rename = "point")]
@@ -62,12 +63,6 @@ pub enum GeoParquetColumnEncoding {
     /// Native MultiPolygon encoding
     #[serde(rename = "multipolygon")]
     MultiPolygon,
-}
-
-impl Default for GeoParquetColumnEncoding {
-    fn default() -> Self {
-        Self::WKB
-    }
 }
 
 impl Display for GeoParquetColumnEncoding {

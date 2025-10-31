@@ -17,7 +17,7 @@
 //! Generic Map Coords algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::map_coords`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/map_coords.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/map_coords.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 pub(crate) use crate::geometry::*;
 pub(crate) use crate::CoordNum;
@@ -336,7 +336,7 @@ where
     fn map_coords_trait(&self, func: impl Fn(Coord<T>) -> Coord<NT> + Copy) -> Self::Output {
         let exterior = match self.exterior_ext() {
             Some(ext) => ext.map_coords(func),
-            None => LineString::new(vec![]),
+            None => LineString::empty(),
         };
 
         let interiors = self
@@ -353,7 +353,7 @@ where
     ) -> Result<Self::Output, E> {
         let exterior = match self.exterior_ext() {
             Some(ext) => ext.try_map_coords(func)?,
-            None => LineString::new(vec![]),
+            None => LineString::empty(),
         };
 
         let interiors = self

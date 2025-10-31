@@ -17,7 +17,7 @@
 //! Generic Intersects algorithm
 //!
 //! Ported (and contains copied code) from `geo::algorithm::intersects` (and its submodules):
-//! <https://github.com/georust/geo/tree/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/intersects>.
+//! <https://github.com/georust/geo/tree/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/intersects>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::GeoTraitExtWithTypeTag;
 
@@ -174,7 +174,7 @@ mod test {
     #[test]
     fn empty_linestring2_test() {
         let linestring = line_string![(x: 3., y: 2.), (x: 7., y: 6.)];
-        assert!(!linestring.intersects(&LineString::new(Vec::new())));
+        assert!(!linestring.intersects(&LineString::empty()));
     }
     #[test]
     fn empty_all_linestring_test() {
@@ -630,6 +630,7 @@ mod test {
         let _ = c.intersects(&multi_ls);
         let _ = c.intersects(&multi_poly);
 
+        let _ = pt.intersects(&c);
         let _ = pt.intersects(&pt);
         let _ = pt.intersects(&ln);
         let _ = pt.intersects(&ls);
@@ -641,6 +642,8 @@ mod test {
         let _ = pt.intersects(&multi_point);
         let _ = pt.intersects(&multi_ls);
         let _ = pt.intersects(&multi_poly);
+
+        let _ = ln.intersects(&c);
         let _ = ln.intersects(&pt);
         let _ = ln.intersects(&ln);
         let _ = ln.intersects(&ls);
@@ -652,6 +655,8 @@ mod test {
         let _ = ln.intersects(&multi_point);
         let _ = ln.intersects(&multi_ls);
         let _ = ln.intersects(&multi_poly);
+
+        let _ = ls.intersects(&c);
         let _ = ls.intersects(&pt);
         let _ = ls.intersects(&ln);
         let _ = ls.intersects(&ls);
@@ -663,6 +668,8 @@ mod test {
         let _ = ls.intersects(&multi_point);
         let _ = ls.intersects(&multi_ls);
         let _ = ls.intersects(&multi_poly);
+
+        let _ = poly.intersects(&c);
         let _ = poly.intersects(&pt);
         let _ = poly.intersects(&ln);
         let _ = poly.intersects(&ls);
@@ -674,6 +681,8 @@ mod test {
         let _ = poly.intersects(&multi_point);
         let _ = poly.intersects(&multi_ls);
         let _ = poly.intersects(&multi_poly);
+
+        let _ = rect.intersects(&c);
         let _ = rect.intersects(&pt);
         let _ = rect.intersects(&ln);
         let _ = rect.intersects(&ls);
@@ -685,6 +694,8 @@ mod test {
         let _ = rect.intersects(&multi_point);
         let _ = rect.intersects(&multi_ls);
         let _ = rect.intersects(&multi_poly);
+
+        let _ = tri.intersects(&c);
         let _ = tri.intersects(&pt);
         let _ = tri.intersects(&ln);
         let _ = tri.intersects(&ls);
@@ -696,6 +707,8 @@ mod test {
         let _ = tri.intersects(&multi_point);
         let _ = tri.intersects(&multi_ls);
         let _ = tri.intersects(&multi_poly);
+
+        let _ = geom.intersects(&c);
         let _ = geom.intersects(&pt);
         let _ = geom.intersects(&ln);
         let _ = geom.intersects(&ls);
@@ -707,6 +720,8 @@ mod test {
         let _ = geom.intersects(&multi_point);
         let _ = geom.intersects(&multi_ls);
         let _ = geom.intersects(&multi_poly);
+
+        let _ = gc.intersects(&c);
         let _ = gc.intersects(&pt);
         let _ = gc.intersects(&ln);
         let _ = gc.intersects(&ls);
@@ -718,6 +733,8 @@ mod test {
         let _ = gc.intersects(&multi_point);
         let _ = gc.intersects(&multi_ls);
         let _ = gc.intersects(&multi_poly);
+
+        let _ = multi_point.intersects(&c);
         let _ = multi_point.intersects(&pt);
         let _ = multi_point.intersects(&ln);
         let _ = multi_point.intersects(&ls);
@@ -729,6 +746,8 @@ mod test {
         let _ = multi_point.intersects(&multi_point);
         let _ = multi_point.intersects(&multi_ls);
         let _ = multi_point.intersects(&multi_poly);
+
+        let _ = multi_ls.intersects(&c);
         let _ = multi_ls.intersects(&pt);
         let _ = multi_ls.intersects(&ln);
         let _ = multi_ls.intersects(&ls);
@@ -740,6 +759,8 @@ mod test {
         let _ = multi_ls.intersects(&multi_point);
         let _ = multi_ls.intersects(&multi_ls);
         let _ = multi_ls.intersects(&multi_poly);
+
+        let _ = multi_poly.intersects(&c);
         let _ = multi_poly.intersects(&pt);
         let _ = multi_poly.intersects(&ln);
         let _ = multi_poly.intersects(&ls);

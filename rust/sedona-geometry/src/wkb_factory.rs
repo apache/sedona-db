@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::error::SedonaGeometryError;
-use geo_traits::Dimensions;
+use geo_traits::{CoordTrait, Dimensions};
 use std::io::Write;
 
 pub const WKB_MIN_PROBABLE_BYTES: usize = 21;
@@ -392,6 +392,37 @@ where
     Ok(())
 }
 
+/// Write a single coordinate of CoordTrait to WKB
+/// This function always writes little endian coordinates.
+pub fn write_wkb_coord_trait<C>(buf: &mut impl Write, coord: &C) -> Result<(), SedonaGeometryError>
+where
+    C: CoordTrait<T = f64>,
+{
+    match coord.dim().size() {
+        2 => {
+            let coord_tuple = coord.x_y();
+            write_wkb_coord(buf, coord_tuple)
+        }
+        3 => {
+            let coord_tuple: (<C as CoordTrait>::T, _, _) =
+                (coord.x(), coord.y(), coord.nth_or_panic(2));
+            write_wkb_coord(buf, coord_tuple)
+        }
+        4 => {
+            let coord_tuple = (
+                coord.x(),
+                coord.y(),
+                coord.nth_or_panic(2),
+                coord.nth_or_panic(3),
+            );
+            write_wkb_coord(buf, coord_tuple)
+        }
+        _ => Err(SedonaGeometryError::Invalid(
+            "Unsupported number of dimensions".to_string(),
+        )),
+    }
+}
+
 /// Write multiple coordinates to WKB
 ///
 /// This function takes an iterator of coordinates and writes them to the provided buffer.
@@ -535,6 +566,31 @@ mod test {
         write_wkb_point_header(&mut wkb, Dimensions::Xyzm).unwrap();
         write_wkb_coords(&mut wkb, vec![(12.0, 13.0, 14.0, 15.0)].into_iter()).unwrap();
         check_bytes(&wkb, "POINT ZM(12 13 14 15)");
+    }
+
+    #[test]
+    fn test_write_wkb_coord_trait() {
+        let cases = [
+            (None, None, "POINT(0 1)"),
+            (Some(2.0), None, "POINT Z(0 1 2)"),
+            (None, Some(3.0), "POINT M(0 1 3)"),
+            (Some(2.0), Some(3.0), "POINT ZM(0 1 2 3)"),
+        ];
+        let mut wkb = vec![];
+
+        for (z, m, expected) in cases {
+            let coord = wkt::types::Coord {
+                x: 0.0,
+                y: 1.0,
+                z,
+                m,
+            };
+
+            wkb.clear();
+            write_wkb_point_header(&mut wkb, coord.dim()).unwrap();
+            write_wkb_coord_trait(&mut wkb, &coord).unwrap();
+            check_bytes(&wkb, expected);
+        }
     }
 
     #[test]

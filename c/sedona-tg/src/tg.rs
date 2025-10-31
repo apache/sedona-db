@@ -23,22 +23,17 @@ use crate::{error::TgError, tg_bindgen::*};
 ///
 /// These index types are used to inform the internal index used in geometries
 /// to accelerate repeated operations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum IndexType {
     /// Do not build an index
     Unindexed,
     /// Use the statically set default
+    #[default]
     Default,
     /// Use natural indexing
     Natural,
     /// Use y-stripes indexing
     YStripes,
-}
-
-impl Default for IndexType {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 impl IndexType {

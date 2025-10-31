@@ -83,7 +83,25 @@ impl<T> MultiPolygonTraitExt for MultiPolygon<T>
 where
     T: CoordNum,
 {
-    forward_multi_polygon_trait_ext_funcs!();
+    type PolygonTypeExt<'a>
+        = <Self as MultiPolygonTrait>::InnerPolygonType<'a>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn polygon_ext(&self, i: usize) -> Option<Self::PolygonTypeExt<'_>> {
+        self.0.get(i)
+    }
+
+    #[inline]
+    unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
+        self.0.get_unchecked(i)
+    }
+
+    #[inline]
+    fn polygons_ext(&self) -> impl Iterator<Item = Self::PolygonTypeExt<'_>> {
+        self.0.iter()
+    }
 }
 
 impl<T: CoordNum> GeoTraitExtWithTypeTag for MultiPolygon<T> {
@@ -94,7 +112,25 @@ impl<T> MultiPolygonTraitExt for &MultiPolygon<T>
 where
     T: CoordNum,
 {
-    forward_multi_polygon_trait_ext_funcs!();
+    type PolygonTypeExt<'a>
+        = <Self as MultiPolygonTrait>::InnerPolygonType<'a>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn polygon_ext(&self, i: usize) -> Option<Self::PolygonTypeExt<'_>> {
+        self.0.get(i)
+    }
+
+    #[inline]
+    unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
+        self.0.get_unchecked(i)
+    }
+
+    #[inline]
+    fn polygons_ext(&self) -> impl Iterator<Item = Self::PolygonTypeExt<'_>> {
+        self.0.iter()
+    }
 }
 
 impl<T: CoordNum> GeoTraitExtWithTypeTag for &MultiPolygon<T> {
