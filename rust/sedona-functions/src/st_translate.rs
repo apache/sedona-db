@@ -36,8 +36,6 @@ use std::{iter::zip, sync::Arc};
 use crate::executor::WkbExecutor;
 
 /// ST_Translate() scalar UDF
-///
-/// Native implementation to get the nth point of a LINESTRING geometry.
 pub fn st_translate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_translate",
