@@ -31,6 +31,7 @@ members = [
     "rust/sedona-geometry",
     "rust/sedona-geoparquet",
     "rust/sedona-raster",
+    "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-testing",

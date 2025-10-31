@@ -256,7 +256,7 @@ impl RasterBuilder {
         self.band_offsets.push(current_offset);
 
         // Mark raster as null
-        self.raster_validity.append_value(false);
+        self.raster_validity.append_null();
 
         Ok(())
     }

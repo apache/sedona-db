@@ -14,12 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod benchmark_util;
-pub mod compare;
-pub mod create;
-pub mod data;
-pub mod datagen;
-pub mod fixtures;
-pub mod rasters;
-pub mod read;
-pub mod testers;
+
+mod executor;
+pub mod register;
+pub mod rs_size;
