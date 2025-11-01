@@ -62,7 +62,8 @@ struct STDump;
 
 impl SedonaScalarKernel for STDump {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], get_geom_list_type()?);
+
         let geom_type = matcher.match_args(args)?;
 
         get_geom_list_type(geom_type.as_ref())
@@ -116,7 +117,8 @@ fn get_geom_list_type(
         Some(SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs)) => {
             let geom_type = SedonaType::Wkb(edges.clone(), crs.clone());
             let geom_list_type =
-                DataType::List(Arc::new(geom_type.to_storage_field("geom", true)?));
+                DataType::List(Arc::new(geom_type.to_storage_field("item", true)?));
+
             Ok(Some(SedonaType::Arrow(geom_list_type)))
         }
         _ => Ok(None),
