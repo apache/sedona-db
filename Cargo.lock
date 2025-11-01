@@ -4894,6 +4894,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-datasource"
+version = "0.2.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "datafusion",
+ "datafusion-catalog",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "float_next_after",
+ "futures",
+ "geo-traits",
+ "object_store",
+ "parquet",
+ "rstest",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-functions",
+ "sedona-geometry",
+ "sedona-schema",
+ "sedona-testing",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "sedona-expr"
 version = "0.2.0"
 dependencies = [
