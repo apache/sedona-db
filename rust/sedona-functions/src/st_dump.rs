@@ -148,7 +148,7 @@ fn geometry_dump_type() -> SedonaType {
     let fields = geometry_dump_fields();
     let struct_type = DataType::Struct(fields);
 
-    SedonaType::Arrow(struct_type)
+    SedonaType::Arrow(DataType::List(Field::new("item", struct_type, true).into()))
 }
 
 fn write_wkb_point_from_coord(
