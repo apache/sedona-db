@@ -41,16 +41,18 @@ nav:
       - Home: index.md
       - Quickstart: quickstart-python.md
       - Programming Guide: programming-guide.md
-      - GeoPandas interop: geopandas-interop.md
-      - Overture Examples: overture-examples.md
-      - CRS Examples: crs-examples.md
-      - Working with Parquet Files: working-with-parquet-files.md
-      - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
-      - Contributors Guide: contributors-guide.md
       - API:
         - Python: reference/python.md
         - SQL: reference/sql.md
         - Spatial Joins: reference/sql-joins.md
+      - Examples:
+        - GeoPandas interop: geopandas-interop.md
+        - Overture Examples: overture-examples.md
+        - CRS Examples: crs-examples.md
+        - Delta Lake: delta-lake.md
+        - Working with Parquet Files: working-with-parquet-files.md
+        - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
+      - Contributors Guide: contributors-guide.md
   - SpatialBench: https://sedona.apache.org/spatialbench/
   - Blog: https://sedona.apache.org/latest/blog/
   - Community: https://sedona.apache.org/latest/setup/compile/
