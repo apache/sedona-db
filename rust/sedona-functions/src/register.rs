@@ -83,6 +83,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_isempty::st_isempty_udf,
         crate::st_length::st_length_udf,
         crate::st_makeline::st_makeline_udf,
+        crate::st_numgeometries::st_numgeometries_udf,
         crate::st_perimeter::st_perimeter_udf,
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,

@@ -1078,6 +1078,37 @@ def test_st_length(eng, geom, expected):
         (None, None),
         ("POINT EMPTY", 0),
         ("LINESTRING EMPTY", 0),
+        ("POLYGON EMPTY", 0),
+        ("MULTIPOINT EMPTY", 0),
+        ("MULTILINESTRING EMPTY", 0),
+        ("MULTIPOLYGON EMPTY", 0),
+        ("GEOMETRYCOLLECTION EMPTY", 0),
+        ("GEOMETRYCOLLECTION (LINESTRING EMPTY, MULTIPOINT ((0 0), (1 1), (2 2)))", 2),
+        ("POINT(0 0)", 1),
+        ("LINESTRING(0 0, 1 1)", 1),
+        ("POLYGON((0 0, 1 0, 0 1, 0 0))", 1),
+        ("MULTIPOINT ((0 0), (1 1), (2 2))", 3),
+        ("MULTILINESTRING((0 0, 0 1, 1 1, 0 0), (0 0, 1 1))", 2),
+        ("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))", 2),
+        ("GEOMETRYCOLLECTION (MULTIPOINT ((0 0), (1 1), (2 2)))", 1),
+        (
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (0 0), POINT (1 1)), MULTIPOINT((2 2), (3 3)))",
+            2,
+        ),
+    ],
+)
+def test_st_numgeometries(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_NumGeometries({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", 0),
+        ("LINESTRING EMPTY", 0),
         ("POINT (0 0)", 0),
         ("LINESTRING (0 0, 0 1)", 0),
         ("MULTIPOINT ((0 0), (1 1))", 0),
