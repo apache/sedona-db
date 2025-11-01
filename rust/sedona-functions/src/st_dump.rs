@@ -114,7 +114,7 @@ fn get_geom_list_type(
 ) -> std::result::Result<Option<SedonaType>, datafusion_common::DataFusionError> {
     match geom_type {
         Some(SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs)) => {
-            let geom_type = SedonaType::Wkb(edges.clone(), crs.clone());
+            let geom_type = SedonaType::Wkb(*edges, crs.clone());
             let geom_list_type =
                 DataType::List(Arc::new(geom_type.to_storage_field("geom", true)?));
             Ok(Some(SedonaType::Arrow(geom_list_type)))
