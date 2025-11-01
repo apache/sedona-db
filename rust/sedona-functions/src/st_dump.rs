@@ -77,8 +77,10 @@ impl SedonaScalarKernel for STDump {
         let executor = WkbExecutor::new(arg_types, args);
 
         let mut builder = ListBuilder::with_capacity(
-            // TODO: what's the decent default value for the capacity?
-            BinaryBuilder::with_capacity(8, WKB_MIN_PROBABLE_BYTES * 8),
+            BinaryBuilder::with_capacity(
+                executor.num_iterations(),
+                WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+            ),
             executor.num_iterations(),
         );
 
