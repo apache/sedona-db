@@ -245,6 +245,24 @@ class TestBenchFunctions(TestBenchBase):
     @pytest.mark.parametrize(
         "table",
         [
+            "collections_simple",
+            "collections_complex",
+        ],
+    )
+    def test_st_numgeometries(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_NumGeometries(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
             "polygons_simple",
             "polygons_complex",
         ],

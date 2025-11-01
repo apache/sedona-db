@@ -45,6 +45,7 @@ mod st_iscollection;
 pub mod st_isempty;
 mod st_length;
 mod st_makeline;
+mod st_numgeometries;
 mod st_perimeter;
 mod st_point;
 mod st_pointn;

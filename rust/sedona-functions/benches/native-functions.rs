@@ -84,6 +84,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayArray(Point, Point),
     );
 
+    benchmark::scalar(c, &f, "native", "st_numgeometries", Point);
+    benchmark::scalar(c, &f, "native", "st_numgeometries", MultiPoint(10));
+
     benchmark::scalar(
         c,
         &f,
