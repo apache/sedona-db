@@ -31,6 +31,7 @@ mod st_buffer;
 mod st_centroid;
 mod st_collect;
 mod st_dimension;
+mod st_dump;
 mod st_dwithin;
 pub mod st_envelope;
 pub mod st_envelope_aggr;
