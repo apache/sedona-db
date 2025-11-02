@@ -121,7 +121,6 @@ impl SedonaScalarKernel for STDump {
                     _ => todo!(),
                 }
 
-                struct_builder.finish();
                 builder.append(true);
             } else {
                 builder.append_null();
@@ -161,11 +160,14 @@ fn write_wkb_point_from_coord(
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::{Array, Int64Array, ListArray, StructArray};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
-        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+        compare::assert_array_equal,
+        create::{create_array, create_scalar},
+        testers::ScalarUdfTester,
     };
 
     use super::*;
@@ -183,9 +185,40 @@ mod tests {
 
         let input = create_array(&[Some("POINT (1 2)")], &sedona_type);
 
-        // let expected = create_array(&[Some("POINT (1 2)")], &WKB_GEOMETRY);
+        let expected_geom = create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY);
 
         let result = tester.invoke_array(input.clone()).unwrap();
-        // assert_array_equal(&result, &expected);
+        let list_array = result
+            .as_ref()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("result should be a ListArray");
+        assert_eq!(list_array.len(), 1);
+
+        let dumped = list_array.value(0);
+        let dumped = dumped
+            .as_ref()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("list elements should be StructArray");
+
+        let path_array = dumped.column(0);
+        let path_array = path_array
+            .as_ref()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("path should be a ListArray");
+        let path_values_array = path_array.value(0);
+        let path_values = path_values_array
+            .as_ref()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("path values should be Int64Array");
+        assert_eq!(path_values.len(), 1);
+        assert_eq!(path_values.value(0), 1);
+
+        let geom_array = dumped.column(1);
+        let expected_geom_array = expected_geom.to_array_of_size(1).unwrap();
+        assert_array_equal(geom_array, &expected_geom_array);
     }
 }
