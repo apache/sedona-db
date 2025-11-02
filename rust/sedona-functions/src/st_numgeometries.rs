@@ -88,7 +88,10 @@ fn invoke_scalar(buf: &[u8]) -> Result<u32> {
     let header = WkbHeader::try_new(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
     let size = header.size();
-    if size == 0 {
+    let is_empty = header
+        .is_empty()
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    if is_empty {
         return Ok(0);
     }
 
@@ -96,16 +99,8 @@ fn invoke_scalar(buf: &[u8]) -> Result<u32> {
         .geometry_type_id()
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
     match geometry_type {
-        GeometryTypeId::Point => {
-            // If POINT EMPTY (represented as POINT (NaN, NaN)), return 0
-            let first_xy = header.first_xy();
-            if first_xy.0.is_nan() && first_xy.1.is_nan() {
-                return Ok(0);
-            }
-            Ok(1)
-        }
-        GeometryTypeId::LineString | GeometryTypeId::Polygon => Ok(1),
         // Returns 1, for these since they are non-empty
+        GeometryTypeId::Point | GeometryTypeId::LineString | GeometryTypeId::Polygon => Ok(1),
         GeometryTypeId::MultiPoint
         | GeometryTypeId::MultiLineString
         | GeometryTypeId::MultiPolygon
