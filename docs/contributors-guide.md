@@ -71,6 +71,15 @@ Your first step is to create a personal copy of the repository and connect it to
 
 SedonaDB is written in Rust and is a standard `cargo` workspace.
 
+Before running cargo test, make sure to set the CMake toolchain variable:
+
+```export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake```
+
+Replace `/path/to/vcpkg/` with the actual path to your vcpkg installation.
+
+Once set, you can run: `cargo test`
+
+This ensures that Cargo and proj-sys can find the correct C/C++ dependencies via CMake.
 You can install a recent version of the Rust compiler and cargo from
 [rustup.rs](https://rustup.rs/) and run tests using `cargo test`.
 
@@ -116,25 +125,73 @@ On Linux and Windows, it is recommended to use [vcpkg](https://github.com/micros
 to provide external dependencies. This can be done by setting the `CMAKE_TOOLCHAIN_FILE`
 environment variable:
 
-```shell
-export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
+#### Windows
 
-#### Visual Studio Code (VSCode) Configuration
+1. Install Rust
 
-When using VSCode, it may be necessary to set this environment variable in `settings.json`
-such that it can be found by rust-analyzer when running build/run tasks:
+Install the latest Rust toolchain from [rustup.rs](https://rustup.rs):
 
-```json
-{
-    "rust-analyzer.runnables.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    },
-    "rust-analyzer.cargo.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    }
-}
-```
+**powershell**
+``
+Invoke-WebRequest https://sh.rustup.rs -UseBasicParsing -OutFile rustup-init.exe
+.\rustup-init.exe ``
+Restart PowerShell, then verify installation:
+
+``
+rustc --version
+cargo --version
+``
+
+2. Download and install Visual Studio Build Tools.
+  During installation, select the workload "Desktop development with C++".
+    link: https://visualstudio.microsoft.com/downloads/
+
+3. Install CMake:
+   Download and install CMake, ensuring "Add CMake to system PATH" is selected.
+    link: https://cmake.org/download/
+    `` cmake --version``
+4. Install and Bootstrap vcpkg:
+    Clone the vcpkg repository and build the vcpkg executable.
+    ``
+      git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
+      cd C:\dev\vcpkg
+      .\bootstrap-vcpkg.bat
+   ``
+
+5. Install Required Libraries:
+   Install necessary dependencies for SedonaDB using vcpkg.
+    ``C:\dev\vcpkg\vcpkg.exe" install geos proj abseil openssl``
+
+6. Configure Environment Variables:
+   Set environment variables so Cargo and CMake can find the installed dependencies.
+   The MSYS2 hash folder inside downloads/tools/msys2 may vary—update it as needed.
+    ```bash
+      # vcpkg root and toolchain
+      $env:VCPKG_ROOT = 'C:\dev\vcpkg'
+      $env:CMAKE_TOOLCHAIN_FILE = "${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+
+      # pkg-config setup (path hash may vary)
+      $env:PATH = "${env:VCPKG_ROOT}/downloads/tools/msys2/21caed2f81ec917b/mingw64/bin/;$env:PATH"
+      $env:PKG_CONFIG_SYSROOT_DIR = "${env:VCPKG_ROOT}/downloads/tools/msys2/21caed2f81ec917b/mingw64/"
+      $env:PKG_CONFIG_PATH = "${env:VCPKG_ROOT}/installed/x64-windows-dynamic-release/lib/pkgconfig/"
+   ```
+    note: >
+      The hash (21caed2f81ec917b) inside downloads/tools/msys2/ may differ on your system.
+
+7. Visual Studio Code Configuration:
+    When using VSCode, set the CMAKE_TOOLCHAIN_FILE variable in settings.json so rust-analyzer can detect it.
+   ```bash
+    settings.json: |
+      {
+          "rust-analyzer.runnables.extraEnv": {
+              "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          },
+          "rust-analyzer.cargo.extraEnv": {
+              "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          }
+      }
+   ```
+
 
 ## Python
 
