@@ -33,7 +33,7 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
 use crate::executor::WkbExecutor;
 
@@ -102,7 +102,6 @@ impl STDumpBuilder {
 }
 
 enum SingleWkb<'a> {
-    Raw(&'a [u8]),
     Point(&'a wkb::reader::Point<'a>),
     LineString(&'a wkb::reader::LineString<'a>),
     Polygon(&'a wkb::reader::Polygon<'a>),
@@ -137,9 +136,6 @@ impl<'a> STDumpStructBuilder<'a> {
             .unwrap();
 
         match wkb {
-            SingleWkb::Raw(wkb) => {
-                geom_builder.write_all(wkb)?;
-            }
             SingleWkb::Point(point) => {
                 wkb::writer::write_point(geom_builder, &point, &Default::default()).unwrap()
             }
@@ -200,8 +196,14 @@ fn append_struct(
     parent_path: &mut Vec<i64>,
 ) -> Result<()> {
     match wkb.as_type() {
-        GeometryType::Point(_) | GeometryType::LineString(_) | GeometryType::Polygon(_) => {
-            struct_builder.append(&parent_path, None, SingleWkb::Raw(wkb.buf()))?;
+        GeometryType::Point(point) => {
+            struct_builder.append(parent_path, None, SingleWkb::Point(point))?;
+        }
+        GeometryType::LineString(line_string) => {
+            struct_builder.append(parent_path, None, SingleWkb::LineString(line_string))?;
+        }
+        GeometryType::Polygon(polygon) => {
+            struct_builder.append(parent_path, None, SingleWkb::Polygon(polygon))?;
         }
         GeometryType::MultiPoint(multi_point) => {
             for (index, point) in multi_point.points().enumerate() {
@@ -288,7 +290,11 @@ mod tests {
                 Some("POINT (1 2)"),
                 Some("LINESTRING (1 1, 2 2)"),
                 Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"),
-                // Some("MULTIPOINT (1 1, 2 2)"),
+                Some("MULTIPOINT (1 1, 2 2)"),
+                Some("MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))"),
+                Some("MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))"),
+                Some("GEOMETRYCOLLECTION (POINT (1 2), MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2))"),
+                Some("GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))"),
             ],
             &sedona_type,
         );
@@ -296,11 +302,51 @@ mod tests {
         assert_dump_row(&result, 0, &[(&[], Some("POINT (1 2)"))]);
         assert_dump_row(&result, 1, &[(&[], Some("LINESTRING (1 1, 2 2)"))]);
         assert_dump_row(&result, 2, &[(&[], Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"))]);
-        // assert_dump_row(
-        //     &result,
-        //     3,
-        //     &[(&[1], Some("POINT (1 1)")), (&[2], Some("POINT (2 2)"))],
-        // );
+        assert_dump_row(
+            &result,
+            3,
+            &[(&[1], Some("POINT (1 1)")), (&[2], Some("POINT (2 2)"))],
+        );
+        assert_dump_row(
+            &result,
+            4,
+            &[
+                (&[1], Some("LINESTRING (1 1, 2 2)")),
+                (&[2], Some("LINESTRING EMPTY")),
+                (&[3], Some("LINESTRING (3 3, 4 4)")),
+            ],
+        );
+        assert_dump_row(
+            &result,
+            5,
+            &[
+                (&[1], Some("POLYGON ((1 1, 2 2, 2 1, 1 1))")),
+                (&[2], Some("POLYGON EMPTY")),
+                (&[3], Some("POLYGON ((3 3, 4 4, 4 3, 3 3)))")),
+            ],
+        );
+        assert_dump_row(
+            &result,
+            6,
+            &[
+                (&[1], Some("POINT (1 2)")),
+                (&[2, 1], Some("LINESTRING (1 1, 2 2)")),
+                (&[2, 2], Some("LINESTRING EMPTY")),
+                (&[2, 3], Some("LINESTRING (3 3, 4 4)")),
+                (&[3], Some("LINESTRING (1 1, 2 2)")),
+            ],
+        );
+        assert_dump_row(
+            &result,
+            7,
+            &[
+                (&[1], Some("POINT (1 2)")),
+                (&[2, 1, 1], Some("LINESTRING (1 1, 2 2)")),
+                (&[2, 1, 2], Some("LINESTRING EMPTY")),
+                (&[2, 1, 3], Some("LINESTRING (3 3, 4 4)")),
+                (&[2, 2], Some("LINESTRING (1 1, 2 2)")),
+            ],
+        );
 
         let null_input = create_array(&[None], &sedona_type);
         let result = tester.invoke_array(null_input).unwrap();
