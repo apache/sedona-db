@@ -247,7 +247,7 @@ fn append_struct(
                 append_struct(struct_builder, geometry, &mut path)?;
             }
         }
-        _ => todo!(),
+        _ => return sedona_internal_err!("Invalid geometry type"),
     }
 
     Ok(())
