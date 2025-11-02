@@ -160,14 +160,12 @@ fn write_wkb_point_from_coord(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{Array, Int64Array, ListArray, StructArray};
+    use arrow_array::{Array, ArrayRef, Int64Array, ListArray, StructArray};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
-        compare::assert_array_equal,
-        create::{create_array, create_scalar},
-        testers::ScalarUdfTester,
+        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
 
     use super::*;
@@ -184,41 +182,73 @@ mod tests {
         let tester = ScalarUdfTester::new(st_dump_udf().into(), vec![sedona_type.clone()]);
 
         let input = create_array(&[Some("POINT (1 2)")], &sedona_type);
+        let result = tester.invoke_array(input).unwrap();
+        let expected: &[(&[i64], Option<&str>)] = &[(&[1], Some("POINT (1 2)"))];
+        assert_dump_row(&result, 0, expected);
 
-        let expected_geom = create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY);
+        let null_input = create_array(&[None], &sedona_type);
+        let result = tester.invoke_array(null_input).unwrap();
+        assert_dump_row_null(&result, 0);
+    }
 
-        let result = tester.invoke_array(input.clone()).unwrap();
+    fn assert_dump_row(result: &ArrayRef, row: usize, expected: &[(&[i64], Option<&str>)]) {
         let list_array = result
             .as_ref()
             .as_any()
             .downcast_ref::<ListArray>()
             .expect("result should be a ListArray");
-        assert_eq!(list_array.len(), 1);
-
-        let dumped = list_array.value(0);
+        assert!(
+            !list_array.is_null(row),
+            "row {row} should not be null in dump result"
+        );
+        let dumped = list_array.value(row);
         let dumped = dumped
             .as_ref()
             .as_any()
             .downcast_ref::<StructArray>()
             .expect("list elements should be StructArray");
+        assert_eq!(dumped.len(), expected.len());
 
-        let path_array = dumped.column(0);
-        let path_array = path_array
+        let path_array = dumped
+            .column(0)
             .as_ref()
             .as_any()
             .downcast_ref::<ListArray>()
             .expect("path should be a ListArray");
-        let path_values_array = path_array.value(0);
-        let path_values = path_values_array
+        assert_eq!(path_array.len(), expected.len());
+        for (i, (expected_path, _)) in expected.iter().enumerate() {
+            let path_array_value = path_array.value(i);
+            let path_values = path_array_value
+                .as_ref()
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("path values should be Int64Array");
+            assert_eq!(
+                path_values.len(),
+                expected_path.len(),
+                "unexpected path length at index {i}"
+            );
+            for (j, expected_value) in expected_path.iter().enumerate() {
+                assert_eq!(
+                    path_values.value(j),
+                    *expected_value,
+                    "unexpected path value at index {i}:{j}"
+                );
+            }
+        }
+
+        let expected_geom_values: Vec<Option<&str>> =
+            expected.iter().map(|(_, geom)| *geom).collect();
+        let expected_geom_array = create_array(&expected_geom_values, &WKB_GEOMETRY);
+        assert_array_equal(dumped.column(1), &expected_geom_array);
+    }
+
+    fn assert_dump_row_null(result: &ArrayRef, row: usize) {
+        let list_array = result
             .as_ref()
             .as_any()
-            .downcast_ref::<Int64Array>()
-            .expect("path values should be Int64Array");
-        assert_eq!(path_values.len(), 1);
-        assert_eq!(path_values.value(0), 1);
-
-        let geom_array = dumped.column(1);
-        let expected_geom_array = expected_geom.to_array_of_size(1).unwrap();
-        assert_array_equal(geom_array, &expected_geom_array);
+            .downcast_ref::<ListArray>()
+            .expect("result should be a ListArray");
+        assert!(list_array.is_null(row), "row {row} should be null");
     }
 }
