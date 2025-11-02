@@ -1016,46 +1016,46 @@ mod tests {
     fn is_empty() {
         let wkb = make_wkb("POINT EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("POINT Z EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("LINESTRING EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("POLYGON EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("MULTIPOINT EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("MULTILINESTRING EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("MULTIPOLYGON EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("GEOMETRYCOLLECTION EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("GEOMETRYCOLLECTION Z EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("GEOMETRYCOLLECTION M EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
 
         let wkb = make_wkb("GEOMETRYCOLLECTION ZM EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
-        assert_eq!(header.is_empty().unwrap(), true);
+        assert!(header.is_empty().unwrap());
     }
 }
