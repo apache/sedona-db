@@ -19,16 +19,16 @@ use arrow_array::{
     ListArray,
 };
 use arrow_schema::{DataType, Field, Fields};
-use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::{CoordTrait, GeometryTrait, PointTrait};
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::{
-    error::SedonaGeometryError,
-    wkb_factory::{write_wkb_coord_trait, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
+use geo_traits::{
+    GeometryCollectionTrait, GeometryTrait, GeometryType, MultiLineStringTrait, MultiPointTrait,
+    MultiPolygonTrait,
 };
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -101,6 +101,13 @@ impl STDumpBuilder {
     }
 }
 
+enum SingleWkb<'a> {
+    Raw(&'a [u8]),
+    Point(&'a wkb::reader::Point<'a>),
+    LineString(&'a wkb::reader::LineString<'a>),
+    Polygon(&'a wkb::reader::Polygon<'a>),
+}
+
 struct STDumpStructBuilder<'a> {
     struct_builder: &'a mut StructBuilder,
 }
@@ -108,34 +115,48 @@ struct STDumpStructBuilder<'a> {
 impl<'a> STDumpStructBuilder<'a> {
     fn append(
         &mut self,
-        path: &[i64],
-        coord: impl CoordTrait<T = f64>, // TODO: acceept Geometry here
-    ) -> std::result::Result<(), DataFusionError> {
+        parent_path: &[i64],
+        cur_index: Option<i64>,
+        wkb: SingleWkb<'_>,
+    ) -> Result<()> {
         let path_builder = self
             .struct_builder
             .field_builder::<ListBuilder<Int64Builder>>(0)
-            .expect("path field exists");
-        let values_builder = path_builder.values();
-        for value in path {
-            values_builder.append_value(*value);
+            .unwrap();
+
+        let path_array_builder = path_builder.values();
+        path_array_builder.append_slice(parent_path);
+        if let Some(cur_index) = cur_index {
+            path_array_builder.append_value(cur_index);
         }
         path_builder.append(true);
 
         let geom_builder = self
             .struct_builder
             .field_builder::<BinaryBuilder>(1)
-            .expect("geom field exists");
-        write_wkb_point_from_coord(geom_builder, coord)
-            .map_err(|err| DataFusionError::External(Box::new(err)))?;
+            .unwrap();
+
+        match wkb {
+            SingleWkb::Raw(wkb) => {
+                geom_builder.write_all(wkb)?;
+            }
+            SingleWkb::Point(point) => {
+                wkb::writer::write_point(geom_builder, &point, &Default::default()).unwrap()
+            }
+            SingleWkb::LineString(line_string) => {
+                wkb::writer::write_line_string(geom_builder, &line_string, &Default::default())
+                    .unwrap()
+            }
+            SingleWkb::Polygon(polygon) => {
+                wkb::writer::write_polygon(geom_builder, &polygon, &Default::default()).unwrap()
+            }
+        }
+
         geom_builder.append_value([]);
 
         self.struct_builder.append(true);
 
         Ok(())
-    }
-
-    fn append_null(&mut self) {
-        self.struct_builder.append_null();
     }
 }
 
@@ -157,18 +178,9 @@ impl SedonaScalarKernel for STDump {
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 let mut struct_builder = builder.struct_builder();
-                {
-                    match wkb.as_type() {
-                        geo_traits::GeometryType::Point(point) => {
-                            if let Some(coord) = point.coord() {
-                                struct_builder.append(&[1], coord)?;
-                            } else {
-                                struct_builder.append_null();
-                            }
-                        }
-                        _ => todo!(),
-                    }
-                }
+
+                let mut cur_path: Vec<i64> = Vec::new();
+                append_struct(&mut struct_builder, &wkb, &mut cur_path)?;
 
                 builder.append(true);
             } else {
@@ -180,6 +192,55 @@ impl SedonaScalarKernel for STDump {
 
         executor.finish(Arc::new(builder.finish()))
     }
+}
+
+fn append_struct(
+    struct_builder: &mut STDumpStructBuilder<'_>,
+    wkb: &wkb::reader::Wkb<'_>,
+    parent_path: &mut Vec<i64>,
+) -> Result<()> {
+    match wkb.as_type() {
+        GeometryType::Point(_) | GeometryType::LineString(_) | GeometryType::Polygon(_) => {
+            struct_builder.append(&parent_path, None, SingleWkb::Raw(wkb.buf()))?;
+        }
+        GeometryType::MultiPoint(multi_point) => {
+            for (index, point) in multi_point.points().enumerate() {
+                struct_builder.append(
+                    &parent_path,
+                    Some((index + 1) as _),
+                    SingleWkb::Point(&point),
+                )?;
+            }
+        }
+        GeometryType::MultiLineString(multi_line_string) => {
+            for (index, line_string) in multi_line_string.line_strings().enumerate() {
+                struct_builder.append(
+                    &parent_path,
+                    Some((index + 1) as _),
+                    SingleWkb::LineString(line_string),
+                )?;
+            }
+        }
+        GeometryType::MultiPolygon(multi_polygon) => {
+            for (index, polygon) in multi_polygon.polygons().enumerate() {
+                struct_builder.append(
+                    &parent_path,
+                    Some((index + 1) as _),
+                    SingleWkb::Polygon(polygon),
+                )?;
+            }
+        }
+        GeometryType::GeometryCollection(geometry_collection) => {
+            for (index, geometry) in geometry_collection.geometries().enumerate() {
+                let mut path = parent_path.clone();
+                path.push((index + 1) as _);
+                append_struct(struct_builder, geometry, &mut path)?;
+            }
+        }
+        _ => todo!(),
+    }
+
+    Ok(())
 }
 
 fn geometry_dump_fields() -> Fields {
@@ -197,14 +258,6 @@ fn geometry_dump_type() -> SedonaType {
     let struct_type = DataType::Struct(fields);
 
     SedonaType::Arrow(DataType::List(Field::new("item", struct_type, true).into()))
-}
-
-fn write_wkb_point_from_coord(
-    buf: &mut impl Write,
-    coord: impl CoordTrait<T = f64>,
-) -> Result<(), SedonaGeometryError> {
-    write_wkb_point_header(buf, coord.dim())?;
-    write_wkb_coord_trait(buf, &coord)
 }
 
 #[cfg(test)]
@@ -230,10 +283,24 @@ mod tests {
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(st_dump_udf().into(), vec![sedona_type.clone()]);
 
-        let input = create_array(&[Some("POINT (1 2)")], &sedona_type);
+        let input = create_array(
+            &[
+                Some("POINT (1 2)"),
+                Some("LINESTRING (1 1, 2 2)"),
+                Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"),
+                // Some("MULTIPOINT (1 1, 2 2)"),
+            ],
+            &sedona_type,
+        );
         let result = tester.invoke_array(input).unwrap();
-        let expected: &[(&[i64], Option<&str>)] = &[(&[1], Some("POINT (1 2)"))];
-        assert_dump_row(&result, 0, expected);
+        assert_dump_row(&result, 0, &[(&[], Some("POINT (1 2)"))]);
+        assert_dump_row(&result, 1, &[(&[], Some("LINESTRING (1 1, 2 2)"))]);
+        assert_dump_row(&result, 2, &[(&[], Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"))]);
+        // assert_dump_row(
+        //     &result,
+        //     3,
+        //     &[(&[1], Some("POINT (1 1)")), (&[2], Some("POINT (2 2)"))],
+        // );
 
         let null_input = create_array(&[None], &sedona_type);
         let result = tester.invoke_array(null_input).unwrap();
