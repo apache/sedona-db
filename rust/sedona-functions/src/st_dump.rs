@@ -201,7 +201,7 @@ impl SedonaScalarKernel for STDump {
 fn append_struct(
     struct_builder: &mut STDumpStructBuilder<'_>,
     wkb: &wkb::reader::Wkb<'_>,
-    parent_path: &mut Vec<i64>,
+    parent_path: &mut [i64],
 ) -> Result<()> {
     match wkb.as_type() {
         GeometryType::Point(point) => {
@@ -216,7 +216,7 @@ fn append_struct(
         GeometryType::MultiPoint(multi_point) => {
             for (index, point) in multi_point.points().enumerate() {
                 struct_builder.append(
-                    &parent_path,
+                    parent_path,
                     Some((index + 1) as _),
                     SingleWkb::Point(&point),
                 )?;
@@ -225,7 +225,7 @@ fn append_struct(
         GeometryType::MultiLineString(multi_line_string) => {
             for (index, line_string) in multi_line_string.line_strings().enumerate() {
                 struct_builder.append(
-                    &parent_path,
+                    parent_path,
                     Some((index + 1) as _),
                     SingleWkb::LineString(line_string),
                 )?;
@@ -234,7 +234,7 @@ fn append_struct(
         GeometryType::MultiPolygon(multi_polygon) => {
             for (index, polygon) in multi_polygon.polygons().enumerate() {
                 struct_builder.append(
-                    &parent_path,
+                    parent_path,
                     Some((index + 1) as _),
                     SingleWkb::Polygon(polygon),
                 )?;
@@ -242,7 +242,7 @@ fn append_struct(
         }
         GeometryType::GeometryCollection(geometry_collection) => {
             for (index, geometry) in geometry_collection.geometries().enumerate() {
-                let mut path = parent_path.clone();
+                let mut path = parent_path.to_vec();
                 path.push((index + 1) as _);
                 append_struct(struct_builder, geometry, &mut path)?;
             }
