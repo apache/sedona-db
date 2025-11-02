@@ -27,6 +27,7 @@ use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, GeometryType, MultiLineStringTrait, MultiPointTrait,
     MultiPolygonTrait,
 };
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -63,8 +64,70 @@ fn st_dump_doc() -> Documentation {
 #[derive(Debug)]
 struct STDump;
 
+// This enum is solely for passing the subset of wkb geometry to STDumpStructBuilder.
+// Maybe we can pass the underlying raw WKB bytes directly, but this just works for now.
+enum SingleWkb<'a> {
+    Point(&'a wkb::reader::Point<'a>),
+    LineString(&'a wkb::reader::LineString<'a>),
+    Polygon(&'a wkb::reader::Polygon<'a>),
+}
+
+// A builder for a single struct of { path: [i64], geom: POINT | LINESTRING | POLYGON }
+struct STDumpStructBuilder<'a> {
+    struct_builder: &'a mut StructBuilder,
+}
+
+// A builder for a list of the structs
 struct STDumpBuilder {
     builder: ListBuilder<StructBuilder>,
+}
+
+impl<'a> STDumpStructBuilder<'a> {
+    // This appends both path and geom at once.
+    fn append(
+        &mut self,
+        parent_path: &[i64],
+        cur_index: Option<i64>,
+        wkb: SingleWkb<'_>,
+    ) -> Result<()> {
+        let path_builder = self
+            .struct_builder
+            .field_builder::<ListBuilder<Int64Builder>>(0)
+            .unwrap();
+
+        let path_array_builder = path_builder.values();
+        path_array_builder.append_slice(parent_path);
+        if let Some(cur_index) = cur_index {
+            path_array_builder.append_value(cur_index);
+        }
+        path_builder.append(true);
+
+        let geom_builder = self
+            .struct_builder
+            .field_builder::<BinaryBuilder>(1)
+            .unwrap();
+
+        let write_result = match wkb {
+            SingleWkb::Point(point) => {
+                wkb::writer::write_point(geom_builder, &point, &Default::default())
+            }
+            SingleWkb::LineString(line_string) => {
+                wkb::writer::write_line_string(geom_builder, &line_string, &Default::default())
+            }
+            SingleWkb::Polygon(polygon) => {
+                wkb::writer::write_polygon(geom_builder, &polygon, &Default::default())
+            }
+        };
+        if let Err(e) = write_result {
+            return sedona_internal_err!("Failed to write WKB: {e}");
+        }
+
+        geom_builder.append_value([]);
+
+        self.struct_builder.append(true);
+
+        Ok(())
+    }
 }
 
 impl STDumpBuilder {
@@ -98,61 +161,6 @@ impl STDumpBuilder {
 
     fn finish(&mut self) -> ListArray {
         self.builder.finish()
-    }
-}
-
-enum SingleWkb<'a> {
-    Point(&'a wkb::reader::Point<'a>),
-    LineString(&'a wkb::reader::LineString<'a>),
-    Polygon(&'a wkb::reader::Polygon<'a>),
-}
-
-struct STDumpStructBuilder<'a> {
-    struct_builder: &'a mut StructBuilder,
-}
-
-impl<'a> STDumpStructBuilder<'a> {
-    fn append(
-        &mut self,
-        parent_path: &[i64],
-        cur_index: Option<i64>,
-        wkb: SingleWkb<'_>,
-    ) -> Result<()> {
-        let path_builder = self
-            .struct_builder
-            .field_builder::<ListBuilder<Int64Builder>>(0)
-            .unwrap();
-
-        let path_array_builder = path_builder.values();
-        path_array_builder.append_slice(parent_path);
-        if let Some(cur_index) = cur_index {
-            path_array_builder.append_value(cur_index);
-        }
-        path_builder.append(true);
-
-        let geom_builder = self
-            .struct_builder
-            .field_builder::<BinaryBuilder>(1)
-            .unwrap();
-
-        match wkb {
-            SingleWkb::Point(point) => {
-                wkb::writer::write_point(geom_builder, &point, &Default::default()).unwrap()
-            }
-            SingleWkb::LineString(line_string) => {
-                wkb::writer::write_line_string(geom_builder, &line_string, &Default::default())
-                    .unwrap()
-            }
-            SingleWkb::Polygon(polygon) => {
-                wkb::writer::write_polygon(geom_builder, &polygon, &Default::default()).unwrap()
-            }
-        }
-
-        geom_builder.append_value([]);
-
-        self.struct_builder.append(true);
-
-        Ok(())
     }
 }
 
