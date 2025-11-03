@@ -100,6 +100,7 @@ def test_st_crs_sedonadb(eng):
     ("geom", "dx", "dy", "expected"),
     [
         (None, None, None, None),
+        (None, 1.0, 2.0, None),
         ("POINT (0 1)", 1.0, None, None),
         ("POINT (0 1)", None, 2.0, None),
         # WKT output of geoarrow-c is causing this (both correctly output
