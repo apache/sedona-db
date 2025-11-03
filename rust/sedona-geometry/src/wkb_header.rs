@@ -141,6 +141,7 @@ impl WkbHeader {
         self.first_geom_dimensions
     }
 
+    /// Returns true if this geometry is EMPTY or false otherwise
     pub fn is_empty(&self) -> Result<bool, SedonaGeometryError> {
         let geometry_type_id = self.geometry_type_id()?;
         if geometry_type_id == GeometryTypeId::Point {
