@@ -55,6 +55,7 @@ mod st_setsrid;
 mod st_srid;
 mod st_start_point;
 mod st_transform;
+mod st_translate;
 pub mod st_union_aggr;
 mod st_xyzm;
 mod st_xyzm_minmax;
