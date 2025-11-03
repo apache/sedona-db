@@ -36,6 +36,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_flipcoordinates", Point);
     benchmark::scalar(c, &f, "native", "st_flipcoordinates", LineString(10));
 
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_translate",
+        BenchmarkArgs::ArrayScalarScalar(Point, Float64(0.0, 1.0), Float64(2.0, 3.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_translate",
+        BenchmarkArgs::ArrayScalarScalar(LineString(10), Float64(0.0, 1.0), Float64(2.0, 3.0)),
+    );
+
     benchmark::scalar(c, &f, "native", "st_geometrytype", Point);
     benchmark::scalar(c, &f, "native", "st_geometrytype", LineString(10));
 
@@ -83,6 +98,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_makeline",
         BenchmarkArgs::ArrayArray(Point, Point),
     );
+
+    benchmark::scalar(c, &f, "native", "st_numgeometries", Point);
+    benchmark::scalar(c, &f, "native", "st_numgeometries", MultiPoint(10));
 
     benchmark::scalar(
         c,

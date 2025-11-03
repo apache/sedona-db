@@ -140,6 +140,16 @@ impl WkbHeader {
     pub fn first_geom_dimensions(&self) -> Option<Dimensions> {
         self.first_geom_dimensions
     }
+
+    /// Returns true if this geometry is EMPTY or false otherwise
+    pub fn is_empty(&self) -> Result<bool, SedonaGeometryError> {
+        let geometry_type_id = self.geometry_type_id()?;
+        if geometry_type_id == GeometryTypeId::Point {
+            let (x, y) = self.first_xy();
+            return Ok(x.is_nan() && y.is_nan());
+        }
+        Ok(self.size == 0)
+    }
 }
 
 // A helper struct for calculating the WKBHeader
@@ -1001,5 +1011,52 @@ mod tests {
         assert_eq!(header.first_xy(), (1.0, 2.0));
         assert_eq!(header.dimensions().unwrap(), Dimensions::Xy);
         assert_eq!(header.first_geom_dimensions().unwrap(), Dimensions::Xyzm);
+    }
+
+    #[test]
+    fn is_empty() {
+        let wkb = make_wkb("POINT EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("POINT Z EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("LINESTRING EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("POLYGON EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("MULTIPOINT EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("MULTILINESTRING EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("MULTIPOLYGON EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("GEOMETRYCOLLECTION EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("GEOMETRYCOLLECTION Z EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("GEOMETRYCOLLECTION M EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
+
+        let wkb = make_wkb("GEOMETRYCOLLECTION ZM EMPTY");
+        let header = WkbHeader::try_new(&wkb).unwrap();
+        assert!(header.is_empty().unwrap());
     }
 }
