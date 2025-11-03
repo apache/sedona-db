@@ -633,6 +633,31 @@ def test_st_dimension(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Dimension({geom_or_null(geom)})", expected)
 
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_dump(eng):
+    wkt = "MULTIPOINT (0 1, 2 3)"
+    expected = [
+        {
+            "path": [1],
+            "geom": shapely.from_wkt("POINT (0 1)").wkb,
+        },
+        {
+            "path": [2],
+            "geom": shapely.from_wkt("POINT (1 2)").wkb,
+        },
+    ]
+
+    if eng == PostGIS:
+        eng = eng.create_or_skip()
+        result = eng.execute_and_collect(f"SELECT ST_Dump({geom_or_null(wkt)})")
+    else:
+        eng = eng.create_or_skip()
+        result = eng.execute_and_collect(f"SELECT unnest(ST_Dump({geom_or_null(wkt)}))")
+    df = eng.result_to_pandas(result)
+    actual = df.iloc[0]
+
+    for item in actual:
+        assert list(item.keys()) == ["path", "geom"]
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
