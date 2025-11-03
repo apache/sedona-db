@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::{
-    builder::{BinaryBuilder, Int64Builder, ListBuilder, StructBuilder},
+    builder::{BinaryBuilder, ListBuilder, StructBuilder, UInt32Builder},
     ListArray,
 };
 use arrow_schema::{DataType, Field, Fields};
@@ -72,7 +72,7 @@ enum SingleWkb<'a> {
     Polygon(&'a wkb::reader::Polygon<'a>),
 }
 
-// A builder for a single struct of { path: [i64], geom: POINT | LINESTRING | POLYGON }
+// A builder for a single struct of { path: [u32], geom: POINT | LINESTRING | POLYGON }
 struct STDumpStructBuilder<'a> {
     struct_builder: &'a mut StructBuilder,
 }
@@ -86,13 +86,13 @@ impl<'a> STDumpStructBuilder<'a> {
     // This appends both path and geom at once.
     fn append(
         &mut self,
-        parent_path: &[i64],
-        cur_index: Option<i64>,
+        parent_path: &[u32],
+        cur_index: Option<u32>,
         wkb: SingleWkb<'_>,
     ) -> Result<()> {
         let path_builder = self
             .struct_builder
-            .field_builder::<ListBuilder<Int64Builder>>(0)
+            .field_builder::<ListBuilder<UInt32Builder>>(0)
             .unwrap();
 
         let path_array_builder = path_builder.values();
@@ -133,7 +133,7 @@ impl<'a> STDumpStructBuilder<'a> {
 impl STDumpBuilder {
     fn new(num_iter: usize) -> Self {
         let path_builder =
-            ListBuilder::with_capacity(Int64Builder::with_capacity(num_iter), num_iter);
+            ListBuilder::with_capacity(UInt32Builder::with_capacity(num_iter), num_iter);
         let geom_builder =
             BinaryBuilder::with_capacity(num_iter, WKB_MIN_PROBABLE_BYTES * num_iter);
         let struct_builder = StructBuilder::new(
@@ -183,7 +183,7 @@ impl SedonaScalarKernel for STDump {
             if let Some(wkb) = maybe_wkb {
                 let mut struct_builder = builder.struct_builder();
 
-                let mut cur_path: Vec<i64> = Vec::new();
+                let mut cur_path: Vec<u32> = Vec::new();
                 append_struct(&mut struct_builder, &wkb, &mut cur_path)?;
 
                 builder.append(true);
@@ -201,7 +201,7 @@ impl SedonaScalarKernel for STDump {
 fn append_struct(
     struct_builder: &mut STDumpStructBuilder<'_>,
     wkb: &wkb::reader::Wkb<'_>,
-    parent_path: &mut [i64],
+    parent_path: &mut [u32],
 ) -> Result<()> {
     match wkb.as_type() {
         GeometryType::Point(point) => {
@@ -256,7 +256,7 @@ fn append_struct(
 fn geometry_dump_fields() -> Fields {
     let path = Field::new(
         "path",
-        DataType::List(Field::new("item", DataType::Int64, true).into()),
+        DataType::List(Field::new("item", DataType::UInt32, true).into()),
         true,
     );
     let geom = WKB_GEOMETRY.to_storage_field("geom", true).unwrap();
@@ -272,7 +272,7 @@ fn geometry_dump_type() -> SedonaType {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{Array, ArrayRef, Int64Array, ListArray, StructArray};
+    use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
@@ -361,7 +361,7 @@ mod tests {
         assert_dump_row_null(&result, 0);
     }
 
-    fn assert_dump_row(result: &ArrayRef, row: usize, expected: &[(&[i64], Option<&str>)]) {
+    fn assert_dump_row(result: &ArrayRef, row: usize, expected: &[(&[u32], Option<&str>)]) {
         let list_array = result
             .as_ref()
             .as_any()
@@ -391,8 +391,8 @@ mod tests {
             let path_values = path_array_value
                 .as_ref()
                 .as_any()
-                .downcast_ref::<Int64Array>()
-                .expect("path values should be Int64Array");
+                .downcast_ref::<UInt32Array>()
+                .expect("path values should be UInt32Array");
             assert_eq!(
                 path_values.len(),
                 expected_path.len(),
