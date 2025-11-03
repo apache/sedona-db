@@ -16,8 +16,11 @@
 // under the License.
 use arrow_array::StructArray;
 use arrow_schema::ArrowError;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata};
+use sedona_raster::{
+    array::RasterStructArray,
+    builder::RasterBuilder,
+    traits::{BandMetadata, RasterMetadata, RasterRef},
+};
 use sedona_schema::raster::{BandDataType, StorageType};
 
 /// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values
@@ -67,6 +70,72 @@ pub fn generate_test_rasters(
 
     builder.finish()
 }
+
+/// Compare two RasterStructArrays for equality
+/// This compares each raster's metadata and band data for equality
+pub fn raster_arrays_equal(raster_array1: &RasterStructArray, raster_array2: &RasterStructArray) -> bool {
+    if raster_array1.len() != raster_array2.len() {
+        return false;
+    }
+
+    for i in 0..raster_array1.len() {
+        let raster1 = raster_array1.get(i).unwrap();
+        let raster2 = raster_array2.get(i).unwrap();
+        if !raster_equal(&raster1, &raster2) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Compare two rasters for equality
+/// This compares metadata and band data for equality
+pub fn raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) -> bool {
+    // Compare metadata
+    let meta1 = raster1.metadata();
+    let meta2 = raster2.metadata();
+    if meta1.width() != meta2.width()
+        || meta1.height() != meta2.height()
+        || meta1.upper_left_x() != meta2.upper_left_x()
+        || meta1.upper_left_y() != meta2.upper_left_y()
+        || meta1.scale_x() != meta2.scale_x()
+        || meta1.scale_y() != meta2.scale_y()
+        || meta1.skew_x() != meta2.skew_x()
+        || meta1.skew_y() != meta2.skew_y()
+    {
+        return false;
+    }
+
+    // Compare bands
+    let bands1 = raster1.bands();
+    let bands2 = raster2.bands();
+    if bands1.len() != bands2.len() {
+        return false;
+    }
+
+    for band_index in 0..bands1.len() {
+        let band1 = bands1.band(band_index + 1).unwrap();
+        let band2 = bands2.band(band_index + 1).unwrap();
+
+        let band_meta1 = band1.metadata();
+        let band_meta2 = band2.metadata();
+        if band_meta1.data_type() != band_meta2.data_type()
+            || band_meta1.nodata_value() != band_meta2.nodata_value()
+            || band_meta1.storage_type() != band_meta2.storage_type()
+            || band_meta1.outdb_url() != band_meta2.outdb_url()
+            || band_meta1.outdb_band_id() != band_meta2.outdb_band_id()
+        {
+            return false;
+        }
+
+        if band1.data() != band2.data() {
+            return false;
+        }
+    }
+
+    true
+}   
 
 #[cfg(test)]
 mod tests {
