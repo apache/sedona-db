@@ -203,6 +203,7 @@ impl SedonaScalarKernel for STDump {
 fn append_struct(
     struct_builder: &mut STDumpStructBuilder<'_>,
     wkb: &wkb::reader::Wkb<'_>,
+    // Note: in order to avoid allocation, this needs to be &mut Vec, not &mut [].
     parent_path: &mut Vec<u32>,
 ) -> Result<()> {
     match wkb.as_type() {
@@ -243,13 +244,14 @@ fn append_struct(
             }
         }
         GeometryType::GeometryCollection(geometry_collection) => {
-            parent_path.push(0);
+            parent_path.push(0); // add an index for the next nexted level
 
             for geometry in geometry_collection.geometries() {
-                parent_path.last_mut().map(|x| *x += 1);
+                parent_path.last_mut().map(|x| *x += 1); // increment the index
                 append_struct(struct_builder, geometry, parent_path)?;
             }
-            parent_path.pop();
+
+            parent_path.truncate(parent_path.len() - 1); // clear the index before returning to the upper level
         }
         _ => return sedona_internal_err!("Invalid geometry type"),
     }
