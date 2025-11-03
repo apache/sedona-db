@@ -178,12 +178,14 @@ impl SedonaScalarKernel for STDump {
         let executor = WkbExecutor::new(arg_types, args);
 
         let mut builder = STDumpBuilder::new(executor.num_iterations());
+        let mut cur_path: Vec<u32> = Vec::new();
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
+                cur_path.clear();
+
                 let mut struct_builder = builder.struct_builder();
 
-                let mut cur_path: Vec<u32> = Vec::new();
                 append_struct(&mut struct_builder, &wkb, &mut cur_path)?;
 
                 builder.append(true);
@@ -201,7 +203,7 @@ impl SedonaScalarKernel for STDump {
 fn append_struct(
     struct_builder: &mut STDumpStructBuilder<'_>,
     wkb: &wkb::reader::Wkb<'_>,
-    parent_path: &mut [u32],
+    parent_path: &mut Vec<u32>,
 ) -> Result<()> {
     match wkb.as_type() {
         GeometryType::Point(point) => {
@@ -241,11 +243,13 @@ fn append_struct(
             }
         }
         GeometryType::GeometryCollection(geometry_collection) => {
-            for (index, geometry) in geometry_collection.geometries().enumerate() {
-                let mut path = parent_path.to_vec();
-                path.push((index + 1) as _);
-                append_struct(struct_builder, geometry, &mut path)?;
+            parent_path.push(0);
+
+            for geometry in geometry_collection.geometries() {
+                parent_path.last_mut().map(|x| *x += 1);
+                append_struct(struct_builder, geometry, parent_path)?;
             }
+            parent_path.pop();
         }
         _ => return sedona_internal_err!("Invalid geometry type"),
     }
