@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::{
-    builder::{BinaryBuilder, ListBuilder, StructBuilder, UInt32Builder},
-    ListArray,
+    builder::{BinaryBuilder, OffsetBufferBuilder, UInt32Builder},
+    ListArray, StructArray,
 };
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::error::Result;
@@ -72,95 +72,172 @@ enum SingleWkb<'a> {
     Polygon(&'a wkb::reader::Polygon<'a>),
 }
 
-// A builder for a single struct of { path: [u32], geom: POINT | LINESTRING | POLYGON }
-struct STDumpStructBuilder<'a> {
-    struct_builder: &'a mut StructBuilder,
-}
-
 // A builder for a list of the structs
 struct STDumpBuilder {
-    builder: ListBuilder<StructBuilder>,
+    path_array_builder: UInt32Builder,
+    path_array_offsets_builder: OffsetBufferBuilder<i32>,
+    geom_builder: BinaryBuilder,
+    struct_offsets_builder: OffsetBufferBuilder<i32>,
 }
 
-impl<'a> STDumpStructBuilder<'a> {
+impl STDumpBuilder {
+    fn new(num_iter: usize) -> Self {
+        let path_array_builder = UInt32Builder::with_capacity(num_iter);
+        let path_array_offsets_builder = OffsetBufferBuilder::new(num_iter);
+        let geom_builder =
+            BinaryBuilder::with_capacity(num_iter, WKB_MIN_PROBABLE_BYTES * num_iter);
+        let struct_offsets_builder = OffsetBufferBuilder::new(num_iter);
+
+        Self {
+            path_array_builder,
+            path_array_offsets_builder,
+            geom_builder,
+            struct_offsets_builder,
+        }
+    }
+
     // This appends both path and geom at once.
-    fn append(
+    fn append_inner(
         &mut self,
         parent_path: &[u32],
         cur_index: Option<u32>,
         wkb: SingleWkb<'_>,
     ) -> Result<()> {
-        let path_builder = self
-            .struct_builder
-            .field_builder::<ListBuilder<UInt32Builder>>(0)
-            .unwrap();
-
-        let path_array_builder = path_builder.values();
-        path_array_builder.append_slice(parent_path);
+        self.path_array_builder.append_slice(parent_path);
         if let Some(cur_index) = cur_index {
-            path_array_builder.append_value(cur_index);
+            self.path_array_builder.append_value(cur_index);
+            self.path_array_offsets_builder
+                .push_length(parent_path.len() + 1);
+        } else {
+            self.path_array_offsets_builder
+                .push_length(parent_path.len());
         }
-        path_builder.append(true);
-
-        let geom_builder = self
-            .struct_builder
-            .field_builder::<BinaryBuilder>(1)
-            .unwrap();
 
         let write_result = match wkb {
             SingleWkb::Point(point) => {
-                wkb::writer::write_point(geom_builder, &point, &Default::default())
+                wkb::writer::write_point(&mut self.geom_builder, &point, &Default::default())
             }
-            SingleWkb::LineString(line_string) => {
-                wkb::writer::write_line_string(geom_builder, &line_string, &Default::default())
-            }
+            SingleWkb::LineString(line_string) => wkb::writer::write_line_string(
+                &mut self.geom_builder,
+                &line_string,
+                &Default::default(),
+            ),
             SingleWkb::Polygon(polygon) => {
-                wkb::writer::write_polygon(geom_builder, &polygon, &Default::default())
+                wkb::writer::write_polygon(&mut self.geom_builder, &polygon, &Default::default())
             }
         };
         if let Err(e) = write_result {
             return sedona_internal_err!("Failed to write WKB: {e}");
         }
 
-        geom_builder.append_value([]);
-
-        self.struct_builder.append(true);
+        self.geom_builder.append_value([]);
 
         Ok(())
     }
-}
 
-impl STDumpBuilder {
-    fn new(num_iter: usize) -> Self {
-        let path_builder =
-            ListBuilder::with_capacity(UInt32Builder::with_capacity(num_iter), num_iter);
-        let geom_builder =
-            BinaryBuilder::with_capacity(num_iter, WKB_MIN_PROBABLE_BYTES * num_iter);
-        let struct_builder = StructBuilder::new(
-            geometry_dump_fields(),
-            vec![Box::new(path_builder), Box::new(geom_builder)],
-        );
-        let builder = ListBuilder::with_capacity(struct_builder, WKB_MIN_PROBABLE_BYTES * num_iter);
+    fn append(
+        &mut self,
+        // Note: in order to avoid allocation, this needs to be &mut Vec, not &mut [].
+        parent_path: &mut Vec<u32>,
+        wkb: &wkb::reader::Wkb<'_>,
+    ) -> Result<i32> {
+        match wkb.as_type() {
+            GeometryType::Point(point) => {
+                self.append_inner(parent_path, None, SingleWkb::Point(point))?;
+                Ok(1)
+            }
+            GeometryType::LineString(line_string) => {
+                self.append_inner(parent_path, None, SingleWkb::LineString(line_string))?;
+                Ok(1)
+            }
+            GeometryType::Polygon(polygon) => {
+                self.append_inner(parent_path, None, SingleWkb::Polygon(polygon))?;
+                Ok(1)
+            }
+            GeometryType::MultiPoint(multi_point) => {
+                for (index, point) in multi_point.points().enumerate() {
+                    self.append_inner(
+                        parent_path,
+                        Some((index + 1) as _),
+                        SingleWkb::Point(&point),
+                    )?;
+                }
+                Ok(multi_point.num_points() as _)
+            }
+            GeometryType::MultiLineString(multi_line_string) => {
+                for (index, line_string) in multi_line_string.line_strings().enumerate() {
+                    self.append_inner(
+                        parent_path,
+                        Some((index + 1) as _),
+                        SingleWkb::LineString(line_string),
+                    )?;
+                }
+                Ok(multi_line_string.num_line_strings() as _)
+            }
+            GeometryType::MultiPolygon(multi_polygon) => {
+                for (index, polygon) in multi_polygon.polygons().enumerate() {
+                    self.append_inner(
+                        parent_path,
+                        Some((index + 1) as _),
+                        SingleWkb::Polygon(polygon),
+                    )?;
+                }
+                Ok(multi_polygon.num_polygons() as _)
+            }
+            GeometryType::GeometryCollection(geometry_collection) => {
+                let mut num_geometries: i32 = 0;
 
-        Self { builder }
-    }
+                parent_path.push(0); // add an index for the next nested level
 
-    fn append(&mut self, is_valid: bool) {
-        self.builder.append(is_valid);
-    }
+                for geometry in geometry_collection.geometries() {
+                    // increment the index
+                    if let Some(index) = parent_path.last_mut() {
+                        *index += 1;
+                    }
+                    num_geometries += self.append(parent_path, geometry)?;
+                }
 
-    fn append_null(&mut self) {
-        self.builder.append_null();
-    }
+                parent_path.truncate(parent_path.len() - 1); // clear the index before returning to the upper level
 
-    fn struct_builder<'a>(&'a mut self) -> STDumpStructBuilder<'a> {
-        STDumpStructBuilder {
-            struct_builder: self.builder.values(),
+                Ok(num_geometries)
+            }
+            _ => return sedona_internal_err!("Invalid geometry type"),
         }
     }
 
-    fn finish(&mut self) -> ListArray {
-        self.builder.finish()
+    fn append_null(&mut self) {
+        self.path_array_builder.append_null();
+        self.path_array_offsets_builder.push_length(1);
+        self.geom_builder.append_null();
+        self.struct_offsets_builder.push_length(1);
+    }
+
+    fn finish(mut self) -> ListArray {
+        let path_array = Arc::new(self.path_array_builder.finish());
+        let path_offsets = self.path_array_offsets_builder.finish();
+        let geom_array = self.geom_builder.finish();
+
+        let path_field = Arc::new(Field::new("item", DataType::UInt32, true));
+        let path_list = ListArray::new(path_field, path_offsets, path_array, None);
+
+        let fields = Fields::from(vec![
+            Field::new(
+                "path",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
+                true,
+            ),
+            Field::new("geom", DataType::Binary, true),
+        ]);
+        let struct_array = StructArray::new(
+            fields.clone(),
+            vec![Arc::new(path_list), Arc::new(geom_array)],
+            None,
+        );
+        let struct_offsets = self.struct_offsets_builder.finish();
+        let struct_field = Arc::new(Field::new("item", DataType::Struct(fields), true));
+        let path_list = ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), None);
+
+        path_list
     }
 }
 
@@ -183,12 +260,7 @@ impl SedonaScalarKernel for STDump {
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 cur_path.clear();
-
-                let mut struct_builder = builder.struct_builder();
-
-                append_struct(&mut struct_builder, &wkb, &mut cur_path)?;
-
-                builder.append(true);
+                builder.append(&mut cur_path, &wkb)?;
             } else {
                 builder.append_null();
             }
@@ -198,68 +270,6 @@ impl SedonaScalarKernel for STDump {
 
         executor.finish(Arc::new(builder.finish()))
     }
-}
-
-fn append_struct(
-    struct_builder: &mut STDumpStructBuilder<'_>,
-    wkb: &wkb::reader::Wkb<'_>,
-    // Note: in order to avoid allocation, this needs to be &mut Vec, not &mut [].
-    parent_path: &mut Vec<u32>,
-) -> Result<()> {
-    match wkb.as_type() {
-        GeometryType::Point(point) => {
-            struct_builder.append(parent_path, None, SingleWkb::Point(point))?;
-        }
-        GeometryType::LineString(line_string) => {
-            struct_builder.append(parent_path, None, SingleWkb::LineString(line_string))?;
-        }
-        GeometryType::Polygon(polygon) => {
-            struct_builder.append(parent_path, None, SingleWkb::Polygon(polygon))?;
-        }
-        GeometryType::MultiPoint(multi_point) => {
-            for (index, point) in multi_point.points().enumerate() {
-                struct_builder.append(
-                    parent_path,
-                    Some((index + 1) as _),
-                    SingleWkb::Point(&point),
-                )?;
-            }
-        }
-        GeometryType::MultiLineString(multi_line_string) => {
-            for (index, line_string) in multi_line_string.line_strings().enumerate() {
-                struct_builder.append(
-                    parent_path,
-                    Some((index + 1) as _),
-                    SingleWkb::LineString(line_string),
-                )?;
-            }
-        }
-        GeometryType::MultiPolygon(multi_polygon) => {
-            for (index, polygon) in multi_polygon.polygons().enumerate() {
-                struct_builder.append(
-                    parent_path,
-                    Some((index + 1) as _),
-                    SingleWkb::Polygon(polygon),
-                )?;
-            }
-        }
-        GeometryType::GeometryCollection(geometry_collection) => {
-            parent_path.push(0); // add an index for the next nested level
-
-            for geometry in geometry_collection.geometries() {
-                // increment the index
-                if let Some(index) = parent_path.last_mut() {
-                    *index += 1;
-                }
-                append_struct(struct_builder, geometry, parent_path)?;
-            }
-
-            parent_path.truncate(parent_path.len() - 1); // clear the index before returning to the upper level
-        }
-        _ => return sedona_internal_err!("Invalid geometry type"),
-    }
-
-    Ok(())
 }
 
 fn geometry_dump_fields() -> Fields {
