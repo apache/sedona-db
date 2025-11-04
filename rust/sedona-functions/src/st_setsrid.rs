@@ -22,7 +22,7 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -225,6 +225,79 @@ fn determine_return_type(
     }
 
     sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
+}
+
+#[derive(Debug)]
+pub(crate) struct SRIDifiedKernel {
+    inner: ScalarKernelRef,
+}
+
+impl SRIDifiedKernel {
+    pub(crate) fn new(inner: ScalarKernelRef) -> Self {
+        Self { inner }
+    }
+}
+
+impl SedonaScalarKernel for SRIDifiedKernel {
+    fn return_type_from_args_and_scalars(
+        &self,
+        args: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<SedonaType>> {
+        let orig_args_len = args.len() - 1;
+        let orig_args = &args[..orig_args_len];
+        let orig_scalar_args = &scalar_args[..orig_args_len];
+
+        let crs = scalar_args[orig_args_len].unwrap();
+        let new_crs = match crs.cast_to(&DataType::Utf8) {
+            Ok(ScalarValue::Utf8(Some(crs))) => {
+                if crs == "0" {
+                    None
+                } else {
+                    validate_crs(&crs, None)?;
+                    deserialize_crs(&serde_json::Value::String(crs))?
+                }
+            }
+            Ok(ScalarValue::Utf8(None)) => None,
+            Ok(_) => {
+                // TODO: This branch is not really the "invalid CRS value" case.
+                //       If it can be cast to Utf-8, it falls into the first branch.
+                return sedona_internal_err!("Invalid CRS value");
+            }
+            Err(_) => None,
+        };
+
+        let mut result = self
+            .inner
+            .return_type_from_args_and_scalars(orig_args, orig_scalar_args);
+        if let Ok(Some(sedona_type)) = &mut result {
+            match sedona_type {
+                SedonaType::Wkb(_, crs) => *crs = new_crs,
+                SedonaType::WkbView(_, crs) => *crs = new_crs,
+                _ => {
+                    return sedona_internal_err!("Return type must be Wkb or WkbView");
+                }
+            }
+        }
+
+        result
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let orig_args_len = arg_types.len() - 1;
+        self.inner
+            .invoke_batch(&arg_types[..orig_args_len], &args[..orig_args_len])
+    }
+
+    fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        sedona_internal_err!(
+            "Should not be called because return_type_from_args_and_scalars() is implemented"
+        )
+    }
 }
 
 #[cfg(test)]
