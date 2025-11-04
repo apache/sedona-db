@@ -244,10 +244,13 @@ fn append_struct(
             }
         }
         GeometryType::GeometryCollection(geometry_collection) => {
-            parent_path.push(0); // add an index for the next nexted level
+            parent_path.push(0); // add an index for the next nested level
 
             for geometry in geometry_collection.geometries() {
-                parent_path.last_mut().map(|x| *x += 1); // increment the index
+                // increment the index
+                if let Some(index) = parent_path.last_mut() {
+                    *index += 1;
+                }
                 append_struct(struct_builder, geometry, parent_path)?;
             }
 
