@@ -201,7 +201,7 @@ impl STDumpBuilder {
 
                 Ok(num_geometries)
             }
-            _ => return sedona_internal_err!("Invalid geometry type"),
+            _ => sedona_internal_err!("Invalid geometry type"),
         }
     }
 
@@ -235,9 +235,7 @@ impl STDumpBuilder {
         );
         let struct_offsets = self.struct_offsets_builder.finish();
         let struct_field = Arc::new(Field::new("item", DataType::Struct(fields), true));
-        let path_list = ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), None);
-
-        path_list
+        ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), None)
     }
 }
 
