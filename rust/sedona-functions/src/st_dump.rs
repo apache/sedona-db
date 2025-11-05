@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::{
-    builder::{BinaryBuilder, OffsetBufferBuilder, UInt32Builder},
+    builder::{BinaryBuilder, NullBufferBuilder, OffsetBufferBuilder, UInt32Builder},
     ListArray, StructArray,
 };
 use arrow_schema::{DataType, Field, Fields};
@@ -78,6 +78,7 @@ struct STDumpBuilder {
     path_array_offsets_builder: OffsetBufferBuilder<i32>,
     geom_builder: BinaryBuilder,
     struct_offsets_builder: OffsetBufferBuilder<i32>,
+    null_builder: NullBufferBuilder,
 }
 
 impl STDumpBuilder {
@@ -87,12 +88,14 @@ impl STDumpBuilder {
         let geom_builder =
             BinaryBuilder::with_capacity(num_iter, WKB_MIN_PROBABLE_BYTES * num_iter);
         let struct_offsets_builder = OffsetBufferBuilder::new(num_iter);
+        let null_builder = NullBufferBuilder::new(num_iter);
 
         Self {
             path_array_builder,
             path_array_offsets_builder,
             geom_builder,
             struct_offsets_builder,
+            null_builder,
         }
     }
 
@@ -206,10 +209,8 @@ impl STDumpBuilder {
     }
 
     fn append_null(&mut self) {
-        self.path_array_builder.append_null();
-        self.path_array_offsets_builder.push_length(1);
+        self.path_array_offsets_builder.push_length(0);
         self.geom_builder.append_null();
-        self.struct_offsets_builder.push_length(1);
     }
 
     fn finish(mut self) -> ListArray {
@@ -228,14 +229,16 @@ impl STDumpBuilder {
             ),
             Field::new("geom", DataType::Binary, true),
         ]);
-        let struct_array = StructArray::new(
+        let struct_array = StructArray::try_new(
             fields.clone(),
             vec![Arc::new(path_list), Arc::new(geom_array)],
             None,
-        );
+        )
+        .unwrap();
         let struct_offsets = self.struct_offsets_builder.finish();
         let struct_field = Arc::new(Field::new("item", DataType::Struct(fields), true));
-        ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), None)
+        let nulls = self.null_builder.finish();
+        ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), nulls)
     }
 }
 
@@ -258,9 +261,15 @@ impl SedonaScalarKernel for STDump {
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 cur_path.clear();
-                builder.append(&mut cur_path, &wkb)?;
+                let num_geometries = builder.append(&mut cur_path, &wkb)?;
+                builder.null_builder.append(true);
+                builder
+                    .struct_offsets_builder
+                    .push_length(num_geometries as usize);
             } else {
                 builder.append_null();
+                builder.struct_offsets_builder.push_length(1);
+                builder.null_builder.append(false);
             }
 
             Ok(())
