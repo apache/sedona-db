@@ -79,6 +79,7 @@ struct STDumpBuilder {
     geom_builder: BinaryBuilder,
     struct_offsets_builder: OffsetBufferBuilder<i32>,
     null_builder: NullBufferBuilder,
+    parent_path: Vec<u32>,
 }
 
 impl STDumpBuilder {
@@ -96,24 +97,20 @@ impl STDumpBuilder {
             geom_builder,
             struct_offsets_builder,
             null_builder,
+            parent_path: Vec::new(), // Reusable buffer to avoid allocation per row
         }
     }
 
     // This appends both path and geom at once.
-    fn append_inner(
-        &mut self,
-        parent_path: &[u32],
-        cur_index: Option<u32>,
-        wkb: SingleWkb<'_>,
-    ) -> Result<()> {
-        self.path_array_builder.append_slice(parent_path);
+    fn append_single_struct(&mut self, cur_index: Option<u32>, wkb: SingleWkb<'_>) -> Result<()> {
+        self.path_array_builder.append_slice(&self.parent_path);
         if let Some(cur_index) = cur_index {
             self.path_array_builder.append_value(cur_index);
             self.path_array_offsets_builder
-                .push_length(parent_path.len() + 1);
+                .push_length(self.parent_path.len() + 1);
         } else {
             self.path_array_offsets_builder
-                .push_length(parent_path.len());
+                .push_length(self.parent_path.len());
         }
 
         let write_result = match wkb {
@@ -138,39 +135,29 @@ impl STDumpBuilder {
         Ok(())
     }
 
-    fn append(
-        &mut self,
-        // Note: in order to avoid allocation, this needs to be &mut Vec, not &mut [].
-        parent_path: &mut Vec<u32>,
-        wkb: &wkb::reader::Wkb<'_>,
-    ) -> Result<i32> {
+    fn append_structs(&mut self, wkb: &wkb::reader::Wkb<'_>) -> Result<i32> {
         match wkb.as_type() {
             GeometryType::Point(point) => {
-                self.append_inner(parent_path, None, SingleWkb::Point(point))?;
+                self.append_single_struct(None, SingleWkb::Point(point))?;
                 Ok(1)
             }
             GeometryType::LineString(line_string) => {
-                self.append_inner(parent_path, None, SingleWkb::LineString(line_string))?;
+                self.append_single_struct(None, SingleWkb::LineString(line_string))?;
                 Ok(1)
             }
             GeometryType::Polygon(polygon) => {
-                self.append_inner(parent_path, None, SingleWkb::Polygon(polygon))?;
+                self.append_single_struct(None, SingleWkb::Polygon(polygon))?;
                 Ok(1)
             }
             GeometryType::MultiPoint(multi_point) => {
                 for (index, point) in multi_point.points().enumerate() {
-                    self.append_inner(
-                        parent_path,
-                        Some((index + 1) as _),
-                        SingleWkb::Point(&point),
-                    )?;
+                    self.append_single_struct(Some((index + 1) as _), SingleWkb::Point(&point))?;
                 }
                 Ok(multi_point.num_points() as _)
             }
             GeometryType::MultiLineString(multi_line_string) => {
                 for (index, line_string) in multi_line_string.line_strings().enumerate() {
-                    self.append_inner(
-                        parent_path,
+                    self.append_single_struct(
                         Some((index + 1) as _),
                         SingleWkb::LineString(line_string),
                     )?;
@@ -179,28 +166,24 @@ impl STDumpBuilder {
             }
             GeometryType::MultiPolygon(multi_polygon) => {
                 for (index, polygon) in multi_polygon.polygons().enumerate() {
-                    self.append_inner(
-                        parent_path,
-                        Some((index + 1) as _),
-                        SingleWkb::Polygon(polygon),
-                    )?;
+                    self.append_single_struct(Some((index + 1) as _), SingleWkb::Polygon(polygon))?;
                 }
                 Ok(multi_polygon.num_polygons() as _)
             }
             GeometryType::GeometryCollection(geometry_collection) => {
                 let mut num_geometries: i32 = 0;
 
-                parent_path.push(0); // add an index for the next nested level
+                self.parent_path.push(0); // add an index for the next nested level
 
                 for geometry in geometry_collection.geometries() {
                     // increment the index
-                    if let Some(index) = parent_path.last_mut() {
+                    if let Some(index) = self.parent_path.last_mut() {
                         *index += 1;
                     }
-                    num_geometries += self.append(parent_path, geometry)?;
+                    num_geometries += self.append_structs(geometry)?;
                 }
 
-                parent_path.truncate(parent_path.len() - 1); // clear the index before returning to the upper level
+                self.parent_path.truncate(self.parent_path.len() - 1); // clear the index before returning to the upper level
 
                 Ok(num_geometries)
             }
@@ -208,9 +191,21 @@ impl STDumpBuilder {
         }
     }
 
+    fn append(&mut self, wkb: &wkb::reader::Wkb<'_>) -> Result<()> {
+        self.parent_path.clear();
+
+        let num_geometries = self.append_structs(wkb)?;
+        self.null_builder.append(true);
+        self.struct_offsets_builder
+            .push_length(num_geometries as usize);
+        Ok(())
+    }
+
     fn append_null(&mut self) {
         self.path_array_offsets_builder.push_length(0);
         self.geom_builder.append_null();
+        self.struct_offsets_builder.push_length(1);
+        self.null_builder.append(false);
     }
 
     fn finish(mut self) -> ListArray {
@@ -256,20 +251,12 @@ impl SedonaScalarKernel for STDump {
         let executor = WkbExecutor::new(arg_types, args);
 
         let mut builder = STDumpBuilder::new(executor.num_iterations());
-        let mut cur_path: Vec<u32> = Vec::new();
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                cur_path.clear();
-                let num_geometries = builder.append(&mut cur_path, &wkb)?;
-                builder.null_builder.append(true);
-                builder
-                    .struct_offsets_builder
-                    .push_length(num_geometries as usize);
+                builder.append(&wkb)?;
             } else {
                 builder.append_null();
-                builder.struct_offsets_builder.push_length(1);
-                builder.null_builder.append(false);
             }
 
             Ok(())
