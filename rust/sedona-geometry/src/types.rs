@@ -292,6 +292,83 @@ impl FromStr for GeometryTypeAndDimensions {
     }
 }
 
+/// A set containing [`GeometryTypeAndDimensions`] values
+pub struct GeometryTypeSet {
+    /// The 32-bits value representing the set of geometry types.
+    /// ordinary XY types:
+    ///   1 << 0: POINT
+    ///   1 << 1: LINESTRING
+    ///   1 << 2: POLYGON
+    ///   1 << 3: MULTIPOINT
+    ///   1 << 4: MULTILINESTRING
+    ///   1 << 5: MULTIPOLYGON
+    ///   1 << 6: GEOMETRYCOLLECTION
+    ///
+    /// XYZ types (ordinary XY types shifts 8 bits left):
+    ///   1 << 8: POINTZ
+    ///   1 << 9: LINESTRINGZ
+    ///   1 << 10: POLYGONZ
+    ///   1 << 11: MULTIPOINTZ
+    ///   1 << 12: MULTILINESTRINGZ
+    ///   1 << 13: MULTIPOLYGONZ
+    ///   1 << 14: GEOMETRYCOLLECTIONZ
+    ///
+    /// XYM types (ordinary XY types shifts 16 bits left):
+    ///   1 << 16: POINTM
+    ///   1 << 17: LINESTRINGM
+    ///   1 << 18: POLYGONM
+    ///   1 << 19: MULTIPOINTM
+    ///   1 << 20: MULTILINESTRINGM
+    ///   1 << 21: MULTIPOLYGONM
+    ///   1 << 22: GEOMETRYCOLLECTIONM
+    ///
+    /// XYZM types: (ordinary XY types shifts 24 bits left):
+    ///   1 << 24: POINTZM
+    ///   1 << 25: LINESTRINGZM
+    ///   1 << 26: POLYGONZM
+    ///   1 << 27: MULTIPOINTZM
+    ///   1 << 28: MULTILINESTRINGZM
+    ///   1 << 29: MULTIPOLYGONZM
+    ///   1 << 30: GEOMETRYCOLLECTIONZM
+    types: u32,
+}
+
+impl GeometryTypeSet {
+    fn new() -> Self {
+        Self { types: 0 }
+    }
+
+    fn insert(&mut self, type_and_dim: &GeometryTypeAndDimensions) {
+        let geom_shift = match type_and_dim.geometry_type() {
+            GeometryTypeId::Geometry => {
+                return;
+            }
+            GeometryTypeId::Point => 0,
+            GeometryTypeId::LineString => 1,
+            GeometryTypeId::Polygon => 2,
+            GeometryTypeId::MultiPoint => 3,
+            GeometryTypeId::MultiLineString => 4,
+            GeometryTypeId::MultiPolygon => 5,
+            GeometryTypeId::GeometryCollection => 6,
+        };
+        let dim_shift = match type_and_dim.dimensions() {
+            geo_traits::Dimensions::Unknown(_) => {
+                return;
+            }
+            geo_traits::Dimensions::Xy => 0,
+            geo_traits::Dimensions::Xyz => 8,
+            geo_traits::Dimensions::Xym => 16,
+            geo_traits::Dimensions::Xyzm => 24,
+        };
+        let bit_position = geom_shift + dim_shift;
+        self.types |= 1 << bit_position;
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.types |= other.types;
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
