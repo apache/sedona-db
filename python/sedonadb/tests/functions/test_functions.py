@@ -635,6 +635,142 @@ def test_st_dimension(eng, geom, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_dump(eng):
+    is_postgis = eng == PostGIS
+    eng = eng.create_or_skip()
+
+    cases = [
+        {"input": "POINT (1 2)", "expected": [{"path": [], "geom": "POINT (1 2)"}]},
+        {
+            "input": "LINESTRING (1 1, 2 2)",
+            "expected": [{"path": [], "geom": "LINESTRING (1 1, 2 2)"}],
+        },
+        {
+            "input": "POLYGON ((1 1, 2 2, 2 1, 1 1))",
+            "expected": [{"path": [], "geom": "POLYGON ((1 1, 2 2, 2 1, 1 1))"}],
+        },
+        {
+            "input": "MULTIPOINT (0 1, 1 2)",
+            "expected": [
+                {
+                    "path": [1],
+                    "geom": "POINT (0 1)",
+                },
+                {
+                    "path": [2],
+                    "geom": "POINT (1 2)",
+                },
+            ],
+        },
+        {
+            "input": "MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))",
+            "expected": [
+                {
+                    "path": [1],
+                    "geom": "LINESTRING (1 1, 2 2)",
+                },
+                {
+                    "path": [2],
+                    "geom": "LINESTRING EMPTY",
+                },
+                {
+                    "path": [3],
+                    "geom": "LINESTRING (3 3, 4 4)",
+                },
+            ],
+        },
+        {
+            "input": "MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))",
+            "expected": [
+                {
+                    "path": [1],
+                    "geom": "POLYGON ((1 1, 2 2, 2 1, 1 1))",
+                },
+                {
+                    "path": [2],
+                    "geom": "POLYGON EMPTY",
+                },
+                {
+                    "path": [3],
+                    "geom": "POLYGON ((3 3, 4 4, 4 3, 3 3))",
+                },
+            ],
+        },
+        {
+            "input": "GEOMETRYCOLLECTION (POINT (1 2), MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2))",
+            "expected": [
+                {
+                    "path": [1],
+                    "geom": "POINT (1 2)",
+                },
+                {
+                    "path": [2, 1],
+                    "geom": "LINESTRING (1 1, 2 2)",
+                },
+                {
+                    "path": [2, 2],
+                    "geom": "LINESTRING EMPTY",
+                },
+                {
+                    "path": [2, 3],
+                    "geom": "LINESTRING (3 3, 4 4)",
+                },
+                {
+                    "path": [3],
+                    "geom": "LINESTRING (1 1, 2 2)",
+                },
+            ],
+        },
+        {
+            "input": "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))",
+            "expected": [
+                {
+                    "path": [1],
+                    "geom": "POINT (1 2)",
+                },
+                {
+                    "path": [2, 1, 1],
+                    "geom": "LINESTRING (1 1, 2 2)",
+                },
+                {
+                    "path": [2, 1, 2],
+                    "geom": "LINESTRING EMPTY",
+                },
+                {
+                    "path": [2, 1, 3],
+                    "geom": "LINESTRING (3 3, 4 4)",
+                },
+                {
+                    "path": [2, 2],
+                    "geom": "LINESTRING (1 1, 2 2)",
+                },
+            ],
+        },
+    ]
+
+    for case in cases:
+        if is_postgis:
+            result = eng.execute_and_collect(
+                f"SELECT ST_Dump({geom_or_null(case['input'])})"
+            )
+        else:
+            result = eng.execute_and_collect(
+                f"SELECT unnest(ST_Dump({geom_or_null(case['input'])}))"
+            )
+        df = eng.result_to_pandas(result)
+
+        for i in df.index:
+            actual = df.iat[i, 0]
+            expected = case["expected"][i]
+            assert list(actual.keys()) == ["path", "geom"]
+            if actual["path"].size == 0:
+                assert len(expected["path"]) == 0
+            else:
+                actual["path"] == expected["path"]
+            assert actual["geom"] == shapely.from_wkt(expected["geom"]).wkb
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [

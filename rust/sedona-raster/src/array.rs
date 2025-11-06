@@ -467,12 +467,19 @@ impl<'a> RasterStructArray<'a> {
     }
 
     /// Get a specific raster by index without consuming the iterator
-    pub fn get(&self, index: usize) -> Option<RasterRefImpl<'a>> {
+    pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
-            return None;
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Invalid raster index: {}",
+                index
+            )));
         }
 
-        Some(RasterRefImpl::new(self.raster_array, index))
+        Ok(RasterRefImpl::new(self.raster_array, index))
+    }
+
+    pub fn is_null(&self, index: usize) -> bool {
+        self.raster_array.is_null(index)
     }
 }
 
@@ -482,6 +489,7 @@ mod tests {
     use crate::builder::RasterBuilder;
     use crate::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_testing::rasters::generate_test_rasters;
 
     #[test]
     fn test_array_basic_functionality() {
@@ -620,5 +628,14 @@ mod tests {
             .collect();
 
         assert_eq!(band_values, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_raster_is_null() {
+        let raster_array = generate_test_rasters(2, Some(1)).unwrap();
+        let rasters = RasterStructArray::new(&raster_array);
+        assert_eq!(rasters.len(), 2);
+        assert!(!rasters.is_null(0));
+        assert!(rasters.is_null(1));
     }
 }
