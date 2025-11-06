@@ -91,10 +91,6 @@ cargo --version
 
 Next, install Visual Studio Build Tools (<https://visualstudio.microsoft.com/downloads/>). Pick "Desktop development with C++" during install.
 
-Pick "Desktop development with C++" during install.
-
-Download from: https://visualstudio.microsoft.com/downloads/
-
 Next, install CMake (<https://cmake.org/>). Ensure "Add CMake to system PATH" is selected during installation.
 
 ```powershell
