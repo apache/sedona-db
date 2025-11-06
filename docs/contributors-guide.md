@@ -75,11 +75,11 @@ Some crates in the workspace wrap native libraries and require system dependenci
 
 Ensure Homebrew-installed tools are on your PATH (Homebrew usually does this automatically).
 
-Windows
+### Windows
 
 Suggested workflow (PowerShell):
 
-### 1. Install Rust (via rustup):
+First, install Rust if it is not already installed:
 
 ```powershell
 Invoke-WebRequest https://sh.rustup.rs -UseBasicParsing -OutFile rustup-init.exe
@@ -89,22 +89,20 @@ rustc --version
 cargo --version
 ```
 
-### 2. Install Visual Studio Build Tools
+Next, install Visual Studio Build Tools (<https://visualstudio.microsoft.com/downloads/>). Pick "Desktop development with C++" during install.
 
 Pick "Desktop development with C++" during install.
 
 Download from: https://visualstudio.microsoft.com/downloads/
 
-### 3.Install CMake
-
-Ensure "Add CMake to system PATH" is selected during installation.
+Next, install CMake (<https://cmake.org/>). Ensure "Add CMake to system PATH" is selected during installation.
 
 ```powershell
 cmake --version
 ```
 
 
-### 4.Install and bootstrap vcpkg (example path: C:\dev\vcpkg — you can choose a different path; see note below about short paths):
+Now, install and bootstrap vcpkg (example path: C:\dev\vcpkg — you can choose a different path; see note below about short paths):
 
 ```powershell
 git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
@@ -113,7 +111,7 @@ cd C:\dev\vcpkg
 ```
 
 
-### 5.Install required libraries with vcpkg:
+Next, install the required libraries with vcpkg:
 
 ```powershell
 C:\dev\vcpkg\vcpkg.exe install geos proj abseil openssl
@@ -137,6 +135,7 @@ Note: the downloads/tools/msys2/<msys-hash> folder name varies per vcpkg bootstr
 VS Code integration (so rust-analyzer sees the toolchain):
 
 Add to your ```settings.json```:
+
 ```json
 {
   "rust-analyzer.runnables.extraEnv": {
@@ -147,15 +146,18 @@ Add to your ```settings.json```:
   }
 }
 ```
-## Linux
 
-On Linux and Windows, it is recommended to use [vcpkg](https://github.com/microsoft/vcpkg)
-to provide external dependencies. This can be done by setting the `CMAKE_TOOLCHAIN_FILE`
-environment variable:
+### Linux
 
-If using ```vcpkg```, set the ```CMAKE_TOOLCHAIN_FILE``` env var to point to vcpkg's ```scripts/buildsystems/vcpkg.cmake```.
+Linux users may install system dependencies from a system package manager. Note that recent versions are required because the Abseil version required is relatively recent compared to the package version on some common LTS platforms.
+
+Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the required version of Abseil)
+
+```shell
+sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev python3-dev libabsl-dev
 
 ## Rust
+
 SedonaDB is written in Rust and is a standard `cargo` workspace.
 
 Before running cargo test, make sure to set the CMake toolchain variable:
@@ -172,7 +174,7 @@ You can install a recent version of the Rust compiler and cargo from
 
 A local development version of the CLI can be run with `cargo run --bin sedona-cli`.
 
-### Test data setup
+## Test data setup
 
 Some tests require submodules that contain test data or pinned versions of
 external dependencies. These submodules can be initialized with:
