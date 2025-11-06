@@ -227,6 +227,7 @@ fn determine_return_type(
     sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
 }
 
+/// [SedonaScalarKernel] wrapper that handles the SRID argument for constructors like ST_Point
 #[derive(Debug)]
 pub(crate) struct SRIDifiedKernel {
     inner: ScalarKernelRef,
