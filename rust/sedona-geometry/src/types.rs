@@ -293,67 +293,42 @@ impl FromStr for GeometryTypeAndDimensions {
 }
 
 /// A set containing [`GeometryTypeAndDimensions`] values
-pub struct GeometryTypeSet {
-    /// The 32-bits value representing the set of geometry types.
-    /// ordinary XY types:
-    ///   1 << 0: POINT
-    ///   1 << 1: LINESTRING
-    ///   1 << 2: POLYGON
-    ///   1 << 3: MULTIPOINT
-    ///   1 << 4: MULTILINESTRING
-    ///   1 << 5: MULTIPOLYGON
-    ///   1 << 6: GEOMETRYCOLLECTION
+#[derive(Clone, Debug, Default)]
+pub struct GeometryTypeAndDimensionsSet {
+    /// Bitset encoding geometry types and dimensions.
     ///
-    /// XYZ types (ordinary XY types shifts 8 bits left):
-    ///   1 << 8: POINTZ
-    ///   1 << 9: LINESTRINGZ
-    ///   1 << 10: POLYGONZ
-    ///   1 << 11: MULTIPOINTZ
-    ///   1 << 12: MULTILINESTRINGZ
-    ///   1 << 13: MULTIPOLYGONZ
-    ///   1 << 14: GEOMETRYCOLLECTIONZ
-    ///
-    /// XYM types (ordinary XY types shifts 16 bits left):
-    ///   1 << 16: POINTM
-    ///   1 << 17: LINESTRINGM
-    ///   1 << 18: POLYGONM
-    ///   1 << 19: MULTIPOINTM
-    ///   1 << 20: MULTILINESTRINGM
-    ///   1 << 21: MULTIPOLYGONM
-    ///   1 << 22: GEOMETRYCOLLECTIONM
-    ///
-    /// XYZM types: (ordinary XY types shifts 24 bits left):
-    ///   1 << 24: POINTZM
-    ///   1 << 25: LINESTRINGZM
-    ///   1 << 26: POLYGONZM
-    ///   1 << 27: MULTIPOINTZM
-    ///   1 << 28: MULTILINESTRINGZM
-    ///   1 << 29: MULTIPOLYGONZM
-    ///   1 << 30: GEOMETRYCOLLECTIONZM
+    /// Uses bits 0-31 where each geometry type's WKB ID (0-7) is encoded
+    /// at different offsets based on dimensions:
+    /// - XY: bits 0-7
+    /// - XYZ: bits 8-15
+    /// - XYM: bits 16-23
+    /// - XYZM: bits 24-31
     types: u32,
 }
 
-impl GeometryTypeSet {
-    fn new() -> Self {
+impl GeometryTypeAndDimensionsSet {
+    pub fn new() -> Self {
         Self { types: 0 }
     }
 
-    fn insert(&mut self, type_and_dim: &GeometryTypeAndDimensions) {
-        let geom_shift = match type_and_dim.geometry_type() {
-            GeometryTypeId::Geometry => {
-                return;
-            }
-            GeometryTypeId::Point => 0,
-            GeometryTypeId::LineString => 1,
-            GeometryTypeId::Polygon => 2,
-            GeometryTypeId::MultiPoint => 3,
-            GeometryTypeId::MultiLineString => 4,
-            GeometryTypeId::MultiPolygon => 5,
-            GeometryTypeId::GeometryCollection => 6,
-        };
+    pub fn insert(
+        &mut self,
+        type_and_dim: &GeometryTypeAndDimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        let geom_shift = type_and_dim.geometry_type().wkb_id();
+        // WKB ID must be < 8 to fit in the bitset layout (8 bits per dimension)
+        if geom_shift >= 8 {
+            panic!(
+                "Invalid geometry type wkb_id {} in GeometryTypeSet::insert",
+                geom_shift
+            );
+        }
         let dim_shift = match type_and_dim.dimensions() {
-            geo_traits::Dimensions::Unknown(_) => {
-                return;
+            geo_traits::Dimensions::Unknown(n) => {
+                return Err(SedonaGeometryError::Invalid(format!(
+                    "Unknown dimensions {} in GeometryTypeSet::insert",
+                    n
+                )));
             }
             geo_traits::Dimensions::Xy => 0,
             geo_traits::Dimensions::Xyz => 8,
@@ -362,10 +337,115 @@ impl GeometryTypeSet {
         };
         let bit_position = geom_shift + dim_shift;
         self.types |= 1 << bit_position;
+        Ok(())
     }
 
-    fn merge(&mut self, other: &Self) {
+    pub fn merge(&mut self, other: &Self) {
         self.types |= other.types;
+    }
+
+    /// Returns `true` if the set contains no geometry types.
+    pub fn is_empty(&self) -> bool {
+        self.types == 0
+    }
+
+    /// Returns the number of geometry types in the set.
+    pub fn size(&self) -> usize {
+        self.types.count_ones() as usize
+    }
+
+    /// Clears the set, removing all geometry types.
+    pub fn clear(&mut self) {
+        self.types = 0;
+    }
+
+    /// Returns an iterator over the geometry types in the set.
+    pub fn iter(&self) -> GeometryTypeSetIter {
+        GeometryTypeSetIter {
+            types: self.types,
+            current_bit: 0,
+        }
+    }
+}
+
+/// Iterator over [`GeometryTypeAndDimensions`] values in a [`GeometryTypeSet`]
+pub struct GeometryTypeSetIter {
+    types: u32,
+    current_bit: u32,
+}
+
+impl Iterator for GeometryTypeSetIter {
+    type Item = GeometryTypeAndDimensions;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Find the next set bit
+        while self.current_bit < 32 {
+            let bit = self.current_bit;
+            self.current_bit += 1;
+
+            if (self.types & (1 << bit)) != 0 {
+                // Decode the bit position into geometry type and dimensions
+                let dim_shift = (bit / 8) * 8;
+                let geom_shift = bit % 8;
+                let dimensions = match dim_shift {
+                    0 => Dimensions::Xy,
+                    8 => Dimensions::Xyz,
+                    16 => Dimensions::Xym,
+                    24 => Dimensions::Xyzm,
+                    _ => panic!(
+                        "Invalid dimension bits at position {} in GeometryTypeSet",
+                        bit
+                    ),
+                };
+
+                let geometry_type = GeometryTypeId::try_from_wkb_id(geom_shift)
+                    .expect("Invalid geometry type wkb_id in GeometryTypeSet");
+
+                return Some(GeometryTypeAndDimensions::new(geometry_type, dimensions));
+            }
+        }
+
+        None
+    }
+}
+
+impl<'a> IntoIterator for &'a GeometryTypeAndDimensionsSet {
+    type Item = GeometryTypeAndDimensions;
+    type IntoIter = GeometryTypeSetIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+// Serialize as a Vec to maintain compatibility with HashSet JSON format
+impl Serialize for GeometryTypeAndDimensionsSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.size()))?;
+        for item in self.iter() {
+            seq.serialize_element(&item)?;
+        }
+        seq.end()
+    }
+}
+
+// Deserialize from a Vec (which is what HashSet was serialized as)
+impl<'de> Deserialize<'de> for GeometryTypeAndDimensionsSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let items: Vec<GeometryTypeAndDimensions> = Vec::deserialize(deserializer)?;
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        for item in items {
+            set.insert(&item).map_err(D::Error::custom)?;
+        }
+        Ok(set)
     }
 }
 
@@ -508,5 +588,250 @@ mod test {
             GeometryTypeAndDimensions::from_str(string_id.as_str()).unwrap(),
             value
         );
+    }
+
+    #[test]
+    fn geometry_type_set_new_is_empty() {
+        let set = GeometryTypeAndDimensionsSet::new();
+        assert!(set.is_empty());
+        assert_eq!(set.size(), 0);
+        assert_eq!(set.iter().count(), 0);
+    }
+
+    #[test]
+    fn geometry_type_set_insert_single() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        let point_xy = GeometryTypeAndDimensions::new(Point, Xy);
+
+        set.insert(&point_xy).unwrap();
+        assert!(!set.is_empty());
+        assert_eq!(set.size(), 1);
+
+        let items: Vec<_> = set.iter().collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0], point_xy);
+    }
+
+    #[test]
+    fn geometry_type_set_insert_duplicate() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        let point_xy = GeometryTypeAndDimensions::new(Point, Xy);
+
+        set.insert(&point_xy).unwrap();
+        set.insert(&point_xy).unwrap();
+        set.insert(&point_xy).unwrap();
+
+        assert_eq!(set.size(), 1);
+        let items: Vec<_> = set.iter().collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0], point_xy);
+    }
+
+    #[test]
+    fn geometry_type_set_insert_all_types() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+
+        // Insert all geometry types with XY dimension
+        for geom_type in [
+            Geometry,
+            Point,
+            LineString,
+            Polygon,
+            MultiPoint,
+            MultiLineString,
+            MultiPolygon,
+            GeometryCollection,
+        ] {
+            set.insert(&GeometryTypeAndDimensions::new(geom_type, Xy))
+                .unwrap();
+        }
+
+        assert_eq!(set.size(), 8);
+        let items: Vec<_> = set.iter().collect();
+        assert_eq!(items.len(), 8);
+    }
+
+    #[test]
+    fn geometry_type_set_insert_unknown_dimension() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        let point_unknown = GeometryTypeAndDimensions::new(Point, Dimensions::Unknown(2));
+
+        let result = set.insert(&point_unknown);
+
+        // Unknown dimensions should return an error
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Unknown dimensions 2 in GeometryTypeSet::insert"
+        );
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn geometry_type_set_clear() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        let point_xy = GeometryTypeAndDimensions::new(Point, Xy);
+        let linestring_xyz = GeometryTypeAndDimensions::new(LineString, Xyz);
+
+        set.insert(&point_xy).unwrap();
+        set.insert(&linestring_xyz).unwrap();
+        assert!(!set.is_empty());
+        assert_eq!(set.size(), 2);
+
+        set.clear();
+        assert!(set.is_empty());
+        assert_eq!(set.size(), 0);
+        assert_eq!(set.iter().count(), 0);
+    }
+
+    #[test]
+    fn geometry_type_set_merge() {
+        let mut set1 = GeometryTypeAndDimensionsSet::new();
+        let mut set2 = GeometryTypeAndDimensionsSet::new();
+
+        let point_xy = GeometryTypeAndDimensions::new(Point, Xy);
+        let linestring_xy = GeometryTypeAndDimensions::new(LineString, Xy);
+        let polygon_xyz = GeometryTypeAndDimensions::new(Polygon, Xyz);
+
+        set1.insert(&point_xy).unwrap();
+        set1.insert(&linestring_xy).unwrap();
+
+        set2.insert(&linestring_xy).unwrap(); // Duplicate
+        set2.insert(&polygon_xyz).unwrap();
+
+        set1.merge(&set2);
+
+        assert_eq!(set1.size(), 3);
+        let items: Vec<_> = set1.iter().collect();
+        assert_eq!(items.len(), 3);
+        assert!(items.contains(&point_xy));
+        assert!(items.contains(&linestring_xy));
+        assert!(items.contains(&polygon_xyz));
+    }
+
+    #[test]
+    fn geometry_type_set_comprehensive() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+
+        // Add a mix of geometry types and dimensions
+        let test_types = vec![
+            GeometryTypeAndDimensions::new(Geometry, Xy),
+            GeometryTypeAndDimensions::new(Point, Xy),
+            GeometryTypeAndDimensions::new(LineString, Xyz),
+            GeometryTypeAndDimensions::new(Polygon, Xym),
+            GeometryTypeAndDimensions::new(MultiPoint, Xyzm),
+            GeometryTypeAndDimensions::new(MultiLineString, Xy),
+            GeometryTypeAndDimensions::new(MultiPolygon, Xyz),
+            GeometryTypeAndDimensions::new(GeometryCollection, Xym),
+        ];
+
+        for type_and_dim in &test_types {
+            set.insert(type_and_dim).unwrap();
+        }
+
+        assert_eq!(set.size(), test_types.len());
+        let items: Vec<_> = set.iter().collect();
+        assert_eq!(items.len(), test_types.len());
+
+        for type_and_dim in &test_types {
+            assert!(items.contains(type_and_dim));
+        }
+    }
+
+    #[test]
+    fn geometry_type_set_serde_empty() {
+        let set = GeometryTypeAndDimensionsSet::new();
+
+        // Serialize
+        let json = serde_json::to_string(&set).unwrap();
+        assert_eq!(json, "[]");
+
+        // Deserialize
+        let deserialized: GeometryTypeAndDimensionsSet = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_empty());
+        assert_eq!(deserialized.size(), 0);
+    }
+
+    #[test]
+    fn geometry_type_set_serde_single() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        let point_xy = GeometryTypeAndDimensions::new(Point, Xy);
+        set.insert(&point_xy).unwrap();
+
+        // Serialize
+        let json = serde_json::to_string(&set).unwrap();
+        assert_eq!(json, "[\"Point\"]");
+
+        // Deserialize
+        let deserialized: GeometryTypeAndDimensionsSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.size(), 1);
+        let items: Vec<_> = deserialized.iter().collect();
+        assert_eq!(items[0], point_xy);
+    }
+
+    #[test]
+    fn geometry_type_set_serde_multiple() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+
+        let test_types = vec![
+            GeometryTypeAndDimensions::new(Point, Xy),
+            GeometryTypeAndDimensions::new(LineString, Xyz),
+            GeometryTypeAndDimensions::new(Polygon, Xyzm),
+        ];
+
+        for type_and_dim in &test_types {
+            set.insert(type_and_dim).unwrap();
+        }
+
+        // Serialize
+        let json = serde_json::to_string(&set).unwrap();
+        assert_eq!(json, "[\"Point\",\"LineString Z\",\"Polygon ZM\"]");
+
+        // Deserialize
+        let deserialized: GeometryTypeAndDimensionsSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.size(), test_types.len());
+
+        let items: Vec<_> = deserialized.iter().collect();
+        for type_and_dim in &test_types {
+            assert!(items.contains(type_and_dim));
+        }
+    }
+
+    #[test]
+    fn geometry_type_set_serde_roundtrip() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+
+        // Add all combinations of one geometry type with different dimensions
+        set.insert(&GeometryTypeAndDimensions::new(Point, Xy))
+            .unwrap();
+        set.insert(&GeometryTypeAndDimensions::new(Point, Xyz))
+            .unwrap();
+        set.insert(&GeometryTypeAndDimensions::new(Point, Xym))
+            .unwrap();
+        set.insert(&GeometryTypeAndDimensions::new(Point, Xyzm))
+            .unwrap();
+        set.insert(&GeometryTypeAndDimensions::new(LineString, Xy))
+            .unwrap();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&set).unwrap();
+        assert_eq!(
+            json,
+            "[\"Point\",\"LineString\",\"Point Z\",\"Point M\",\"Point ZM\"]"
+        );
+
+        // Deserialize back
+        let deserialized: GeometryTypeAndDimensionsSet = serde_json::from_str(&json).unwrap();
+
+        // Verify the deserialized set matches the original
+        assert_eq!(set.size(), deserialized.size());
+
+        let original_items: Vec<_> = set.iter().collect();
+        let deserialized_items: Vec<_> = deserialized.iter().collect();
+
+        assert_eq!(original_items.len(), deserialized_items.len());
+        for item in &original_items {
+            assert!(deserialized_items.contains(item));
+        }
     }
 }
