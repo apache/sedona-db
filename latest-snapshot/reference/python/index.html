@@ -4083,11 +4083,11 @@ DBAPI is experimental.</p>
         </li>
     </ul>
         <p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">con</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">sedona</span>.<span class="nv">dbapi</span>.<span class="k">connect</span><span class="ss">()</span>
-<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">with</span><span class="w"> </span><span class="nv">con</span>.<span class="nv">cursor</span><span class="ss">()</span><span class="w"> </span><span class="nv">as</span><span class="w"> </span><span class="nv">cur</span>:
-...<span class="w">     </span><span class="nv">cur</span>.<span class="nv">execute</span><span class="ss">(</span><span class="s2">"SELECT 1 as one"</span><span class="ss">)</span>
-...<span class="w">     </span><span class="nv">cur</span>.<span class="nv">fetchall</span><span class="ss">()</span>
-[<span class="ss">(</span><span class="mi">1</span>,<span class="ss">)</span>]
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; con = sedona.dbapi.connect()
+&gt;&gt;&gt; with con.cursor() as cur:
+<span class="k">...</span>     _ = cur.execute("SELECT 1 as one")
+<span class="k">...</span>     cur.fetchall()
+[(1,)]
 </code></pre></div>
 
 
