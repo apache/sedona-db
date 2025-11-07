@@ -19,7 +19,6 @@ use std::{iter::zip, sync::Arc};
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{FieldRef, Schema};
 use datafusion_common::{config::ConfigOptions, Result, ScalarValue};
-use datafusion_expr::ScalarUDFImpl;
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDF, ColumnarValue, Expr, Literal, ReturnFieldArgs, ScalarFunctionArgs,
@@ -27,7 +26,6 @@ use datafusion_expr::{
 };
 use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -158,13 +156,13 @@ impl AggregateUdfTester {
 /// Note that arguments are always cast to the values passed [Self::new]:
 /// to test different combinations of argument types, use a new tester.
 pub struct ScalarUdfTester {
-    udf: SedonaScalarUDF,
+    udf: ScalarUDF,
     arg_types: Vec<SedonaType>,
 }
 
 impl ScalarUdfTester {
     /// Create a new tester
-    pub fn new(udf: SedonaScalarUDF, arg_types: Vec<SedonaType>) -> Self {
+    pub fn new(udf: ScalarUDF, arg_types: Vec<SedonaType>) -> Self {
         Self { udf, arg_types }
     }
 
@@ -194,53 +192,23 @@ impl ScalarUdfTester {
 
     /// Compute the return type
     pub fn return_type(&self) -> Result<SedonaType> {
-        let scalar_arguments: Vec<Option<&ScalarValue>> = vec![None; self.arg_types.len()];
-        self.return_type_from_args(&scalar_arguments, false)
+        let scalar_arguments = vec![None; self.arg_types.len()];
+        self.return_type_with_scalars_inner(&scalar_arguments)
     }
 
-    fn return_type_from_args(
-        &self,
-        scalar_arguments: &[Option<&ScalarValue>],
-        from_scalar: bool,
-    ) -> Result<SedonaType> {
-        let arg_fields = self
-            .arg_types
-            .iter()
-            .map(|sedona_type| sedona_type.to_storage_field("", true).map(Arc::new))
-            .collect::<Result<Vec<_>>>()?;
-
-        let args = ReturnFieldArgs {
-            arg_fields: &arg_fields,
-            scalar_arguments,
-        };
-        let return_field = if from_scalar {
-            let scalar_udf: ScalarUDF = self.udf.clone().into();
-            scalar_udf.return_field_from_args(args)
-        } else {
-            self.udf.return_field_from_args(args)
-        }?;
-        SedonaType::from_storage_field(&return_field)
-    }
-
-    /// Compute the return type with scalar values
-    fn return_type_with_scalars(
-        &self,
-        scalar_arguments: &[Option<ScalarValue>],
-    ) -> Result<SedonaType> {
-        let scalar_arguments = scalar_arguments
-            .iter()
-            .map(|value| value.as_ref())
-            .collect::<Vec<Option<&ScalarValue>>>();
-        self.return_type_from_args(&scalar_arguments, true)
-    }
-
+    /// Compute the return type from one scalar argument
+    ///
+    /// This is for UDFs implementing `SedonaScalarKernel::return_type_from_args_and_scalars()`.
     pub fn return_type_with_scalar(&self, arg0: Option<impl Literal>) -> Result<SedonaType> {
         let scalar_arguments = vec![arg0
             .map(|x| Self::scalar_lit(x, &self.arg_types[0]))
             .transpose()?];
-        self.return_type_with_scalars(&scalar_arguments)
+        self.return_type_with_scalars_inner(&scalar_arguments)
     }
 
+    /// Compute the return type from two scalar arguments
+    ///
+    /// This is for UDFs implementing `SedonaScalarKernel::return_type_from_args_and_scalars()`.
     pub fn return_type_with_scalar_scalar(
         &self,
         arg0: Option<impl Literal>,
@@ -252,9 +220,12 @@ impl ScalarUdfTester {
             arg1.map(|x| Self::scalar_lit(x, &self.arg_types[1]))
                 .transpose()?,
         ];
-        self.return_type_with_scalars(&scalar_arguments)
+        self.return_type_with_scalars_inner(&scalar_arguments)
     }
 
+    /// Compute the return type from three scalar arguments
+    ///
+    /// This is for UDFs implementing `SedonaScalarKernel::return_type_from_args_and_scalars()`.
     pub fn return_type_with_scalar_scalar_scalar(
         &self,
         arg0: Option<impl Literal>,
@@ -269,7 +240,27 @@ impl ScalarUdfTester {
             arg2.map(|x| Self::scalar_lit(x, &self.arg_types[2]))
                 .transpose()?,
         ];
-        self.return_type_with_scalars(&scalar_arguments)
+        self.return_type_with_scalars_inner(&scalar_arguments)
+    }
+
+    fn return_type_with_scalars_inner(
+        &self,
+        scalar_arguments: &[Option<ScalarValue>],
+    ) -> Result<SedonaType> {
+        let arg_fields = self
+            .arg_types
+            .iter()
+            .map(|sedona_type| sedona_type.to_storage_field("", true).map(Arc::new))
+            .collect::<Result<Vec<_>>>()?;
+
+        let scalar_arguments_ref: Vec<Option<&ScalarValue>> =
+            scalar_arguments.iter().map(|x| x.as_ref()).collect();
+        let args = ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &scalar_arguments_ref,
+        };
+        let return_field = self.udf.return_field_from_args(args)?;
+        SedonaType::from_storage_field(&return_field)
     }
 
     /// Invoke this function with a scalar
@@ -474,8 +465,7 @@ impl ScalarUdfTester {
             config_options: Arc::new(ConfigOptions::default()),
         };
 
-        let scalar_udf: ScalarUDF = self.udf.clone().into();
-        scalar_udf.invoke_with_args(args)
+        self.udf.invoke_with_args(args)
     }
 
     fn scalar_arg(arg: impl Literal, sedona_type: &SedonaType) -> Result<ColumnarValue> {
