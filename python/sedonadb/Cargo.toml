@@ -43,6 +43,7 @@ pyo3 = { version = "0.25.1" }
 sedona = { path = "../../rust/sedona" }
 sedona-adbc = { path = "../../rust/sedona-adbc" }
 sedona-expr = { path = "../../rust/sedona-expr" }
+sedona-datasource = { path = "../../rust/sedona-datasource" }
 sedona-geoparquet = { path = "../../rust/sedona-geoparquet" }
 sedona-schema = { path = "../../rust/sedona-schema" }
 sedona-proj = { path = "../../c/sedona-proj", default-features = false }

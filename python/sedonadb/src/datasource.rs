@@ -1,0 +1,175 @@
+use std::{collections::HashMap, sync::Arc};
+
+use arrow_array::{RecordBatch, RecordBatchReader};
+use arrow_schema::{ArrowError, Schema, SchemaRef};
+use async_trait::async_trait;
+use datafusion_common::{DataFusionError, Result};
+use pyo3::{exceptions::PyNotImplementedError, pyclass, pymethods, PyObject, Python};
+use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs};
+
+use crate::{
+    error::PySedonaError,
+    import_from::{import_arrow_array_stream, import_arrow_schema},
+};
+
+#[pyclass]
+#[derive(Debug)]
+pub struct PyExternalFormat {
+    extension: String,
+    py_spec: PyObject,
+}
+
+impl PyExternalFormat {
+    fn with_options_impl<'py>(
+        &self,
+        py: Python<'py>,
+        options: &HashMap<String, String>,
+    ) -> Result<Self, PySedonaError> {
+        let new_py_spec = self
+            .py_spec
+            .call_method(py, "with_options", (options.clone(),), None)?;
+        let new_extension = new_py_spec
+            .getattr(py, "extension")?
+            .extract::<String>(py)?;
+        Ok(Self {
+            extension: new_extension,
+            py_spec: new_py_spec,
+        })
+    }
+
+    fn infer_schema_impl<'py>(
+        &self,
+        py: Python<'py>,
+        object: &Object,
+    ) -> Result<Schema, PySedonaError> {
+        let maybe_schema = self.py_spec.call_method(
+            py,
+            "infer_schema",
+            (PyDataSourceObject {
+                inner: object.clone(),
+            },),
+            None,
+        );
+
+        match maybe_schema {
+            Ok(py_schema) => import_arrow_schema(py_schema.bind(py)),
+            Err(e) => {
+                if e.is_instance_of::<PyNotImplementedError>(py) {
+                    // Fall back on the open_reader implementation
+                    let reader_args = OpenReaderArgs {
+                        src: object.clone(),
+                        batch_size: None,
+                        file_schema: None,
+                        file_projection: None,
+                        filters: vec![],
+                    };
+
+                    let reader = self.open_reader_impl(py, &reader_args)?;
+                    Ok(reader.schema().as_ref().clone())
+                } else {
+                    Err(PySedonaError::from(e))
+                }
+            }
+        }
+    }
+
+    fn open_reader_impl<'py>(
+        &self,
+        py: Python<'py>,
+        args: &OpenReaderArgs,
+    ) -> Result<Box<dyn RecordBatchReader + Send>, PySedonaError> {
+        let reader_obj = self.py_spec.call_method(
+            py,
+            "open_reader",
+            (PyOpenReaderArgs {
+                inner: args.clone(),
+            },),
+            None,
+        )?;
+
+        let reader = import_arrow_array_stream(py, reader_obj.bind(py), None)?;
+        let wrapped_reader = WrappedRecordBatchReader {
+            inner: reader,
+            shelter: Some(reader_obj),
+        };
+        Ok(Box::new(wrapped_reader))
+    }
+}
+
+#[pymethods]
+impl PyExternalFormat {
+    #[new]
+    fn new<'py>(py: Python<'py>, py_spec: PyObject) -> Result<Self, PySedonaError> {
+        let extension = py_spec.getattr(py, "extension")?.extract::<String>(py)?;
+        Ok(Self { extension, py_spec })
+    }
+}
+
+#[async_trait]
+impl ExternalFormatSpec for PyExternalFormat {
+    fn extension(&self) -> &str {
+        &self.extension
+    }
+
+    fn with_options(
+        &self,
+        options: &HashMap<String, String>,
+    ) -> Result<Arc<dyn ExternalFormatSpec>> {
+        let new_external_format = Python::with_gil(|py| self.with_options_impl(py, options))
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        Ok(Arc::new(new_external_format))
+    }
+
+    async fn infer_schema(&self, location: &Object) -> Result<Schema> {
+        let schema = Python::with_gil(|py| self.infer_schema_impl(py, location))
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        Ok(schema)
+    }
+
+    async fn open_reader(
+        &self,
+        args: &OpenReaderArgs,
+    ) -> Result<Box<dyn RecordBatchReader + Send>> {
+        let reader = Python::with_gil(|py| self.open_reader_impl(py, args))
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        Ok(reader)
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyDataSourceObject {
+    pub inner: Object,
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyOpenReaderArgs {
+    pub inner: OpenReaderArgs,
+}
+
+struct WrappedRecordBatchReader {
+    pub inner: Box<dyn RecordBatchReader + Send>,
+    pub shelter: Option<PyObject>,
+}
+
+impl RecordBatchReader for WrappedRecordBatchReader {
+    fn schema(&self) -> SchemaRef {
+        self.inner.schema()
+    }
+}
+
+impl Iterator for WrappedRecordBatchReader {
+    type Item = Result<RecordBatch, ArrowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.inner.next() {
+            Some(item)
+        } else {
+            self.shelter = None;
+            None
+        }
+    }
+}
