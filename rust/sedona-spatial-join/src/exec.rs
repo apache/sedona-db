@@ -548,7 +548,7 @@ impl SpatialJoinExec {
                         build_streams.push(stream);
                     }
 
-                    let probe_thread_count = self.right.output_partitioning().partition_count();
+                    let probe_thread_count = probe_plan.output_partitioning().partition_count();
 
                     Ok(build_index(
                         Arc::clone(&context),
