@@ -102,6 +102,10 @@ pub enum SupportsRepartition {
     /// This implementation does not support repartitioning beyond the file level
     None,
     /// This implementation supports partitioning by arbitrary ranges with a file
+    ///
+    /// Implementations that return this must check [Object::range] when opening
+    /// a file and ensure that each record is read exactly once from one file
+    /// with potentially multiple ranges.
     ByRange,
 }
 

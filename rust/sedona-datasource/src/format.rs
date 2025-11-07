@@ -40,7 +40,6 @@ use datafusion_physical_plan::{
 };
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
-use sedona_common::sedona_internal_err;
 
 use crate::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
 
@@ -189,7 +188,7 @@ impl FileFormat for ExternalFileFormat {
         _conf: FileSinkConfig,
         _order_requirements: Option<LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        not_impl_err!("writing not yet supported for SimpleSedonaFormat")
+        not_impl_err!("writing not yet supported for ExternalFileFormat")
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
@@ -358,12 +357,6 @@ struct ExternalFileOpener {
 
 impl FileOpener for ExternalFileOpener {
     fn open(&self, file_meta: FileMeta, _file: PartitionedFile) -> Result<FileOpenFuture> {
-        if file_meta.range.is_some() {
-            return sedona_internal_err!(
-                "Expected SimpleOpener to open a single partition per file"
-            );
-        }
-
         let mut self_clone = self.clone();
         Ok(Box::pin(async move {
             self_clone.args.src.meta.replace(file_meta.object_meta);
