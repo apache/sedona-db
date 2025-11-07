@@ -1054,28 +1054,37 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust" class="md-nav__link">
+  <a href="#system-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust
+      System dependencies
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Rust">
+    <nav class="md-nav" aria-label="System dependencies">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#test-data-setup" class="md-nav__link">
+  <a href="#macos-homebrew" class="md-nav__link">
     <span class="md-ellipsis">
-      Test data setup
+      macOS: Homebrew
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#system-dependencies" class="md-nav__link">
+  <a href="#windows" class="md-nav__link">
     <span class="md-ellipsis">
-      System dependencies
+      Windows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#linux" class="md-nav__link">
+    <span class="md-ellipsis">
+      Linux
     </span>
   </a>
   
@@ -1083,6 +1092,24 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-data-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test data setup
+    </span>
+  </a>
   
 </li>
       
@@ -1352,28 +1379,37 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rust" class="md-nav__link">
+  <a href="#system-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
-      Rust
+      System dependencies
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Rust">
+    <nav class="md-nav" aria-label="System dependencies">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#test-data-setup" class="md-nav__link">
+  <a href="#macos-homebrew" class="md-nav__link">
     <span class="md-ellipsis">
-      Test data setup
+      macOS: Homebrew
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#system-dependencies" class="md-nav__link">
+  <a href="#windows" class="md-nav__link">
     <span class="md-ellipsis">
-      System dependencies
+      Windows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#linux" class="md-nav__link">
+    <span class="md-ellipsis">
+      Linux
     </span>
   </a>
   
@@ -1381,6 +1417,24 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      Rust
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-data-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Test data setup
+    </span>
+  </a>
   
 </li>
       
@@ -1602,16 +1656,73 @@ origin<span class="w">    </span>https://github.com/YourUsername/sedona-db.git<s
 upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>fetch<span class="o">)</span>
 upstream<span class="w">  </span>https://github.com/apache/sedona-db.git<span class="w"> </span><span class="o">(</span>push<span class="o">)</span>
 </code></pre></div>
+<h2 id="system-dependencies">System dependencies<a class="headerlink" href="#system-dependencies" title="Permanent link">¶</a></h2>
 </li>
 </ul>
 </li>
 </ol>
+<p>Some crates in the workspace wrap native libraries and require system dependencies (GEOS, PROJ, Abseil, OpenSSL, CMake, etc.). We recommend using:</p>
+<h3 id="macos-homebrew">macOS: Homebrew<a class="headerlink" href="#macos-homebrew" title="Permanent link">¶</a></h3>
+<p><code>bash brew install abseil openssl cmake geos proj</code></p>
+<p>Ensure Homebrew-installed tools are on your PATH (Homebrew usually does this automatically).</p>
+<h3 id="windows">Windows<a class="headerlink" href="#windows" title="Permanent link">¶</a></h3>
+<p>Suggested workflow (PowerShell):</p>
+<p>First, install Rust if it is not already installed:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">Invoke-WebRequest</span> <span class="n">https</span><span class="p">://</span><span class="n">sh</span><span class="p">.</span><span class="n">rustup</span><span class="p">.</span><span class="n">rs</span> <span class="n">-UseBasicParsing</span> <span class="n">-OutFile</span> <span class="n">rustup-init</span><span class="p">.</span><span class="n">exe</span>
+<span class="p">.\</span><span class="n">rustup-init</span><span class="p">.</span><span class="n">exe</span>
+<span class="c"># Restart PowerShell</span>
+<span class="n">rustc</span> <span class="p">-</span><span class="n">-version</span>
+<span class="n">cargo</span> <span class="p">-</span><span class="n">-version</span>
+</code></pre></div>
+<p>Next, install Visual Studio Build Tools (<a href="https://visualstudio.microsoft.com/downloads/">https://visualstudio.microsoft.com/downloads/</a>). Pick "Desktop development with C++" during install.</p>
+<p>Next, install CMake (<a href="https://cmake.org/">https://cmake.org/</a>). Ensure "Add CMake to system PATH" is selected during installation.</p>
+<div class="highlight"><pre><span></span><code><span class="n">cmake</span> <span class="p">-</span><span class="n">-version</span>
+</code></pre></div>
+<p>Now, install and bootstrap vcpkg (example path: C:\dev\vcpkg — you can choose a different path; see note below about short paths):</p>
+<div class="highlight"><pre><span></span><code><span class="n">git</span> <span class="n">clone</span> <span class="n">https</span><span class="p">://</span><span class="n">github</span><span class="p">.</span><span class="n">com</span><span class="p">/</span><span class="n">microsoft</span><span class="p">/</span><span class="n">vcpkg</span><span class="p">.</span><span class="n">git</span> <span class="n">C</span><span class="p">:\</span><span class="n">dev</span><span class="p">\</span><span class="n">vcpkg</span>
+<span class="nb">cd </span><span class="n">C</span><span class="p">:\</span><span class="n">dev</span><span class="p">\</span><span class="n">vcpkg</span>
+<span class="p">.\</span><span class="n">bootstrap-vcpkg</span><span class="p">.</span><span class="n">bat</span>
+</code></pre></div>
+<p>Next, install the required libraries with vcpkg:</p>
+<div class="highlight"><pre><span></span><code><span class="n">C</span><span class="p">:\</span><span class="n">dev</span><span class="p">\</span><span class="n">vcpkg</span><span class="p">\</span><span class="n">vcpkg</span><span class="p">.</span><span class="n">exe</span> <span class="n">install</span> <span class="n">geos</span> <span class="n">proj</span> <span class="n">abseil</span> <span class="n">openssl</span>
+</code></pre></div>
+<p>Configure environment variables (PowerShell example — update paths as needed):</p>
+<div class="highlight"><pre><span></span><code><span class="nv">$env:VCPKG_ROOT</span> <span class="p">=</span> <span class="s1">'C:\dev\vcpkg'</span>
+<span class="nv">$env:CMAKE_TOOLCHAIN_FILE</span> <span class="p">=</span> <span class="s2">"${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"</span>
+
+<span class="c"># pkg-config/ msys path (hash may vary)</span>
+<span class="nv">$env:PATH</span> <span class="p">=</span> <span class="s2">"${env:VCPKG_ROOT}/downloads/tools/msys2/&lt;msys-hash&gt;/mingw64/bin/;$env:PATH"</span>
+<span class="nv">$env:PKG_CONFIG_SYSROOT_DIR</span> <span class="p">=</span> <span class="s2">"${env:VCPKG_ROOT}/downloads/tools/msys2/&lt;msys-hash&gt;/mingw64/"</span>
+<span class="nv">$env:PKG_CONFIG_PATH</span> <span class="p">=</span> <span class="s2">"${env:VCPKG_ROOT}/installed/x64-windows-dynamic-release/lib/pkgconfig/"</span>
+</code></pre></div>
+<p>Note: the downloads/tools/msys2/<msys-hash> folder name varies per vcpkg bootstrap. Replace <msys-hash> with the actual folder name on your system.</msys-hash></msys-hash></p>
+<p>VS Code integration (so rust-analyzer sees the toolchain):</p>
+<p>Add to your <code>settings.json</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"rust-analyzer.runnables.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"rust-analyzer.cargo.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="linux">Linux<a class="headerlink" href="#linux" title="Permanent link">¶</a></h3>
+<p>Linux users may install system dependencies from a system package manager. Note that recent versions are required because the Abseil version required is relatively recent compared to the package version on some common LTS platforms.</p>
+<p>Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the required version of Abseil)</p>
+<div class="highlight"><pre><span></span><code>sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>cmake<span class="w"> </span>libssl-dev<span class="w"> </span>libproj-dev<span class="w"> </span>libgeos-dev<span class="w"> </span>python3-dev<span class="w"> </span>libabsl-dev
+</code></pre></div>
 <h2 id="rust">Rust<a class="headerlink" href="#rust" title="Permanent link">¶</a></h2>
 <p>SedonaDB is written in Rust and is a standard <code>cargo</code> workspace.</p>
-<p>You can install a recent version of the Rust compiler and cargo from
+<p>Before running cargo test, make sure to set the CMake toolchain variable:</p>
+<p><code>export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake</code></p>
+<p>Replace <code>/path/to/vcpkg/</code> with the actual path to your vcpkg installation.</p>
+<p>Once set, you can run: <code>cargo test</code></p>
+<p>This ensures that Cargo and proj-sys can find the correct C/C++ dependencies via CMake.
+You can install a recent version of the Rust compiler and cargo from
 <a href="https://rustup.rs/">rustup.rs</a> and run tests using <code>cargo test</code>.</p>
 <p>A local development version of the CLI can be run with <code>cargo run --bin sedona-cli</code>.</p>
-<h3 id="test-data-setup">Test data setup<a class="headerlink" href="#test-data-setup" title="Permanent link">¶</a></h3>
+<h2 id="test-data-setup">Test data setup<a class="headerlink" href="#test-data-setup" title="Permanent link">¶</a></h2>
 <p>Some tests require submodules that contain test data or pinned versions of
 external dependencies. These submodules can be initialized with:</p>
 <div class="highlight"><pre><span></span><code>git<span class="w"> </span>submodule<span class="w"> </span>init
@@ -1619,37 +1730,6 @@ git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w
 </code></pre></div>
 <p>Additionally, some of the data required in the tests can be downloaded by running the following script.</p>
 <div class="highlight"><pre><span></span><code>python<span class="w"> </span>submodules/download-assets.py
-</code></pre></div>
-<h3 id="system-dependencies">System dependencies<a class="headerlink" href="#system-dependencies" title="Permanent link">¶</a></h3>
-<p>Some crates wrap external native libraries and require system dependencies
-to build.</p>
-<div class="admonition note">
-<p class="admonition-title"><code>sedona-s2geography</code></p>
-<p>At this time, the only crate that requires this is the <code>sedona-s2geography</code>
-crate, which requires <a href="https://cmake.org">CMake</a>,
-<a href="https://github.com/abseil/abseil-cpp">Abseil</a> and OpenSSL.</p>
-</div>
-<h4 id="macos">macOS<a class="headerlink" href="#macos" title="Permanent link">¶</a></h4>
-<p>These can be installed on macOS with <a href="https://brew.sh">Homebrew</a>:</p>
-<div class="highlight"><pre><span></span><code>brew<span class="w"> </span>install<span class="w"> </span>abseil<span class="w"> </span>openssl<span class="w"> </span>cmake<span class="w"> </span>geos
-</code></pre></div>
-<h4 id="linux-and-windows">Linux and Windows<a class="headerlink" href="#linux-and-windows" title="Permanent link">¶</a></h4>
-<p>On Linux and Windows, it is recommended to use <a href="https://github.com/microsoft/vcpkg">vcpkg</a>
-to provide external dependencies. This can be done by setting the <code>CMAKE_TOOLCHAIN_FILE</code>
-environment variable:</p>
-<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">CMAKE_TOOLCHAIN_FILE</span><span class="o">=</span>/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-</code></pre></div>
-<h4 id="visual-studio-code-vscode-configuration">Visual Studio Code (VSCode) Configuration<a class="headerlink" href="#visual-studio-code-vscode-configuration" title="Permanent link">¶</a></h4>
-<p>When using VSCode, it may be necessary to set this environment variable in <code>settings.json</code>
-such that it can be found by rust-analyzer when running build/run tasks:</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span>
-<span class="w">    </span><span class="nt">"rust-analyzer.runnables.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
-<span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">"rust-analyzer.cargo.extraEnv"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">"CMAKE_TOOLCHAIN_FILE"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
 </code></pre></div>
 <h2 id="python">Python<a class="headerlink" href="#python" title="Permanent link">¶</a></h2>
 <p>Python bindings to SedonaDB are built with the <a href="https://www.maturin.rs">Maturin</a> build
@@ -1762,7 +1842,7 @@ cargo<span class="w"> </span>bench
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="October 25, 2025 05:38:25 UTC">October 25, 2025 05:38:25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="November 7, 2025 15:52:39 UTC">November 7, 2025 15:52:39</span>
   </span>
 
     
