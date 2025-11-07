@@ -130,4 +130,4 @@ adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_f
 
 # TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
 geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
-wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
+wkb = { git = "https://github.com/georust/wkb.git", rev = "3158e6295e4a39dc7fd75f3cfebee113c8b844d0" }

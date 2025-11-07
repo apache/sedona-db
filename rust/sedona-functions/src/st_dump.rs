@@ -34,7 +34,7 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use crate::executor::WkbExecutor;
 
@@ -63,14 +63,6 @@ fn st_dump_doc() -> Documentation {
 
 #[derive(Debug)]
 struct STDump;
-
-// This enum is solely for passing the subset of wkb geometry to STDumpStructBuilder.
-// Maybe we can pass the underlying raw WKB bytes directly, but this just works for now.
-enum SingleWkb<'a> {
-    Point(&'a wkb::reader::Point<'a>),
-    LineString(&'a wkb::reader::LineString<'a>),
-    Polygon(&'a wkb::reader::Polygon<'a>),
-}
 
 // A builder for a list of the structs
 struct STDumpBuilder {
@@ -102,7 +94,7 @@ impl STDumpBuilder {
     }
 
     // This appends both path and geom at once.
-    fn append_single_struct(&mut self, cur_index: Option<u32>, wkb: SingleWkb<'_>) -> Result<()> {
+    fn append_single_struct(&mut self, cur_index: Option<u32>, wkb: &[u8]) -> Result<()> {
         self.path_array_builder.append_slice(&self.parent_path);
         if let Some(cur_index) = cur_index {
             self.path_array_builder.append_value(cur_index);
@@ -113,23 +105,7 @@ impl STDumpBuilder {
                 .push_length(self.parent_path.len());
         }
 
-        let write_result = match wkb {
-            SingleWkb::Point(point) => {
-                wkb::writer::write_point(&mut self.geom_builder, &point, &Default::default())
-            }
-            SingleWkb::LineString(line_string) => wkb::writer::write_line_string(
-                &mut self.geom_builder,
-                &line_string,
-                &Default::default(),
-            ),
-            SingleWkb::Polygon(polygon) => {
-                wkb::writer::write_polygon(&mut self.geom_builder, &polygon, &Default::default())
-            }
-        };
-        if let Err(e) = write_result {
-            return sedona_internal_err!("Failed to write WKB: {e}");
-        }
-
+        self.geom_builder.write_all(wkb)?;
         self.geom_builder.append_value([]);
 
         Ok(())
@@ -138,35 +114,32 @@ impl STDumpBuilder {
     fn append_structs(&mut self, wkb: &wkb::reader::Wkb<'_>) -> Result<i32> {
         match wkb.as_type() {
             GeometryType::Point(point) => {
-                self.append_single_struct(None, SingleWkb::Point(point))?;
+                self.append_single_struct(None, point.buf())?;
                 Ok(1)
             }
             GeometryType::LineString(line_string) => {
-                self.append_single_struct(None, SingleWkb::LineString(line_string))?;
+                self.append_single_struct(None, line_string.buf())?;
                 Ok(1)
             }
             GeometryType::Polygon(polygon) => {
-                self.append_single_struct(None, SingleWkb::Polygon(polygon))?;
+                self.append_single_struct(None, polygon.buf())?;
                 Ok(1)
             }
             GeometryType::MultiPoint(multi_point) => {
                 for (index, point) in multi_point.points().enumerate() {
-                    self.append_single_struct(Some((index + 1) as _), SingleWkb::Point(&point))?;
+                    self.append_single_struct(Some((index + 1) as _), point.buf())?;
                 }
                 Ok(multi_point.num_points() as _)
             }
             GeometryType::MultiLineString(multi_line_string) => {
                 for (index, line_string) in multi_line_string.line_strings().enumerate() {
-                    self.append_single_struct(
-                        Some((index + 1) as _),
-                        SingleWkb::LineString(line_string),
-                    )?;
+                    self.append_single_struct(Some((index + 1) as _), line_string.buf())?;
                 }
                 Ok(multi_line_string.num_line_strings() as _)
             }
             GeometryType::MultiPolygon(multi_polygon) => {
                 for (index, polygon) in multi_polygon.polygons().enumerate() {
-                    self.append_single_struct(Some((index + 1) as _), SingleWkb::Polygon(polygon))?;
+                    self.append_single_struct(Some((index + 1) as _), polygon.buf())?;
                 }
                 Ok(multi_polygon.num_polygons() as _)
             }
