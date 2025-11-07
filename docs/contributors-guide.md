@@ -151,6 +151,7 @@ Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the req
 
 ```shell
 sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev python3-dev libabsl-dev
+```
 
 ## Rust
 
