@@ -14,12 +14,31 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod benchmark_util;
-pub mod compare;
-pub mod create;
-pub mod data;
-pub mod datagen;
-pub mod fixtures;
-pub mod rasters;
-pub mod read;
-pub mod testers;
+use sedona_expr::function_set::FunctionSet;
+
+/// Export the set of functions defined in this crate
+pub fn default_function_set() -> FunctionSet {
+    let mut function_set = FunctionSet::new();
+
+    macro_rules! register_scalar_udfs {
+        ($function_set:expr, $($udf:expr),* $(,)?) => {
+            $(
+                $function_set.insert_scalar_udf($udf());
+            )*
+        };
+    }
+
+    macro_rules! register_aggregate_udfs {
+        ($function_set:expr, $($udf:expr),* $(,)?) => {
+            $(
+                $function_set.insert_aggregate_udf($udf());
+            )*
+        };
+    }
+
+    register_scalar_udfs!(function_set, crate::rs_size::rs_width_udf,);
+
+    register_aggregate_udfs!(function_set,);
+
+    function_set
+}

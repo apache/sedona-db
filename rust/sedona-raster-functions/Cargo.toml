@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-raster"
+name = "sedona-raster-functions"
 version.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -31,8 +31,10 @@ result_large_err = "allow"
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
+datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
 sedona-common = { path = "../sedona-common" }
+sedona-expr = { path = "../sedona-expr" }
+sedona-raster = { path = "../sedona-raster" }
 sedona-schema = { path = "../sedona-schema" }
-
-[dev-dependencies]
 sedona-testing = { path = "../sedona-testing" }
