@@ -166,6 +166,8 @@ mod tests {
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::Edges;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
@@ -266,7 +268,11 @@ mod tests {
             ],
         );
 
-        tester.assert_return_type(WKB_GEOMETRY);
+        let return_type = tester
+            .return_type_with_scalar_scalar_scalar(Some(1.0), Some(2.0), Some(4326))
+            .unwrap();
+        assert_eq!(return_type, SedonaType::Wkb(Edges::Planar, lnglat()));
+
         let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 4326).unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }

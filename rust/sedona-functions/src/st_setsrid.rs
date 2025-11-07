@@ -249,7 +249,10 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         let orig_args = &args[..orig_args_len];
         let orig_scalar_args = &scalar_args[..orig_args_len];
 
-        let crs = scalar_args[orig_args_len].unwrap();
+        let crs = match scalar_args[orig_args_len] {
+            Some(crs) => crs,
+            None => return Ok(None),
+        };
         let new_crs = match crs.cast_to(&DataType::Utf8) {
             Ok(ScalarValue::Utf8(Some(crs))) => {
                 if crs == "0" {
