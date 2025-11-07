@@ -64,4 +64,18 @@ class PyogrioFormat(ExternalFormatSpec):
         return self._extension
 
     def open_reader(self, args):
-        pass
+        return PyogrioReaderShelter(
+            self._raw.ogr_open_arrow(args.src.to_file_path(), {})
+        )
+
+
+class PyogrioReaderShelter:
+    def __init__(self, inner):
+        self._inner = inner
+        self._meta, self._reader = self._inner.__enter__()
+
+    def __del__(self):
+        self._inner.__exit__(None, None, None)
+
+    def __arrow_c_stream__(self, requested_schema=None):
+        return self._reader.__arrow_c_stream__()

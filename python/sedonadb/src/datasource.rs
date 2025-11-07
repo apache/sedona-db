@@ -19,6 +19,15 @@ pub struct PyExternalFormat {
     py_spec: PyObject,
 }
 
+impl Clone for PyExternalFormat {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            extension: self.extension.clone(),
+            py_spec: self.py_spec.clone_ref(py),
+        })
+    }
+}
+
 impl PyExternalFormat {
     fn with_options_impl<'py>(
         &self,
