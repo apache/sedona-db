@@ -260,12 +260,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                 }
             }
             Ok(ScalarValue::Utf8(None)) => None,
-            Ok(_) => {
-                // TODO: This branch is not really the "invalid CRS value" case.
-                //       If it can be cast to Utf-8, it falls into the first branch.
-                return sedona_internal_err!("Invalid CRS value");
-            }
-            Err(_) => None,
+            Ok(_) | Err(_) => return sedona_internal_err!("Can't cast Crs {crs:?} to Utf8"),
         };
 
         let mut result = self
