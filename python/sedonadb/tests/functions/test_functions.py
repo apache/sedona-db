@@ -1318,15 +1318,21 @@ def test_st_point(eng, x, y, expected):
     ("x", "y", "srid", "expected"),
     [
         (None, None, None, None),
+        # This is a bit tricky, but in PostGIS:
+        # - ST_SRID(ST_POINT(x, y, NULL)) is NULL
+        # - ST_SRID(ST_POINT(x, y, 0)) is 0
+        # - ST_SRID(ST_POINT(x, y)) is 0
         (1, 1, None, None),
+        (1, 1, 0, 0),
         (1, 1, 4326, 4326),
-        (1, 1, 0, None),
+        (1, 1, "4326", 4326),
     ],
 )
 def test_st_point_with_srid(eng, x, y, srid, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_SRID(ST_Point({val_or_null(x)}, {val_or_null(y)}, {val_or_null(srid)}))", expected
+        f"SELECT ST_SRID(ST_Point({val_or_null(x)}, {val_or_null(y)}, {val_or_null(srid)}))",
+        expected,
     )
 
 

@@ -260,7 +260,7 @@ mod tests {
     #[rstest]
     #[case(DataType::UInt32, 4326)]
     #[case(DataType::Int32, 4326)]
-    #[case(DataType::Utf8, "EPSG:4326")]
+    #[case(DataType::Utf8, "4326")]
     fn udf_invoke_with_srid(#[case] srid_type: DataType, #[case] srid_value: impl Literal + Copy) {
         let udf = st_point_udf();
         let tester = ScalarUdfTester::new(
