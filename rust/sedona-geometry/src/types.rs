@@ -319,7 +319,7 @@ impl GeometryTypeAndDimensionsSet {
     ) -> Result<(), SedonaGeometryError> {
         if let Dimensions::Unknown(n) = type_and_dim.dimensions() {
             return Err(SedonaGeometryError::Invalid(format!(
-                "Unknown dimensions {} in GeometryTypeSet::insert",
+                "Unknown dimensions {} in GeometryTypeAndDimensionsSet::insert",
                 n
             )));
         }
@@ -333,7 +333,7 @@ impl GeometryTypeAndDimensionsSet {
         // WKB ID must be < 8 to fit in the bitset layout (8 bits per dimension)
         if geom_shift >= 8 {
             panic!(
-                "Invalid geometry type wkb_id {} in GeometryTypeSet::insert_or_ignore",
+                "Invalid geometry type wkb_id {} in GeometryTypeAndDimensionsSet::insert_or_ignore",
                 geom_shift
             );
         }
@@ -383,7 +383,7 @@ impl GeometryTypeAndDimensionsSet {
     }
 }
 
-/// Iterator over [`GeometryTypeAndDimensions`] values in a [`GeometryTypeSet`]
+/// Iterator over [`GeometryTypeAndDimensions`] values in a [`GeometryTypeAndDimensionsSet`]
 pub struct GeometryTypeSetIter {
     types: u32,
     current_bit: u32,
@@ -408,13 +408,13 @@ impl Iterator for GeometryTypeSetIter {
                     16 => Dimensions::Xym,
                     24 => Dimensions::Xyzm,
                     _ => panic!(
-                        "Invalid dimension bits at position {} in GeometryTypeSet",
+                        "Invalid dimension bits at position {} in GeometryTypeAndDimensionsSet",
                         bit
                     ),
                 };
 
                 let geometry_type = GeometryTypeId::try_from_wkb_id(geom_shift)
-                    .expect("Invalid geometry type wkb_id in GeometryTypeSet");
+                    .expect("Invalid geometry type wkb_id in GeometryTypeAndDimensionsSet");
 
                 return Some(GeometryTypeAndDimensions::new(geometry_type, dimensions));
             }
@@ -677,7 +677,7 @@ mod test {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Unknown dimensions 2 in GeometryTypeSet::insert"
+            "Unknown dimensions 2 in GeometryTypeAndDimensionsSet::insert"
         );
         assert!(set.is_empty());
     }
