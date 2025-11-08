@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case(DataType::UInt16, 4326)]
+    #[case(DataType::UInt32, 4326)]
     #[case(DataType::Int32, 4326)]
     #[case(DataType::Utf8, "EPSG:4326")]
     fn udf_invoke_with_srid(#[case] srid_type: DataType, #[case] srid_value: impl Literal + Copy) {
@@ -281,6 +281,29 @@ mod tests {
             .invoke_scalar_scalar_scalar(1.0, 2.0, srid_value)
             .unwrap();
         tester.assert_scalar_result_equals_with_return_type(result, "POINT (1 2)", return_type);
+    }
+
+    #[test]
+    fn udf_invoke_with_invalid_srid() {
+        let udf = st_point_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+
+        let return_type = tester.return_type_with_scalar_scalar_scalar(
+            Some(1.0),
+            Some(2.0),
+            Some("gazornenplat"),
+        );
+        assert!(return_type.is_err());
+
+        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, "gazornenplat");
+        assert!(result.is_err());
     }
 
     #[test]
