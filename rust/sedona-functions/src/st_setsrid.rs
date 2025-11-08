@@ -245,11 +245,18 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         args: &[SedonaType],
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
+        // args should consist of the original args and one extra arg for
+        // specifying CRS. So, first, validate the length and separate these.
+        //
+        // [arg0, arg1, ..., crs_arg];
+        //  ^^^^^^^^^^^^^^^
+        //     orig_args
         let orig_args_len = match (args.len(), scalar_args.len()) {
             (0, 0) => return Ok(None),
             (l1, l2) if l1 == l2 => l1 - 1,
             _ => return sedona_internal_err!("Arg types and arg values have different lengths"),
         };
+
         let orig_args = &args[..orig_args_len];
         let orig_scalar_args = &scalar_args[..orig_args_len];
 
