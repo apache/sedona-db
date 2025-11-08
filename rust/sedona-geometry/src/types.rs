@@ -424,7 +424,7 @@ impl Iterator for GeometryTypeSetIter {
     }
 }
 
-impl<'a> IntoIterator for &'a GeometryTypeAndDimensionsSet {
+impl IntoIterator for &GeometryTypeAndDimensionsSet {
     type Item = GeometryTypeAndDimensions;
     type IntoIter = GeometryTypeSetIter;
 
@@ -439,7 +439,7 @@ impl Serialize for GeometryTypeAndDimensionsSet {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeSeq;
+        use serde::ser::SerializeSeq; // codespell:ignore ser
         let mut seq = serializer.serialize_seq(Some(self.size()))?;
         for item in self.iter() {
             seq.serialize_element(&item)?;
