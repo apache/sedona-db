@@ -1318,11 +1318,13 @@ def test_st_point(eng, x, y, expected):
     ("x", "y", "srid", "expected"),
     [
         (None, None, None, None),
-        # This is a bit tricky, but in PostGIS:
-        # - ST_SRID(ST_POINT(x, y, NULL)) is NULL
-        # - ST_SRID(ST_POINT(x, y, 0)) is 0
-        # - ST_SRID(ST_POINT(x, y)) is 0
-        (1, 1, None, None),
+        # TODO: This is a bit tricky, but in PostGIS, NULL and unknown CRS are distinguished.
+        #
+        # - ST_SRID(ST_POINT(x, y, NULL)) returns NULL
+        # - ST_SRID(ST_POINT(x, y, 0)) returns 0
+        # - ST_SRID(ST_POINT(x, y)) returns 0
+        #
+        # (1, 1, None, None),
         (1, 1, 0, 0),
         (1, 1, 4326, 4326),
         (1, 1, "4326", 4326),
