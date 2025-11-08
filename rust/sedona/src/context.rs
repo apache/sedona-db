@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -40,6 +41,8 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
+use sedona_datasource::provider::external_listing_table;
+use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::{function_set::FunctionSet, scalar_udf::ScalarKernelRef};
 use sedona_geoparquet::options::TableGeoParquetOptions;
@@ -248,6 +251,43 @@ impl SedonaContext {
         }
 
         let provider = geoparquet_listing_table(&self.ctx, urls, options).await?;
+
+        self.ctx.read_table(Arc::new(provider))
+    }
+
+    /// Creates a [`DataFrame`] for reading a [ExternalFormatSpec]
+    pub async fn read_external_format<P: DataFilePaths>(
+        &self,
+        spec: Arc<dyn ExternalFormatSpec>,
+        table_paths: P,
+        options: Option<&HashMap<String, String>>,
+        check_extension: bool,
+    ) -> Result<DataFrame> {
+        let urls = table_paths.to_urls()?;
+
+        // Pre-register object store with our custom options before creating GeoParquetReadOptions
+        if !urls.is_empty() {
+            // Extract the table options from GeoParquetReadOptions for object store registration
+            ensure_object_store_registered_with_options(
+                &mut self.ctx.state(),
+                urls[0].as_str(),
+                options,
+            )
+            .await?;
+        }
+
+        let provider = if let Some(options) = options {
+            // Strip the filesystem-based options
+            let options_without_filesystems = options
+                .iter()
+                .filter(|(k, _)| !k.starts_with("gcs.") || !k.starts_with("aws."))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<HashMap<String, String>>();
+            let spec = spec.with_options(&options_without_filesystems)?;
+            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+        } else {
+            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+        };
 
         self.ctx.read_table(Arc::new(provider))
     }

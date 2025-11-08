@@ -10,6 +10,7 @@ use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs};
 use crate::{
     error::PySedonaError,
     import_from::{import_arrow_array_stream, import_arrow_schema},
+    schema::PySedonaSchema,
 };
 
 #[pyclass]
@@ -153,10 +154,40 @@ pub struct PyDataSourceObject {
     pub inner: Object,
 }
 
+#[pymethods]
+impl PyDataSourceObject {
+    fn to_url(&self) -> Option<String> {
+        self.inner.to_url_string()
+    }
+}
+
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyOpenReaderArgs {
     pub inner: OpenReaderArgs,
+}
+
+#[pymethods]
+impl PyOpenReaderArgs {
+    #[getter]
+    fn src(&self) -> PyDataSourceObject {
+        PyDataSourceObject {
+            inner: self.inner.src.clone(),
+        }
+    }
+
+    #[getter]
+    fn file_schema(&self) -> Option<PySedonaSchema> {
+        self.inner
+            .file_schema
+            .as_ref()
+            .map(|schema| PySedonaSchema::new(schema.as_ref().clone()))
+    }
+
+    #[getter]
+    fn file_projection(&self) -> Option<Vec<usize>> {
+        self.inner.file_projection.clone()
+    }
 }
 
 struct WrappedRecordBatchReader {

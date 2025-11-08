@@ -4832,6 +4832,7 @@ dependencies = [
  "parking_lot",
  "rstest",
  "sedona-common",
+ "sedona-datasource",
  "sedona-expr",
  "sedona-functions",
  "sedona-geo",

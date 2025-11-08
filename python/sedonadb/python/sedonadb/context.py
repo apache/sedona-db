@@ -152,6 +152,26 @@ class SedonaContext:
             self.options,
         )
 
+    def read_ogr(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> DataFrame:
+        from sedonadb.datasource import PyogrioFormatSpec
+
+        if isinstance(table_paths, (str, Path)):
+            table_paths = [table_paths]
+
+        spec = PyogrioFormatSpec()
+        if options is not None:
+            spec = spec.with_options(options)
+
+        return DataFrame(
+            self._impl,
+            self._impl.read_external_format(spec, [str(path) for path in table_paths], False),
+            self.options,
+        )
+
     def sql(self, sql: str) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
 

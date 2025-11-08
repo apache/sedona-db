@@ -41,7 +41,7 @@ class ExternalFormatSpec:
         return PyExternalFormat(self)
 
 
-class PyogrioFormat(ExternalFormatSpec):
+class PyogrioFormatSpec(ExternalFormatSpec):
     def __init__(self, extension=""):
         import pyogrio.raw
 
@@ -64,9 +64,19 @@ class PyogrioFormat(ExternalFormatSpec):
         return self._extension
 
     def open_reader(self, args):
-        return PyogrioReaderShelter(
-            self._raw.ogr_open_arrow(args.src.to_file_path(), {})
-        )
+        url = args.src.to_url()
+        print(url)
+        if url is None:
+            raise ValueError(f"Can't convert {args.src} to OGR-openable object")
+
+        if url.startswith("http://") or url.startswith("https://"):
+            ogr_src = f"/vsicurl/{url}"
+        elif url.startswith("file://"):
+            ogr_src = url.removeprefix("file://")
+        else:
+            raise ValueError(f"Can't open {url} with OGR")
+
+        return PyogrioReaderShelter(self._raw.ogr_open_arrow(ogr_src, {}))
 
 
 class PyogrioReaderShelter:

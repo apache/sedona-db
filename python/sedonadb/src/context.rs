@@ -16,11 +16,9 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
-use datafusion::datasource::listing::ListingTableUrl;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
-use sedona_datasource::provider::external_listing_table;
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -110,6 +108,26 @@ impl InternalContext {
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
+    pub fn read_external_format<'py>(
+        &self,
+        py: Python<'py>,
+        format_spec: Bound<PyAny>,
+        table_paths: Vec<String>,
+        check_extension: bool,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let spec = format_spec
+            .call_method0("__sedona_external_format__")?
+            .extract::<PyExternalFormat>()?;
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner
+                .read_external_format(Arc::new(spec), table_paths, None, check_extension),
+        )??;
+
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
     pub fn sql<'py>(
         &self,
         py: Python<'py>,
@@ -165,34 +183,5 @@ impl InternalContext {
             "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
                 .to_string(),
         ))
-    }
-
-    pub fn read_format<'py>(
-        &self,
-        py: Python<'py>,
-        format_spec: Bound<PyAny>,
-        table_paths: Vec<String>,
-        check_extension: bool,
-    ) -> Result<InternalDataFrame, PySedonaError> {
-        let spec = format_spec
-            .call_method0("__sedona_external_format__")?
-            .extract::<PyExternalFormat>()?;
-        let table_paths = table_paths
-            .into_iter()
-            .map(ListingTableUrl::parse)
-            .collect::<Result<Vec<_>, _>>()?;
-        let provider = wait_for_future(
-            py,
-            &self.runtime,
-            external_listing_table(
-                Arc::new(spec),
-                &self.inner.ctx,
-                table_paths,
-                check_extension,
-            ),
-        )??;
-
-        let df = self.inner.ctx.read_table(Arc::new(provider))?;
-        Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 }
