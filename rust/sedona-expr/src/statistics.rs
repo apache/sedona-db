@@ -95,22 +95,10 @@ impl GeoStatistics {
     }
 
     /// Update the geometry types and return self
-    pub fn with_geometry_types(self, types: Option<&[GeometryTypeAndDimensions]>) -> Self {
-        match types {
-            Some(type_slice) => {
-                let mut type_set = GeometryTypeAndDimensionsSet::new();
-                for type_val in type_slice {
-                    type_set.insert_or_ignore(type_val);
-                }
-                Self {
-                    geometry_types: Some(type_set),
-                    ..self
-                }
-            }
-            None => Self {
-                geometry_types: None,
-                ..self
-            },
+    pub fn with_geometry_types(self, types: Option<GeometryTypeAndDimensionsSet>) -> Self {
+        Self {
+            geometry_types: types,
+            ..self
         }
     }
 
@@ -464,18 +452,17 @@ mod test {
 
     #[test]
     fn specified_geometry_types() {
-        let type_array = [GeometryTypeAndDimensions::new(
-            GeometryTypeId::Polygon,
-            Dimensions::Xy,
-        )];
+        let mut types = GeometryTypeAndDimensionsSet::new();
+        types
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Polygon,
+                Dimensions::Xy,
+            ))
+            .unwrap();
 
         // Test with_geometry_types
-        let stats = GeoStatistics::empty().with_geometry_types(Some(&type_array));
-        let mut expected_set = GeometryTypeAndDimensionsSet::new();
-        for t in &type_array {
-            expected_set.insert(t).unwrap();
-        }
-        assert_eq!(stats.geometry_types(), Some(&expected_set));
+        let stats = GeoStatistics::empty().with_geometry_types(Some(types.clone()));
+        assert_eq!(stats.geometry_types(), Some(&types));
         assert_eq!(
             stats.bbox(),
             Some(&BoundingBox::xy(Interval::empty(), Interval::empty()))

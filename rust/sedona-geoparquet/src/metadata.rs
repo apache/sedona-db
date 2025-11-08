@@ -520,8 +520,7 @@ impl GeoParquetColumnMetadata {
         if self.geometry_types.is_empty() {
             stats
         } else {
-            let geometry_types = self.geometry_types.iter().collect::<Vec<_>>();
-            stats.with_geometry_types(Some(&geometry_types))
+            stats.with_geometry_types(Some(self.geometry_types.clone()))
         }
     }
 

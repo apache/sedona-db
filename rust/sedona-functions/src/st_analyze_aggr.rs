@@ -361,12 +361,7 @@ impl AnalyzeAccumulator {
             Some(new_set)
         };
 
-        if let Some(type_set) = &types {
-            let type_vec: Vec<GeometryTypeAndDimensions> = type_set.iter().collect();
-            stats.with_geometry_types(Some(&type_vec))
-        } else {
-            stats.with_geometry_types(None)
-        }
+        stats.with_geometry_types(types)
     }
 
     fn execute_update(&mut self, executor: WkbExecutor) -> Result<()> {
