@@ -1315,6 +1315,23 @@ def test_st_point(eng, x, y, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("x", "y", "srid", "expected"),
+    [
+        (None, None, None, None),
+        (1, 1, None, None),
+        (1, 1, 4326, 4326),
+        (1, 1, 0, None),
+    ],
+)
+def test_st_point_with_srid(eng, x, y, srid, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_SRID(ST_Point({val_or_null(x)}, {val_or_null(y)}, {val_or_null(srid)}))", expected
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("x", "y", "z", "expected"),
     [
         (None, None, None, None),
