@@ -115,3 +115,63 @@ def test_st_collect_zero_input(eng):
         ) AS t(geom) WHERE false""",
         None,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_basic_triangle(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_Polygonize(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (10 0, 10 10)'),
+                ('LINESTRING (10 10, 0 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_with_nulls(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_Polygonize(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                (NULL),
+                ('LINESTRING (10 0, 10 10)'),
+                (NULL),
+                ('LINESTRING (10 10, 0 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_no_polygons_formed(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_Polygonize(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (20 0, 30 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION EMPTY",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_multiple_polygons(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_Polygonize(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (10 0, 5 10)'),
+                ('LINESTRING (5 10, 0 0)'),
+                ('LINESTRING (20 0, 30 0)'),
+                ('LINESTRING (30 0, 25 10)'),
+                ('LINESTRING (25 10, 20 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 5 10, 10 0)), POLYGON ((30 0, 20 0, 25 10, 30 0)))",
+    )

@@ -123,6 +123,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_collect::st_collect_udf,
         crate::st_envelope_aggr::st_envelope_aggr_udf,
         crate::st_intersection_aggr::st_intersection_aggr_udf,
+        crate::st_polygonize::st_polygonize_udf,
         crate::st_union_aggr::st_union_aggr_udf,
     );
 

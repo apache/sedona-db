@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 
 use crate::{
@@ -29,6 +30,7 @@ use crate::{
     st_isvalidreason::st_is_valid_reason_impl,
     st_length::st_length_impl,
     st_perimeter::st_perimeter_impl,
+    st_polygonize::st_polygonize_impl,
     st_reverse::st_reverse_impl,
     st_simplifypreservetopology::st_simplify_preserve_topology_impl,
     st_unaryunion::st_unary_union_impl,
@@ -79,4 +81,8 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_union", st_union_impl()),
         ("st_within", st_within_impl()),
     ]
+}
+
+pub fn aggregate_kernels() -> Vec<(&'static str, SedonaAccumulatorRef)> {
+    vec![("st_polygonize", st_polygonize_impl())]
 }

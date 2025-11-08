@@ -52,6 +52,7 @@ mod st_point;
 mod st_pointn;
 mod st_points;
 mod st_pointzm;
+mod st_polygonize;
 mod st_setsrid;
 mod st_srid;
 mod st_start_point;

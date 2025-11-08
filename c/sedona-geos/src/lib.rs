@@ -31,6 +31,7 @@ mod st_isvalid;
 mod st_isvalidreason;
 mod st_length;
 mod st_perimeter;
+mod st_polygonize;
 mod st_reverse;
 mod st_simplifypreservetopology;
 mod st_unaryunion;
