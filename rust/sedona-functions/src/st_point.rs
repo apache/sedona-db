@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(return_type, SedonaType::Wkb(Edges::Planar, lnglat()));
 
         let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 4326).unwrap();
-        tester.assert_scalar_result_equals(result, "POINT (1 2)");
+        tester.assert_scalar_result_equals_with_return_type(result, "POINT (1 2)", return_type);
     }
 
     #[test]

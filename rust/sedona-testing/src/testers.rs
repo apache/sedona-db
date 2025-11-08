@@ -184,7 +184,26 @@ impl ScalarUdfTester {
     /// Both actual and expected are interpreted according to the calculated
     /// return type (notably, WKT is interpreted as geometry or geography output).
     pub fn assert_scalar_result_equals(&self, actual: impl Literal, expected: impl Literal) {
-        let return_type = self.return_type().unwrap();
+        self.assert_scalar_result_equals_inner(actual, expected, None);
+    }
+
+    /// Assert the result of invoking this function with the return type specified
+    pub fn assert_scalar_result_equals_with_return_type(
+        &self,
+        actual: impl Literal,
+        expected: impl Literal,
+        return_type: SedonaType,
+    ) {
+        self.assert_scalar_result_equals_inner(actual, expected, Some(return_type));
+    }
+
+    fn assert_scalar_result_equals_inner(
+        &self,
+        actual: impl Literal,
+        expected: impl Literal,
+        return_type: Option<SedonaType>,
+    ) {
+        let return_type = return_type.unwrap_or_else(|| self.return_type().unwrap());
         let actual = Self::scalar_lit(actual, &return_type).unwrap();
         let expected = Self::scalar_lit(expected, &return_type).unwrap();
         assert_scalar_equal(&actual, &expected);
@@ -304,13 +323,25 @@ impl ScalarUdfTester {
         arg1: T1,
         arg2: T2,
     ) -> Result<ScalarValue> {
-        let args = vec![
-            Self::scalar_arg(arg0, &self.arg_types[0])?,
-            Self::scalar_arg(arg1, &self.arg_types[1])?,
-            Self::scalar_arg(arg2, &self.arg_types[2])?,
+        let scalar_args = vec![
+            Self::scalar_lit(arg0, &self.arg_types[0])?,
+            Self::scalar_lit(arg1, &self.arg_types[1])?,
+            Self::scalar_lit(arg2, &self.arg_types[2])?,
         ];
+        let return_type = self
+            .return_type_with_scalar_scalar_scalar(
+                Some(scalar_args[0].clone()),
+                Some(scalar_args[1].clone()),
+                Some(scalar_args[2].clone()),
+            )
+            .ok();
 
-        if let ColumnarValue::Scalar(scalar) = self.invoke(args)? {
+        let args: Vec<ColumnarValue> = scalar_args
+            .into_iter()
+            .map(|x| ColumnarValue::Scalar(x))
+            .collect();
+
+        if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
         } else {
             sedona_internal_err!("Expected scalar result from binary scalar invoke")
@@ -442,6 +473,13 @@ impl ScalarUdfTester {
     }
 
     pub fn invoke(&self, args: Vec<ColumnarValue>) -> Result<ColumnarValue> {
+        self.invoke_with_return_type(args, None)
+    }
+    pub fn invoke_with_return_type(
+        &self,
+        args: Vec<ColumnarValue>,
+        return_type: Option<SedonaType>,
+    ) -> Result<ColumnarValue> {
         assert_eq!(args.len(), self.arg_types.len(), "Unexpected arg length");
 
         let mut number_rows = 1;
@@ -455,11 +493,16 @@ impl ScalarUdfTester {
             }
         }
 
+        let return_type = match return_type {
+            Some(return_type) => return_type,
+            None => self.return_type()?,
+        };
+
         let args = ScalarFunctionArgs {
             args,
             arg_fields: self.arg_fields(),
             number_rows,
-            return_field: self.return_type()?.to_storage_field("", true)?.into(),
+            return_field: return_type.to_storage_field("", true)?.into(),
             // TODO: Consider piping actual ConfigOptions for more realistic testing
             // See: https://github.com/apache/sedona-db/issues/248
             config_options: Arc::new(ConfigOptions::default()),
