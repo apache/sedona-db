@@ -16,7 +16,7 @@
 // under the License.
 use std::{sync::Arc, vec};
 
-use arrow_array::{builder::BinaryBuilder, Array};
+use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{
@@ -26,6 +26,8 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
+
+use crate::executor::WkbExecutor;
 
 /// ST_SetSRID() scalar UDF implementation
 ///
@@ -300,15 +302,14 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let orig_args_len = arg_types.len() - 1;
+        let orig_arg_types = &arg_types[..orig_args_len];
+        let orig_args = &args[..orig_args_len];
 
-        let result = self
-            .inner
-            .invoke_batch(&arg_types[..orig_args_len], &args[..orig_args_len])?
-            .to_array(1)?;
-
+        // If the specified SRID is NULL, the result is also NULL. So, return
+        // NULL early and doesn't run `invoke_batch()`.
         if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
             if sc.is_null() {
-                let n = result.len();
+                let n = WkbExecutor::new(orig_arg_types, orig_args).num_iterations();
                 let mut builder = BinaryBuilder::with_capacity(n, 0);
                 for _ in 0..n {
                     builder.append_null();
@@ -318,7 +319,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
             }
         }
 
-        Ok(ColumnarValue::Array(result))
+        self.inner.invoke_batch(orig_arg_types, orig_args)
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
