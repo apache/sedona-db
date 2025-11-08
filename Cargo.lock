@@ -4909,6 +4909,7 @@ dependencies = [
  "datafusion-physical-plan",
  "futures",
  "object_store",
+ "regex",
  "sedona-common",
  "sedona-expr",
  "sedona-schema",

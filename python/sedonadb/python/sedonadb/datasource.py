@@ -65,7 +65,6 @@ class PyogrioFormatSpec(ExternalFormatSpec):
 
     def open_reader(self, args):
         url = args.src.to_url()
-        print(url)
         if url is None:
             raise ValueError(f"Can't convert {args.src} to OGR-openable object")
 
