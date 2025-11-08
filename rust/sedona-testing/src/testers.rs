@@ -188,6 +188,8 @@ impl ScalarUdfTester {
     }
 
     /// Assert the result of invoking this function with the return type specified
+    ///
+    /// This is for UDFs implementing `SedonaScalarKernel::return_type_from_args_and_scalars()`.
     pub fn assert_scalar_result_equals_with_return_type(
         &self,
         actual: impl Literal,
@@ -286,11 +288,12 @@ impl ScalarUdfTester {
     pub fn invoke_scalar(&self, arg: impl Literal) -> Result<ScalarValue> {
         let scalar_arg = Self::scalar_lit(arg, &self.arg_types[0])?;
 
+        // Some UDF calculate the return type from the input scalar arguments, so try it first.
         let return_type = self
             .return_type_with_scalars_inner(&[Some(scalar_arg.clone())])
             .ok();
-        let args = vec![ColumnarValue::Scalar(scalar_arg)];
 
+        let args = vec![ColumnarValue::Scalar(scalar_arg)];
         if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
         } else {
@@ -312,9 +315,11 @@ impl ScalarUdfTester {
         let scalar_arg0 = Self::scalar_lit(arg0, &self.arg_types[0])?;
         let scalar_arg1 = Self::scalar_lit(arg1, &self.arg_types[1])?;
 
+        // Some UDF calculate the return type from the input scalar arguments, so try it first.
         let return_type = self
             .return_type_with_scalars_inner(&[Some(scalar_arg0.clone()), Some(scalar_arg1.clone())])
             .ok();
+
         let args = vec![
             ColumnarValue::Scalar(scalar_arg0),
             ColumnarValue::Scalar(scalar_arg1),
@@ -337,6 +342,7 @@ impl ScalarUdfTester {
         let scalar_arg1 = Self::scalar_lit(arg1, &self.arg_types[1])?;
         let scalar_arg2 = Self::scalar_lit(arg2, &self.arg_types[2])?;
 
+        // Some UDF calculate the return type from the input scalar arguments, so try it first.
         let return_type = self
             .return_type_with_scalars_inner(&[
                 Some(scalar_arg0.clone()),
@@ -344,12 +350,12 @@ impl ScalarUdfTester {
                 Some(scalar_arg2.clone()),
             ])
             .ok();
+
         let args = vec![
             ColumnarValue::Scalar(scalar_arg0),
             ColumnarValue::Scalar(scalar_arg1),
             ColumnarValue::Scalar(scalar_arg2),
         ];
-
         if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
         } else {
