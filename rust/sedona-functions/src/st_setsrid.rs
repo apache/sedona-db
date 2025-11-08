@@ -16,6 +16,7 @@
 // under the License.
 use std::{sync::Arc, vec};
 
+use arrow_array::{make_array, Array};
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{
@@ -300,14 +301,24 @@ impl SedonaScalarKernel for SRIDifiedKernel {
     ) -> Result<ColumnarValue> {
         let orig_args_len = arg_types.len() - 1;
 
+        let mut result = self
+            .inner
+            .invoke_batch(&arg_types[..orig_args_len], &args[..orig_args_len])?
+            .to_array(1)?;
+
         if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
             if sc.is_null() {
-                return Ok(ColumnarValue::Scalar(ScalarValue::Null));
+                let len = result.len();
+                let data = result
+                    .to_data()
+                    .into_builder()
+                    .nulls(Some(vec![true; len].into()))
+                    .build()?;
+                result = make_array(data);
             }
         }
 
-        self.inner
-            .invoke_batch(&arg_types[..orig_args_len], &args[..orig_args_len])
+        Ok(ColumnarValue::Array(result))
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
