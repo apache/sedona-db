@@ -64,7 +64,7 @@ impl SedonaAccumulator for STPolygonize {
 #[derive(Debug)]
 struct PolygonizeAccumulator {
     input_type: SedonaType,
-    geometries: Vec<Vec<u8>>,
+    geometries: Vec<Arc<[u8]>>,
 }
 
 impl PolygonizeAccumulator {
@@ -107,13 +107,13 @@ impl Accumulator for PolygonizeAccumulator {
             ));
         }
 
-        let arg_types = [self.input_type.clone()];
+        let arg_types = std::slice::from_ref(&self.input_type);
         let args = [ColumnarValue::Array(values[0].clone())];
-        let executor = sedona_functions::executor::WkbExecutor::new(&arg_types, &args);
+        let executor = sedona_functions::executor::WkbExecutor::new(arg_types, &args);
 
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.geometries.push(item.buf().to_vec());
+                self.geometries.push(item.buf().into());
             }
             Ok(())
         })?;
@@ -127,12 +127,11 @@ impl Accumulator for PolygonizeAccumulator {
     }
 
     fn size(&self) -> usize {
-        std::mem::size_of::<Self>() + self.geometries.iter().map(|g| g.capacity()).sum::<usize>()
+        std::mem::size_of::<Self>() + self.geometries.iter().map(|g| g.len()).sum::<usize>()
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        let binary_array =
-            BinaryArray::from_iter(self.geometries.iter().map(|g| Some(g.as_slice())));
+        let binary_array = BinaryArray::from_iter(self.geometries.iter().map(|g| Some(g.as_ref())));
         let mut offsets_builder = OffsetBufferBuilder::new(1);
         offsets_builder.push_length(binary_array.len());
         let offsets = offsets_builder.finish();
@@ -165,7 +164,7 @@ impl Accumulator for PolygonizeAccumulator {
             let binary_array = as_binary_array(&value_ref)?;
             for j in 0..binary_array.len() {
                 if !binary_array.is_null(j) {
-                    self.geometries.push(binary_array.value(j).to_vec());
+                    self.geometries.push(binary_array.value(j).into());
                 }
             }
         }
