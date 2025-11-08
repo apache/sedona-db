@@ -293,7 +293,7 @@ impl FromStr for GeometryTypeAndDimensions {
 }
 
 /// A set containing [`GeometryTypeAndDimensions`] values
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeometryTypeAndDimensionsSet {
     /// Bitset encoding geometry types and dimensions.
     ///
@@ -307,28 +307,40 @@ pub struct GeometryTypeAndDimensionsSet {
 }
 
 impl GeometryTypeAndDimensionsSet {
+    #[inline]
     pub fn new() -> Self {
         Self { types: 0 }
     }
 
+    #[inline]
     pub fn insert(
         &mut self,
         type_and_dim: &GeometryTypeAndDimensions,
     ) -> Result<(), SedonaGeometryError> {
+        if let Dimensions::Unknown(n) = type_and_dim.dimensions() {
+            return Err(SedonaGeometryError::Invalid(format!(
+                "Unknown dimensions {} in GeometryTypeSet::insert",
+                n
+            )));
+        }
+        self.insert_or_ignore(type_and_dim);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn insert_or_ignore(&mut self, type_and_dim: &GeometryTypeAndDimensions) {
         let geom_shift = type_and_dim.geometry_type().wkb_id();
         // WKB ID must be < 8 to fit in the bitset layout (8 bits per dimension)
         if geom_shift >= 8 {
             panic!(
-                "Invalid geometry type wkb_id {} in GeometryTypeSet::insert",
+                "Invalid geometry type wkb_id {} in GeometryTypeSet::insert_or_ignore",
                 geom_shift
             );
         }
         let dim_shift = match type_and_dim.dimensions() {
-            geo_traits::Dimensions::Unknown(n) => {
-                return Err(SedonaGeometryError::Invalid(format!(
-                    "Unknown dimensions {} in GeometryTypeSet::insert",
-                    n
-                )));
+            geo_traits::Dimensions::Unknown(_) => {
+                // Ignore unknown dimensions
+                return;
             }
             geo_traits::Dimensions::Xy => 0,
             geo_traits::Dimensions::Xyz => 8,
@@ -337,24 +349,27 @@ impl GeometryTypeAndDimensionsSet {
         };
         let bit_position = geom_shift + dim_shift;
         self.types |= 1 << bit_position;
-        Ok(())
     }
 
+    #[inline]
     pub fn merge(&mut self, other: &Self) {
         self.types |= other.types;
     }
 
     /// Returns `true` if the set contains no geometry types.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.types == 0
     }
 
     /// Returns the number of geometry types in the set.
+    #[inline]
     pub fn size(&self) -> usize {
         self.types.count_ones() as usize
     }
 
     /// Clears the set, removing all geometry types.
+    #[inline]
     pub fn clear(&mut self) {
         self.types = 0;
     }
@@ -723,6 +738,7 @@ mod test {
             GeometryTypeAndDimensions::new(MultiLineString, Xy),
             GeometryTypeAndDimensions::new(MultiPolygon, Xyz),
             GeometryTypeAndDimensions::new(GeometryCollection, Xym),
+            GeometryTypeAndDimensions::new(GeometryCollection, Xyzm),
         ];
 
         for type_and_dim in &test_types {

@@ -35,7 +35,7 @@ use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometryAnalysis;
 use sedona_geometry::interval::IntervalTrait;
-use sedona_geometry::types::GeometryTypeAndDimensions;
+use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
@@ -353,14 +353,16 @@ impl AnalyzeAccumulator {
         let current_types = stats.geometry_types();
         let types = if let Some(existing_types) = current_types {
             let mut new_types = existing_types.clone();
-            new_types.insert(geometry_type);
+            new_types.insert_or_ignore(&geometry_type);
             Some(new_types)
         } else {
-            Some(std::collections::HashSet::from([geometry_type]))
+            let mut new_set = GeometryTypeAndDimensionsSet::new();
+            new_set.insert_or_ignore(&geometry_type);
+            Some(new_set)
         };
 
         if let Some(type_set) = &types {
-            let type_vec: Vec<GeometryTypeAndDimensions> = type_set.iter().cloned().collect();
+            let type_vec: Vec<GeometryTypeAndDimensions> = type_set.iter().collect();
             stats.with_geometry_types(Some(&type_vec))
         } else {
             stats.with_geometry_types(None)
@@ -414,9 +416,10 @@ impl Accumulator for AnalyzeAccumulator {
         // Add approximate size for geometry types if present
         let types_size = match self.stats.geometry_types() {
             Some(types) => {
+                // GeometryTypeAndDimensionsSet is a u32 bitset
                 let elem_size = size_of::<GeometryTypeAndDimensions>();
-                let capacity = types.capacity();
-                capacity * elem_size
+                let count = types.size();
+                count * elem_size
             }
             None => 0,
         };
