@@ -299,6 +299,13 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let orig_args_len = arg_types.len() - 1;
+
+        if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
+            if sc.is_null() {
+                return Ok(ColumnarValue::Scalar(ScalarValue::Null));
+            }
+        }
+
         self.inner
             .invoke_batch(&arg_types[..orig_args_len], &args[..orig_args_len])
     }
