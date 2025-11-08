@@ -66,17 +66,112 @@ Your first step is to create a personal copy of the repository and connect it to
         upstream  https://github.com/apache/sedona-db.git (fetch)
         upstream  https://github.com/apache/sedona-db.git (push)
         ```
+## System dependencies
+
+Some crates in the workspace wrap native libraries and require system dependencies (GEOS, PROJ, Abseil, OpenSSL, CMake, etc.). We recommend using:
+
+### macOS: Homebrew
+``` bash brew install abseil openssl cmake geos proj ```
+
+Ensure Homebrew-installed tools are on your PATH (Homebrew usually does this automatically).
+
+### Windows
+
+Suggested workflow (PowerShell):
+
+First, install Rust if it is not already installed:
+
+```powershell
+Invoke-WebRequest https://sh.rustup.rs -UseBasicParsing -OutFile rustup-init.exe
+.\rustup-init.exe
+# Restart PowerShell
+rustc --version
+cargo --version
+```
+
+Next, install Visual Studio Build Tools (<https://visualstudio.microsoft.com/downloads/>). Pick "Desktop development with C++" during install.
+
+Next, install CMake (<https://cmake.org/>). Ensure "Add CMake to system PATH" is selected during installation.
+
+```powershell
+cmake --version
+```
+
+
+Now, install and bootstrap vcpkg (example path: C:\dev\vcpkg — you can choose a different path; see note below about short paths):
+
+```powershell
+git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
+cd C:\dev\vcpkg
+.\bootstrap-vcpkg.bat
+```
+
+
+Next, install the required libraries with vcpkg:
+
+```powershell
+C:\dev\vcpkg\vcpkg.exe install geos proj abseil openssl
+```
+
+Configure environment variables (PowerShell example — update paths as needed):
+
+```powershell
+$env:VCPKG_ROOT = 'C:\dev\vcpkg'
+$env:CMAKE_TOOLCHAIN_FILE = "${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+
+# pkg-config/ msys path (hash may vary)
+$env:PATH = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/bin/;$env:PATH"
+$env:PKG_CONFIG_SYSROOT_DIR = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/"
+$env:PKG_CONFIG_PATH = "${env:VCPKG_ROOT}/installed/x64-windows-dynamic-release/lib/pkgconfig/"
+```
+
+
+Note: the downloads/tools/msys2/<msys-hash> folder name varies per vcpkg bootstrap. Replace <msys-hash> with the actual folder name on your system.
+
+VS Code integration (so rust-analyzer sees the toolchain):
+
+Add to your ```settings.json```:
+
+```json
+{
+  "rust-analyzer.runnables.extraEnv": {
+    "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+  },
+  "rust-analyzer.cargo.extraEnv": {
+    "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+  }
+}
+```
+
+### Linux
+
+Linux users may install system dependencies from a system package manager. Note that recent versions are required because the Abseil version required is relatively recent compared to the package version on some common LTS platforms.
+
+Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the required version of Abseil)
+
+```shell
+sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev python3-dev libabsl-dev
+```
 
 ## Rust
 
 SedonaDB is written in Rust and is a standard `cargo` workspace.
 
+Before running cargo test, make sure to set the CMake toolchain variable:
+
+```export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake```
+
+Replace `/path/to/vcpkg/` with the actual path to your vcpkg installation.
+
+Once set, you can run: `cargo test`
+
+This ensures that Cargo and proj-sys can find the correct C/C++ dependencies via CMake.
 You can install a recent version of the Rust compiler and cargo from
 [rustup.rs](https://rustup.rs/) and run tests using `cargo test`.
 
 A local development version of the CLI can be run with `cargo run --bin sedona-cli`.
 
-### Test data setup
+## Test data setup
 
 Some tests require submodules that contain test data or pinned versions of
 external dependencies. These submodules can be initialized with:
@@ -92,49 +187,6 @@ Additionally, some of the data required in the tests can be downloaded by runnin
 python submodules/download-assets.py
 ```
 
-### System dependencies
-
-Some crates wrap external native libraries and require system dependencies
-to build.
-
-!!!note "`sedona-s2geography`"
-    At this time, the only crate that requires this is the `sedona-s2geography`
-    crate, which requires [CMake](https://cmake.org),
-    [Abseil](https://github.com/abseil/abseil-cpp) and OpenSSL.
-
-#### macOS
-
-These can be installed on macOS with [Homebrew](https://brew.sh):
-
-```shell
-brew install abseil openssl cmake geos
-```
-
-#### Linux and Windows
-
-On Linux and Windows, it is recommended to use [vcpkg](https://github.com/microsoft/vcpkg)
-to provide external dependencies. This can be done by setting the `CMAKE_TOOLCHAIN_FILE`
-environment variable:
-
-```shell
-export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-#### Visual Studio Code (VSCode) Configuration
-
-When using VSCode, it may be necessary to set this environment variable in `settings.json`
-such that it can be found by rust-analyzer when running build/run tasks:
-
-```json
-{
-    "rust-analyzer.runnables.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    },
-    "rust-analyzer.cargo.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    }
-}
-```
 
 ## Python
 

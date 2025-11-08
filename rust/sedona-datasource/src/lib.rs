@@ -15,19 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod build_index;
-mod evaluated_batch;
-pub mod exec;
-mod index;
-pub mod operand_evaluator;
-pub mod optimizer;
-pub mod refine;
-pub mod spatial_predicate;
-mod stream;
-pub mod utils;
-
-pub use exec::SpatialJoinExec;
-pub use optimizer::register_spatial_join_optimizer;
-
-// Re-export option types from sedona-common for convenience
-pub use sedona_common::option::*;
+pub mod format;
+pub mod provider;
+pub mod spec;

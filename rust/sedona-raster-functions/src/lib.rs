@@ -14,50 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-mod barrier;
-mod distance;
-pub mod executor;
-mod overlay;
-mod predicates;
-mod referencing;
+
+mod executor;
 pub mod register;
-mod sd_format;
-pub mod st_analyze_aggr;
-mod st_area;
-mod st_asbinary;
-mod st_astext;
-mod st_azimuth;
-mod st_buffer;
-mod st_centroid;
-mod st_collect;
-mod st_dimension;
-mod st_dump;
-mod st_dwithin;
-pub mod st_envelope;
-pub mod st_envelope_aggr;
-pub mod st_flipcoordinates;
-mod st_geometrytype;
-mod st_geomfromwkb;
-mod st_geomfromwkt;
-mod st_haszm;
-pub mod st_intersection_aggr;
-pub mod st_isclosed;
-mod st_iscollection;
-pub mod st_isempty;
-mod st_length;
-mod st_makeline;
-mod st_numgeometries;
-mod st_perimeter;
-mod st_point;
-mod st_pointn;
-mod st_points;
-mod st_pointzm;
-mod st_setsrid;
-mod st_srid;
-mod st_start_point;
-mod st_transform;
-mod st_translate;
-pub mod st_union_aggr;
-mod st_xyzm;
-mod st_xyzm_minmax;
-mod st_zmflag;
+pub mod rs_size;

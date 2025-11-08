@@ -50,6 +50,7 @@ rand = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-expr = { path = "../sedona-expr" }
+sedona-raster = { path = "../sedona-raster" }
 sedona-schema = { path = "../sedona-schema" }
 wkb = { workspace = true }
 wkt = { workspace = true }

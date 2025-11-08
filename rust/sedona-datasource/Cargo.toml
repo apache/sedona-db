@@ -14,8 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 [package]
-name = "sedona-raster"
+name = "sedona-datasource"
 version.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -24,15 +25,26 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[lints.clippy]
-result_large_err = "allow"
-
-[dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-arrow-buffer = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-schema = { path = "../sedona-schema" }
+[features]
+default = []
 
 [dev-dependencies]
-sedona-testing = { path = "../sedona-testing" }
+url = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[dependencies]
+async-trait = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-array = { workspace = true }
+datafusion = { workspace = true }
+datafusion-catalog = { workspace = true }
+datafusion-common = { workspace = true }
+datafusion-execution = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
+futures = { workspace = true }
+object_store = { workspace = true }
+sedona-common = { path = "../sedona-common" }
+sedona-expr = { path = "../sedona-expr" }
+sedona-schema = { path = "../sedona-schema" }

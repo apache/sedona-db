@@ -14,20 +14,31 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use sedona_expr::function_set::FunctionSet;
 
-mod build_index;
-mod evaluated_batch;
-pub mod exec;
-mod index;
-pub mod operand_evaluator;
-pub mod optimizer;
-pub mod refine;
-pub mod spatial_predicate;
-mod stream;
-pub mod utils;
+/// Export the set of functions defined in this crate
+pub fn default_function_set() -> FunctionSet {
+    let mut function_set = FunctionSet::new();
 
-pub use exec::SpatialJoinExec;
-pub use optimizer::register_spatial_join_optimizer;
+    macro_rules! register_scalar_udfs {
+        ($function_set:expr, $($udf:expr),* $(,)?) => {
+            $(
+                $function_set.insert_scalar_udf($udf());
+            )*
+        };
+    }
 
-// Re-export option types from sedona-common for convenience
-pub use sedona_common::option::*;
+    macro_rules! register_aggregate_udfs {
+        ($function_set:expr, $($udf:expr),* $(,)?) => {
+            $(
+                $function_set.insert_aggregate_udf($udf());
+            )*
+        };
+    }
+
+    register_scalar_udfs!(function_set, crate::rs_size::rs_width_udf,);
+
+    register_aggregate_udfs!(function_set,);
+
+    function_set
+}
