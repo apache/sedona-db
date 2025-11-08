@@ -164,6 +164,7 @@ mod tests {
     use arrow_array::create_array;
     use arrow_array::ArrayRef;
     use arrow_schema::DataType;
+    use datafusion_expr::Literal;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::crs::lnglat;
@@ -256,24 +257,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn udf_invoke_with_srid() {
+    #[rstest]
+    #[case(DataType::UInt16, 4326)]
+    #[case(DataType::Int32, 4326)]
+    #[case(DataType::Utf8, "EPSG:4326")]
+    fn udf_invoke_with_srid(#[case] srid_type: DataType, #[case] srid_value: impl Literal + Copy) {
         let udf = st_point_udf();
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
                 SedonaType::Arrow(DataType::Float64),
                 SedonaType::Arrow(DataType::Float64),
-                SedonaType::Arrow(DataType::UInt16),
+                SedonaType::Arrow(srid_type),
             ],
         );
 
         let return_type = tester
-            .return_type_with_scalar_scalar_scalar(Some(1.0), Some(2.0), Some(4326))
+            .return_type_with_scalar_scalar_scalar(Some(1.0), Some(2.0), Some(srid_value))
             .unwrap();
         assert_eq!(return_type, SedonaType::Wkb(Edges::Planar, lnglat()));
 
-        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, 4326).unwrap();
+        let result = tester
+            .invoke_scalar_scalar_scalar(1.0, 2.0, srid_value)
+            .unwrap();
         tester.assert_scalar_result_equals_with_return_type(result, "POINT (1 2)", return_type);
     }
 
