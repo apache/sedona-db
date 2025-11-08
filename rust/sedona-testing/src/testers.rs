@@ -284,16 +284,12 @@ impl ScalarUdfTester {
 
     /// Invoke this function with a scalar
     pub fn invoke_scalar(&self, arg: impl Literal) -> Result<ScalarValue> {
-        let scalar_args = vec![Self::scalar_lit(arg, &self.arg_types[0])?];
+        let scalar_arg = Self::scalar_lit(arg, &self.arg_types[0])?;
 
-        let scalar_args_ref: Vec<Option<ScalarValue>> =
-            scalar_args.iter().map(|x| Some(x.clone())).collect();
-        let return_type = self.return_type_with_scalars_inner(&scalar_args_ref).ok();
-
-        let args: Vec<ColumnarValue> = scalar_args
-            .into_iter()
-            .map(|x| ColumnarValue::Scalar(x))
-            .collect();
+        let return_type = self
+            .return_type_with_scalars_inner(&[Some(scalar_arg.clone())])
+            .ok();
+        let args = vec![ColumnarValue::Scalar(scalar_arg)];
 
         if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
@@ -313,20 +309,16 @@ impl ScalarUdfTester {
         arg0: T0,
         arg1: T1,
     ) -> Result<ScalarValue> {
-        let scalar_args = vec![
-            Self::scalar_lit(arg0, &self.arg_types[0])?,
-            Self::scalar_lit(arg1, &self.arg_types[1])?,
+        let scalar_arg0 = Self::scalar_lit(arg0, &self.arg_types[0])?;
+        let scalar_arg1 = Self::scalar_lit(arg1, &self.arg_types[1])?;
+
+        let return_type = self
+            .return_type_with_scalars_inner(&[Some(scalar_arg0.clone()), Some(scalar_arg1.clone())])
+            .ok();
+        let args = vec![
+            ColumnarValue::Scalar(scalar_arg0),
+            ColumnarValue::Scalar(scalar_arg1),
         ];
-
-        let scalar_args_ref: Vec<Option<ScalarValue>> =
-            scalar_args.iter().map(|x| Some(x.clone())).collect();
-        let return_type = self.return_type_with_scalars_inner(&scalar_args_ref).ok();
-
-        let args: Vec<ColumnarValue> = scalar_args
-            .into_iter()
-            .map(|x| ColumnarValue::Scalar(x))
-            .collect();
-
         if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
         } else {
@@ -341,20 +333,22 @@ impl ScalarUdfTester {
         arg1: T1,
         arg2: T2,
     ) -> Result<ScalarValue> {
-        let scalar_args = vec![
-            Self::scalar_lit(arg0, &self.arg_types[0])?,
-            Self::scalar_lit(arg1, &self.arg_types[1])?,
-            Self::scalar_lit(arg2, &self.arg_types[2])?,
+        let scalar_arg0 = Self::scalar_lit(arg0, &self.arg_types[0])?;
+        let scalar_arg1 = Self::scalar_lit(arg1, &self.arg_types[1])?;
+        let scalar_arg2 = Self::scalar_lit(arg2, &self.arg_types[2])?;
+
+        let return_type = self
+            .return_type_with_scalars_inner(&[
+                Some(scalar_arg0.clone()),
+                Some(scalar_arg1.clone()),
+                Some(scalar_arg2.clone()),
+            ])
+            .ok();
+        let args = vec![
+            ColumnarValue::Scalar(scalar_arg0),
+            ColumnarValue::Scalar(scalar_arg1),
+            ColumnarValue::Scalar(scalar_arg2),
         ];
-
-        let scalar_args_ref: Vec<Option<ScalarValue>> =
-            scalar_args.iter().map(|x| Some(x.clone())).collect();
-        let return_type = self.return_type_with_scalars_inner(&scalar_args_ref).ok();
-
-        let args: Vec<ColumnarValue> = scalar_args
-            .into_iter()
-            .map(|x| ColumnarValue::Scalar(x))
-            .collect();
 
         if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
             Ok(scalar)
