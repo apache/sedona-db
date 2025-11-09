@@ -72,8 +72,8 @@ impl SedonaScalarKernel for STReverse {
 
 fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -> Result<()> {
     let geometry = geos_geom
-        .get_centroid()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to calculate centroid: {e}")))?;
+        .reverse()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to calculate reverse: {e}")))?;
 
     let wkb = geometry
         .to_wkb()
