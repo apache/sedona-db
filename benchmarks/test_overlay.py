@@ -16,11 +16,17 @@
 # under the License.
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
+from sedonadb.testing import (
+    DuckDBSingleThread,
+    PostGISSingleThread,
+    SedonaDBSingleThread,
+)
 
 
 class TestBenchPredicates(TestBenchBase):
-    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
     @pytest.mark.parametrize(
         "table",
         [
@@ -33,23 +39,5 @@ class TestBenchPredicates(TestBenchBase):
 
         def queries():
             eng.execute_and_collect(f"SELECT ST_Difference(geom1, geom2) from {table}")
-
-        benchmark(queries)
-
-    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
-    @pytest.mark.parametrize(
-        "table",
-        [
-            "polygons_simple",
-            "polygons_complex",
-        ],
-    )
-    def test_st_intersection(self, benchmark, eng, table):
-        eng = self._get_eng(eng)
-
-        def queries():
-            eng.execute_and_collect(
-                f"SELECT ST_Intersection(geom1, geom2) from {table}"
-            )
 
         benchmark(queries)
