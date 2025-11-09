@@ -175,3 +175,36 @@ def test_st_polygonize_multiple_polygons(eng):
         ) AS t(geom)""",
         "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 5 10, 10 0)), POLYGON ((30 0, 20 0, 25 10, 30 0)))",
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (
+            "POLYGON ((10 0, 0 0, 10 10, 10 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+        ),
+        (
+            "LINESTRING (0 0, 0 1, 1 1, 1 0, 0 0)",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+        ),
+        ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
+        ("MULTIPOINT ((0 0), (1 1))", "GEOMETRYCOLLECTION EMPTY"),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", "GEOMETRYCOLLECTION EMPTY"),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 10, 10 10)))",
+        ),
+        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))", "GEOMETRYCOLLECTION EMPTY"),
+        ("LINESTRING EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_polygonize_single_geom(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize(ST_GeomFromText(geom)) FROM (
+            VALUES ('{geom}')
+        ) AS t(geom)""",
+        expected,
+    )

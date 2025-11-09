@@ -308,4 +308,119 @@ mod tests {
             Some("GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))"),
         );
     }
+
+    #[rstest]
+    fn polygonize_single_polygon(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("POLYGON ((10 0, 0 0, 10 10, 10 0))")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(
+            &result,
+            Some("GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))"),
+        );
+    }
+
+    #[rstest]
+    fn polygonize_multipolygon(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some(
+            "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
+        )]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(
+            &result,
+            Some("GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 10, 10 10)))"),
+        );
+    }
+
+    #[rstest]
+    fn polygonize_closed_ring_linestring(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("LINESTRING (0 0, 0 1, 1 1, 1 0, 0 0)")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(
+            &result,
+            Some("GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))"),
+        );
+    }
+
+    #[rstest]
+    fn polygonize_point_returns_empty(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("POINT (0 0)")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
+
+    #[rstest]
+    fn polygonize_multipoint_returns_empty(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("MULTIPOINT ((0 0), (1 1))")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
+
+    #[rstest]
+    fn polygonize_multilinestring_returns_empty(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
+
+    #[rstest]
+    fn polygonize_geometrycollection_returns_empty(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some(
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+        )]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
+
+    #[rstest]
+    fn polygonize_empty_linestring_returns_empty(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+
+        let batches = vec![vec![Some("LINESTRING EMPTY")]];
+
+        let result = tester.aggregate_wkt(batches).unwrap();
+        assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
 }
