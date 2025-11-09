@@ -263,6 +263,17 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         let orig_args = &args[..orig_args_len];
         let orig_scalar_args = &scalar_args[..orig_args_len];
 
+        // Invoke the original return_type_from_args_and_scalars() first before checking the CRS argument
+        let mut inner_result = match self
+            .inner
+            .return_type_from_args_and_scalars(orig_args, orig_scalar_args)?
+        {
+            Some(sedona_type) => sedona_type,
+            // if no match, quit here. Since the CRS arg is also an unintended
+            // one, validating it would be a cryptic error to the user.
+            None => return Ok(None),
+        };
+
         let crs = match scalar_args[orig_args_len] {
             Some(crs) => crs,
             None => return Ok(None),
@@ -280,20 +291,15 @@ impl SedonaScalarKernel for SRIDifiedKernel {
             Ok(_) | Err(_) => return sedona_internal_err!("Can't cast Crs {crs:?} to Utf8"),
         };
 
-        let mut result = self
-            .inner
-            .return_type_from_args_and_scalars(orig_args, orig_scalar_args);
-        if let Ok(Some(sedona_type)) = &mut result {
-            match sedona_type {
-                SedonaType::Wkb(_, crs) => *crs = new_crs,
-                SedonaType::WkbView(_, crs) => *crs = new_crs,
-                _ => {
-                    return sedona_internal_err!("Return type must be Wkb or WkbView");
-                }
+        match &mut inner_result {
+            SedonaType::Wkb(_, crs) => *crs = new_crs,
+            SedonaType::WkbView(_, crs) => *crs = new_crs,
+            _ => {
+                return sedona_internal_err!("Return type must be Wkb or WkbView");
             }
         }
 
-        result
+        Ok(Some(inner_result))
     }
 
     fn invoke_batch(
