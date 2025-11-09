@@ -14,6 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+# MacOS
+.DS_Store
+
 # sedona-cli
 .history
 
@@ -36,3 +40,12 @@ coverage/
 
 # documentation
 site/
+
+# Python cache files
+__pycache__
+
+# R-related files
+.Rproj.user
+
+# .env file for release management
+dev/release/.env

@@ -33,6 +33,9 @@ default = []
 [dev-dependencies]
 sedona-testing = { path = "../sedona-testing" }
 url = { workspace = true }
+rstest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
 
 [dependencies]
 async-trait = { workspace = true }
@@ -43,19 +46,21 @@ chrono = { workspace = true }
 datafusion = { workspace = true, features = ["parquet"] }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-datasource-parquet = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+float_next_after = { workspace = true }
 geo-traits = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
 parquet = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-expr = { path = "../sedona-expr" }
+sedona-functions = { path = "../sedona-functions" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
-tokio = { workspace = true }

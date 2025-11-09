@@ -22,9 +22,10 @@ use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDFImpl, Documentation, Signature, Volatility,
 };
+use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
-use crate::scalar_udf::ArgMatcher;
+use sedona_schema::matchers::ArgMatcher;
 
 pub type SedonaAccumulatorRef = Arc<dyn SedonaAccumulator + Send + Sync>;
 
@@ -38,6 +39,20 @@ pub struct SedonaAggregateUDF {
     signature: Signature,
     kernels: Vec<SedonaAccumulatorRef>,
     documentation: Option<Documentation>,
+}
+
+impl PartialEq for SedonaAggregateUDF {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for SedonaAggregateUDF {}
+
+impl std::hash::Hash for SedonaAggregateUDF {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 impl SedonaAggregateUDF {
@@ -97,10 +112,6 @@ impl SedonaAggregateUDF {
 
         not_impl_err!("{}({:?}): No kernel matching arguments", self.name, args)
     }
-
-    fn sedona_types(args: &[DataType]) -> Result<Vec<SedonaType>> {
-        args.iter().map(SedonaType::from_data_type).collect()
-    }
 }
 
 impl AggregateUDFImpl for SedonaAggregateUDF {
@@ -124,28 +135,37 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
         let arg_types = args
             .input_fields
             .iter()
-            .map(|f| f.data_type().clone())
-            .collect::<Vec<_>>();
-        let arg_physical_types = Self::sedona_types(&arg_types)?;
-        let (accumulator, _) = self.dispatch_impl(&arg_physical_types)?;
-        accumulator.state_fields(&arg_physical_types)
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect::<Result<Vec<_>>>()?;
+        let (accumulator, _) = self.dispatch_impl(&arg_types)?;
+        accumulator.state_fields(&arg_types)
     }
 
-    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
-        let arg_physical_types = Self::sedona_types(arg_types)?;
-        let (_, out_type) = self.dispatch_impl(&arg_physical_types)?;
-        Ok(out_type.data_type())
+    fn return_field(&self, arg_fields: &[FieldRef]) -> Result<FieldRef> {
+        let arg_types = arg_fields
+            .iter()
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect::<Result<Vec<_>>>()?;
+        let (_, out_type) = self.dispatch_impl(&arg_types)?;
+        Ok(Arc::new(out_type.to_storage_field("", true)?))
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        sedona_internal_err!("return_type() should not be called (use return_field())")
     }
 
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
-        let arg_types = acc_args
+        let arg_fields = acc_args
             .exprs
             .iter()
-            .map(|expr| expr.data_type(acc_args.schema))
+            .map(|expr| expr.return_field(acc_args.schema))
             .collect::<Result<Vec<_>>>()?;
-        let arg_physical_types = Self::sedona_types(&arg_types)?;
-        let (accumulator, output_type) = self.dispatch_impl(&arg_physical_types)?;
-        accumulator.accumulator(&arg_physical_types, &output_type)
+        let arg_types = arg_fields
+            .iter()
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect::<Result<Vec<_>>>()?;
+        let (accumulator, output_type) = self.dispatch_impl(&arg_types)?;
+        accumulator.accumulator(&arg_types, &output_type)
     }
 
     fn documentation(&self) -> Option<&Documentation> {
@@ -220,12 +240,12 @@ mod test {
         // UDF with no implementations
         let udf = SedonaAggregateUDF::new("empty", vec![], Volatility::Immutable, None);
         assert_eq!(udf.name(), "empty");
-        let err = udf.return_type(&[]).unwrap_err();
+        let err = udf.return_field(&[]).unwrap_err();
         assert_eq!(err.message(), "empty([]): No kernel matching arguments");
         assert!(udf.kernels().is_empty());
         assert_eq!(udf.coerce_types(&[])?, vec![]);
 
-        let batch_err = udf.return_type(&[]).unwrap_err();
+        let batch_err = udf.return_field(&[]).unwrap_err();
         assert_eq!(
             batch_err.message(),
             "empty([]): No kernel matching arguments"
@@ -249,7 +269,7 @@ mod test {
         let tester = AggregateUdfTester::new(stub.clone().into(), vec![]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Boolean.try_into().unwrap()
+            SedonaType::Arrow(DataType::Boolean)
         );
 
         let err = tester.aggregate(&vec![]).unwrap_err();
@@ -261,7 +281,7 @@ mod test {
         // If we call with anything else, we shouldn't be able to do anything
         let tester = AggregateUdfTester::new(
             stub.clone().into(),
-            vec![DataType::Binary.try_into().unwrap()],
+            vec![SedonaType::Arrow(DataType::Binary)],
         );
         let err = tester.return_type().unwrap_err();
         assert_eq!(

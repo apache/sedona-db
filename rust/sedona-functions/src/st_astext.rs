@@ -23,20 +23,20 @@ use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_AsText() scalar UDF implementation
 ///
 /// An implementation of WKT writing using GeoRust's wkt crate.
 pub fn st_astext_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_with_aliases(
+    let udf = SedonaScalarUDF::new(
         "st_astext",
         vec![Arc::new(STAsText {})],
         Volatility::Immutable,
         Some(st_astext_doc()),
-        vec!["st_aswkt".to_string()],
-    )
+    );
+    udf.with_aliases(vec!["st_aswkt".to_string()])
 }
 
 fn st_astext_doc() -> Documentation {
@@ -58,7 +58,7 @@ impl SedonaScalarKernel for STAsText {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Utf8.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Utf8),
         );
 
         matcher.match_args(args)

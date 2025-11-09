@@ -297,16 +297,14 @@ mod test {
     fn scalar_udf_errors() {
         let mut udf = S2ScalarUDF::Length();
         let err = udf.init(Fields::empty(), None).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid argument: Expected one argument in unary s2geography UDF"
-        );
+        assert!(err
+            .to_string()
+            .contains("Expected one argument in unary s2geography UDF"));
 
         let err = udf.execute(&[]).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "Invalid argument: Expected one argument/one argument type in in unary s2geography UDF"
-        );
+        assert!(err
+            .to_string()
+            .contains("Expected one argument/one argument type in in unary s2geography UDF"));
     }
 
     #[test]

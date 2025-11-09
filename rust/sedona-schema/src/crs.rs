@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use datafusion_common::{DataFusionError, Result};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -68,6 +68,18 @@ pub fn lnglat() -> Crs {
 /// equality (for binary operators).
 pub type Crs = Option<Arc<dyn CoordinateReferenceSystem + Send + Sync>>;
 
+impl Display for dyn CoordinateReferenceSystem + Send + Sync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Ok(Some(auth_code)) = self.to_authority_code() {
+            write!(f, "{}", auth_code.to_lowercase())
+        } else {
+            // We can probably try harder to get compact output out of more
+            // types of CRSes
+            write!(f, "{{...}}")
+        }
+    }
+}
+
 impl PartialEq<dyn CoordinateReferenceSystem + Send + Sync>
     for dyn CoordinateReferenceSystem + Send + Sync
 {
@@ -88,6 +100,7 @@ pub trait CoordinateReferenceSystem: Debug {
     fn to_json(&self) -> String;
     fn to_authority_code(&self) -> Result<Option<String>>;
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
+    fn srid(&self) -> Result<Option<u32>>;
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system
@@ -120,6 +133,10 @@ impl LngLat {
 
     pub fn is_authority_code_lnglat(string_value: &str) -> bool {
         string_value == "OGC:CRS84" || string_value == "EPSG:4326"
+    }
+
+    pub fn srid() -> Option<u32> {
+        Some(4326)
     }
 }
 
@@ -207,6 +224,17 @@ impl CoordinateReferenceSystem for AuthorityCode {
             (_, _) => false,
         }
     }
+
+    /// Get the SRID if authority is EPSG
+    fn srid(&self) -> Result<Option<u32>> {
+        if self.authority.eq_ignore_ascii_case("EPSG") {
+            Ok(self.code.parse::<u32>().ok())
+        } else if LngLat::is_lnglat(self) {
+            Ok(LngLat::srid())
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -272,6 +300,19 @@ impl CoordinateReferenceSystem for ProjJSON {
             false
         }
     }
+
+    fn srid(&self) -> Result<Option<u32>> {
+        let authority_code_opt = self.to_authority_code()?;
+        if let Some(authority_code) = authority_code_opt {
+            if LngLat::is_authority_code_lnglat(&authority_code) {
+                return Ok(LngLat::srid());
+            } else if let Some((_, code)) = AuthorityCode::split_auth_code(&authority_code) {
+                return Ok(code.parse::<u32>().ok());
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"WGS 84 (CRS84)","datum_ensemble":{"name":"World Geodetic System 1984 ensemble","members":[{"name":"World Geodetic System 1984 (Transit)","id":{"authority":"EPSG","code":1166}},{"name":"World Geodetic System 1984 (G730)","id":{"authority":"EPSG","code":1152}},{"name":"World Geodetic System 1984 (G873)","id":{"authority":"EPSG","code":1153}},{"name":"World Geodetic System 1984 (G1150)","id":{"authority":"EPSG","code":1154}},{"name":"World Geodetic System 1984 (G1674)","id":{"authority":"EPSG","code":1155}},{"name":"World Geodetic System 1984 (G1762)","id":{"authority":"EPSG","code":1156}},{"name":"World Geodetic System 1984 (G2139)","id":{"authority":"EPSG","code":1309}},{"name":"World Geodetic System 1984 (G2296)","id":{"authority":"EPSG","code":1383}}],"ellipsoid":{"name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563},"accuracy":"2.0","id":{"authority":"EPSG","code":6326}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"},{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"}]},"scope":"Not known.","area":"World.","bbox":{"south_latitude":-90,"west_longitude":-180,"north_latitude":90,"east_longitude":180},"id":{"authority":"OGC","code":"CRS84"}}"#;
@@ -279,6 +320,7 @@ pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.
 #[cfg(test)]
 mod test {
     use super::*;
+    const EPSG_6318_PROJJSON: &str = r#"{"$schema": "https://proj.org/schemas/v0.4/projjson.schema.json","type": "GeographicCRS","name": "NAD83(2011)","datum": {"type": "GeodeticReferenceFrame","name": "NAD83 (National Spatial Reference System 2011)","ellipsoid": {"name": "GRS 1980","semi_major_axis": 6378137,"inverse_flattening": 298.257222101}},"coordinate_system": {"subtype": "ellipsoidal","axis": [{"name": "Geodetic latitude","abbreviation": "Lat","direction": "north","unit": "degree"},{"name": "Geodetic longitude","abbreviation": "Lon","direction": "east","unit": "degree"}]},"scope": "Horizontal component of 3D system.","area": "Puerto Rico - onshore and offshore. United States (USA) onshore and offshore - Alabama; Alaska; Arizona; Arkansas; California; Colorado; Connecticut; Delaware; Florida; Georgia; Idaho; Illinois; Indiana; Iowa; Kansas; Kentucky; Louisiana; Maine; Maryland; Massachusetts; Michigan; Minnesota; Mississippi; Missouri; Montana; Nebraska; Nevada; New Hampshire; New Jersey; New Mexico; New York; North Carolina; North Dakota; Ohio; Oklahoma; Oregon; Pennsylvania; Rhode Island; South Carolina; South Dakota; Tennessee; Texas; Utah; Vermont; Virginia; Washington; West Virginia; Wisconsin; Wyoming. US Virgin Islands - onshore and offshore.", "bbox": {"south_latitude": 14.92,"west_longitude": 167.65,"north_latitude": 74.71,"east_longitude": -63.88},"id": {"authority": "EPSG","code": 6318}}"#;
 
     #[test]
     fn deserialize() {
@@ -304,6 +346,7 @@ mod test {
     fn crs_projjson() {
         let projjson = OGC_CRS84_PROJJSON.parse::<ProjJSON>().unwrap();
         assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "OGC:CRS84");
+        assert_eq!(projjson.srid().unwrap(), Some(4326));
 
         let json_value: Value = serde_json::from_str(OGC_CRS84_PROJJSON).unwrap();
         let json_value_roundtrip: Value = serde_json::from_str(&projjson.to_json()).unwrap();
@@ -317,7 +360,11 @@ mod test {
             .to_authority_code()
             .unwrap()
             .is_none());
-        assert!(!projjson.crs_equals(&projjson_without_identifier))
+        assert!(!projjson.crs_equals(&projjson_without_identifier));
+
+        let projjson = EPSG_6318_PROJJSON.parse::<ProjJSON>().unwrap();
+        assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "EPSG:6318");
+        assert_eq!(projjson.srid().unwrap(), Some(6318));
     }
 
     #[test]
@@ -328,6 +375,7 @@ mod test {
         };
         assert!(auth_code.crs_equals(&auth_code));
         assert!(!auth_code.crs_equals(LngLat::crs().unwrap().as_ref()));
+        assert_eq!(auth_code.srid().unwrap(), Some(4269));
 
         assert_eq!(
             auth_code.to_authority_code().unwrap(),
@@ -345,18 +393,24 @@ mod test {
         assert!(AuthorityCode::is_authority_code(&auth_code_parsed.unwrap()));
 
         let value: Value = serde_json::from_str("\"EPSG:4269\"").unwrap();
-        let new_crs = deserialize_crs(&value).unwrap();
+        let new_crs = deserialize_crs(&value).unwrap().unwrap();
         assert_eq!(
-            new_crs.unwrap().to_authority_code().unwrap(),
+            new_crs.to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
+        assert_eq!(new_crs.srid().unwrap(), Some(4269));
 
         // Ensure we can also just pass a code here
         let value: Value = serde_json::from_str("\"4269\"").unwrap();
         let new_crs = deserialize_crs(&value).unwrap();
         assert_eq!(
-            new_crs.unwrap().to_authority_code().unwrap(),
+            new_crs.clone().unwrap().to_authority_code().unwrap(),
             Some("EPSG:4269".to_string())
         );
+        assert_eq!(new_crs.unwrap().srid().unwrap(), Some(4269));
+
+        let value: Value = serde_json::from_str("\"EPSG:4326\"").unwrap();
+        let new_crs = deserialize_crs(&value).unwrap();
+        assert_eq!(new_crs.clone().unwrap().srid().unwrap(), Some(4326));
     }
 }

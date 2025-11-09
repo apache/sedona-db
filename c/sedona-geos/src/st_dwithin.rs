@@ -18,11 +18,11 @@ use std::sync::Arc;
 
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
@@ -42,7 +42,7 @@ impl SedonaScalarKernel for STDWithin {
                 ArgMatcher::is_geometry(),
                 ArgMatcher::is_numeric(),
             ],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)
@@ -53,25 +53,14 @@ impl SedonaScalarKernel for STDWithin {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Extract the constant scalar value before looping over the input geometries
-        let distance: Option<f64>;
-        if let ColumnarValue::Scalar(scalar_arg) = &args[2] {
-            if scalar_arg.is_null() {
-                distance = None;
-            } else {
-                distance = Some(f64::try_from(scalar_arg.clone())?);
-            }
-        } else {
-            return Err(DataFusionError::Execution(format!(
-                "Invalid distance: {:?}",
-                args[2]
-            )));
-        }
-
+        let arg2 = args[2].cast_to(&DataType::Float64, None)?;
         let executor = GeosExecutor::new(arg_types, args);
+        let arg2_array = arg2.to_array(executor.num_iterations())?;
+        let arg2_f64_array = as_float64_array(&arg2_array)?;
+        let mut arg2_iter = arg2_f64_array.iter();
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         executor.execute_wkb_wkb_void(|lhs, rhs| {
-            match (lhs, rhs, distance) {
+            match (lhs, rhs, arg2_iter.next().unwrap()) {
                 (Some(lhs), Some(rhs), Some(distance)) => {
                     builder.append_value(invoke_scalar(lhs, rhs, distance)?);
                 }
@@ -93,6 +82,7 @@ fn invoke_scalar(lhs: &geos::Geometry, rhs: &geos::Geometry, distance: f64) -> R
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -104,8 +94,6 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_dwithin", st_dwithin_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
@@ -145,13 +133,20 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
-        let distance = 1.0;
+        let distance = 1;
 
         let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
         assert_array_equal(
             &tester
-                .invoke_array_array_scalar(arg1, arg2, distance)
+                .invoke_array_array_scalar(Arc::clone(&arg1), Arc::clone(&arg2), distance)
                 .unwrap(),
+            &expected,
+        );
+
+        let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1)]);
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
+        assert_array_equal(
+            &tester.invoke_arrays(vec![arg1, arg2, distance]).unwrap(),
             &expected,
         );
     }

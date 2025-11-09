@@ -265,15 +265,6 @@ impl Default for Visitor {
     }
 }
 
-impl From<&str> for GeoArrowStringView {
-    fn from(value: &str) -> Self {
-        Self {
-            data: value.as_ptr() as *const i8,
-            size_bytes: value.len() as i64,
-        }
-    }
-}
-
 /// Convert a [SedonaType] to a GeoArrow type identifier
 fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCError> {
     let type_id = match sedona_type {
@@ -290,6 +281,11 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
                 )));
             }
         },
+        SedonaType::Raster => {
+            return Err(GeoArrowCError::Invalid(
+                "GeoArrow does not support Raster types".to_string(),
+            ))
+        }
     };
 
     Ok(type_id)
@@ -414,10 +410,10 @@ mod test {
             DataType::Utf8View
         );
 
-        let err = arrow_storage_type(GeoArrowType_GEOARROW_TYPE_LINESTRING).unwrap_err();
+        let err = arrow_storage_type(0).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Can't guess Arrow type from GeoArrowType with ID 2"
+            "Can't guess Arrow type from GeoArrowType with ID 0"
         );
     }
 }

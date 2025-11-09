@@ -23,13 +23,9 @@ use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::{
-    GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait, MultiPointTrait,
-    MultiPolygonTrait, PointTrait, PolygonTrait,
-};
-use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::is_empty::is_geometry_empty;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 pub fn st_isempty_udf() -> SedonaScalarUDF {
@@ -59,7 +55,7 @@ impl SedonaScalarKernel for STIsEmpty {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Boolean.try_into()?,
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)
@@ -87,30 +83,22 @@ impl SedonaScalarKernel for STIsEmpty {
     }
 }
 
+pub fn is_wkb_empty(item: &Wkb) -> Result<bool> {
+    invoke_scalar(item)
+}
+
 fn invoke_scalar(item: &Wkb) -> Result<bool> {
-    match item.as_type() {
-        geo_traits::GeometryType::Point(point) => Ok(point.coord().is_none()),
-        geo_traits::GeometryType::LineString(linestring) => Ok(linestring.num_coords() == 0),
-        geo_traits::GeometryType::Polygon(polygon) => {
-            Ok(polygon.num_interiors() == 0 && polygon.exterior().is_none())
-        }
-        geo_traits::GeometryType::MultiPoint(multipoint) => Ok(multipoint.num_points() == 0),
-        geo_traits::GeometryType::MultiLineString(multilinestring) => {
-            Ok(multilinestring.num_line_strings() == 0)
-        }
-        geo_traits::GeometryType::MultiPolygon(multipolygon) => {
-            Ok(multipolygon.num_polygons() == 0)
-        }
-        geo_traits::GeometryType::GeometryCollection(geometrycollection) => {
-            Ok(geometrycollection.num_geometries() == 0)
-        }
-        _ => sedona_internal_err!("Invalid geometry type"),
-    }
+    is_geometry_empty(item).map_err(|e| {
+        datafusion_common::error::DataFusionError::Execution(format!(
+            "Failed to check if geometry is empty: {e}"
+        ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -127,8 +115,6 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let tester = ScalarUdfTester::new(st_isempty_udf().into(), vec![sedona_type.clone()]);
 
         tester.assert_return_type(DataType::Boolean);

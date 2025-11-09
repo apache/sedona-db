@@ -21,8 +21,8 @@ use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
@@ -38,7 +38,7 @@ impl SedonaScalarKernel for STDistance {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            DataType::Float64.try_into()?,
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)
@@ -77,6 +77,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry, other_geos_geom: &geos::Geometry) -
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -88,8 +89,6 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf = SedonaScalarUDF::from_kernel("st_distance", st_distance_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(DataType::Float64);

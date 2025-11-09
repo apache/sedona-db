@@ -14,7 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 pub mod crs;
 pub mod datatypes;
 pub mod extension_type;
-pub mod projection;
+pub mod matchers;
+pub mod raster;
+pub mod schema;

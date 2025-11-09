@@ -60,6 +60,6 @@ mimalloc = { workspace = true, optional = true }
 libmimalloc-sys = { workspace = true, optional = true }
 regex = { workspace = true }
 rustyline = "15.0"
-sedona = { path = "../rust/sedona", features = ["aws", "gcp", "http", "proj", "s2geography"] }
+sedona = { path = "../rust/sedona", features = ["aws", "gcp", "http", "proj"] }
 sedona-tg = { path = "../c/sedona-tg" }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "parking_lot", "signal"] }

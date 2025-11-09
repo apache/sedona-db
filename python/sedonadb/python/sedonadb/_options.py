@@ -52,17 +52,3 @@ class Options:
     @width.setter
     def width(self, value: Optional[int]):
         self._width = value
-
-
-def global_options() -> Options:
-    """Access the global options
-
-    Most users should use `sedonadb.options` to access this singleton; however,
-    internal SedonaDB Python code must use this function to avoid a circular
-    dependency.
-    """
-    global _global_options
-    return _global_options
-
-
-_global_options = Options()

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::error::SedonaGeometryError;
-use geo_traits::Dimensions;
+use geo_traits::{CoordTrait, Dimensions};
 use std::io::Write;
 
 pub const WKB_MIN_PROBABLE_BYTES: usize = 21;
@@ -392,6 +392,37 @@ where
     Ok(())
 }
 
+/// Write a single coordinate of CoordTrait to WKB
+/// This function always writes little endian coordinates.
+pub fn write_wkb_coord_trait<C>(buf: &mut impl Write, coord: &C) -> Result<(), SedonaGeometryError>
+where
+    C: CoordTrait<T = f64>,
+{
+    match coord.dim().size() {
+        2 => {
+            let coord_tuple = coord.x_y();
+            write_wkb_coord(buf, coord_tuple)
+        }
+        3 => {
+            let coord_tuple: (<C as CoordTrait>::T, _, _) =
+                (coord.x(), coord.y(), coord.nth_or_panic(2));
+            write_wkb_coord(buf, coord_tuple)
+        }
+        4 => {
+            let coord_tuple = (
+                coord.x(),
+                coord.y(),
+                coord.nth_or_panic(2),
+                coord.nth_or_panic(3),
+            );
+            write_wkb_coord(buf, coord_tuple)
+        }
+        _ => Err(SedonaGeometryError::Invalid(
+            "Unsupported number of dimensions".to_string(),
+        )),
+    }
+}
+
 /// Write multiple coordinates to WKB
 ///
 /// This function takes an iterator of coordinates and writes them to the provided buffer.
@@ -469,7 +500,8 @@ fn count_to_u32(count: usize) -> Result<u32, SedonaGeometryError> {
 mod test {
     use std::str::FromStr;
     use wkb::reader::read_wkb;
-    use wkb::writer::write_geometry;
+    use wkb::writer::{write_geometry, WriteOptions};
+    use wkb::Endianness;
     use wkt::Wkt;
 
     use super::*;
@@ -478,7 +510,14 @@ mod test {
     fn test_wkb_point() {
         let wkt: Wkt = Wkt::from_str("POINT (0 1)").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_point((0.0, 1.0)).unwrap(), wkb);
     }
 
@@ -530,15 +569,54 @@ mod test {
     }
 
     #[test]
+    fn test_write_wkb_coord_trait() {
+        let cases = [
+            (None, None, "POINT(0 1)"),
+            (Some(2.0), None, "POINT Z(0 1 2)"),
+            (None, Some(3.0), "POINT M(0 1 3)"),
+            (Some(2.0), Some(3.0), "POINT ZM(0 1 2 3)"),
+        ];
+        let mut wkb = vec![];
+
+        for (z, m, expected) in cases {
+            let coord = wkt::types::Coord {
+                x: 0.0,
+                y: 1.0,
+                z,
+                m,
+            };
+
+            wkb.clear();
+            write_wkb_point_header(&mut wkb, coord.dim()).unwrap();
+            write_wkb_coord_trait(&mut wkb, &coord).unwrap();
+            check_bytes(&wkb, expected);
+        }
+    }
+
+    #[test]
     fn test_wkb_linestring() {
         let wkt: Wkt = Wkt::from_str("LINESTRING EMPTY").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_linestring([].into_iter()).unwrap(), wkb);
 
         let wkt: Wkt = Wkt::from_str("LINESTRING (0 1, 2 3)").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(
             wkb_linestring([(0.0, 1.0), (2.0, 3.0)].into_iter()).unwrap(),
             wkb
@@ -584,12 +662,26 @@ mod test {
     fn test_wkb_multilinestring() {
         let wkt: Wkt = Wkt::from_str("MULTILINESTRING EMPTY").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_multilinestring([].into_iter()).unwrap(), wkb);
 
         let wkt: Wkt = Wkt::from_str("MULTILINESTRING ((0 0, 1 1, 2 2), (3 3, 4 4))").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
 
         let linestrings = vec![
             vec![(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)],
@@ -603,12 +695,26 @@ mod test {
     fn test_wkb_polygon() {
         let wkt: Wkt = Wkt::from_str("POLYGON EMPTY").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_polygon([].into_iter()).unwrap(), wkb);
 
         let wkt: Wkt = Wkt::from_str("POLYGON ((0 0, 1 0, 0 1, 0 0))").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(
             wkb_polygon([(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)].into_iter()).unwrap(),
             wkb
@@ -697,13 +803,27 @@ mod test {
     fn test_wkb_multipolygon() {
         let wkt: Wkt = Wkt::from_str("MULTIPOLYGON EMPTY").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_multipolygon([].into_iter()).unwrap(), wkb);
 
         let wkt: Wkt =
             Wkt::from_str("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((2 2, 3 2, 2 3, 2 2)))").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
 
         let polygons = vec![
             vec![(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)],
@@ -717,12 +837,26 @@ mod test {
     fn test_wkb_multipoint() {
         let wkt: Wkt = Wkt::from_str("MULTIPOINT EMPTY").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(wkb_multipoint([].into_iter()).unwrap(), wkb);
 
         let wkt: Wkt = Wkt::from_str("MULTIPOINT ((0 0), (1 1))").unwrap();
         let mut wkb = vec![];
-        write_geometry(&mut wkb, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        write_geometry(
+            &mut wkb,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
 
         let points = vec![(0.0, 0.0), (1.0, 1.0)];
         assert_eq!(wkb_multipoint(points.into_iter()).unwrap(), wkb);

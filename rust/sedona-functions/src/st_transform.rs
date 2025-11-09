@@ -17,9 +17,11 @@
 use std::vec;
 
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
-use sedona_expr::scalar_udf::ArgMatcher;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::{
+    datatypes::{Edges, SedonaType},
+    matchers::ArgMatcher,
+};
 
 /// St_Transform() UDF implementation
 ///
@@ -30,9 +32,12 @@ pub fn st_transform_udf() -> SedonaScalarUDF {
         ArgMatcher::new(
             vec![
                 ArgMatcher::is_geometry_or_geography(),
-                ArgMatcher::is_string(),
-                ArgMatcher::is_optional(ArgMatcher::is_string()),
-                ArgMatcher::is_optional(ArgMatcher::is_boolean()),
+                ArgMatcher::or(vec![ArgMatcher::is_string(), ArgMatcher::is_numeric()]),
+                ArgMatcher::optional(ArgMatcher::or(vec![
+                    ArgMatcher::is_string(),
+                    ArgMatcher::is_numeric(),
+                ])),
+                ArgMatcher::optional(ArgMatcher::is_boolean()),
             ],
             SedonaType::Wkb(Edges::Planar, None),
         ),

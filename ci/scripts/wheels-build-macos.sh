@@ -43,8 +43,7 @@ source ./wheels-bootstrap-vcpkg.sh
 export CIBW_REPAIR_WHEEL_COMMAND_MACOS="DYLD_LIBRARY_PATH=$VCPKG_INSTALL_NAME_DIR delocate-listdeps {wheel} && DYLD_LIBRARY_PATH=$VCPKG_INSTALL_NAME_DIR delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}"
 
 # Pass on environment variables specifically for the build
-export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS MACOSX_DEPLOYMENT_TARGET=12.0 CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS _PYTHON_HOST_PLATFORM=macosx-12.0-arm64 MACOSX_DEPLOYMENT_TARGET=12.0 CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'"
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --output-dir python/$1/dist python/$1
-popd

@@ -96,3 +96,21 @@ impl BinaryPredicate for Touches {
         lhs.touches(rhs)
     }
 }
+
+/// Check if the geometries cross
+#[derive(Debug, Default)]
+pub struct Crosses {}
+impl BinaryPredicate for Crosses {
+    fn evaluate(lhs: &Geometry, rhs: &Geometry) -> GResult<bool> {
+        lhs.crosses(rhs)
+    }
+}
+
+/// Check if the geometries overlap
+#[derive(Debug, Default)]
+pub struct Overlaps {}
+impl BinaryPredicate for Overlaps {
+    fn evaluate(lhs: &Geometry, rhs: &Geometry) -> GResult<bool> {
+        lhs.overlaps(rhs)
+    }
+}

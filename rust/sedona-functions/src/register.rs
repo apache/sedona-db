@@ -64,11 +64,14 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_astext::st_astext_udf,
+        crate::st_azimuth::st_azimuth_udf,
         crate::st_buffer::st_buffer_udf,
         crate::st_centroid::st_centroid_udf,
         crate::st_dimension::st_dimension_udf,
+        crate::st_dump::st_dump_udf,
         crate::st_dwithin::st_dwithin_udf,
         crate::st_envelope::st_envelope_udf,
+        crate::st_flipcoordinates::st_flipcoordinates_udf,
         crate::st_geometrytype::st_geometry_type_udf,
         crate::st_geomfromwkb::st_geogfromwkb_udf,
         crate::st_geomfromwkb::st_geomfromwkb_udf,
@@ -76,33 +79,48 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geomfromwkt::st_geomfromwkt_udf,
         crate::st_haszm::st_hasm_udf,
         crate::st_haszm::st_hasz_udf,
+        crate::st_isclosed::st_isclosed_udf,
+        crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
         crate::st_length::st_length_udf,
+        crate::st_makeline::st_makeline_udf,
+        crate::st_numgeometries::st_numgeometries_udf,
         crate::st_perimeter::st_perimeter_udf,
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,
-        crate::st_pointzm::st_pointz_udf,
+        crate::st_pointn::st_pointn_udf,
+        crate::st_points::st_npoints_udf,
+        crate::st_points::st_points_udf,
         crate::st_pointzm::st_pointm_udf,
+        crate::st_pointzm::st_pointz_udf,
         crate::st_pointzm::st_pointzm_udf,
-        crate::st_transform::st_transform_udf,
+        crate::st_setsrid::st_set_crs_udf,
         crate::st_setsrid::st_set_srid_udf,
+        crate::st_srid::st_crs_udf,
+        crate::st_srid::st_srid_udf,
+        crate::st_start_point::st_end_point_udf,
+        crate::st_start_point::st_start_point_udf,
+        crate::st_transform::st_transform_udf,
+        crate::st_translate::st_translate_udf,
+        crate::st_xyzm_minmax::st_mmax_udf,
+        crate::st_xyzm_minmax::st_mmin_udf,
+        crate::st_xyzm_minmax::st_xmax_udf,
+        crate::st_xyzm_minmax::st_xmin_udf,
+        crate::st_xyzm_minmax::st_ymax_udf,
+        crate::st_xyzm_minmax::st_ymin_udf,
+        crate::st_xyzm_minmax::st_zmax_udf,
+        crate::st_xyzm_minmax::st_zmin_udf,
         crate::st_xyzm::st_m_udf,
         crate::st_xyzm::st_x_udf,
         crate::st_xyzm::st_y_udf,
         crate::st_xyzm::st_z_udf,
-        crate::st_xyzm_minmax::st_xmin_udf,
-        crate::st_xyzm_minmax::st_ymin_udf,
-        crate::st_xyzm_minmax::st_xmax_udf,
-        crate::st_xyzm_minmax::st_ymax_udf,
-        crate::st_xyzm_minmax::st_zmin_udf,
-        crate::st_xyzm_minmax::st_zmax_udf,
-        crate::st_xyzm_minmax::st_mmin_udf,
-        crate::st_xyzm_minmax::st_mmax_udf,
+        crate::st_zmflag::st_zmflag_udf,
     );
 
     register_aggregate_udfs!(
         function_set,
         crate::st_analyze_aggr::st_analyze_aggr_udf,
+        crate::st_collect::st_collect_udf,
         crate::st_envelope_aggr::st_envelope_aggr_udf,
         crate::st_intersection_aggr::st_intersection_aggr_udf,
         crate::st_union_aggr::st_union_aggr_udf,
@@ -121,8 +139,11 @@ pub mod stubs {
     pub use crate::predicates::*;
     pub use crate::referencing::*;
     pub use crate::st_area::st_area_udf;
+    pub use crate::st_azimuth::st_azimuth_udf;
+    pub use crate::st_centroid::st_centroid_udf;
     pub use crate::st_length::st_length_udf;
     pub use crate::st_perimeter::st_perimeter_udf;
+    pub use crate::st_setsrid::st_set_crs_with_engine_udf;
     pub use crate::st_setsrid::st_set_srid_with_engine_udf;
     pub use crate::st_transform::st_transform_udf;
 }

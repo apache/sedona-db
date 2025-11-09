@@ -29,15 +29,19 @@ use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use datafusion_common::Result;
 use geo_types::{
-    Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect,
+    Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
+    Point, Polygon, Rect,
 };
 use rand::distributions::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 use std::f64::consts::PI;
 use std::sync::Arc;
+use wkb::writer::WriteOptions;
+use wkb::Endianness;
 
 /// Builder for generating test data partitions with random geometries.
 ///
@@ -305,7 +309,7 @@ impl RandomPartitionedDataBuilder {
         Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("dist", DataType::Float64, false),
-            Field::new("geometry", self.sedona_type.clone().into(), true),
+            self.sedona_type.to_storage_field("geometry", true).unwrap(),
         ]))
     }
 
@@ -404,7 +408,7 @@ impl RandomPartitionedDataBuilder {
         // Create Arrow arrays
         let id_array = Arc::new(Int32Array::from(ids));
         let dist_array = Arc::new(Float64Array::from(distances));
-        let geometry_array = create_wkb_array(wkb_geometries, &self.sedona_type);
+        let geometry_array = create_wkb_array(wkb_geometries, &self.sedona_type)?;
 
         // Create RecordBatch
         Ok(RecordBatch::try_new(
@@ -415,13 +419,15 @@ impl RandomPartitionedDataBuilder {
 }
 
 /// Create an ArrayRef from a vector of WKB bytes based on the sedona type
-fn create_wkb_array(wkb_values: Vec<Option<Vec<u8>>>, sedona_type: &SedonaType) -> ArrayRef {
-    let storage_array: ArrayRef = match sedona_type {
-        SedonaType::Wkb(_, _) => Arc::new(BinaryArray::from_iter(wkb_values)),
-        SedonaType::WkbView(_, _) => Arc::new(BinaryViewArray::from_iter(wkb_values)),
-        _ => panic!("create_wkb_array not implemented for {sedona_type:?}"),
-    };
-    sedona_type.wrap_array(&storage_array).unwrap()
+fn create_wkb_array(
+    wkb_values: Vec<Option<Vec<u8>>>,
+    sedona_type: &SedonaType,
+) -> Result<ArrayRef> {
+    match sedona_type {
+        SedonaType::Wkb(_, _) => Ok(Arc::new(BinaryArray::from_iter(wkb_values))),
+        SedonaType::WkbView(_, _) => Ok(Arc::new(BinaryViewArray::from_iter(wkb_values))),
+        _ => sedona_internal_err!("create_wkb_array not implemented for {sedona_type:?}"),
+    }
 }
 
 struct RandomPartitionedDataReader<R> {
@@ -498,7 +504,14 @@ fn generate_random_wkb<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOption
 
     // Convert geometry to WKB
     let mut out: Vec<u8> = vec![];
-    wkb::writer::write_geometry(&mut out, &geometry, Default::default()).unwrap();
+    wkb::writer::write_geometry(
+        &mut out,
+        &geometry,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .unwrap();
     out
 }
 
@@ -521,13 +534,13 @@ fn generate_random_geometry<R: rand::Rng>(
         GeometryTypeId::MultiPolygon => {
             Geometry::MultiPolygon(generate_random_multipolygon(rng, options))
         }
-        _ => {
-            // For other geometry types, default to generating a point
-            let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x);
-            let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y);
-            let x = rng.sample(x_dist);
-            let y = rng.sample(y_dist);
-            Geometry::Point(Point::new(x, y))
+        GeometryTypeId::GeometryCollection => {
+            Geometry::GeometryCollection(generate_random_geometrycollection(rng, options))
+        }
+        GeometryTypeId::Geometry => {
+            let mut copy_options = options.clone();
+            copy_options.geom_type = pick_random_geometry_type(rng);
+            generate_random_geometry(rng, &copy_options)
         }
     }
 }
@@ -562,7 +575,8 @@ fn generate_random_linestring<R: rand::Rng>(
         );
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
-        let coords = generate_circular_vertices(center_x, center_y, half_size, num_vertices, false);
+        let coords =
+            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, false);
         LineString::from(coords)
     }
 }
@@ -578,7 +592,8 @@ fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOp
         );
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
-        let coords = generate_circular_vertices(center_x, center_y, half_size, num_vertices, true);
+        let coords =
+            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, true);
         let shell = LineString::from(coords);
         let mut holes = Vec::new();
 
@@ -589,7 +604,7 @@ fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOp
         if add_hole {
             let new_size = half_size * hole_scale_factor;
             let mut coords =
-                generate_circular_vertices(center_x, center_y, new_size, num_vertices, true);
+                generate_circular_vertices(rng, center_x, center_y, new_size, num_vertices, true);
             coords.reverse();
             holes.push(LineString::from(coords));
         }
@@ -634,6 +649,18 @@ fn generate_random_multipolygon<R: rand::Rng>(
     }
 }
 
+fn generate_random_geometrycollection<R: rand::Rng>(
+    rng: &mut R,
+    options: &RandomGeometryOptions,
+) -> GeometryCollection {
+    if rng.gen_bool(options.empty_rate) {
+        GeometryCollection::new_from(vec![])
+    } else {
+        let children = generate_random_children(rng, options, generate_random_geometry);
+        GeometryCollection::new_from(children)
+    }
+}
+
 fn generate_random_children<R: Rng, T, F: Fn(&mut R, &RandomGeometryOptions) -> T>(
     rng: &mut R,
     options: &RandomGeometryOptions,
@@ -665,10 +692,27 @@ fn generate_random_children<R: Rng, T, F: Fn(&mut R, &RandomGeometryOptions) -> 
         child_options.bounds = bounds;
         let child_size = bounds.height().min(bounds.width());
         child_options.size_range = (child_size * 0.9, child_size);
+
+        // If GeometryCollection, pick a random geometry type
+        // Don't support nested GeometryCollection for now to avoid too much recursion
+        if options.geom_type == GeometryTypeId::GeometryCollection {
+            child_options.geom_type = pick_random_geometry_type(rng);
+        }
         children.push(func(rng, &child_options));
     }
 
     children
+}
+
+fn pick_random_geometry_type<R: Rng>(rng: &mut R) -> GeometryTypeId {
+    [
+        GeometryTypeId::Point,
+        GeometryTypeId::LineString,
+        GeometryTypeId::Polygon,
+        GeometryTypeId::MultiPoint,
+        GeometryTypeId::MultiLineString,
+        GeometryTypeId::MultiPolygon,
+    ][rng.gen_range(0..6)]
 }
 
 fn generate_random_circle<R: rand::Rng>(
@@ -723,7 +767,8 @@ fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> V
     tiles
 }
 
-fn generate_circular_vertices(
+fn generate_circular_vertices<R: rand::Rng>(
+    rng: &mut R,
     center_x: f64,
     center_y: f64,
     radius: f64,
@@ -731,7 +776,11 @@ fn generate_circular_vertices(
     closed: bool,
 ) -> Vec<Coord> {
     let mut out = Vec::new();
-    let mut angle: f64 = 0.0;
+
+    // Randomize starting angle (0 to 2 * PI)
+    let start_angle_dist = Uniform::new(0.0, 2.0 * PI);
+    let mut angle: f64 = rng.sample(start_angle_dist);
+
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
     for _ in 0..num_vertices {
         out.push(Coord {
@@ -1119,6 +1168,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_random_geometrycollection_part_count() {
+        let mut rng = StdRng::seed_from_u64(123);
+        let mut options = RandomGeometryOptions::new();
+
+        options.num_parts_range = (3, 3);
+        for _ in 0..100 {
+            let geom = generate_random_geometrycollection(&mut rng, &options);
+            assert_eq!(geom.len(), 3);
+        }
+
+        options.num_parts_range = (10, 10);
+        for _ in 0..100 {
+            let geom = generate_random_geometrycollection(&mut rng, &options);
+            assert_eq!(geom.len(), 10);
+        }
+    }
+
     #[rstest]
     fn test_random_geometry_type(
         #[values(
@@ -1127,7 +1194,8 @@ mod tests {
             GeometryTypeId::Polygon,
             GeometryTypeId::MultiPoint,
             GeometryTypeId::MultiLineString,
-            GeometryTypeId::MultiPolygon
+            GeometryTypeId::MultiPolygon,
+            GeometryTypeId::GeometryCollection
         )]
         geom_type: GeometryTypeId,
     ) {
@@ -1152,7 +1220,8 @@ mod tests {
             GeometryTypeId::Polygon,
             GeometryTypeId::MultiPoint,
             GeometryTypeId::MultiLineString,
-            GeometryTypeId::MultiPolygon
+            GeometryTypeId::MultiPolygon,
+            GeometryTypeId::GeometryCollection
         )]
         geom_type: GeometryTypeId,
     ) {

@@ -17,10 +17,7 @@
 use adbc_core::PartitionedResult;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::Schema;
-use sedona::{
-    context::{SedonaContext, SedonaDataFrame},
-    reader::SedonaStreamReader,
-};
+use sedona::{context::SedonaContext, reader::SedonaStreamReader};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -100,10 +97,7 @@ impl Statement for SedonaStatement {
         if let Some(query) = self.sql_query.clone() {
             self.runtime.block_on(async {
                 let df = self.ctx.sql(&query).await.map_err(from_datafusion_error)?;
-                let stream = df
-                    .execute_stream_sedona()
-                    .await
-                    .map_err(from_datafusion_error)?;
+                let stream = df.execute_stream().await.map_err(from_datafusion_error)?;
                 Ok(SedonaStreamReader::new(self.runtime.clone(), stream))
             })
         } else {

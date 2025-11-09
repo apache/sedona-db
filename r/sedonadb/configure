@@ -1,0 +1,91 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# We need to link GEOS libs. The cargo build will use pkg-config
+# and then geos-config, in that order, and requires pkg-config to be
+# available (even if it isn't used). Here we just try pkg-config (LIB_DIR
+# can be used to specify the location of -lgeos_c)
+
+pkg-config geos  2>/dev/null
+if [ $? -eq 0 ]; then
+  PKGCONFIG_LIBS=`pkg-config --libs geos`
+fi
+
+if [ "$LIB_DIR" ]; then
+  echo "Found LIB_DIR!"
+  PKG_LIBS="-L$LIB_DIR -lgeos_c $PKG_LIBS"
+elif [ "$PKGCONFIG_CFLAGS" ] || [ "$PKGCONFIG_LIBS" ]; then
+  echo "Found GEOS pkg-config libs!"
+  PKG_LIBS=${PKGCONFIG_LIBS}
+fi
+
+
+# Even when `cargo` is on `PATH`, `rustc` might not in some cases. This adds
+# ~/.cargo/bin to PATH to address such cases. Note that is not always available
+# (e.g. or on Ubuntu with Rust installed via APT).
+if [ -d "${HOME}/.cargo/bin" ]; then
+  export PATH="${PATH}:${HOME}/.cargo/bin"
+fi
+
+CARGO_VERSION="$(cargo --version)"
+
+if [ $? -ne 0 ]; then
+  echo "-------------- ERROR: CONFIGURATION FAILED --------------------"
+  echo ""
+  echo "The cargo command is not available. To install Rust, please refer"
+  echo "to the official instruction:"
+  echo ""
+  echo "https://www.rust-lang.org/tools/install"
+  echo ""
+  echo "---------------------------------------------------------------"
+
+  exit 1
+fi
+
+# There's a little chance that rustc is not available on PATH while cargo is.
+# So, just ignore the error case.
+RUSTC_VERSION="$(rustc --version || true)"
+
+# Report the version of Rustc to comply with the CRAN policy
+echo "using Rust package manager: '${CARGO_VERSION}'"
+echo "using Rust compiler: '${RUSTC_VERSION}'"
+
+if [ "$(uname)" = "Emscripten" ]; then
+  TARGET="wasm32-unknown-emscripten"
+fi
+
+# allow overriding profile externally (e.g. on CI)
+if [ -n "${SAVVY_PROFILE}" ]; then
+  PROFILE="${SAVVY_PROFILE}"
+# catch DEBUG envvar, which is passed from pkgbuild::compile_dll()
+elif [ "${DEBUG}" = "true" ]; then
+  PROFILE=dev
+else
+  PROFILE=release
+fi
+
+# e.g. SAVVY_FEATURES="a b"  -->  "--features 'a b'"
+if [ -n "${SAVVY_FEATURES}" ]; then
+  FEATURE_FLAGS="--features '${SAVVY_FEATURES}'"
+fi
+
+sed \
+  -e "s/@TARGET@/${TARGET}/" \
+  -e "s/@PROFILE@/${PROFILE}/" \
+  -e "s/@FEATURE_FLAGS@/${FEATURE_FLAGS}/" \
+  -e "s|@PKG_LIBS@|${PKG_LIBS}|" \
+  src/Makevars.in > src/Makevars

@@ -14,13 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::Arc;
+use std::{iter::zip, sync::Arc};
 
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel, TypeMatcher};
-use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY},
+    matchers::{ArgMatcher, TypeMatcher},
+};
 
 use crate::s2geography::S2ScalarUDF;
 
@@ -29,7 +32,7 @@ pub fn st_area_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Area,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -56,7 +59,7 @@ pub fn st_contains_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Contains,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -83,7 +86,7 @@ pub fn st_distance_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Distance,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -92,7 +95,7 @@ pub fn st_equals_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Equals,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -110,7 +113,7 @@ pub fn st_intersects_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Intersects,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Boolean.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Boolean),
     )
 }
 
@@ -119,7 +122,7 @@ pub fn st_length_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Length,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -137,7 +140,7 @@ pub fn st_line_locate_point_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::LineLocatePoint,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -146,7 +149,7 @@ pub fn st_max_distance_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::MaxDistance,
         vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -155,7 +158,7 @@ pub fn st_perimeter_impl() -> ScalarKernelRef {
     S2ScalarKernel::new_ref(
         S2ScalarUDF::Perimeter,
         vec![ArgMatcher::is_geography()],
-        DataType::Float64.try_into().unwrap(),
+        SedonaType::Arrow(DataType::Float64),
     )
 }
 
@@ -218,8 +221,13 @@ impl SedonaScalarKernel for S2ScalarKernel {
     ) -> Result<ColumnarValue> {
         let mut inner = (self.inner_factory)();
 
+        let arg_types_if_null = self.matcher.types_if_null(arg_types)?;
+        let args_casted_null = zip(args, &arg_types_if_null)
+            .map(|(arg, type_if_null)| arg.cast_to(type_if_null.storage_type(), None))
+            .collect::<Result<Vec<_>>>()?;
+
         // S2's scalar UDFs operate on fields with extension metadata
-        let arg_fields = arg_types
+        let arg_fields = arg_types_if_null
             .iter()
             .map(|arg_type| arg_type.to_storage_field("", true))
             .collect::<Result<Vec<_>>>()?;
@@ -228,7 +236,7 @@ impl SedonaScalarKernel for S2ScalarKernel {
         let out_ffi_schema = inner.init(arg_fields.into(), None)?;
 
         // Create arrays from each argument (scalars become arrays of size 1)
-        let arg_arrays = args
+        let arg_arrays = args_casted_null
             .iter()
             .map(|arg| match arg {
                 ColumnarValue::Array(array) => Ok(array.clone()),
@@ -274,7 +282,7 @@ mod test {
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Float64.try_into().unwrap()
+            SedonaType::Arrow(DataType::Float64)
         );
 
         // Array -> Array
@@ -299,6 +307,10 @@ mod test {
             .invoke_wkb_scalar(Some("LINESTRING (0 0, 0 1)"))
             .unwrap();
         assert_eq!(result, ScalarValue::Float64(Some(111195.10117748393)));
+
+        // Null scalar -> Null
+        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
+        assert_eq!(result, ScalarValue::Float64(None));
     }
 
     #[rstest]
@@ -308,7 +320,7 @@ mod test {
             ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         assert_eq!(
             tester.return_type().unwrap(),
-            DataType::Boolean.try_into().unwrap()
+            SedonaType::Arrow(DataType::Boolean)
         );
 
         let point_array = create_array(
@@ -338,6 +350,12 @@ mod test {
             .invoke_scalar_scalar(polygon_scalar, point_scalar)
             .unwrap();
         assert_eq!(result, ScalarValue::Boolean(Some(true)));
+
+        // Null scalars -> Null
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(None));
     }
 
     #[test]
@@ -463,7 +481,7 @@ mod test {
         );
         let tester = ScalarUdfTester::new(
             udf.into(),
-            vec![WKB_GEOGRAPHY, DataType::Float64.try_into().unwrap()],
+            vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Float64)],
         );
         tester.assert_return_type(WKB_GEOGRAPHY);
         let result = tester

@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 /// Strongly-typed structs corresponding to the metadata provided by the GeoParquet specification.
 ///
 /// This is a slightly modified version of geoarrow-rs/rust/geoarrow-geoparquet (modified
@@ -38,10 +39,11 @@ use serde_json::Value;
 ///
 /// In contrast to the _user-specified API_, which is just "WKB" or "Native", here we need to know
 /// the actual written encoding type so that we can save that in the metadata.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum GeoParquetColumnEncoding {
     /// Serialized Well-known Binary encoding
+    #[default]
     WKB,
     /// Native Point encoding
     #[serde(rename = "point")]
@@ -261,6 +263,21 @@ pub struct GeoParquetCovering {
     pub bbox: GeoParquetBboxCovering,
 }
 
+impl GeoParquetCovering {
+    pub fn bbox_struct_xy(struct_column_name: &str) -> Self {
+        GeoParquetCovering {
+            bbox: GeoParquetBboxCovering {
+                xmin: vec![struct_column_name.to_string(), "xmin".to_string()],
+                ymin: vec![struct_column_name.to_string(), "ymin".to_string()],
+                zmin: None,
+                xmax: vec![struct_column_name.to_string(), "xmax".to_string()],
+                ymax: vec![struct_column_name.to_string(), "ymax".to_string()],
+                zmax: None,
+            },
+        }
+    }
+}
+
 /// Top-level GeoParquet file metadata
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeoParquetMetadata {
@@ -276,8 +293,18 @@ pub struct GeoParquetMetadata {
     pub columns: HashMap<String, GeoParquetColumnMetadata>,
 }
 
+impl Default for GeoParquetMetadata {
+    fn default() -> Self {
+        Self {
+            version: "1.0.0".to_string(),
+            primary_column: Default::default(),
+            columns: Default::default(),
+        }
+    }
+}
+
 /// GeoParquet column metadata
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct GeoParquetColumnMetadata {
     /// Name of the geometry encoding format. As of GeoParquet 1.1, `"WKB"`, `"point"`,
     /// `"linestring"`, `"polygon"`, `"multipoint"`, `"multilinestring"`, and `"multipolygon"` are

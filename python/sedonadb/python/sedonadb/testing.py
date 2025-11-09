@@ -63,6 +63,17 @@ class DBEngine:
     of that name.
     """
 
+    def close(self):
+        """Close the connection - base implementation does nothing"""
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     @classmethod
     def name(cls) -> str:
         """This engine's name
@@ -219,7 +230,12 @@ class DBEngine:
 
         if isinstance(expected, pa.Table):
             result_arrow = self.result_to_table(result)
-            if result_arrow != expected:
+            if result_arrow.schema != expected.schema:
+                raise AssertionError(
+                    f"Expected schema:\n  {expected.schema}\nGot:\n  {result_arrow.schema}"
+                )
+
+            if result_arrow.columns != expected.columns:
                 raise AssertionError(f"Expected:\n  {expected}\nGot:\n  {result_arrow}")
 
             # It is probably a bug in geoarrow.types.type_parrow that CRS mismatches
@@ -308,7 +324,7 @@ class SedonaDB(DBEngine):
         return cls(*args, **kwargs)
 
     def create_table_parquet(self, name, paths) -> "SedonaDB":
-        self.con.read_parquet(paths).collect().to_view(name, overwrite=True)
+        self.con.read_parquet(paths).to_memtable().to_view(name, overwrite=True)
         return self
 
     def create_view_parquet(self, name, paths) -> "SedonaDB":
@@ -326,6 +342,15 @@ class SedonaDB(DBEngine):
     def execute_and_collect(self, query) -> "sedonadb.dataframe.DataFrame":
         # Use to_arrow_table() to maintain ordering of the input table
         return self.con.sql(query).to_arrow_table()
+
+
+class SedonaDBSingleThread(SedonaDB):
+    """SedonaDB configured for single-threaded execution"""
+
+    def __init__(self):
+        super().__init__()
+        # Force single-threaded execution
+        self.con.sql("SET datafusion.execution.target_partitions TO 1")
 
 
 class DuckDB(DBEngine):
@@ -379,6 +404,14 @@ class DuckDB(DBEngine):
         return self.con.sql(query).fetch_arrow_table()
 
 
+class DuckDBSingleThread(DuckDB):
+    """DuckDB configured for single-threaded execution"""
+
+    def __init__(self):
+        super().__init__()
+        self.con.sql("SET threads TO 1")
+
+
 class PostGIS(DBEngine):
     """A PostGIS implementation of the DBEngine using ADBC
 
@@ -393,6 +426,11 @@ class PostGIS(DBEngine):
         if uri is None:
             uri = "postgresql://localhost:5432/postgres?user=postgres&password=password"
         self.con = adbc_driver_postgresql.dbapi.connect(uri)
+
+    def close(self):
+        """Close the connection"""
+        if self.con:
+            self.con.close()
 
     @classmethod
     def name(cls):
@@ -575,6 +613,15 @@ class PostGIS(DBEngine):
                 cur.fetchall()
 
         return col_srid
+
+
+class PostGISSingleThread(PostGIS):
+    """PostGIS configured for single-threaded (no parallel workers) execution"""
+
+    def __init__(self, uri=None):
+        super().__init__(uri)
+        with self.con.cursor() as cur:
+            cur.execute("SET max_parallel_workers_per_gather TO 0")
 
 
 def geom_or_null(arg):

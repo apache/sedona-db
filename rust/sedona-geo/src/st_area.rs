@@ -20,10 +20,10 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use geo_generic_alg::Area;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
-use sedona_schema::datatypes::SedonaType;
+use sedona_geo_generic_alg::Area;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Area() implementation using [Area]
@@ -38,7 +38,7 @@ impl SedonaScalarKernel for STArea {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)

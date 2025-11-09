@@ -24,8 +24,11 @@ use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 use crate::executor::WkbExecutor;
 
@@ -152,13 +155,12 @@ fn populate_wkb_item(item: &mut [u8], x: &f64, y: &f64) {
 #[cfg(test)]
 mod tests {
     use arrow_array::create_array;
+    use arrow_array::ArrayRef;
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_testing::{
-        compare::assert_value_equal,
-        create::{create_array_value, create_scalar_value},
-    };
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
 
@@ -185,74 +187,60 @@ mod tests {
         let lhs_scalar = ScalarValue::Float64(Some(1.0)).cast_to(&lhs_type).unwrap();
         let rhs_scalar_null = ScalarValue::Float64(None).cast_to(&rhs_type).unwrap();
         let rhs_scalar = ScalarValue::Float64(Some(2.0)).cast_to(&rhs_type).unwrap();
-        let lhs_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(1.0), Some(2.0), None, None]))
-                .cast_to(&lhs_type, None)
-                .unwrap();
-        let rhs_array =
-            ColumnarValue::Array(create_array!(Float64, [Some(5.0), None, Some(7.0), None]))
-                .cast_to(&rhs_type, None)
-                .unwrap();
+        let lhs_array: ArrayRef = create_array!(Float64, [Some(1.0), Some(2.0), None, None]);
+        let rhs_array: ArrayRef = create_array!(Float64, [Some(5.0), None, Some(7.0), None]);
 
-        // Check scalar
-        assert_value_equal(
-            &udf.invoke_batch(&[lhs_scalar.clone().into(), rhs_scalar.clone().into()], 3)
-                .unwrap(),
-            &create_scalar_value(Some("POINT (1 2)"), &WKB_GEOMETRY),
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::Arrow(lhs_type), SedonaType::Arrow(rhs_type)],
         );
+
+        // Check scalars
+        let result = tester
+            .invoke_scalar_scalar(lhs_scalar.clone(), rhs_scalar.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 2)");
 
         // Check scalar null combinations
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[lhs_scalar.clone().into(), rhs_scalar_null.clone().into()],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        let result = tester
+            .invoke_scalar_scalar(lhs_scalar.clone(), rhs_scalar_null.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[lhs_scalar_null.clone().into(), rhs_scalar.clone().into()],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        let result = tester
+            .invoke_scalar_scalar(lhs_scalar_null.clone(), rhs_scalar.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    lhs_scalar_null.clone().into(),
-                    rhs_scalar_null.clone().into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(None, &WKB_GEOMETRY),
-        );
+        let result = tester
+            .invoke_scalar_scalar(lhs_scalar_null.clone(), rhs_scalar_null.clone())
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
         // Check array
-        assert_value_equal(
-            &udf.invoke_batch(&[lhs_array.clone(), rhs_array.clone()], 4)
+        assert_array_equal(
+            &tester
+                .invoke_array_array(lhs_array.clone(), rhs_array.clone())
                 .unwrap(),
-            &create_array_value(&[Some("POINT (1 5)"), None, None, None], &WKB_GEOMETRY),
+            &create_array(&[Some("POINT (1 5)"), None, None, None], &WKB_GEOMETRY),
         );
 
         // Check array/scalar combinations
-        assert_value_equal(
-            &udf.invoke_batch(&[lhs_array.clone(), rhs_scalar.clone().into()], 4)
+        assert_array_equal(
+            &tester
+                .invoke_array_scalar(lhs_array.clone(), rhs_scalar.clone())
                 .unwrap(),
-            &create_array_value(
+            &create_array(
                 &[Some("POINT (1 2)"), Some("POINT (2 2)"), None, None],
                 &WKB_GEOMETRY,
             ),
         );
 
-        assert_value_equal(
-            &udf.invoke_batch(&[lhs_scalar.clone().into(), rhs_array], 4)
+        assert_array_equal(
+            &tester
+                .invoke_scalar_array(lhs_scalar.clone(), rhs_array.clone())
                 .unwrap(),
-            &create_array_value(
+            &create_array(
                 &[Some("POINT (1 5)"), None, Some("POINT (1 7)"), None],
                 &WKB_GEOMETRY,
             ),
@@ -262,17 +250,16 @@ mod tests {
     #[test]
     fn geog() {
         let udf = st_geogpoint_udf();
-
-        assert_value_equal(
-            &udf.invoke_batch(
-                &[
-                    ScalarValue::Float64(Some(1.0)).into(),
-                    ScalarValue::Float64(Some(2.0)).into(),
-                ],
-                1,
-            )
-            .unwrap(),
-            &create_scalar_value(Some("POINT (1 2)"), &WKB_GEOGRAPHY),
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
+
+        tester.assert_return_type(WKB_GEOGRAPHY);
+        let result = tester.invoke_scalar_scalar(1.0, 2.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }
 }

@@ -33,11 +33,18 @@ dynamic = ["version"]
 test = [
     "adbc-driver-manager[dbapi]",
     "adbc-driver-postgresql",
+    "datafusion",
     "duckdb",
     "geoarrow-pyarrow",
     "geopandas",
     "pandas",
+    "polars",
     "pytest",
+]
+geopandas = [
+    "adbc-driver-manager[dbapi]",
+    "geoarrow-pyarrow",
+    "geopandas",
 ]
 
 [tool.maturin]

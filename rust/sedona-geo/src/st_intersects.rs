@@ -20,10 +20,10 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use geo_generic_alg::Intersects;
-use sedona_expr::scalar_udf::{ArgMatcher, ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
-use sedona_schema::datatypes::SedonaType;
+use sedona_geo_generic_alg::Intersects;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Intersects() implementation using [Intersects]
@@ -38,7 +38,7 @@ impl SedonaScalarKernel for STIntersects {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            DataType::Boolean.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Boolean),
         );
 
         matcher.match_args(args)

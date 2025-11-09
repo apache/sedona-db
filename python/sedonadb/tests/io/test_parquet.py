@@ -15,13 +15,17 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
+import json
 import tempfile
-import shapely
-import geopandas
-from pyarrow import parquet
 from pathlib import Path
-from sedonadb.testing import geom_or_null, SedonaDB, DuckDB, skip_if_not_exists
+
+import geopandas
+import geopandas.testing
+import pytest
+import shapely
+from pyarrow import parquet
+from sedonadb._lib import SedonaError
+from sedonadb.testing import DuckDB, SedonaDB, geom_or_null, skip_if_not_exists
 
 
 @pytest.mark.parametrize("name", ["water-junc", "water-point"])
@@ -60,12 +64,24 @@ def test_read_sedona_testing(sedona_testing, name):
 
 
 @pytest.mark.parametrize("name", ["water-junc", "water-point"])
-def test_read_geoparquet_pruned(geoarrow_data, name):
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "intersects",
+        "coveredby",
+        "within",
+        "equals",
+        "disjoint",
+    ],
+)
+def test_read_geoparquet_prune_points(geoarrow_data, name, predicate):
     # Note that this doesn't check that pruning actually occurred, just that
     # for a query where we should be pruning automatically that we don't omit results.
     eng = SedonaDB()
     path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
     skip_if_not_exists(path)
+
+    gdf = geopandas.read_parquet(path)
 
     # Roughly a diamond around Gaspereau Lake, Nova Scotia, in UTM zone 20
     wkt_filter = """
@@ -74,14 +90,22 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
             376000 4983000, 371000 4978000
         ))
     """
+
+    # Use a wkt_filter that will lead to non-empty results
+    if predicate == "equals":
+        wkt_filter = gdf.geometry.iloc[0].wkt
+
     poly_filter = shapely.from_wkt(wkt_filter)
 
-    gdf = geopandas.read_parquet(path)
-    gdf = (
-        gdf[gdf.geometry.intersects(poly_filter)]
-        .sort_values(by="OBJECTID")
-        .reset_index(drop=True)
-    )
+    if predicate == "equals":
+        # Geopandas does not have an equals predicate, so we use the == operator
+        mask = gdf.geometry == poly_filter
+    elif predicate == "coveredby":
+        mask = gdf.geometry.covered_by(poly_filter)
+    else:
+        mask = getattr(gdf.geometry, predicate)(poly_filter)
+
+    gdf = gdf[mask].sort_values(by="OBJECTID").reset_index(drop=True)
     gdf = gdf[["OBJECTID", "geometry"]]
 
     # Make sure this isn't a bogus test
@@ -102,7 +126,7 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT "OBJECTID", geometry FROM tab
-            WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
@@ -127,8 +151,201 @@ def test_read_geoparquet_pruned(geoarrow_data, name):
         result = eng.execute_and_collect(
             f"""
             SELECT * FROM tab_dataset
-            WHERE ST_Intersects(geometry, ST_SetSRID({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
             ORDER BY "OBJECTID";
         """
         )
         eng.assert_result(result, gdf)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "contains",
+        "covers",
+        "touches",
+        "crosses",
+        "overlaps",
+    ],
+)
+def test_read_geoparquet_prune_polygons(sedona_testing, predicate):
+    # Note that this doesn't check that pruning actually occurred, just that
+    # for a query where we should be pruning automatically that we don't omit results.
+    eng = SedonaDB()
+    path = sedona_testing / "data" / "parquet" / "geoparquet-1.0.0.parquet"
+    skip_if_not_exists(path)
+
+    # A point inside of a polygon for contains / covers
+    wkt_filter = "POINT (33.60 -5.54)"
+
+    # Use a wkt_filter that will lead to non-empty results
+    if predicate == "touches":
+        # A point on the boundary of a polygon
+        wkt_filter = "POINT (33.90371119710453 -0.9500000000000001)"
+    elif predicate == "overlaps":
+        # A polygon that intersects the polygon but neither contain each other
+        wkt_filter = "POLYGON ((33 -1.9, 33.00 0, 34 0, 34 -1.9, 33 -1.9))"
+    elif predicate == "crosses":
+        # A linestring that intersects the polygon but is not contained by it
+        wkt_filter = "LINESTRING (33 -1.9, 33.00 0, 34 0, 34 -1.9, 33 -1.9)"
+
+    poly_filter = shapely.from_wkt(wkt_filter)
+
+    gdf = geopandas.read_parquet(path)
+    if predicate == "equals":
+        # Geopandas does not have an equals predicate, so we use the == operator
+        mask = gdf.geometry == poly_filter
+    elif predicate == "coveredby":
+        mask = gdf.geometry.covered_by(poly_filter)
+    else:
+        mask = getattr(gdf.geometry, predicate)(poly_filter)
+
+    gdf = gdf[mask].sort_values(by="pop_est").reset_index(drop=True)
+    gdf = gdf[["pop_est", "geometry"]]
+
+    # Make sure this isn't a bogus test
+    assert len(gdf) > 0
+
+    with tempfile.TemporaryDirectory() as td:
+        # Write using GeoPandas, which implements GeoParquet 1.1 bbox covering
+        # Write tiny row groups so that many bounding boxes have to be checked
+        tmp_parquet = Path(td) / "geoparquet-1.0.0.parquet"
+        geopandas.read_parquet(path).to_parquet(
+            tmp_parquet,
+            schema_version="1.1.0",
+            write_covering_bbox=True,
+            row_group_size=1024,
+        )
+
+        eng.create_view_parquet("tab", tmp_parquet)
+        result = eng.execute_and_collect(
+            f"""
+            SELECT "pop_est", geometry FROM tab
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "pop_est";
+        """
+        )
+        eng.assert_result(result, gdf)
+
+        # Write a dataset with one file per row group to check file pruning correctness
+        ds_dir = Path(td) / "ds"
+        ds_dir.mkdir()
+        ds_paths = []
+
+        with parquet.ParquetFile(tmp_parquet) as f:
+            for i in range(f.metadata.num_row_groups):
+                tab = f.read_row_group(i, ["pop_est", "geometry"])
+                df = geopandas.GeoDataFrame.from_arrow(tab)
+                ds_path = ds_dir / f"file{i}.parquet"
+                df.to_parquet(ds_path)
+                ds_paths.append(ds_path)
+
+        # Check a query against the same dataset without the bbox column but with file-level
+        # geoparquet metadata bounding boxes
+        eng.create_view_parquet("tab_dataset", ds_paths)
+        result = eng.execute_and_collect(
+            f"""
+            SELECT * FROM tab_dataset
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "pop_est";
+        """
+        )
+        eng.assert_result(result, gdf)
+
+
+@pytest.mark.parametrize("name", ["water-junc", "water-point"])
+def test_write_geoparquet_geometry(con, geoarrow_data, name):
+    # Checks a read and write of some non-trivial files and ensures we match GeoPandas
+    path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}_geo.parquet"
+    skip_if_not_exists(path)
+
+    gdf = geopandas.read_parquet(path).sort_values(by="OBJECTID").reset_index(drop=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(gdf).to_parquet(tmp_parquet)
+
+        gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
+        geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
+
+
+def test_write_geoparquet_1_1(con, geoarrow_data):
+    # Checks GeoParquet 1.1 support specifically
+    path = geoarrow_data / "ns-water" / "files" / "ns-water_water-junc_geo.parquet"
+    skip_if_not_exists(path)
+
+    gdf = geopandas.read_parquet(path).sort_values(by="OBJECTID").reset_index(drop=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(gdf).to_parquet(
+            tmp_parquet, sort_by="OBJECTID", geoparquet_version="1.1"
+        )
+
+        file_kv_metadata = parquet.ParquetFile(tmp_parquet).metadata.metadata
+        assert b"geo" in file_kv_metadata
+        geo_metadata = json.loads(file_kv_metadata[b"geo"])
+        assert geo_metadata["version"] == "1.1.0"
+        geo_column = geo_metadata["columns"]["geometry"]
+        assert geo_column["covering"] == {
+            "bbox": {
+                "xmin": ["bbox", "xmin"],
+                "ymin": ["bbox", "ymin"],
+                "xmax": ["bbox", "xmax"],
+                "ymax": ["bbox", "ymax"],
+            }
+        }
+
+        # This should still roundtrip through GeoPandas because GeoPandas removes
+        # the bbox column on read
+        gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
+        assert all(gdf.columns == gdf_roundtrip.columns)
+        geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
+
+        # ...but the bbox column should still be there
+        df_roundtrip = con.read_parquet(tmp_parquet).to_pandas()
+        assert "bbox" in df_roundtrip.columns
+
+        # An attempt to rewrite this should fail because it would have to overwrite
+        # the bbox column
+        tmp_parquet2 = Path(td) / "tmp2.parquet"
+        with pytest.raises(
+            SedonaError, match="Can't overwrite GeoParquet 1.1 bbox column 'bbox'"
+        ):
+            con.read_parquet(tmp_parquet).to_parquet(
+                tmp_parquet2, geoparquet_version="1.1"
+            )
+
+        # ...unless we pass the appropriate option
+        con.read_parquet(tmp_parquet).to_parquet(
+            tmp_parquet2, geoparquet_version="1.1", overwrite_bbox_columns=True
+        )
+        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
+        assert "bbox" in df_roundtrip.columns
+
+
+def test_write_geoparquet_unknown(con):
+    with pytest.raises(SedonaError, match="Unexpected GeoParquet version string"):
+        con.sql("SELECT 1 as one").to_parquet(
+            "unused", geoparquet_version="not supported"
+        )
+
+
+def test_write_geoparquet_geography(con, geoarrow_data):
+    # Checks a read and write of geography (rounctrip, since nobody else can read/write)
+    path = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography_geo.parquet"
+    )
+    skip_if_not_exists(path)
+
+    table = con.read_parquet(path).to_arrow_table()
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(table).to_parquet(tmp_parquet)
+
+        table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
+        assert table_roundtrip == table

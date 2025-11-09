@@ -20,9 +20,9 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use datafusion_expr::ScalarUDF;
 use sedona_expr::{
     function_set::FunctionSet,
-    scalar_udf::{ArgMatcher, SedonaScalarUDF, SimpleSedonaScalarKernel},
+    scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel},
 };
-use sedona_schema::datatypes::WKB_GEOGRAPHY;
+use sedona_schema::{datatypes::WKB_GEOGRAPHY, matchers::ArgMatcher};
 use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
 
 fn criterion_benchmark(c: &mut Criterion) {

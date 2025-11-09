@@ -16,10 +16,6 @@
 # under the License.
 from sedonadb import _lib
 from sedonadb.context import connect, configure_proj
-from sedonadb import _options
-
-options = _options.global_options()
-"""Global options for SedonaDB"""
 
 __version__ = _lib.sedona_python_version()
 

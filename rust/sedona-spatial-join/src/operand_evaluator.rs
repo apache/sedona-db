@@ -18,16 +18,17 @@ use core::fmt;
 use std::{mem::transmute, sync::Arc};
 
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
+use arrow_schema::DataType;
 use datafusion_common::{
     utils::proxy::VecAllocExt, DataFusionError, JoinSide, Result, ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
 use float_next_after::NextAfter;
-use geo_generic_alg::BoundingRect;
 use geo_index::rtree::util::f64_box_to_f32;
 use geo_types::{coord, Rect};
 use sedona_functions::executor::IterGeo;
+use sedona_geo_generic_alg::BoundingRect;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
@@ -111,14 +112,13 @@ pub(crate) struct EvaluatedGeometryArray {
 }
 
 impl EvaluatedGeometryArray {
-    pub fn try_new(geometry_array: ArrayRef) -> Result<Self> {
+    pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
-        let sedona_type: SedonaType = geometry_array.data_type().try_into()?;
-        let wkb_array = sedona_type.unwrap_array(&geometry_array)?;
+        let wkb_array = geometry_array.clone();
         let mut wkbs = Vec::with_capacity(num_rows);
         let mut idx = 0;
-        wkb_array.iter_as_wkb(&sedona_type, num_rows, |wkb_opt| {
+        wkb_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
             if let Some(wkb) = &wkb_opt {
                 if let Some(rect) = wkb.bounding_rect() {
                     let min = rect.min();
@@ -215,7 +215,9 @@ fn evaluate_with_rects(
     let geometry_columnar_value = geom_expr.evaluate(batch)?;
     let num_rows = batch.num_rows();
     let geometry_array = geometry_columnar_value.to_array(num_rows)?;
-    EvaluatedGeometryArray::try_new(geometry_array)
+    let sedona_type =
+        SedonaType::from_storage_field(geom_expr.return_field(&batch.schema())?.as_ref())?;
+    EvaluatedGeometryArray::try_new(geometry_array, &sedona_type)
 }
 
 impl DistanceOperandEvaluator {
@@ -239,6 +241,8 @@ impl DistanceOperandEvaluator {
 
         // Expand the vec by distance
         let distance_columnar_value = self.inner.distance.evaluate(batch)?;
+        // No timezone conversion needed for distance; pass None as cast_options explicitly.
+        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
         match &distance_columnar_value {
             ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
                 result.rects.iter_mut().for_each(|(_, rect)| {

@@ -16,11 +16,17 @@
 # under the License.
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
+from sedonadb.testing import (
+    DuckDBSingleThread,
+    PostGISSingleThread,
+    SedonaDBSingleThread,
+)
 
 
 class TestBenchPredicates(TestBenchBase):
-    @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
     @pytest.mark.parametrize(
         "table",
         [

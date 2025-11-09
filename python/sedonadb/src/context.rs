@@ -14,15 +14,19 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
+use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
 
 use crate::{
-    dataframe::InternalDataFrame, error::PySedonaError,
-    import_from::import_table_provider_from_any, runtime::wait_for_future,
+    dataframe::InternalDataFrame,
+    error::PySedonaError,
+    import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
+    runtime::wait_for_future,
+    udf::PySedonaScalarUdf,
 };
 
 #[pyclass]
@@ -74,11 +78,31 @@ impl InternalContext {
         &self,
         py: Python<'py>,
         table_paths: Vec<String>,
+        options: HashMap<String, PyObject>,
     ) -> Result<InternalDataFrame, PySedonaError> {
+        // Convert Python options to strings, filtering out None values
+        let rust_options: HashMap<String, String> = options
+            .into_iter()
+            .filter_map(|(k, v)| {
+                if v.is_none(py) {
+                    None
+                } else {
+                    v.bind(py)
+                        .str()
+                        .and_then(|s| s.extract())
+                        .map(|s: String| (k, s))
+                        .ok()
+                }
+            })
+            .collect();
+
+        let geo_options =
+            sedona_geoparquet::provider::GeoParquetReadOptions::from_table_options(rust_options)
+                .map_err(|e| PySedonaError::SedonaPython(format!("Invalid table options: {e}")))?;
         let df = wait_for_future(
             py,
             &self.runtime,
-            self.inner.read_parquet(table_paths, Default::default()),
+            self.inner.read_parquet(table_paths, geo_options),
         )??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
@@ -95,5 +119,48 @@ impl InternalContext {
     pub fn drop_view(&self, table_ref: &str) -> Result<(), PySedonaError> {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
+    }
+
+    pub fn scalar_udf(&self, name: &str) -> Result<PySedonaScalarUdf, PySedonaError> {
+        if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(name) {
+            Ok(PySedonaScalarUdf {
+                inner: sedona_scalar_udf.clone(),
+            })
+        } else {
+            Err(PySedonaError::SedonaPython(format!(
+                "Sedona scalar UDF with name {name} was not found"
+            )))
+        }
+    }
+
+    pub fn register_udf(&mut self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
+        if udf.hasattr("__sedona_internal_udf__")? {
+            let py_scalar_udf = udf
+                .getattr("__sedona_internal_udf__")?
+                .call0()?
+                .extract::<PySedonaScalarUdf>()?;
+            let name = py_scalar_udf.inner.name();
+            self.inner
+                .functions
+                .insert_scalar_udf(py_scalar_udf.inner.clone());
+            self.inner.ctx.register_udf(
+                self.inner
+                    .functions
+                    .scalar_udf(name)
+                    .unwrap()
+                    .clone()
+                    .into(),
+            );
+            return Ok(());
+        } else if udf.hasattr("__datafusion_scalar_udf__")? {
+            let scalar_udf = import_ffi_scalar_udf(&udf)?;
+            self.inner.ctx.register_udf(scalar_udf);
+            return Ok(());
+        }
+
+        Err(PySedonaError::SedonaPython(
+            "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
+                .to_string(),
+        ))
     }
 }

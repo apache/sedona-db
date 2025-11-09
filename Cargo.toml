@@ -21,12 +21,17 @@ members = [
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
+    "r/sedonadb/src/rust",
+    "rust/sedona-geo-traits-ext",
+    "rust/sedona-geo-generic-alg",
     "rust/sedona-adbc",
     "rust/sedona-expr",
     "rust/sedona-functions",
     "rust/sedona-geo",
     "rust/sedona-geometry",
     "rust/sedona-geoparquet",
+    "rust/sedona-raster",
+    "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-testing",
@@ -37,68 +42,71 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.2.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
-homepage = "https://github.com/wherobots/wherobots-vectorized-compute"
-repository = "https://github.com/wherobots/wherobots-vectorized-compute"
-description = "Apache Sedona for Rust"
+homepage = "https://github.com/apache/sedona-db"
+repository = "https://github.com/apache/sedona-db"
+description = "Apache SedonaDB Rust API"
 readme = "README.md"
 edition = "2021"
 
 # Same rust-version, arrow, and datafusion dependencies as datafusion-comet
 # https://github.com/apache/datafusion-comet/blob/main/native/Cargo.toml
-rust-version = "1.82"
+rust-version = "1.86"
 
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
-adbc_core = { git = "https://github.com/apache/arrow-adbc", rev = "1ba248290cd299c4969b679463bcd54c217cf2e4" }
+adbc_core = ">=0.20.0"
+adbc_ffi = ">=0.20.0"
 lru = "0.12"
-arrow = { version = "55.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "55.1.0" }
-arrow-cast = { version = "55.1.0" }
-arrow-data = { version = "55.1.0" }
-arrow-json = { version = "55.1.0" }
-arrow-schema = { version = "55.1.0" }
+arrow = { version = "56.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "56.0.0" }
+arrow-cast = { version = "56.0.0" }
+arrow-data = { version = "56.0.0" }
+arrow-json = { version = "56.0.0" }
+arrow-schema = { version = "56.0.0" }
+arrow-buffer = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
+byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
-comfy-table = { version = "7.0" }
+comfy-table = { version = "7.1.4" }
 criterion = { version = "0.5", features = ["html_reports"] }
-datafusion = { version = "49.0.0", default-features = false }
-datafusion-catalog = { version = "49.0.0" }
-datafusion-common = { version = "49.0.0", default-features = false }
-datafusion-common-runtime = { version = "49.0.0", default-features = false }
-datafusion-execution = { version = "49.0.0", default-features = false }
-datafusion-expr = { version = "49.0.0" }
-datafusion-ffi = {  version = "49.0.0" }
-datafusion-physical-expr = { version = "49.0.0" }
-datafusion-physical-plan = { version = "49.0.0" }
+datafusion = { version = "50.2.0", default-features = false }
+datafusion-catalog = { version = "50.2.0" }
+datafusion-common = { version = "50.2.0", default-features = false }
+datafusion-common-runtime = { version = "50.2.0", default-features = false }
+datafusion-datasource-parquet = { version = "50.2.0" }
+datafusion-execution = { version = "50.2.0", default-features = false }
+datafusion-expr = { version = "50.2.0" }
+datafusion-ffi = {  version = "50.2.0" }
+datafusion-physical-expr = { version = "50.2.0" }
+datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
 futures = { version = "0.3" }
 object_store = { version = "0.12.0", default-features = false }
 float_next_after = "1"
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 mimalloc = { version = "0.1", default-features = false }
 libmimalloc-sys = { version = "0.1", default-features = false }
+once_cell = "1.20"
 
-geos = { version = "10.0.0", features = ["geo"] }
+geos = { version = "10.0.0", features = ["geo", "v3_10_0"] }
 
-# Use our own fork of georust/geo, which implements generic computational geometry algorithms for geo-traits
-geo-generic-alg = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-generic-alg" }
-geo-types = "0.7.16"
-geo-traits = "0.2.0"
-geo-traits-ext = "0.1.0"
-geo = { version = "0.30.0" }
+geo-types = "0.7.17"
+geo-traits = "0.3.0"
+geo = "0.31.0"
 
 geo-index = { version = "0.3.1" }
 
-wkb = { version = "0.8.0", features = ["geos"] }
-wkt = "0.13.0"
+wkb = "0.9.1"
+wkt = "0.14.0"
 
 parking_lot = "0.12"
-parquet = { version = "55.1.0", default-features = false, features = [
+parquet = { version = "56.0.0", default-features = false, features = [
     "arrow",
     "async",
     "object_store",
@@ -109,14 +117,16 @@ rstest = "0.24.0"
 serde = { version = "1" }
 serde_json = { version = "1" }
 serde_with = { version = "1" }
+tempfile = { version = "3"}
 thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
 
 [patch.crates-io]
-geo-types = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-types" }
-geo-traits = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-traits" }
-geo-traits-ext = { git = "https://github.com/wherobots/geo.git", branch = "generic-alg", package = "geo-traits-ext" }
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
+
+# TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
 geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
-wkb = { git = "https://github.com/wherobots/wkb.git", branch = "generic-alg" }
-wkt = { git = "https://github.com/wherobots/wkt.git", branch = "generic-alg" }
+wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }

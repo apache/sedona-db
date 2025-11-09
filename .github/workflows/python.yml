@@ -21,6 +21,13 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/python.yml'
+      - 'rust/**'
+      - 'c/**'
+      - 'python/**'
   push:
     branches:
       - main
@@ -35,6 +42,10 @@ permissions:
 defaults:
   run:
     shell: bash -l -eo pipefail {0}
+
+env:
+  # At GEOS updated to 3.14.0
+  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
 
 jobs:
   test:
@@ -52,8 +63,41 @@ jobs:
 
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.13'
           cache: 'pip'
+
+      - name: Clone vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      - name: Set up environment variables and bootstrap vcpkg
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+        run: |
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+          cd ..
+
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+          echo "PATH=$VCPKG_ROOT:$PATH" >> $GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE" >> $GITHUB_ENV
+
+      - name: Cache vcpkg binaries
+        id: cache-vcpkg
+        uses: actions/cache@v4
+        with:
+          path: vcpkg/packages
+          # Bump the number at the end of this line to force a new dependency build
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-2
+
+      - name: Install vcpkg dependencies
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ./vcpkg/vcpkg install abseil openssl
 
       - name: Use stable Rust
         id: rust
@@ -67,11 +111,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache
-          prefix-key: "python-v1"
+          # Update this key to force a new cache (sync with packaging.yml)
+          prefix-key: "python-v2"
 
       - name: Install
         run: |
+          # Keep this export in sync with the export in dev/release/verify-release-candidate.sh
+          export MATURIN_PEP517_ARGS="--features s2geography"
           pip install -e "python/sedonadb/[test]" -vv
 
       - name: Download minimal geoarrow-data assets

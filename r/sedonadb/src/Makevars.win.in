@@ -1,0 +1,70 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+TARGET = @TARGET@
+
+PROFILE = @PROFILE@
+FEATURE_FLAGS = @FEATURE_FLAGS@
+
+# Add flags if necessary
+RUSTFLAGS =
+
+# We set this in configure to work around a Windows path length restriction
+TARGET_DIR = @TARGET_DIR@
+LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
+STATLIB = $(LIBDIR)/libsedonadbr.a
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll  @PKG_LIBS@
+
+# Rtools doesn't have the linker in the location that cargo expects, so we need
+# to overwrite it via configuration.
+CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
+
+# It seems pkg-config requires this envvar to be explicitly set in case of cross-compilation.
+#
+# cf. https://stackoverflow.com/a/68979087
+PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
+
+# "-Wno-pedantic" is to override the "-pedantic" flag passed by pkgbuild, which
+# makes the compilation of aws-lc-sys fail. Hopefully, such C code will be fixed
+# on upstream so that we can remove this.
+CFLAGS_TWEAKED = $(CFLAGS) -Wno-pedantic
+
+all: $(SHLIB) clean_intermediate
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	# When the GNU toolchain is used (i.e. on CRAN), -lgcc_eh is specified for
+	# building proc-macro2, but Rtools doesn't contain libgcc_eh. This isn't used
+	# in actual, but we need this tweak to please the compiler.
+	mkdir -p $(LIBDIR)/libgcc_mock && touch $(LIBDIR)/libgcc_mock/libgcc_eh.a
+
+	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
+	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
+	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
+	  export CC="$(CC)" && \
+	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
+	  export RUSTFLAGS="$(RUSTFLAGS)" && \
+	  cargo build --target $(TARGET) --lib --profile $(PROFILE) $(FEATURE_FLAGS) --manifest-path ./rust/Cargo.toml --target-dir $(TARGET_DIR)
+
+clean_intermediate: $(SHLIB)
+	rm -f $(STATLIB)
+
+clean:
+	rm -Rf $(SHLIB) $(OBJECTS) $(STATLIB) ./rust/target
+
+.PHONY: all clean_intermediate clean

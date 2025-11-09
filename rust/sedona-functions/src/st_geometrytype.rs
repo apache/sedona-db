@@ -16,18 +16,16 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
-use wkb::reader::Wkb;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 pub fn st_geometry_type_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
@@ -54,7 +52,10 @@ struct STGeometryType {}
 
 impl SedonaScalarKernel for STGeometryType {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], DataType::Utf8.try_into()?);
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry()],
+            SedonaType::Arrow(DataType::Utf8),
+        );
 
         matcher.match_args(args)
     }
@@ -64,16 +65,16 @@ impl SedonaScalarKernel for STGeometryType {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
-        let min_output_size = "POINT".len() * executor.num_iterations();
+        let executor = WkbBytesExecutor::new(arg_types, args);
+        let min_output_size = "ST_POINT".len() * executor.num_iterations();
         let mut builder = StringBuilder::with_capacity(executor.num_iterations(), min_output_size);
 
-        // We can do quite a lot better than this with some vectorized WKB processing,
-        // but for now we just do a slow iteration
-        executor.execute_wkb_void(|maybe_item| {
-            match maybe_item {
-                Some(item) => {
-                    builder.append_option(invoke_scalar(&item)?);
+        // Iterate over raw WKB bytes for faster type inference
+        executor.execute_wkb_void(|maybe_bytes| {
+            match maybe_bytes {
+                Some(bytes) => {
+                    let name = infer_geometry_type_name(bytes)?;
+                    builder.append_value(name);
                 }
                 None => builder.append_null(),
             }
@@ -84,26 +85,40 @@ impl SedonaScalarKernel for STGeometryType {
     }
 }
 
-fn invoke_scalar(item: &Wkb) -> Result<Option<String>> {
-    match item.as_type() {
-        geo_traits::GeometryType::Point(_) => Ok(Some("ST_Point".to_string())),
-        geo_traits::GeometryType::LineString(_) => Ok(Some("ST_LineString".to_string())),
-        geo_traits::GeometryType::Polygon(_) => Ok(Some("ST_Polygon".to_string())),
-        geo_traits::GeometryType::MultiPoint(_) => Ok(Some("ST_MultiPoint".to_string())),
-        geo_traits::GeometryType::MultiLineString(_) => Ok(Some("ST_MultiLineString".to_string())),
-        geo_traits::GeometryType::MultiPolygon(_) => Ok(Some("ST_MultiPolygon".to_string())),
-        geo_traits::GeometryType::GeometryCollection(_) => {
-            Ok(Some("ST_GeometryCollection".to_string()))
-        }
+/// Fast-path inference of geometry type name from raw WKB bytes
+/// An error will be thrown for invalid WKB bytes input
+///
+/// Spec: https://libgeos.org/specifications/wkb/
+#[inline]
+fn infer_geometry_type_name(buf: &[u8]) -> Result<&'static str> {
+    if buf.len() < 5 {
+        return sedona_internal_err!("Invalid WKB: buffer too small ({} bytes)", buf.len());
+    }
 
-        // Other geometry types in geo that we should not get here: Rect, Triangle, Line
-        _ => sedona_internal_err!("unexpected geometry type"),
+    let byte_order = buf[0];
+    let code = match byte_order {
+        0 => u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]),
+        1 => u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]),
+        other => return sedona_internal_err!("Unexpected byte order: {other}"),
+    };
+
+    // Only low 3 bits is for the base type, high bits include additional info
+    match code & 0x7 {
+        1 => Ok("ST_Point"),
+        2 => Ok("ST_LineString"),
+        3 => Ok("ST_Polygon"),
+        4 => Ok("ST_MultiPoint"),
+        5 => Ok("ST_MultiLineString"),
+        6 => Ok("ST_MultiPolygon"),
+        7 => Ok("ST_GeometryCollection"),
+        _ => sedona_internal_err!("WKB type code out of range. Got: {}", code),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -120,8 +135,6 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let udf: ScalarUDF = st_geometry_type_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![sedona_type]);
         tester.assert_return_type(DataType::Utf8);

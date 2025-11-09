@@ -14,6 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import tempfile
+from pathlib import Path
+
 import geoarrow.pyarrow as ga
 import geoarrow.types as gat
 import geopandas.testing
@@ -21,6 +25,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import sedonadb
+from sedonadb.testing import skip_if_not_exists
 
 
 def test_dataframe_from_dataframe(con):
@@ -129,14 +134,14 @@ def test_schema(con):
     # Non-geometry field accessor
     assert df.schema.field(0).name == "one"
     assert df.schema.field("one").name == "one"
-    assert repr(df.schema.field(0).type) == "SedonaType Int64"
+    assert repr(df.schema.field(0).type) == "SedonaType int64<Int64>"
     assert df.schema.field(0).type.edge_type is None
     assert df.schema.field(0).type.crs is None
 
     # Geometry field accessor
     assert df.schema.field(1).name == "geom"
     assert df.schema.field("geom").name == "geom"
-    assert repr(df.schema.field(1).type) == "SedonaType wkb"
+    assert repr(df.schema.field(1).type) == "SedonaType geometry<Wkb>"
     assert df.schema.field(1).type.edge_type == gat.EdgeType.PLANAR
     assert df.schema.field(1).type.crs is None
 
@@ -157,15 +162,23 @@ def test_schema(con):
         df.schema.field({})
 
 
+def test_columns(con):
+    df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
+    assert len(df.columns) == 2
+
+    pdf = df.to_pandas()
+    assert set(df.columns) == set(pdf.columns)
+
+
 def test_schema_non_null_crs(con):
     tab = pa.table({"geom": ga.with_crs(ga.as_wkb(["POINT (0 1)"]), gat.OGC_CRS84)})
     df = con.create_data_frame(tab)
     assert df.schema.field("geom").type.crs == gat.OGC_CRS84
 
 
-def test_collect(con):
+def test_to_memtable(con):
     df = con.sql("SELECT 1 as one")
-    pd.testing.assert_frame_equal(df.collect().to_pandas(), df.to_pandas())
+    pd.testing.assert_frame_equal(df.to_memtable().to_pandas(), df.to_pandas())
 
 
 def test_to_view(con):
@@ -211,6 +224,16 @@ def test_head_limit(con):
     )
 
 
+def test_execute(con):
+    df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+    assert df.execute() == 3
+
+    df = con.sql("CREATE OR REPLACE VIEW temp_view AS SELECT 1 as one")
+    assert df.execute() == 0
+    assert con.view("temp_view").count() == 1
+    con.drop_view("temp_view")
+
+
 def test_count(con):
     df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
     assert df.count() == 3
@@ -223,12 +246,17 @@ def test_dataframe_to_arrow(con):
     )
 
     assert pa.schema(df) == expected_schema
-    assert df.to_arrow_table() == pa.table(
-        {"one": [1], "geom": ga.as_wkb(["POINT (0 1)"])}, schema=expected_schema
+    assert (
+        df.to_arrow_table().columns
+        == pa.table(
+            {"one": [1], "geom": ga.as_wkb(["POINT (0 1)"])}, schema=expected_schema
+        ).columns
     )
 
     # Make sure we can request a schema if the schema is identical
-    assert df.to_arrow_table(schema=expected_schema) == df.to_arrow_table()
+    assert (
+        df.to_arrow_table(schema=expected_schema).columns == df.to_arrow_table().columns
+    )
 
     # ...but not otherwise (yet)
     with pytest.raises(
@@ -236,6 +264,35 @@ def test_dataframe_to_arrow(con):
         match="Requested schema != DataFrame schema not yet supported",
     ):
         df.to_arrow_table(schema=pa.schema({}))
+
+
+def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
+    # It's difficult to trigger this with a simpler example
+    # https://github.com/apache/sedona-db/issues/156
+    path_water_junc = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-junc_geo.parquet"
+    )
+    path_water_point = (
+        geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
+    )
+    skip_if_not_exists(path_water_junc)
+    skip_if_not_exists(path_water_point)
+
+    con.read_parquet(path_water_junc).to_view("junc", overwrite=True)
+    con.read_parquet(path_water_point).to_view("point", overwrite=True)
+    con.sql("""SELECT geometry FROM junc WHERE "OBJECTID" = 1814""").to_view(
+        "junc_filter", overwrite=True
+    )
+
+    joined = con.sql("""
+        SELECT "OBJECTID", "FEAT_CODE", point.geometry
+        FROM point
+        JOIN junc_filter ON ST_DWithin(junc_filter.geometry, point.geometry, 10000)
+    """)
+
+    reader = pa.RecordBatchReader.from_stream(joined)
+    batch_rows = [len(batch) for batch in reader]
+    assert batch_rows == [24]
 
 
 def test_dataframe_to_pandas(con):
@@ -276,6 +333,73 @@ def test_dataframe_to_pandas(con):
     )
 
 
+def test_dataframe_to_parquet(con):
+    df = con.sql(
+        "SELECT * FROM (VALUES ('one', 1), ('two', 2), ('three', 3)) AS t(a, b)"
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        # Defaults with a path that ends with .parquet (single file)
+        tmp_parquet_file = Path(td) / "tmp.parquet"
+        df.to_parquet(tmp_parquet_file)
+
+        assert tmp_parquet_file.exists()
+        assert tmp_parquet_file.is_file()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_file),
+            pd.DataFrame({"a": ["one", "two", "three"], "b": [1, 2, 3]}),
+        )
+
+        # Defaults with a path that doesn't end in .parquet (directory)
+        tmp_parquet_dir = Path(td) / "tmp"
+        df.to_parquet(tmp_parquet_dir)
+
+        assert tmp_parquet_dir.exists()
+        assert tmp_parquet_dir.is_dir()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_dir),
+            pd.DataFrame({"a": ["one", "two", "three"], "b": [1, 2, 3]}),
+        )
+
+        # With partition_by
+        tmp_parquet_dir = Path(td) / "tmp_partitioned"
+        df.to_parquet(tmp_parquet_dir, partition_by=["a"])
+        assert tmp_parquet_dir.exists()
+        assert tmp_parquet_dir.is_dir()
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet_dir).sort_values("b").reset_index(drop=True),
+            pd.DataFrame(
+                {"b": [1, 2, 3], "a": pd.Categorical(["one", "two", "three"])}
+            ),
+        )
+
+        # With order_by
+        tmp_parquet = Path(td) / "tmp_ordered.parquet"
+        df.to_parquet(tmp_parquet, sort_by=["a"])
+        pd.testing.assert_frame_equal(
+            pd.read_parquet(tmp_parquet),
+            pd.DataFrame({"a": ["one", "three", "two"], "b": [1, 3, 2]}),
+        )
+
+
+def test_record_batch_reader_projection(con):
+    def batches():
+        for _ in range(3):
+            yield pa.record_batch({"a": ["a", "b", "c"], "b": [1, 2, 3]})
+
+    reader = pa.RecordBatchReader.from_batches(next(batches()).schema, batches())
+    df = con.create_data_frame(reader)
+    df.to_view("temp_rbr_proj", overwrite=True)
+    try:
+        # Query the view with projection (only select column b)
+        proj_df = con.sql("SELECT b FROM temp_rbr_proj")
+        tbl = proj_df.to_arrow_table()
+        assert tbl.column_names == ["b"]
+        assert tbl.to_pydict()["b"] == [1, 2, 3] * 3
+    finally:
+        con.drop_view("temp_rbr_proj")
+
+
 def test_show(con, capsys):
     con.sql("SELECT 1 as one").show()
     expected = """
@@ -312,13 +436,75 @@ def test_show(con, capsys):
     assert capsys.readouterr().out.strip() == expected
 
 
+def test_show_explained(con, capsys):
+    con.sql("EXPLAIN SELECT 1 as one").show()
+    expected = """
+┌───────────────┬─────────────────────────────────┐
+│   plan_type   ┆               plan              │
+│      utf8     ┆               utf8              │
+╞═══════════════╪═════════════════════════════════╡
+│ logical_plan  ┆ Projection: Int64(1) AS one     │
+│               ┆   EmptyRelation: rows=1         │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ physical_plan ┆ ProjectionExec: expr=[1 as one] │
+│               ┆   PlaceholderRowExec            │
+│               ┆                                 │
+└───────────────┴─────────────────────────────────┘
+    """.strip()
+    assert capsys.readouterr().out.strip() == expected
+
+
+def test_explain(con, capsys):
+    con.sql("SELECT 1 as one").explain().show()
+    expected = """
+┌───────────────┬─────────────────────────────────┐
+│   plan_type   ┆               plan              │
+│      utf8     ┆               utf8              │
+╞═══════════════╪═════════════════════════════════╡
+│ logical_plan  ┆ Projection: Int64(1) AS one     │
+│               ┆   EmptyRelation: rows=1         │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ physical_plan ┆ ProjectionExec: expr=[1 as one] │
+│               ┆   PlaceholderRowExec            │
+│               ┆                                 │
+└───────────────┴─────────────────────────────────┘
+    """.strip()
+    assert capsys.readouterr().out.strip() == expected
+
+    con.sql("SELECT 1 as one").explain(format="tree").show()
+    expected = """
+┌───────────────┬───────────────────────────────┐
+│   plan_type   ┆              plan             │
+│      utf8     ┆              utf8             │
+╞═══════════════╪═══════════════════════════════╡
+│ physical_plan ┆ ┌───────────────────────────┐ │
+│               ┆ │       ProjectionExec      │ │
+│               ┆ │    --------------------   │ │
+│               ┆ │           one: 1          │ │
+│               ┆ └─────────────┬─────────────┘ │
+│               ┆ ┌─────────────┴─────────────┐ │
+│               ┆ │     PlaceholderRowExec    │ │
+│               ┆ └───────────────────────────┘ │
+│               ┆                               │
+└───────────────┴───────────────────────────────┘
+    """.strip()
+    assert capsys.readouterr().out.strip() == expected
+
+    query_plan = con.sql("SELECT 1 as one").explain(type="analyze").to_pandas()
+    assert query_plan.iloc[0, 0] == "Plan with Metrics"
+
+    query_plan = con.sql("SELECT 1 as one").explain(type="extended").to_pandas()
+    assert query_plan.iloc[0, 0] == "initial_logical_plan"
+    assert len(query_plan) > 10
+
+
 def test_repr(con):
     assert repr(con.sql("SELECT 1 as one")).startswith(
         "<sedonadb.dataframe.DataFrame object"
     )
 
     try:
-        sedonadb.options.interactive = True
+        con.options.interactive = True
         repr_interactive = repr(con.sql("SELECT 1 as one"))
         expected = """
 ┌───────┐
@@ -330,4 +516,4 @@ def test_repr(con):
     """.strip()
         assert repr_interactive == expected
     finally:
-        sedonadb.options.interactive = False
+        con.options.interactive = False

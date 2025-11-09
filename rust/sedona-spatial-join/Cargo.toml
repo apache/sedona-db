@@ -42,10 +42,12 @@ datafusion-physical-plan = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
+once_cell = { workspace = true }
 parking_lot = { workspace = true }
-geo-generic-alg = { workspace = true }
+geo = { workspace = true }
+sedona-geo-generic-alg = { path = "../sedona-geo-generic-alg" }
 geo-traits = { workspace = true, features = ["geo-types"] }
-geo-traits-ext = { workspace = true }
+sedona-geo-traits-ext = { path = "../sedona-geo-traits-ext" }
 geo-types = { workspace = true }
 sedona-common = { path = "../sedona-common" }
 sedona-expr = { path = "../sedona-expr" }
@@ -54,6 +56,7 @@ sedona-geo = { path = "../sedona-geo" }
 sedona-geometry = { path = "../sedona-geometry" }
 sedona-schema = { path = "../sedona-schema" }
 sedona-tg = { path = "../../c/sedona-tg" }
+sedona-geos = { path = "../../c/sedona-geos" }
 wkb = { workspace = true }
 geo-index = { workspace = true }
 geos = { workspace = true }
@@ -65,5 +68,4 @@ rstest = { workspace = true }
 sedona-testing = { path = "../sedona-testing" }
 wkt = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
-sedona-geos = { path = "../../c/sedona-geos" }
 rand = { workspace = true }

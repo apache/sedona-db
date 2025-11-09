@@ -38,6 +38,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      - name: Install pinned Rust toolchain
+        id: rust
+        run: |
+          set -euxo pipefail
+          # Extract pinned channel from rust-toolchain.toml (keeps single source of truth)
+          TOOLCHAIN=$(awk -F '"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "Pinned toolchain: ${TOOLCHAIN}"
+          rustup toolchain install "${TOOLCHAIN}" --profile minimal --no-self-update
+          rustup component add --toolchain "${TOOLCHAIN}" rustfmt clippy
+          rustup default "${TOOLCHAIN}"
+          rustup show active-toolchain
+          rustc -V
+          cargo -V
       - name: pre-commit (cache)
         uses: actions/cache@v4
         with:

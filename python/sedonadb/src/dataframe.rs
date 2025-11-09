@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::ffi::CString;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow_array::ffi::FFI_ArrowSchema;
@@ -22,13 +23,17 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::RecordBatchReader;
 use arrow_schema::Schema;
 use datafusion::catalog::MemTable;
+use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
+use datafusion_common::Column;
+use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona::context::SedonaDataFrame;
+use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_schema::projection::unwrap_schema;
+use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
+use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
@@ -52,13 +57,24 @@ impl InternalDataFrame {
 #[pymethods]
 impl InternalDataFrame {
     fn schema(&self) -> PySedonaSchema {
-        let arrow_schema = unwrap_schema(self.inner.schema().as_arrow());
-        PySedonaSchema::new(arrow_schema)
+        let arrow_schema = self.inner.schema().as_arrow();
+        PySedonaSchema::new(arrow_schema.clone())
+    }
+
+    fn columns(&self) -> Result<Vec<String>, PySedonaError> {
+        Ok(self
+            .inner
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect())
     }
 
     fn primary_geometry_column(&self) -> Result<Option<String>, PySedonaError> {
         Ok(self
             .inner
+            .schema()
             .primary_geometry_column_index()?
             .map(|i| self.inner.schema().field(i).name().to_string()))
     }
@@ -66,6 +82,7 @@ impl InternalDataFrame {
     fn geometry_columns(&self) -> Result<Vec<String>, PySedonaError> {
         let names = self
             .inner
+            .schema()
             .geometry_column_indices()?
             .into_iter()
             .map(|i| self.inner.schema().field(i).name().to_string())
@@ -80,6 +97,17 @@ impl InternalDataFrame {
     ) -> Result<InternalDataFrame, PySedonaError> {
         let inner = self.inner.clone().limit(offset, limit)?;
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
+        let mut c = 0;
+        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
+        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
+        for batch in reader {
+            c += batch?.num_rows();
+        }
+
+        Ok(c)
     }
 
     fn count<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
@@ -105,7 +133,11 @@ impl InternalDataFrame {
         Ok(())
     }
 
-    fn collect<'py>(&self, py: Python<'py>, ctx: &InternalContext) -> Result<Self, PySedonaError> {
+    fn to_memtable<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+    ) -> Result<Self, PySedonaError> {
         let schema = self.inner.schema();
         let partitions =
             wait_for_future(py, &self.runtime, self.inner.clone().collect_partitioned())??;
@@ -115,6 +147,51 @@ impl InternalDataFrame {
             ctx.inner.ctx.read_table(Arc::new(provider))?,
             self.runtime.clone(),
         ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn to_parquet<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+        path: String,
+        partition_by: Vec<String>,
+        sort_by: Vec<String>,
+        single_file_output: bool,
+        geoparquet_version: Option<String>,
+        overwrite_bbox_columns: bool,
+    ) -> Result<(), PySedonaError> {
+        // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
+        // field names (ascending), but other types of expressions aren't supported here yet.
+        let sort_by_expr = sort_by
+            .into_iter()
+            .map(|name| {
+                let column = Expr::Column(Column::new_unqualified(name));
+                SortExpr::new(column, true, false)
+            })
+            .collect::<Vec<_>>();
+
+        let options = SedonaWriteOptions::new()
+            .with_partition_by(partition_by)
+            .with_sort_by(sort_by_expr)
+            .with_single_file_output(single_file_output);
+
+        let mut writer_options = TableGeoParquetOptions::new();
+        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
+        if let Some(geoparquet_version) = geoparquet_version {
+            writer_options.geoparquet_version = geoparquet_version.parse()?;
+        } else {
+            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
+        }
+
+        wait_for_future(
+            py,
+            &self.runtime,
+            self.inner
+                .clone()
+                .write_geoparquet(&ctx.inner, &path, options, Some(writer_options)),
+        )??;
+        Ok(())
     }
 
     fn show<'py>(
@@ -141,6 +218,26 @@ impl InternalDataFrame {
         Ok(content)
     }
 
+    fn explain(&self, explain_type: &str, format: &str) -> Result<Self, PySedonaError> {
+        let format = ExplainFormat::from_str(format)?;
+        let (analyze, verbose) = match explain_type {
+            "standard" => (false, false),
+            "extended" => (false, true),
+            "analyze" => (true, false),
+            _ => {
+                return Err(PySedonaError::SedonaPython(
+                    "explain type must be one of 'standard', 'extended', or 'analyze'".to_string(),
+                ))
+            }
+        };
+        let explain_option = ExplainOption::default()
+            .with_analyze(analyze)
+            .with_verbose(verbose)
+            .with_format(format);
+        let explain_df = self.inner.clone().explain_with_options(explain_option)?;
+        Ok(Self::new(explain_df, self.runtime.clone()))
+    }
+
     fn __datafusion_table_provider__<'py>(
         &self,
         py: Python<'py>,
@@ -163,7 +260,7 @@ impl InternalDataFrame {
             let ffi_schema = unsafe { FFI_ArrowSchema::from_raw(contents as _) };
             let requested_schema = Schema::try_from(&ffi_schema)?;
             let actual_schema = self.inner.schema().as_arrow();
-            if requested_schema != unwrap_schema(actual_schema) {
+            if &requested_schema != actual_schema {
                 // Eventually we can support this by inserting a cast
                 return Err(PySedonaError::SedonaPython(
                     "Requested schema != DataFrame schema not yet supported".to_string(),
@@ -171,11 +268,7 @@ impl InternalDataFrame {
             }
         }
 
-        let stream = wait_for_future(
-            py,
-            &self.runtime,
-            self.inner.clone().execute_stream_sedona(),
-        )??;
+        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
         let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
         let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 

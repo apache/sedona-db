@@ -223,6 +223,7 @@ mod test {
     use super::*;
     use rstest::rstest;
     use std::{iter::zip, str::FromStr};
+    use wkb::{writer::WriteOptions, Endianness};
     use wkt::Wkt;
 
     pub fn wkt_bounds_xy(wkt_value: &str) -> Result<BoundingBox, SedonaGeometryError> {
@@ -441,7 +442,14 @@ mod test {
     fn test_wkb_bounds_xy() {
         let wkt: Wkt = Wkt::from_str("POINT (0 1)").unwrap();
         let mut out = Vec::new();
-        wkb::writer::write_geometry(&mut out, &wkt, wkb::Endianness::LittleEndian).unwrap();
+        wkb::writer::write_geometry(
+            &mut out,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
         assert_eq!(
             wkb_bounds_xy(&out).unwrap(),
             BoundingBox::xy((0, 0), (1, 1))

@@ -14,9 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import TYPE_CHECKING, Union, Optional, Any
 
-from sedonadb._options import global_options
+from pathlib import Path
+from typing import TYPE_CHECKING, Union, Optional, Any, Iterable, Literal
+
+from sedonadb.utility import sedona  # noqa: F401
+
 
 if TYPE_CHECKING:
     import pandas
@@ -32,9 +35,10 @@ class DataFrame:
     reading a file, or executing SQL.
     """
 
-    def __init__(self, ctx, impl):
+    def __init__(self, ctx, impl, options):
         self._ctx = ctx
         self._impl = impl
+        self._options = options
 
     @property
     def schema(self):
@@ -42,18 +46,22 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> df = con.sql("SELECT 1 as one")
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 as one")
             >>> df.schema
             SedonaSchema with 1 field:
-              one: non-nullable Int64
+              one: non-nullable int64<Int64>
             >>> df.schema.field(0)
-            SedonaField one: non-nullable Int64
+            SedonaField one: non-nullable int64<Int64>
             >>> df.schema.field(0).name, df.schema.field(0).type
-            ('one', SedonaType Int64)
+            ('one', SedonaType int64<Int64>)
         """
         return self._impl.schema()
+
+    @property
+    def columns(self) -> list[str]:
+        """Return a list of column names"""
+        return self._impl.columns()
 
     def head(self, n: int = 5) -> "DataFrame":
         """Limit result to the first n rows
@@ -65,9 +73,8 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
             >>> df.head(1).show()
             ┌──────┐
             │  val │
@@ -89,9 +96,8 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
             >>> df.limit(1).show()
             ┌──────┐
             │  val │
@@ -109,16 +115,41 @@ class DataFrame:
             └───────┘
 
         """
-        return DataFrame(self._ctx, self._impl.limit(n, offset))
+        return DataFrame(self._ctx, self._impl.limit(n, offset), self._options)
+
+    def execute(self) -> None:
+        """Execute the plan represented by this DataFrame
+
+        This will execute the query without collecting results into memory,
+        which is useful for executing SQL statements like SET, CREATE VIEW,
+        and CREATE EXTERNAL TABLE.
+
+        Note that this is functionally similar to `.count()` except it does
+        not apply any optimizations (e.g., does not use statistics to avoid
+        reading data to calculate a count).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("CREATE OR REPLACE VIEW temp_view AS SELECT 1 as one").execute()
+            0
+            >>> sd.view("temp_view").show()
+            ┌───────┐
+            │  one  │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            └───────┘
+        """
+        return self._impl.execute()
 
     def count(self) -> int:
         """Compute the number of rows in this DataFrame
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> df = con.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES ('one'), ('two'), ('three')) AS t(val)")
             >>> df.count()
             3
 
@@ -160,13 +191,12 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
-            >>> con.view("foofy").show()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+            >>> sd.view("foofy").show()
             ┌────────────┐
             │    geom    │
-            │     wkb    │
+            │  geometry  │
             ╞════════════╡
             │ POINT(0 1) │
             └────────────┘
@@ -174,26 +204,28 @@ class DataFrame:
         """
         self._impl.to_view(self._ctx, name, overwrite)
 
-    def collect(self) -> "DataFrame":
-        """Collect a data frame into memory
+    def to_memtable(self) -> "DataFrame":
+        """Collect a data frame into a memtable
 
         Executes the logical plan represented by this object and returns a
         DataFrame representing it.
 
+        Does not guarantee ordering of rows.  Use `to_arrow_table()` if
+        ordering is needed.
+
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geom").collect().show()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geom").to_memtable().show()
             ┌────────────┐
             │    geom    │
-            │     wkb    │
+            │  geometry  │
             ╞════════════╡
             │ POINT(0 1) │
             └────────────┘
 
         """
-        return DataFrame(self._ctx, self._impl.collect(self._ctx))
+        return DataFrame(self._ctx, self._impl.to_memtable(self._ctx), self._options)
 
     def __datafusion_table_provider__(self):
         return self._impl.__datafusion_table_provider__()
@@ -210,11 +242,10 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geometry").to_arrow_table()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geometry").to_arrow_table()
             pyarrow.Table
-            geometry: extension<geoarrow.wkb<WkbType>>
+            geometry: extension<geoarrow.wkb<WkbType>> not null
             ----
             geometry: [[01010000000000000000000000000000000000F03F]]
 
@@ -244,9 +275,8 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geometry").to_pandas()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geometry").to_pandas()
                   geometry
             0  POINT (0 1)
 
@@ -262,6 +292,88 @@ class DataFrame:
             return GeoDataFrame.from_arrow(table, geometry=geometry)
         else:
             return table.to_pandas()
+
+    def to_parquet(
+        self,
+        path: Union[str, Path],
+        *,
+        partition_by: Optional[Union[str, Iterable[str]]] = None,
+        sort_by: Optional[Union[str, Iterable[str]]] = None,
+        single_file_output: Optional[bool] = None,
+        geoparquet_version: Literal["1.0", "1.1"] = "1.0",
+        overwrite_bbox_columns: bool = False,
+    ):
+        """Write this DataFrame to one or more (Geo)Parquet files
+
+        For input that contains geometry columns, GeoParquet metadata is written
+        such that suitable readers can recreate Geometry/Geography types when
+        reading the output and potentially read fewer row groups when only a
+        subset of the file is needed for a given query.
+
+        Args:
+            path: A filename or directory to which parquet file(s) should be written.
+            partition_by: A vector of column names to partition by. If non-empty,
+                applies hive-style partitioning to the output.
+            sort_by: A vector of column names to sort by. Currently only ascending
+                sort is supported.
+            single_file_output: Use True or False to force writing a single Parquet
+                file vs. writing one file per partition to a directory. By default,
+                a single file is written if `partition_by` is unspecified and
+                `path` ends with `.parquet`.
+            geoparquet_version: GeoParquet metadata version to write if output contains
+                one or more geometry columns. The default (1.0) is the most widely
+                supported and will result in geometry columns being recognized in many
+                readers; however, only includes statistics at the file level.
+
+                Use GeoParquet 1.1 to compute an additional bounding box column
+                for every geometry column in the output: some readers can use these columns
+                to prune row groups when files contain an effective spatial ordering.
+                The extra columns will appear just before their geometry column and
+                will be named "[geom_col_name]_bbox" for all geometry columns except
+                "geometry", whose bounding box column name is just "bbox".
+            overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
+                that already exist in the input. This is useful in a read -> modify
+                -> write scenario to ensure these columns are up-to-date. If `False`
+                (the default), an error will be raised if a bbox column already exists.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
+            >>> sd.read_parquet(url).to_parquet(f"{td.name}/tmp.parquet")
+
+        """
+
+        path = Path(path)
+
+        if single_file_output is None:
+            single_file_output = partition_by is None and str(path).endswith(".parquet")
+
+        if isinstance(partition_by, str):
+            partition_by = [partition_by]
+        elif partition_by is not None:
+            partition_by = list(partition_by)
+        else:
+            partition_by = []
+
+        if isinstance(sort_by, str):
+            sort_by = [sort_by]
+        elif sort_by is not None:
+            sort_by = list(sort_by)
+        else:
+            sort_by = []
+
+        self._impl.to_parquet(
+            self._ctx,
+            str(path),
+            partition_by,
+            sort_by,
+            single_file_output,
+            geoparquet_version,
+            overwrite_bbox_columns,
+        )
 
     def show(
         self,
@@ -282,41 +394,82 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geometry").show()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geometry").show()
             ┌────────────┐
             │  geometry  │
-            │     wkb    │
+            │  geometry  │
             ╞════════════╡
             │ POINT(0 1) │
             └────────────┘
 
         """
-        width = _out_width(width)
+        width = self._out_width(width)
         print(self._impl.show(self._ctx, limit, width, ascii), end="")
 
+    def explain(
+        self,
+        type: str = "standard",
+        format: str = "indent",
+    ) -> "DataFrame":
+        """Return the execution plan for this DataFrame as a DataFrame
+
+        Retrieves the logical and physical execution plans that will be used to
+        compute this DataFrame. This is useful for understanding query
+        performance and optimization.
+
+        Args:
+            type: The type of explain plan to generate. Supported values are:
+                "standard" (default) - shows logical and physical plans,
+                "extended" - includes additional query optimization details,
+                "analyze" - executes the plan and reports actual metrics.
+            format: The format to use for displaying the plan. Supported formats are
+                "indent" (default), "tree", "pgjson" and "graphviz".
+
+        Returns:
+            A DataFrame containing the execution plan information with columns
+            'plan_type' and 'plan'.
+
+        Examples:
+
+            >>> import sedonadb
+            >>> con = sedonadb.connect()
+            >>> df = con.sql("SELECT 1 as one")
+            >>> df.explain().show()
+            ┌───────────────┬─────────────────────────────────┐
+            │   plan_type   ┆               plan              │
+            │      utf8     ┆               utf8              │
+            ╞═══════════════╪═════════════════════════════════╡
+            │ logical_plan  ┆ Projection: Int64(1) AS one     │
+            │               ┆   EmptyRelation: rows=1         │
+            ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+            │ physical_plan ┆ ProjectionExec: expr=[1 as one] │
+            │               ┆   PlaceholderRowExec            │
+            │               ┆                                 │
+            └───────────────┴─────────────────────────────────┘
+        """
+        return DataFrame(self._ctx, self._impl.explain(type, format), self._options)
+
     def __repr__(self) -> str:
-        if global_options().interactive:
-            width = _out_width()
+        if self._options.interactive:
+            width = self._out_width()
             return self._impl.show(self._ctx, 10, width, ascii=False).strip()
         else:
             return super().__repr__()
 
+    def _out_width(self, width=None) -> int:
+        if width is None:
+            width = self._options.width
 
-def _out_width(width=None) -> int:
-    if width is None:
-        width = global_options().width
+        if width is None:
+            import shutil
 
-    if width is None:
-        import shutil
+            width, _ = shutil.get_terminal_size(fallback=(100, 24))
 
-        width, _ = shutil.get_terminal_size(fallback=(100, 24))
-
-    return width
+        return width
 
 
-def _create_data_frame(ctx_impl, obj, schema) -> DataFrame:
+def _create_data_frame(ctx_impl, obj, schema, options) -> DataFrame:
     """Create a DataFrame (internal)
 
     This is defined here because we need it in future dataframe methods like
@@ -335,27 +488,27 @@ def _create_data_frame(ctx_impl, obj, schema) -> DataFrame:
     # This includes geopandas/pandas DataFrames, pyarrow tables, and Polars tables.
     type_name = _qualified_type_name(obj)
     if type_name in SPECIAL_CASED_SCANS:
-        return SPECIAL_CASED_SCANS[type_name](ctx_impl, obj, schema)
+        return SPECIAL_CASED_SCANS[type_name](ctx_impl, obj, schema, options)
 
     # The default implementation handles objects that implement
     # __datafusion_table_provider__ or __arrow_c_stream__. For objects implementing
     # __arrow_c_stream__, this currently will only work for a single scan (i.e.,
     # the returned data frame can't be previewed before the query is computed).
-    return _scan_default(ctx_impl, obj, schema)
+    return _scan_default(ctx_impl, obj, schema, options)
 
 
-def _scan_default(ctx_impl, obj, schema):
+def _scan_default(ctx_impl, obj, schema, options):
     impl = ctx_impl.create_data_frame(obj, schema)
-    return DataFrame(ctx_impl, impl)
+    return DataFrame(ctx_impl, impl, options)
 
 
-def _scan_collected_default(ctx_impl, obj, schema):
-    return _scan_default(ctx_impl, obj, schema).collect()
+def _scan_collected_default(ctx_impl, obj, schema, options):
+    return _scan_default(ctx_impl, obj, schema, options).to_memtable()
 
 
-def _scan_geopandas(ctx_impl, obj, schema):
+def _scan_geopandas(ctx_impl, obj, schema, options):
     return _scan_collected_default(
-        ctx_impl, obj.to_arrow(geometry_encoding="WKB"), schema
+        ctx_impl, obj.to_arrow(geometry_encoding="WKB"), schema, options
     )
 
 

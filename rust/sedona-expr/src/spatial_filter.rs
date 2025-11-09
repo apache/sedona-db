@@ -16,6 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
+use arrow_schema::{DataType, Schema};
 use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::{
@@ -25,9 +26,12 @@ use datafusion_physical_expr::{
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
 use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
-use sedona_schema::datatypes::SedonaType;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::statistics::GeoStatistics;
+use crate::{
+    statistics::GeoStatistics,
+    utils::{parse_distance_predicate, ParsedDistancePredicate},
+};
 
 /// Simplified parsed spatial filter
 ///
@@ -41,6 +45,8 @@ use crate::statistics::GeoStatistics;
 pub enum SpatialFilter {
     /// ST_Intersects(\<column\>, \<literal\>) or ST_Intersects(\<literal\>, \<column\>)
     Intersects(Column, BoundingBox),
+    /// ST_Covers(\<column\>, \<literal\>) or ST_Covers(\<literal\>, \<column\>)
+    Covers(Column, BoundingBox),
     /// ST_HasZ(\<column\>)
     HasZ(Column),
     /// Logical AND
@@ -63,6 +69,9 @@ impl SpatialFilter {
             SpatialFilter::Intersects(column, bounds) => {
                 Self::evaluate_intersects_bbox(&table_stats[column.index()], bounds)
             }
+            SpatialFilter::Covers(column, bounds) => {
+                Self::evaluate_covers_bbox(&table_stats[column.index()], bounds)
+            }
             SpatialFilter::HasZ(column) => Self::evaluate_has_z(&table_stats[column.index()]),
             SpatialFilter::And(lhs, rhs) => Self::evaluate_and(lhs, rhs, table_stats),
             SpatialFilter::Or(lhs, rhs) => Self::evaluate_or(lhs, rhs, table_stats),
@@ -74,6 +83,14 @@ impl SpatialFilter {
     fn evaluate_intersects_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
         if let Some(bbox) = column_stats.bbox() {
             bbox.intersects(bounds)
+        } else {
+            true
+        }
+    }
+
+    fn evaluate_covers_bbox(column_stats: &GeoStatistics, bounds: &BoundingBox) -> bool {
+        if let Some(bbox) = column_stats.bbox() {
+            bbox.contains(bounds)
         } else {
             true
         }
@@ -118,46 +135,10 @@ impl SpatialFilter {
     ///
     /// Parses expr to extract known expressions we can evaluate against statistics.
     pub fn try_from_expr(expr: &Arc<dyn PhysicalExpr>) -> Result<Self> {
-        if let Some(scalar_fun) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
-            let raw_args = scalar_fun.args();
-            let args = parse_args(raw_args);
-            match scalar_fun.fun().name() {
-                "st_intersects" => {
-                    if args.len() != 2 {
-                        return sedona_internal_err!(
-                            "unexpected argument count in filter evaluation"
-                        );
-                    }
-
-                    match (&args[0], &args[1]) {
-                        (ArgRef::Col(column), ArgRef::Lit(literal))
-                        | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
-                            match literal_bounds(literal) {
-                                Ok(literal_bounds) => {
-                                    Ok(Self::Intersects(column.clone(), literal_bounds))
-                                }
-                                Err(e) => Err(DataFusionError::External(Box::new(e))),
-                            }
-                        }
-                        // Not between a literal and a column
-                        _ => Ok(Self::Unknown),
-                    }
-                }
-                "st_hasz" => {
-                    if args.len() != 1 {
-                        return sedona_internal_err!(
-                            "unexpected argument count in filter evaluation"
-                        );
-                    }
-
-                    match &args[0] {
-                        ArgRef::Col(column) => Ok(Self::HasZ(column.clone())),
-                        _ => Ok(Self::Unknown),
-                    }
-                }
-                // Not a function we know about
-                _ => Ok(Self::Unknown),
-            }
+        if let Some(spatial_filter) = Self::try_from_range_predicate(expr)? {
+            Ok(spatial_filter)
+        } else if let Some(spatial_filter) = Self::try_from_distance_predicate(expr)? {
+            Ok(spatial_filter)
         } else if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
             match binary_expr.op() {
                 Operator::And => Ok(Self::And(
@@ -186,6 +167,184 @@ impl SpatialFilter {
             Ok(Self::Unknown)
         }
     }
+
+    fn try_from_range_predicate(expr: &Arc<dyn PhysicalExpr>) -> Result<Option<Self>> {
+        let Some(scalar_fun) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() else {
+            return Ok(None);
+        };
+
+        let raw_args = scalar_fun.args();
+        let args = parse_args(raw_args);
+        let fun_name = scalar_fun.fun().name();
+        match fun_name {
+            "st_intersects" | "st_touches" | "st_crosses" | "st_overlaps" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal))
+                    | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_equals" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal))
+                    | (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_within" | "st_covered_by" | "st_coveredby" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal)) => {
+                        // column within/covered_by literal -> Intersects filter
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        // literal within/covered_by column -> Covers filter
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_contains" | "st_covers" => {
+                if args.len() != 2 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match (&args[0], &args[1]) {
+                    (ArgRef::Col(column), ArgRef::Lit(literal)) => {
+                        // column contains/covers literal -> Covers filter
+                        // (column's bbox must fully cover literal's bbox)
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Covers(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    (ArgRef::Lit(literal), ArgRef::Col(column)) => {
+                        // literal contains/covers column -> Intersects filter
+                        // (if literal contains column, they must at least intersect)
+                        if !is_prunable_geospatial_literal(literal) {
+                            return Ok(Some(Self::Unknown));
+                        }
+                        match literal_bounds(literal) {
+                            Ok(literal_bounds) => {
+                                Ok(Some(Self::Intersects(column.clone(), literal_bounds)))
+                            }
+                            Err(e) => Err(DataFusionError::External(Box::new(e))),
+                        }
+                    }
+                    // Not between a literal and a column
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            "st_hasz" => {
+                if args.len() != 1 {
+                    return sedona_internal_err!("unexpected argument count in filter evaluation");
+                }
+
+                match &args[0] {
+                    ArgRef::Col(column) => Ok(Some(Self::HasZ(column.clone()))),
+                    _ => Ok(Some(Self::Unknown)),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn try_from_distance_predicate(expr: &Arc<dyn PhysicalExpr>) -> Result<Option<Self>> {
+        let Some(ParsedDistancePredicate {
+            arg0,
+            arg1,
+            arg_distance,
+        }) = parse_distance_predicate(expr)
+        else {
+            return Ok(None);
+        };
+
+        let raw_args = [arg0, arg1, arg_distance];
+        let args = parse_args(&raw_args);
+
+        match (&args[0], &args[1], &args[2]) {
+            (ArgRef::Col(column), ArgRef::Lit(literal), ArgRef::Lit(distance))
+            | (ArgRef::Lit(literal), ArgRef::Col(column), ArgRef::Lit(distance)) => {
+                if !is_prunable_geospatial_literal(literal) {
+                    return Ok(Some(Self::Unknown));
+                }
+                match (
+                    literal_bounds(literal),
+                    distance.value().cast_to(&DataType::Float64)?,
+                ) {
+                    (Ok(literal_bounds), distance_scalar_value) => {
+                        let ScalarValue::Float64(Some(dist)) = distance_scalar_value else {
+                            return Ok(None);
+                        };
+                        if dist.is_nan() || dist < 0.0 {
+                            return Ok(None);
+                        }
+                        let expanded_bounds = literal_bounds.expand_by(dist);
+                        Ok(Some(Self::Intersects(column.clone(), expanded_bounds)))
+                    }
+                    (Err(e), _) => Err(DataFusionError::External(Box::new(e))),
+                }
+            }
+            // Not between a literal and a column
+            _ => Ok(Some(Self::Unknown)),
+        }
+    }
 }
 
 /// Internal utility to help match physical expression types
@@ -195,24 +354,35 @@ enum ArgRef<'a> {
     Other,
 }
 
+/// Our current spatial data pruning implementation does not correctly handle geography data.
+/// We therefore only consider geometry data type for pruning.
+fn is_prunable_geospatial_literal(literal: &Literal) -> bool {
+    let Ok(literal_field) = literal.return_field(&Schema::empty()) else {
+        return false;
+    };
+    let Ok(sedona_type) = SedonaType::from_storage_field(&literal_field) else {
+        return false;
+    };
+    let matcher = ArgMatcher::is_geometry();
+    matcher.match_type(&sedona_type)
+}
+
 fn literal_bounds(literal: &Literal) -> Result<BoundingBox> {
-    let sedona_type = SedonaType::from_data_type(&literal.value().data_type())?;
+    let literal_field = literal.return_field(&Schema::empty())?;
+    let sedona_type = SedonaType::from_storage_field(&literal_field)?;
     match &sedona_type {
-        SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {
-            match sedona_type.unwrap_scalar(literal.value())? {
-                ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
-                    if let Some(vec) = maybe_vec {
-                        return wkb_bounds_xy(&vec)
-                            .map_err(|e| DataFusionError::External(Box::new(e)));
-                    }
+        SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => match literal.value() {
+            ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
+                if let Some(vec) = maybe_vec {
+                    return wkb_bounds_xy(vec).map_err(|e| DataFusionError::External(Box::new(e)));
                 }
-                _ => {}
             }
-        }
+            _ => {}
+        },
         _ => {}
     }
 
-    sedona_internal_err!("Unexpected scalar type in filter expression")
+    sedona_internal_err!("Unexpected scalar type in filter expression ({literal:?})")
 }
 
 fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {
@@ -231,24 +401,15 @@ fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {
 
 #[cfg(test)]
 mod test {
-
     use arrow_schema::{DataType, Field};
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ScalarUDF, Signature, SimpleScalarUDF, Volatility};
+    use rstest::rstest;
     use sedona_geometry::{bounding_box::BoundingBox, interval::Interval};
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
     use sedona_testing::create::create_scalar;
 
     use super::*;
-
-    fn dummy_st_intersects() -> ScalarUDF {
-        SimpleScalarUDF::new_with_signature(
-            "st_intersects",
-            Signature::any(2, Volatility::Immutable),
-            DataType::Boolean,
-            Arc::new(|_args| Ok(ScalarValue::Boolean(Some(true)).into())),
-        )
-        .into()
-    }
 
     fn dummy_st_hasz() -> ScalarUDF {
         SimpleScalarUDF::new_with_signature(
@@ -270,12 +431,23 @@ mod test {
         .into()
     }
 
-    #[test]
-    fn spatial_filters() {}
+    fn create_dummy_spatial_function(name: &str, arg_count: usize) -> ScalarUDF {
+        SimpleScalarUDF::new_with_signature(
+            name,
+            Signature::any(arg_count, Volatility::Immutable),
+            DataType::Boolean,
+            Arc::new(|_args| Ok(ScalarValue::Boolean(Some(true)).into())),
+        )
+        .into()
+    }
 
     #[test]
     fn predicate_intersects() {
-        let literal = Literal::new(create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal = Literal::new_with_metadata(
+            create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        );
         let bounds = literal_bounds(&literal).unwrap();
 
         let stats_no_info = [GeoStatistics::unspecified()];
@@ -302,6 +474,29 @@ mod test {
         assert!(err
             .message()
             .contains("Unexpected scalar type in filter expression"));
+    }
+
+    #[test]
+    fn predicate_covers() {
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal = Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        );
+        let bounds = literal_bounds(&literal).unwrap();
+
+        let stats_no_info = [GeoStatistics::unspecified()];
+        let stats_covered =
+            [GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0, 4), (0, 4))))];
+        let stats_not_covered = [
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((3.0, 3.0), (5.0, 5.0))))
+        ];
+        let col0 = Column::new("col0", 0);
+
+        // Covers should return true when column bbox is fully contained in literal bounds
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_no_info));
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_covered));
+        assert!(!SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_not_covered));
     }
 
     #[test]
@@ -395,6 +590,7 @@ mod test {
             Arc::new(unrelated),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_no_args).unwrap(),
@@ -402,38 +598,294 @@ mod test {
         ));
     }
 
-    #[test]
-    fn predicate_from_expr_intersects() {
+    #[rstest]
+    fn predicate_from_expr_commutative_intersects_functions(
+        #[values("st_intersects", "st_touches", "st_crosses", "st_overlaps")] func_name: &str,
+    ) {
         let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
-        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new(create_scalar(
-            Some("POINT (1 2)"),
-            &WKB_GEOMETRY,
-        )));
-        let st_intersects = dummy_st_intersects();
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
 
+        // Test functions that should result in Intersects filter
+        let func = create_dummy_spatial_function(func_name, 2);
         let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
-            "intersects",
-            Arc::new(st_intersects.clone()),
+            func_name,
+            Arc::new(func.clone()),
             vec![column.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
-        assert!(matches!(predicate, SpatialFilter::Intersects(_, _)));
+        assert!(
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "Function {func_name} should produce Intersects filter"
+        );
 
-        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
-            "intersects",
-            Arc::new(st_intersects.clone()),
+        // Test reversed argument order
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
             vec![literal.clone(), column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
+            "Function {func_name} with reversed args should produce Intersects filter"
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_expr_equals_function(#[values("st_equals")] func_name: &str) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        // Test functions that should result in Covers filter
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
-        assert!(matches!(predicate, SpatialFilter::Intersects(_, _)))
+        assert!(
+            matches!(predicate, SpatialFilter::Covers(_, _)),
+            "Function {func_name} should produce Covers filter"
+        );
+
+        // Test reversed argument order
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
+            vec![literal.clone(), column.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Covers(_, _)),
+            "Function {func_name} with reversed args should produce Covers filter"
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_expr_within_covered_by_functions(
+        #[values("st_within", "st_covered_by", "st_coveredby")] func_name: &str,
+    ) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        // Test functions that should result in CoveredBy filter when column is first arg
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "Function {func_name} should produce Intersects filter"
+        );
+
+        // Test reversed argument order: should be converted to Intersects filter
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
+            vec![literal.clone(), column.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Covers(_, _)),
+            "Function {func_name} with reversed args should produce Covers filter"
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_expr_contains_covers_functions(
+        #[values("st_contains", "st_covers")] func_name: &str,
+    ) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        // Test functions that should result in CoveredBy filter when column is first arg
+        // (column contains/covers literal -> column's bbox must fully contain literal's bbox)
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Covers(_, _)),
+            "Function {func_name} should produce CoveredBy filter"
+        );
+
+        // Test reversed argument order: should be converted to Intersects filter
+        // (literal contains/covers column -> they must at least intersect)
+        let expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func),
+            vec![literal.clone(), column.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
+            "Function {func_name} with reversed args should produce Intersects filter"
+        );
     }
 
     #[test]
-    fn predicate_from_intersects_errors() {
+    fn predicate_from_expr_distance_functions() {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOMETRY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
+            Some(storage_field.metadata().into()),
+        ));
+        let distance_literal: Arc<dyn PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Float64(Some(100.0))));
+
+        // Test ST_DWithin function
+        let st_dwithin = create_dummy_spatial_function("st_dwithin", 3);
+        let dwithin_expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin.clone()),
+            vec![column.clone(), literal.clone(), distance_literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "ST_DWithin should produce Intersects filter with expanded bounds"
+        );
+
+        // Test ST_DWithin with reversed geometry arguments
+        let dwithin_expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin),
+            vec![literal.clone(), column.clone(), distance_literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&dwithin_expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
+            "ST_DWithin with reversed args should produce Intersects filter"
+        );
+
+        // Test ST_Distance <= threshold
+        let st_distance = create_dummy_spatial_function("st_distance", 2);
+        let distance_expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_distance",
+            Arc::new(st_distance.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let comparison_expr: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            distance_expr.clone(),
+            Operator::LtEq,
+            distance_literal.clone(),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&comparison_expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Intersects(_, _)),
+            "ST_Distance <= threshold should produce Intersects filter"
+        );
+
+        // Test threshold >= ST_Distance
+        let comparison_expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            distance_literal.clone(),
+            Operator::GtEq,
+            distance_expr.clone(),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&comparison_expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Intersects(_, _)),
+            "threshold >= ST_Distance should produce Intersects filter"
+        );
+
+        // Test with negative distance (should be treated as Unknown)
+        let negative_distance: Arc<dyn PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Float64(Some(-10.0))));
+        let st_dwithin = create_dummy_spatial_function("st_dwithin", 3);
+        let dwithin_expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin.clone()),
+            vec![column.clone(), literal.clone(), negative_distance],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Unknown),
+            "Negative distance should result in Unknown filter"
+        );
+
+        // Test with NaN distance (should be treated as Unknown)
+        let nan_distance: Arc<dyn PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Float64(Some(f64::NAN))));
+        let dwithin_expr_nan: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin),
+            vec![column.clone(), literal.clone(), nan_distance],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_nan = SpatialFilter::try_from_expr(&dwithin_expr_nan).unwrap();
+        assert!(
+            matches!(predicate_nan, SpatialFilter::Unknown),
+            "NaN distance should result in Unknown filter"
+        );
+    }
+
+    #[rstest]
+    fn predicate_from_spatial_relation_function_errors(
+        #[values(
+            "st_intersects",
+            "st_equals",
+            "st_touches",
+            "st_contains",
+            "st_covers",
+            "st_within",
+            "st_covered_by",
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
+        )]
+        func_name: &str,
+    ) {
         let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new(ScalarValue::Null));
-        let st_intersects = dummy_st_intersects();
+        let st_intersects = create_dummy_spatial_function(func_name, 2);
 
         // Wrong number of args
         let expr_no_args: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
@@ -441,6 +893,7 @@ mod test {
             Arc::new(st_intersects.clone()),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(SpatialFilter::try_from_expr(&expr_no_args)
             .unwrap_err()
@@ -453,11 +906,123 @@ mod test {
             Arc::new(st_intersects.clone()),
             vec![literal.clone(), literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_wrong_types).unwrap(),
             SpatialFilter::Unknown
         ));
+    }
+
+    #[rstest]
+    fn range_predicate_involving_geography_should_be_transformed_to_unknown(
+        #[values(
+            "st_intersects",
+            "st_equals",
+            "st_touches",
+            "st_contains",
+            "st_covers",
+            "st_within",
+            "st_covered_by",
+            "st_coveredby",
+            "st_crosses",
+            "st_overlaps"
+        )]
+        func_name: &str,
+    ) {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOGRAPHY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"), &WKB_GEOGRAPHY),
+            Some(storage_field.metadata().into()),
+        ));
+
+        let func = create_dummy_spatial_function(func_name, 2);
+        let expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            func_name,
+            Arc::new(func.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Unknown),
+            "Function {func_name} involving geography should produce Unknown filter"
+        );
+    }
+
+    #[test]
+    fn distance_predicate_involving_geography_should_be_transformed_to_unknown() {
+        let column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+        let storage_field = WKB_GEOGRAPHY.to_storage_field("", true).unwrap();
+        let literal: Arc<dyn PhysicalExpr> = Arc::new(Literal::new_with_metadata(
+            create_scalar(Some("POINT (1 2)"), &WKB_GEOGRAPHY),
+            Some(storage_field.metadata().into()),
+        ));
+        let distance_literal: Arc<dyn PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Float64(Some(100.0))));
+
+        // Test ST_DWithin function
+        let st_dwithin = create_dummy_spatial_function("st_dwithin", 3);
+        let dwithin_expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin.clone()),
+            vec![column.clone(), literal.clone(), distance_literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&dwithin_expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Unknown),
+            "ST_DWithin involving geography should produce Unknown filter"
+        );
+
+        // Test ST_DWithin with reversed geometry arguments
+        let dwithin_expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_dwithin",
+            Arc::new(st_dwithin),
+            vec![literal.clone(), column.clone(), distance_literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&dwithin_expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Unknown),
+            "ST_DWithin involving geography should produce Unknown filter"
+        );
+
+        // Test ST_Distance <= threshold
+        let st_distance = create_dummy_spatial_function("st_distance", 2);
+        let distance_expr: Arc<dyn PhysicalExpr> = Arc::new(ScalarFunctionExpr::new(
+            "st_distance",
+            Arc::new(st_distance.clone()),
+            vec![column.clone(), literal.clone()],
+            Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
+        ));
+        let comparison_expr: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            distance_expr.clone(),
+            Operator::LtEq,
+            distance_literal.clone(),
+        ));
+        let predicate = SpatialFilter::try_from_expr(&comparison_expr).unwrap();
+        assert!(
+            matches!(predicate, SpatialFilter::Unknown),
+            "ST_Distance <= threshold involving geography should produce Unknown filter"
+        );
+
+        // Test threshold >= ST_Distance
+        let comparison_expr_reversed: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            distance_literal.clone(),
+            Operator::GtEq,
+            distance_expr.clone(),
+        ));
+        let predicate_reversed = SpatialFilter::try_from_expr(&comparison_expr_reversed).unwrap();
+        assert!(
+            matches!(predicate_reversed, SpatialFilter::Unknown),
+            "threshold >= ST_Distance involving geography should produce Unknown filter"
+        );
     }
 
     #[test]
@@ -470,6 +1035,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![column.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         let predicate = SpatialFilter::try_from_expr(&expr).unwrap();
         assert!(matches!(predicate, SpatialFilter::HasZ(_)));
@@ -485,6 +1051,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(SpatialFilter::try_from_expr(&expr_no_args)
             .unwrap_err()
@@ -497,6 +1064,7 @@ mod test {
             Arc::new(has_z.clone()),
             vec![literal.clone()],
             Arc::new(Field::new("", DataType::Boolean, true)),
+            Arc::new(ConfigOptions::default()),
         ));
         assert!(matches!(
             SpatialFilter::try_from_expr(&expr_wrong_types).unwrap(),

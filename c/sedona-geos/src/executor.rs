@@ -17,13 +17,15 @@
 use datafusion_common::{DataFusionError, Result};
 use sedona_functions::executor::{GenericExecutor, GeometryFactory};
 
+use crate::wkb_to_geos::GEOSWkbFactory;
+
 /// A [GenericExecutor] that iterates over [geos::Geometry]
 pub type GeosExecutor<'a, 'b> = GenericExecutor<'a, 'b, GeosGeometryFactory, GeosGeometryFactory>;
 
 /// [GeometryFactory] implementation for iterating over [geos::Geometry]
 #[derive(Default)]
 pub struct GeosGeometryFactory {
-    inner: wkb::reader::to_geos::GEOSWkbFactory,
+    inner: GEOSWkbFactory,
 }
 
 impl GeometryFactory for GeosGeometryFactory {

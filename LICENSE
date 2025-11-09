@@ -212,6 +212,7 @@ c/sedona-geoarrow-c/src/geoarrow (vendored from https://github.com/geoarrow/geoa
 c/sedona-geoarrow-c/src/nanoarrow (vendored from https://github.com/apache/arrow-nanoarrow)
 c/sedona-s2geography/s2geography (submodule from https://github.com/paleolimbot/s2geography)
 c/sedona-s2geography/s2geometry (submodule from https://github.com/google/s2geometry)
+rust/sedona-geo-generic-alg (ported and contains copied code from https://github.com/georust/geo)
 
 MIT License
 --------------------------------------

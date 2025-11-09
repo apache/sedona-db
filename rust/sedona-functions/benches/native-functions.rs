@@ -33,6 +33,24 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_envelope", Point);
     benchmark::scalar(c, &f, "native", "st_envelope", LineString(10));
 
+    benchmark::scalar(c, &f, "native", "st_flipcoordinates", Point);
+    benchmark::scalar(c, &f, "native", "st_flipcoordinates", LineString(10));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_translate",
+        BenchmarkArgs::ArrayScalarScalar(Point, Float64(0.0, 1.0), Float64(2.0, 3.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_translate",
+        BenchmarkArgs::ArrayScalarScalar(LineString(10), Float64(0.0, 1.0), Float64(2.0, 3.0)),
+    );
+
     benchmark::scalar(c, &f, "native", "st_geometrytype", Point);
     benchmark::scalar(c, &f, "native", "st_geometrytype", LineString(10));
 
@@ -57,6 +75,32 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_geomfromwkt",
         Transformed(LineString(10).into(), st_astext.clone()),
     );
+
+    benchmark::scalar(c, &f, "native", "st_hasz", Point);
+    benchmark::scalar(c, &f, "native", "st_hasz", LineString(10));
+
+    benchmark::scalar(c, &f, "native", "st_hasm", Point);
+    benchmark::scalar(c, &f, "native", "st_hasm", LineString(10));
+
+    benchmark::scalar(c, &f, "native", "st_isempty", Point);
+    benchmark::scalar(c, &f, "native", "st_isempty", LineString(10));
+
+    benchmark::scalar(c, &f, "native", "st_isclosed", Point);
+    benchmark::scalar(c, &f, "native", "st_isclosed", LineString(10));
+
+    benchmark::scalar(c, &f, "native", "st_iscollection", Point);
+    benchmark::scalar(c, &f, "native", "st_iscollection", MultiPoint(10));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_makeline",
+        BenchmarkArgs::ArrayArray(Point, Point),
+    );
+
+    benchmark::scalar(c, &f, "native", "st_numgeometries", Point);
+    benchmark::scalar(c, &f, "native", "st_numgeometries", MultiPoint(10));
 
     benchmark::scalar(
         c,
@@ -103,14 +147,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
-    benchmark::scalar(c, &f, "native", "st_hasz", Point);
-    benchmark::scalar(c, &f, "native", "st_hasz", LineString(10));
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_startpoint",
+        BenchmarkArgs::Array(LineString(10)),
+    );
 
-    benchmark::scalar(c, &f, "native", "st_hasm", Point);
-    benchmark::scalar(c, &f, "native", "st_hasm", LineString(10));
-
-    benchmark::scalar(c, &f, "native", "st_isempty", Point);
-    benchmark::scalar(c, &f, "native", "st_isempty", LineString(10));
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_endpoint",
+        BenchmarkArgs::Array(LineString(10)),
+    );
 
     benchmark::scalar(c, &f, "native", "st_x", Point);
     benchmark::scalar(c, &f, "native", "st_y", Point);
@@ -127,11 +178,25 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_mmin", LineString(10));
     benchmark::scalar(c, &f, "native", "st_mmax", LineString(10));
 
+    benchmark::scalar(c, &f, "native", "st_zmflag", Point);
+    benchmark::scalar(c, &f, "native", "st_zmflag", LineString(10));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_azimuth",
+        BenchmarkArgs::ArrayArray(Point, Point),
+    );
+
     benchmark::aggregate(c, &f, "native", "st_envelope_aggr", Point);
     benchmark::aggregate(c, &f, "native", "st_envelope_aggr", LineString(10));
 
     benchmark::aggregate(c, &f, "native", "st_analyze_aggr", Point);
     benchmark::aggregate(c, &f, "native", "st_analyze_aggr", LineString(10));
+
+    benchmark::aggregate(c, &f, "native", "st_collect", Point);
+    benchmark::aggregate(c, &f, "native", "st_collect", LineString(10));
 }
 
 criterion_group!(benches, criterion_benchmark);

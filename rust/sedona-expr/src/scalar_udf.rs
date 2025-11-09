@@ -14,18 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::iter::zip;
-use std::sync::Arc;
-use std::{any::Any, fmt::Debug};
+use std::{any::Any, fmt::Debug, sync::Arc};
 
-use arrow_schema::{DataType, Field, FieldRef};
-use datafusion_common::{not_impl_err, plan_err, Result, ScalarValue};
+use arrow_schema::{DataType, FieldRef};
+use datafusion_common::{not_impl_err, Result, ScalarValue};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
     Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel + Send + Sync>;
 
@@ -41,6 +39,20 @@ pub struct SedonaScalarUDF {
     kernels: Vec<ScalarKernelRef>,
     documentation: Option<Documentation>,
     aliases: Vec<String>,
+}
+
+impl PartialEq for SedonaScalarUDF {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for SedonaScalarUDF {}
+
+impl std::hash::Hash for SedonaScalarUDF {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 /// User-defined function implementation
@@ -85,291 +97,15 @@ pub trait SedonaScalarKernel: Debug {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue>;
-}
 
-/// Helper to match arguments and compute return types
-#[derive(Debug)]
-pub struct ArgMatcher {
-    matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>>,
-    out_type: SedonaType,
-}
-
-impl ArgMatcher {
-    /// Create a new ArgMatcher
-    pub fn new(matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>>, out_type: SedonaType) -> Self {
-        Self { matchers, out_type }
-    }
-
-    /// Calculate a return type given input types
-    ///
-    /// Returns Some(physical_type) if this kernel applies to the input types or
-    /// None otherwise. This function also checks that all input arguments have
-    /// compatible CRSes and if so, applies the CRS to the output type.
-    pub fn match_args(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        if !self.matches(args) {
-            return Ok(None);
-        }
-
-        let geometry_arg_crses = args
-            .iter()
-            .filter(|arg_type| IsGeometryOrGeography {}.match_type(arg_type))
-            .map(|arg_type| match arg_type {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs.clone(),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        if geometry_arg_crses.is_empty() {
-            return Ok(Some(self.out_type.clone()));
-        }
-
-        let out_crs = geometry_arg_crses[0].clone();
-        for this_crs in geometry_arg_crses.into_iter().skip(1) {
-            if out_crs != this_crs {
-                let hint = "Use ST_Transform() or ST_SetSRID() to ensure arguments are compatible.";
-
-                return match (out_crs, this_crs) {
-                    (None, Some(rhs_crs)) => {
-                        plan_err!("Mismatched CRS arguments: None vs {rhs_crs}\n{hint}")
-                    }
-                    (Some(lhs_crs), None) => {
-                        plan_err!("Mismatched CRS arguments: {lhs_crs} vs None\n{hint}")
-                    }
-                    (Some(lhs_crs), Some(rhs_crs)) => {
-                        plan_err!("Mismatched CRS arguments: {lhs_crs} vs {rhs_crs}\n{hint}")
-                    }
-                    _ => sedona_internal_err!("None vs. None should be considered equal"),
-                };
-            }
-        }
-
-        match &self.out_type {
-            SedonaType::Wkb(edges, _) => Ok(Some(SedonaType::Wkb(*edges, out_crs))),
-            SedonaType::WkbView(edges, _) => Ok(Some(SedonaType::WkbView(*edges, out_crs))),
-            _ => Ok(Some(self.out_type.clone())),
-        }
-    }
-
-    /// Check for an input type match
-    ///
-    /// Returns true if args applies to the input types.
-    pub fn matches(&self, args: &[SedonaType]) -> bool {
-        if args.len() > self.matchers.len() {
-            return false;
-        }
-
-        let matcher_iter = self.matchers.iter();
-        let mut arg_iter = args.iter().peekable();
-
-        for matcher in matcher_iter {
-            if let Some(arg) = arg_iter.peek() {
-                if arg == &&SedonaType::Arrow(DataType::Null) || matcher.match_type(arg) {
-                    arg_iter.next(); // Consume the argument
-                    continue; // Move to the next matcher
-                } else if matcher.is_optional() {
-                    continue; // Skip the optional matcher
-                } else {
-                    return false; // Non-optional matcher failed
-                }
-            } else if matcher.is_optional() {
-                continue; // Skip remaining optional matchers
-            } else {
-                return false; // Non-optional matcher failed with no arguments left
-            }
-        }
-
-        // Ensure all arguments are consumed
-        arg_iter.next().is_none()
-    }
-
-    /// Matches any argument
-    pub fn is_any() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsAny {})
-    }
-
-    /// Matches the given Arrow type using PartialEq
-    pub fn is_arrow(data_type: DataType) -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsExact {
-            exact_type: SedonaType::Arrow(data_type),
-        })
-    }
-
-    /// Matches any geography or geometry argument without considering Crs
-    pub fn is_geometry_or_geography() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsGeometryOrGeography {})
-    }
-
-    /// Matches any geometry argument without considering Crs
-    pub fn is_geometry() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsGeometry {})
-    }
-
-    /// Matches any geography argument without considering Crs
-    pub fn is_geography() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsGeography {})
-    }
-
-    /// Matches any numeric argument
-    pub fn is_numeric() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsNumeric {})
-    }
-
-    /// Matches any string argument
-    pub fn is_string() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsString {})
-    }
-
-    /// Matches any binary argument
-    pub fn is_binary() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsBinary {})
-    }
-
-    /// Matches any boolean argument
-    pub fn is_boolean() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsBoolean {})
-    }
-
-    /// Matches any argument that is optional
-    pub fn is_optional(
-        matcher: Arc<dyn TypeMatcher + Send + Sync>,
-    ) -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(OptionalMatcher { inner: matcher })
-    }
-}
-
-pub trait TypeMatcher: Debug {
-    fn match_type(&self, arg: &SedonaType) -> bool;
-    fn is_optional(&self) -> bool {
-        false
-    }
-}
-
-#[derive(Debug)]
-struct IsAny;
-
-impl TypeMatcher for IsAny {
-    fn match_type(&self, _arg: &SedonaType) -> bool {
-        true
-    }
-}
-
-#[derive(Debug)]
-struct IsExact {
-    exact_type: SedonaType,
-}
-
-impl TypeMatcher for IsExact {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        self.exact_type.match_signature(arg)
-    }
-}
-
-#[derive(Debug)]
-struct OptionalMatcher {
-    inner: Arc<dyn TypeMatcher + Send + Sync>,
-}
-
-impl TypeMatcher for OptionalMatcher {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        self.inner.match_type(arg)
-    }
-
-    fn is_optional(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug)]
-struct IsGeometryOrGeography {}
-
-impl TypeMatcher for IsGeometryOrGeography {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        matches!(arg, SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _))
-    }
-}
-
-#[derive(Debug)]
-struct IsGeometry {}
-
-impl TypeMatcher for IsGeometry {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
-                matches!(edges, Edges::Planar)
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IsGeography {}
-
-impl TypeMatcher for IsGeography {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
-                matches!(edges, Edges::Spherical)
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IsNumeric {}
-
-impl TypeMatcher for IsNumeric {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Arrow(data_type) => data_type.is_numeric(),
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IsString {}
-
-impl TypeMatcher for IsString {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Arrow(data_type) => {
-                matches!(
-                    data_type,
-                    DataType::Utf8 | DataType::Utf8View | DataType::LargeUtf8
-                )
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IsBinary {}
-
-impl TypeMatcher for IsBinary {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Arrow(data_type) => {
-                matches!(data_type, DataType::Binary | DataType::BinaryView)
-            }
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct IsBoolean {}
-
-impl TypeMatcher for IsBoolean {
-    fn match_type(&self, arg: &SedonaType) -> bool {
-        match arg {
-            SedonaType::Arrow(data_type) => {
-                matches!(data_type, DataType::Boolean)
-            }
-            _ => false,
-        }
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+    ) -> Result<ColumnarValue> {
+        self.invoke_batch(arg_types, args)
     }
 }
 
@@ -427,19 +163,13 @@ impl SedonaScalarUDF {
         }
     }
 
-    pub fn new_with_aliases(
-        name: &str,
-        kernels: Vec<ScalarKernelRef>,
-        volatility: Volatility,
-        documentation: Option<Documentation>,
-        aliases: Vec<String>,
-    ) -> SedonaScalarUDF {
-        let signature = Signature::user_defined(volatility);
+    /// Add aliases to an existing SedonaScalarUDF
+    pub fn with_aliases(self, aliases: Vec<String>) -> SedonaScalarUDF {
         Self {
-            name: name.to_string(),
-            signature,
-            kernels,
-            documentation,
+            name: self.name,
+            signature: self.signature,
+            kernels: self.kernels,
+            documentation: self.documentation,
             aliases,
         }
     }
@@ -475,38 +205,12 @@ impl SedonaScalarUDF {
         Self::new(name, vec![kernel], Volatility::Immutable, None)
     }
 
-    pub fn invoke_batch(
-        &self,
-        args: &[ColumnarValue],
-        number_rows: usize,
-    ) -> Result<ColumnarValue> {
-        let arg_types: Vec<_> = args.iter().map(|arg| arg.data_type()).collect();
-        let return_type = self.return_type(&arg_types)?;
-        let arg_fields: Vec<_> = arg_types
-            .into_iter()
-            .map(|data_type| Arc::new(Field::new("", data_type, true)))
-            .collect();
-
-        let args = ScalarFunctionArgs {
-            args: args.to_vec(),
-            arg_fields,
-            number_rows,
-            return_field: Arc::new(Field::new("", return_type, true)),
-        };
-
-        self.invoke_with_args(args)
-    }
-
     /// Add a new kernel to a Scalar UDF
     ///
     /// Because kernels are resolved in reverse order, the new kernel will take
     /// precedence over any previously added kernels that apply to the same types.
     pub fn add_kernel(&mut self, kernel: ScalarKernelRef) {
         self.kernels.push(kernel);
-    }
-
-    fn physical_types(args: &[DataType]) -> Result<Vec<SedonaType>> {
-        args.iter().map(SedonaType::from_data_type).collect()
     }
 
     fn return_type_impl(
@@ -542,31 +246,31 @@ impl ScalarUDFImpl for SedonaScalarUDF {
         self.documentation.as_ref()
     }
 
-    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        let arg_types = Self::physical_types(args)?;
-        let scalars = vec![None; args.len()];
-        let (_, out_type) = self.return_type_impl(&arg_types, &scalars)?;
-        Ok(out_type.data_type())
+    fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
+        sedona_internal_err!("Should not be called (use return_field_from_args())")
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
-        let arg_data_types: Vec<DataType> = args
+        let arg_types = args
             .arg_fields
             .iter()
-            .map(|arg| arg.data_type().clone())
-            .collect();
-        let arg_types = Self::physical_types(&arg_data_types)?;
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect::<Result<Vec<_>>>()?;
         let (_, out_type) = self.return_type_impl(&arg_types, args.scalar_arguments)?;
-        Ok(Field::new("", out_type.data_type(), true).into())
+        Ok(Arc::new(out_type.to_storage_field("", true)?))
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
         Ok(arg_types.to_vec())
     }
 
-    fn invoke_with_args(&self, args: datafusion_expr::ScalarFunctionArgs) -> Result<ColumnarValue> {
-        let arg_types: Vec<DataType> = args.args.iter().map(|arg| arg.data_type()).collect();
-        let arg_physical_types = Self::physical_types(&arg_types)?;
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+        let arg_types = args
+            .arg_fields
+            .iter()
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect::<Result<Vec<_>>>()?;
+
         let arg_scalars = args
             .args
             .iter()
@@ -578,12 +282,9 @@ impl ScalarUDFImpl for SedonaScalarUDF {
                 }
             })
             .collect::<Vec<_>>();
-        let (kernel, out_type) = self.return_type_impl(&arg_physical_types, &arg_scalars)?;
-        let args_unwrapped: Result<Vec<ColumnarValue>, _> = zip(&arg_physical_types, &args.args)
-            .map(|(a, b)| a.unwrap_arg(b))
-            .collect();
-        let result = kernel.invoke_batch(&arg_physical_types, &args_unwrapped?)?;
-        out_type.wrap_arg(&result)
+
+        let (kernel, return_type) = self.return_type_impl(&arg_types, &arg_scalars)?;
+        kernel.invoke_batch_from_args(&arg_types, &args.args, &return_type, args.number_rows)
     }
 
     fn aliases(&self) -> &[String] {
@@ -594,121 +295,29 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 #[cfg(test)]
 mod tests {
     use datafusion_common::{scalar::ScalarValue, DFSchema};
+    use sedona_testing::testers::ScalarUdfTester;
 
     use datafusion_expr::{lit, ExprSchemable, ScalarUDF};
     use sedona_schema::{
         crs::lnglat,
-        datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY},
+        datatypes::{Edges, WKB_GEOMETRY},
     };
 
     use super::*;
-
-    #[test]
-    fn matchers() {
-        assert!(ArgMatcher::is_arrow(DataType::Null).match_type(&SedonaType::Arrow(DataType::Null)));
-
-        assert!(ArgMatcher::is_geometry_or_geography().match_type(&WKB_GEOMETRY));
-        assert!(ArgMatcher::is_geometry_or_geography().match_type(&WKB_GEOGRAPHY));
-        assert!(!ArgMatcher::is_geometry_or_geography()
-            .match_type(&SedonaType::Arrow(DataType::Binary)));
-
-        assert!(ArgMatcher::is_geometry().match_type(&WKB_GEOMETRY));
-        assert!(!ArgMatcher::is_geometry().match_type(&WKB_GEOGRAPHY));
-
-        assert!(ArgMatcher::is_geography().match_type(&WKB_GEOGRAPHY));
-        assert!(!ArgMatcher::is_geography().match_type(&WKB_GEOMETRY));
-
-        assert!(ArgMatcher::is_numeric().match_type(&SedonaType::Arrow(DataType::Int32)));
-        assert!(ArgMatcher::is_numeric().match_type(&SedonaType::Arrow(DataType::Float64)));
-
-        assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));
-        assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8View)));
-        assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::LargeUtf8)));
-        assert!(!ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Binary)));
-
-        assert!(ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::Binary)));
-        assert!(ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::BinaryView)));
-        assert!(!ArgMatcher::is_binary().match_type(&SedonaType::Arrow(DataType::Utf8)));
-
-        assert!(ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Boolean)));
-        assert!(!ArgMatcher::is_boolean().match_type(&SedonaType::Arrow(DataType::Int32)));
-    }
-
-    #[test]
-    fn optional_matcher() {
-        let matcher = ArgMatcher::new(
-            vec![
-                ArgMatcher::is_geometry(),
-                ArgMatcher::is_optional(ArgMatcher::is_boolean()),
-                ArgMatcher::is_optional(ArgMatcher::is_numeric()),
-            ],
-            SedonaType::Arrow(DataType::Null),
-        );
-
-        // Match with all args present and matching
-        assert!(matcher.matches(&[
-            WKB_GEOMETRY,
-            SedonaType::Arrow(DataType::Boolean),
-            SedonaType::Arrow(DataType::Int32)
-        ]));
-
-        // Match when first argument present, second is None
-        assert!(matcher.matches(&[WKB_GEOMETRY]));
-
-        // Match when skip an optional arg
-        assert!(matcher.matches(&[WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)]));
-
-        // No match when first is None, second is present
-        assert!(!matcher.matches(&[SedonaType::Arrow(DataType::Boolean)]));
-
-        // No match when second argument is incorrect type
-        assert!(!matcher.matches(&[WKB_GEOMETRY, WKB_GEOMETRY]));
-
-        // No match when first argument is incorrect type
-        assert!(!matcher.matches(&[
-            SedonaType::Arrow(DataType::Boolean),
-            SedonaType::Arrow(DataType::Boolean)
-        ]));
-
-        // No match when too many arguments
-        assert!(!matcher.matches(&[
-            WKB_GEOGRAPHY,
-            SedonaType::Arrow(DataType::Boolean),
-            SedonaType::Arrow(DataType::Int32),
-            SedonaType::Arrow(DataType::Int32)
-        ]));
-    }
-
-    #[test]
-    fn arg_matcher_matches_null() {
-        for type_matcher in [
-            ArgMatcher::is_arrow(DataType::Null),
-            ArgMatcher::is_arrow(DataType::Float32),
-            ArgMatcher::is_geometry_or_geography(),
-            ArgMatcher::is_geometry(),
-            ArgMatcher::is_geography(),
-            ArgMatcher::is_numeric(),
-            ArgMatcher::is_string(),
-            ArgMatcher::is_binary(),
-            ArgMatcher::is_boolean(),
-            ArgMatcher::is_optional(ArgMatcher::is_numeric()),
-        ] {
-            let matcher = ArgMatcher::new(vec![type_matcher], SedonaType::Arrow(DataType::Null));
-            assert!(matcher.matches(&[SedonaType::Arrow(DataType::Null)]));
-        }
-    }
 
     #[test]
     fn udf_empty() -> Result<()> {
         // UDF with no implementations
         let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable, None);
         assert_eq!(udf.name(), "empty");
-        let err = udf.return_type(&[]).unwrap_err();
-        assert_eq!(err.message(), "empty([]): No kernel matching arguments");
-
         assert_eq!(udf.coerce_types(&[])?, vec![]);
 
-        let batch_err = udf.invoke_batch(&[], 5).unwrap_err();
+        let tester = ScalarUdfTester::new(udf.into(), vec![]);
+
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(err.message(), "empty([]): No kernel matching arguments");
+
+        let batch_err = tester.invoke_arrays(vec![]).unwrap_err();
         assert_eq!(
             batch_err.message(),
             "empty([]): No kernel matching arguments"
@@ -744,53 +353,23 @@ mod tests {
             None,
         );
 
-        assert_eq!(udf.name(), "simple_udf");
-
         // Calling with a geo type should return a Null type
-        let wkb_arrow = WKB_GEOMETRY.data_type();
-        let wkb_dummy_val = WKB_GEOMETRY
-            .wrap_arg(&ColumnarValue::Scalar(ScalarValue::Binary(None)))
-            .unwrap();
-
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(DataType::Null);
         assert_eq!(
-            udf.return_type(std::slice::from_ref(&wkb_arrow)).unwrap(),
-            DataType::Null
+            tester.invoke_scalar("POINT (0 1)").unwrap(),
+            ScalarValue::Null
         );
-        assert_eq!(
-            udf.coerce_types(std::slice::from_ref(&wkb_arrow)).unwrap(),
-            vec![wkb_arrow.clone()]
-        );
-
-        if let ColumnarValue::Scalar(scalar) = udf.invoke_batch(&[wkb_dummy_val], 5).unwrap() {
-            assert_eq!(scalar, ScalarValue::Null);
-        } else {
-            panic!("Unexpected batch result");
-        }
 
         // Calling with a Boolean should result in a Boolean
-        let bool_arrow = DataType::Boolean;
-        let bool_dummy_val = ColumnarValue::Scalar(ScalarValue::Boolean(None));
-        assert_eq!(
-            udf.coerce_types(std::slice::from_ref(&bool_arrow)).unwrap(),
-            vec![bool_arrow.clone()]
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![SedonaType::Arrow(DataType::Boolean)],
         );
-
+        tester.assert_return_type(DataType::Boolean);
         assert_eq!(
-            udf.return_type(std::slice::from_ref(&bool_arrow)).unwrap(),
-            DataType::Boolean
-        );
-
-        if let ColumnarValue::Scalar(scalar) = udf.invoke_batch(&[bool_dummy_val], 5).unwrap() {
-            assert_eq!(scalar, ScalarValue::Boolean(None));
-        } else {
-            panic!("Unexpected batch result");
-        }
-
-        // Calling with something where no types match should error
-        let batch_err = udf.invoke_batch(&[], 5).unwrap_err();
-        assert_eq!(
-            batch_err.message(),
-            "simple_udf([]): No kernel matching arguments"
+            tester.invoke_scalar(true).unwrap(),
+            ScalarValue::Boolean(None)
         );
 
         // Adding a new kernel should result in that kernel getting picked first
@@ -804,10 +383,11 @@ mod tests {
         ));
 
         // Now, calling with a Boolean should result in a Utf8
-        assert_eq!(
-            udf.return_type(std::slice::from_ref(&bool_arrow)).unwrap(),
-            DataType::Utf8
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![SedonaType::Arrow(DataType::Boolean)],
         );
+        tester.assert_return_type(DataType::Utf8);
     }
 
     #[test]
@@ -818,9 +398,10 @@ mod tests {
             Volatility::Immutable,
             None,
         );
+        let tester = ScalarUdfTester::new(stub.into(), vec![]);
+        tester.assert_return_type(DataType::Boolean);
 
-        assert_eq!(stub.return_type(&[]).unwrap(), DataType::Boolean);
-        let err = stub.invoke_batch(&[], 1).unwrap_err();
+        let err = tester.invoke_arrays(vec![]).unwrap_err();
         assert_eq!(
             err.message(),
             "Implementation for stubby([]) was not registered"
@@ -829,8 +410,7 @@ mod tests {
 
     #[test]
     fn crs_propagation() {
-        let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat()).data_type();
-
+        let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
         let predicate_stub = SedonaScalarUDF::new_stub(
             "stubby",
             ArgMatcher::new(
@@ -842,25 +422,25 @@ mod tests {
         );
 
         // None CRS to None CRS is OK
-        assert_eq!(
-            predicate_stub
-                .return_type(&[WKB_GEOMETRY.data_type(), WKB_GEOMETRY.data_type()])
-                .unwrap(),
-            DataType::Boolean
+        let tester = ScalarUdfTester::new(
+            predicate_stub.clone().into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
         );
+        tester.assert_return_type(DataType::Boolean);
 
         // lnglat + lnglat is OK
-        assert_eq!(
-            predicate_stub
-                .return_type(&[geom_lnglat.clone(), geom_lnglat.clone()])
-                .unwrap(),
-            DataType::Boolean
+        let tester = ScalarUdfTester::new(
+            predicate_stub.clone().into(),
+            vec![geom_lnglat.clone(), geom_lnglat.clone()],
         );
+        tester.assert_return_type(DataType::Boolean);
 
         // Non-equal CRSes should error
-        let err = predicate_stub
-            .return_type(&[WKB_GEOMETRY.data_type(), geom_lnglat.clone()])
-            .unwrap_err();
+        let tester = ScalarUdfTester::new(
+            predicate_stub.clone().into(),
+            vec![WKB_GEOMETRY, geom_lnglat.clone()],
+        );
+        let err = tester.return_type().unwrap_err();
         assert!(err.message().starts_with("Mismatched CRS arguments"));
 
         // When geometry is output, it should match the crses of the inputs
@@ -874,12 +454,11 @@ mod tests {
             None,
         );
 
-        assert_eq!(
-            geom_out_stub
-                .return_type(&[geom_lnglat.clone(), geom_lnglat.clone()])
-                .unwrap(),
-            geom_lnglat.clone()
+        let tester = ScalarUdfTester::new(
+            geom_out_stub.clone().into(),
+            vec![geom_lnglat.clone(), geom_lnglat.clone()],
         );
+        tester.assert_return_type(geom_lnglat.clone());
     }
 
     #[test]
@@ -901,8 +480,8 @@ mod tests {
         fn parse_type(val: &ColumnarValue) -> Result<SedonaType> {
             if let ColumnarValue::Scalar(ScalarValue::Utf8(Some(scalar_arg1))) = val {
                 match scalar_arg1.as_str() {
-                    "float32" => return Ok(DataType::Float32.try_into().unwrap()),
-                    "float64" => return Ok(DataType::Float64.try_into().unwrap()),
+                    "float32" => return Ok(SedonaType::Arrow(DataType::Float32)),
+                    "float64" => return Ok(SedonaType::Arrow(DataType::Float64)),
                     _ => {}
                 }
             }
@@ -934,7 +513,7 @@ mod tests {
             args: &[ColumnarValue],
         ) -> Result<ColumnarValue> {
             let out_type = Self::parse_type(&args[1])?;
-            args[0].cast_to(&out_type.data_type(), None)
+            args[0].cast_to(out_type.storage_type(), None)
         }
     }
 }

@@ -32,8 +32,14 @@ else
     export PATH="${VCPKG_ROOT}/installed/${VCPKG_DEFAULT_TRIPLET}/tools/geos/bin:${PATH}"
 
     pushd ${VCPKG_ROOT}
+
+    # If we have an explicitly requested reference, ensure it is checked out
+    if [ ! -z "${VCPKG_REF}" ]; then
+        git checkout ${VCPKG_REF}
+    fi
+
     ./bootstrap-vcpkg.sh
-    ./vcpkg install --overlay-triplets="${SEDONADB_DIR}/ci/scripts/custom-triplets" geos
+    ./vcpkg install --overlay-triplets="${SEDONADB_DIR}/ci/scripts/custom-triplets" geos abseil openssl
     popd
 
     export CMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"

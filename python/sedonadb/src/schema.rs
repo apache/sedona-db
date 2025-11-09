@@ -171,6 +171,7 @@ impl PySedonaField {
 }
 
 #[pyclass]
+#[derive(Clone, Debug)]
 pub struct PySedonaType {
     pub inner: SedonaType,
 }
@@ -181,7 +182,7 @@ impl PySedonaType {
     }
 
     pub fn repr(&self) -> String {
-        format!("{}", self.inner)
+        format!("{}<{}>", self.inner.logical_type_name(), self.inner)
     }
 }
 

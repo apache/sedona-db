@@ -17,10 +17,12 @@
 import os
 import sys
 from pathlib import Path
-from typing import Iterable, Literal, Union
+from typing import Any, Dict, Iterable, Literal, Optional, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
 from sedonadb.dataframe import DataFrame, _create_data_frame
+from sedonadb.utility import sedona  # noqa: F401
+from sedonadb._options import Options
 
 
 class SedonaContext:
@@ -29,13 +31,54 @@ class SedonaContext:
     This object keeps track of state such as registered functions,
     registered tables, and available memory. This is similar to a
     Spark SessionContext or a database connection.
+
+    Examples:
+
+        >>> sd = sedona.db.connect()
+        >>> sd.options.interactive = True
+        >>> sd.sql("SELECT 1 as one")
+        ┌───────┐
+        │  one  │
+        │ int64 │
+        ╞═══════╡
+        │     1 │
+        └───────┘
     """
 
     def __init__(self):
         self._impl = InternalContext()
+        self.options = Options()
 
-    def create_data_frame(self, obj, schema=None) -> DataFrame:
-        return _create_data_frame(self._impl, obj, schema)
+    def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
+        """Create a DataFrame from an in-memory or protocol-enabled object.
+
+        Converts supported Python objects into a SedonaDB DataFrame so you
+        can run SQL and spatial operations on them.
+
+        Args:
+            obj: A supported object:
+                - pandas DataFrame
+                - GeoPandas DataFrame
+                - Polars DataFrame
+                - pyarrow Table
+            schema: Optional object implementing ``__arrow_schema__`` for providing an Arrow schema.
+
+        Returns:
+            DataFrame: A SedonaDB DataFrame.
+
+        Examples:
+
+            >>> import pandas as pd
+            >>> sd = sedona.db.connect()
+            >>> sd.create_data_frame(pd.DataFrame({"x": [1, 2]})).head(1).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            └───────┘
+        """
+        return _create_data_frame(self._impl, obj, schema, self.options)
 
     def view(self, name: str) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from a named view
@@ -47,20 +90,19 @@ class SedonaContext:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
-            >>> con.view("foofy").show()
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+            >>> sd.view("foofy").show()
             ┌────────────┐
             │    geom    │
-            │     wkb    │
+            │  geometry  │
             ╞════════════╡
             │ POINT(0 1) │
             └────────────┘
-            >>> con.drop_view("foofy")
+            >>> sd.drop_view("foofy")
 
         """
-        return DataFrame(self._impl, self._impl.view(name))
+        return DataFrame(self._impl, self._impl.view(name), self.options)
 
     def drop_view(self, name: str) -> None:
         """Remove a named view
@@ -70,34 +112,44 @@ class SedonaContext:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
-            >>> con.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
-            >>> con.drop_view("foofy")
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geom").to_view("foofy")
+            >>> sd.drop_view("foofy")
 
         """
         self._impl.drop_view(name)
 
-    def read_parquet(self, table_paths: Union[str, Path, Iterable[str]]) -> DataFrame:
+    def read_parquet(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
         Args:
             table_paths: A str, Path, or iterable of paths containing URLs to Parquet
                 files.
+            options: Optional dictionary of options to pass to the Parquet reader.
+                For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
 
         Examples:
 
-            >>> import sedonadb
+            >>> sd = sedona.db.connect()
             >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
-            >>> sedonadb.connect().read_parquet(url)
+            >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
 
         """
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
 
+        if options is None:
+            options = {}
+
         return DataFrame(
-            self._impl, self._impl.read_parquet([str(path) for path in table_paths])
+            self._impl,
+            self._impl.read_parquet([str(path) for path in table_paths], options),
+            self.options,
         )
 
     def sql(self, sql: str) -> DataFrame:
@@ -111,12 +163,46 @@ class SedonaContext:
 
         Examples:
 
-            >>> import sedonadb
-            >>> sedonadb.connect().sql("SELECT ST_Point(0, 1) as geom")
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT ST_Point(0, 1) as geom")
             <sedonadb.dataframe.DataFrame object at ...>
 
         """
-        return DataFrame(self._impl, self._impl.sql(sql))
+        return DataFrame(self._impl, self._impl.sql(sql), self.options)
+
+    def register_udf(self, udf: Any):
+        """Register a user-defined function
+
+        Args:
+            udf: An object implementing the DataFusion PyCapsule protocol
+                (i.e., `__datafusion_scalar_udf__`) or a function annotated
+                with [arrow_udf][sedonadb.udf.arrow_udf].
+
+        Examples:
+
+            >>> import pyarrow as pa
+            >>> from sedonadb import udf
+            >>> sd = sedona.db.connect()
+            >>> @udf.arrow_udf(pa.int64(), [udf.STRING])
+            ... def char_count(arg0):
+            ...     arg0 = pa.array(arg0.to_array())
+            ...
+            ...     return pa.array(
+            ...         (len(item) for item in arg0.to_pylist()),
+            ...         pa.int64()
+            ...     )
+            ...
+            >>> sd.register_udf(char_count)
+            >>> sd.sql("SELECT char_count('abcde') as col").show()
+            ┌───────┐
+            │  col  │
+            │ int64 │
+            ╞═══════╡
+            │     5 │
+            └───────┘
+
+        """
+        self._impl.register_udf(udf)
 
 
 def connect() -> SedonaContext:
@@ -169,8 +255,7 @@ def configure_proj(
 
     Examples:
 
-        >>> import sedonadb
-        >>> sedonadb.configure_proj("auto")
+        >>> sedona.db.configure_proj("auto")
     """
     if preset is not None:
         if preset == "pyproj":
@@ -207,7 +292,10 @@ def configure_proj(
             import warnings
 
             all_errors = "\n".join(errors)
-            warnings.warn(f"Failed to configure PROJ (tried {tried}):\n{all_errors}")
+            warnings.warn(
+                "Failed to configure PROJ. Is pyproj or a system install of PROJ available?"
+                f"\nDetails: tried {tried}\n{all_errors}"
+            )
             return
         else:
             raise ValueError(f"Unknown preset: {preset}")

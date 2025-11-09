@@ -333,7 +333,6 @@ impl Barrier {
     /// Compare two scalar values using the given operator
     fn compare_values(left: &ScalarValue, op: &str, right: &ScalarValue) -> Result<bool> {
         use ScalarValue::*;
-
         match (left, right) {
             (Int64(Some(l)), Int64(Some(r))) => match op {
                 "=" | "==" => Ok(l == r),
@@ -386,6 +385,7 @@ mod tests {
     use super::*;
     use arrow_array::RecordBatch;
     use arrow_schema::{Field, Schema};
+    use datafusion::prelude::SessionContext;
     use datafusion_expr::ScalarUDF;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -652,8 +652,6 @@ mod tests {
         expression: &str,
         column_values: &[(&str, ScalarValue)],
     ) -> Result<bool> {
-        use datafusion::prelude::SessionContext;
-
         // Create schema from column values
         let mut fields = vec![];
         let mut arrays = vec![];

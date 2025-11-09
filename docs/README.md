@@ -23,6 +23,10 @@ SedonaDB's documentation is powered by [mkdocs.org](https://www.mkdocs.org) and 
 
 ```shell
 git clone https://github.com/apache/sedona-db.git && cd sedona-db
+
+# OPTIONAL: build the doc for the latest dev version of sedona-db
+pip install -e "python/sedonadb/[test]" -vv
+
 pip install -r docs/requirements.txt
 ```
 

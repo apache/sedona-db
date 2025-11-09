@@ -19,17 +19,81 @@
 
 # SedonaDB
 
-SedonaDB is a high-performance, dependency-free geospatial compute engine.
+SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
-You can easily run SedonaDB locally or in the cloud.  The first release supports a core set of vector operations, but the full-suite of common vector and raster computations will be supported soon.
+SedonaDB is perfect for processing smaller to medium datasets on local machines or cloud instances. For distributed workloads, you can leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
 
-SedonaDB only runs on a single machine, so it’s perfect for processing smaller datasets.  You can use SedonaSpark, SedonaFlink, or SedonaSnow for operations on larger datasets.
+## Architecture
+
+![SedonaDB Architecture](docs/image/sedonadb-architecture.svg)
+
+* **Columnar in-memory datasets**
+    * Spatial indexing
+    * Spatial statistics
+    * CRS tracking
+    * Arrow format and zero serialization overhead
+
+* **Spatial query optimization**
+    * Spatial-aware heuristic based optimization
+    * Spatial-aware cost based optimization
+
+* **Spatial query processing**
+    * Spatial range query, KNN query, spatial join query, KNN join query
+    * Map algebra, NDVI, mask, zonal statistics
+
+Raster functions are coming soon. We expect SedonaDB Raster will match all raster functions provided in [SedonaSpark](https://sedona.apache.org/latest/api/sql/Raster-operators/).
+
+## Features of SedonaDB
+
+SedonaDB has several advantages:
+
+* **🚀 High Performance:** Built in Rust for exceptional speed and memory efficiency
+* **🗺️ Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
+* **🌍 CRS Propagation:** Always maintains coordinate reference system information
+* **📁 Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
+* **⚡ Dual APIs:** Python and SQL interfaces for seamless workflow integration
+* **🔧 Extensible:** Easily customizable and extensible architecture
+* **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
+* **👥 Active Community:** Great maintainers and contributors who encourage external contributions
+
+## Performance Benchmarks
+
+This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/single-node-benchmarks/).
+
+<div align="center">
+  <img src="docs/image/sf1-09242025.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="docs/image/sf10-09242025.png" alt="SF10 Benchmark Results" width="45%" />
+</div>
 
 ## Install
 
-You can install Python SedonaDB with `pip install apache-sedona`.
+You can install Python SedonaDB with PyPI:
 
-You can also install Rust SedonaDB with `cargo add apache-sedona`.
+```sh
+pip install "apache-sedona[db]"
+```
+
+## Quick Start
+
+Get started with SedonaDB in just a few lines:
+
+```python
+import sedona.db
+
+# Connect to SedonaDB
+sd = sedona.db.connect()
+
+# Run a simple spatial query
+result = sd.sql("SELECT ST_Point(0, 1) as geom")
+result.show()
+```
+
+### Supported File Formats
+
+SedonaDB supports a wide range of geospatial file formats:
+
+- **Vector:** GeoParquet, WKT, WKB, all formats supported by GeoPandas
+- **Raster:** Coming soon with full SedonaSpark compatibility
 
 ## Overture buildings example
 
@@ -38,13 +102,15 @@ This section shows how to query the Overture buildings data.
 Start by establishing a connection:
 
 ```python
-import sedonadb
-sedona = sedonadb.connect()
+import sedona.db
+import os
+sd = sedona.db.connect()
 ```
 
 Set some AWS environment variables to access the data:
 
 ```python
+import os
 os.environ["AWS_SKIP_SIGNATURE"] = "true"
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 ```
@@ -55,6 +121,7 @@ Read the dataset into a Python SedonaDB `DataFrame`. This is lazy: even though t
 df = sd.read_parquet(
     "s3://overturemaps-us-west-2/release/2025-08-20.0/theme=buildings/type=building/"
 )
+df.to_view("buildings")
 ```
 
 Now run a query to compute the centroids of tall buildings (above 20 meters) in New York City:
@@ -87,7 +154,7 @@ Here's the query output:
 ```
 ┌─────────────────────────┬────────────────────┬────────────┬────────────┬─────────────────────────┐
 │            id           ┆       height       ┆ num_floors ┆ roof_shape ┆         centroid        │
-│         utf8view        ┆       float64      ┆    int32   ┆  utf8view  ┆     wkb <ogc:crs84>     │
+│           utf8          ┆       float64      ┆    int32   ┆    utf8    ┆         geometry        │
 ╞═════════════════════════╪════════════════════╪════════════╪════════════╪═════════════════════════╡
 │ 1b9040c2-2e79-4f56-aba… ┆               22.4 ┆            ┆            ┆ POINT(-74.230407502993… │
 ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
@@ -101,32 +168,29 @@ Here's the query output:
 └─────────────────────────┴────────────────────┴────────────┴────────────┴─────────────────────────┘
 ```
 
-## Features of SedonaDB
+## Community & Support
 
-SedonaDB has several advantages:
+### Get Help
 
-* The code is written in Rust and runs fast.
-* It supports both vector and raster functions.  You can use a single library to access a full-suite of spatial functionality.
-* It always propagates the coordinate reference system (CRS).
-* It supports legacy and modern file formats.
-* It has Python and SQL APIs and users can seamlessly switch between them.
-* It’s easily extensible and customized.
-* It is interoperable with other PyArrow compatible libraries like GeoPandas, DuckDB, and Polars.
-* It has a great community of maintainers and encourages external contributions.
+- 💬 **Discord:** Join our [Discord community](https://discord.com/invite/9A3k5dEBsY) for real-time chat and support
+- 💭 **GitHub Discussions:** Start a [GitHub Discussion](https://github.com/apache/sedona/discussions) with questions or ideas
+- 📚 **Documentation:** Check out our [comprehensive docs](https://sedona.apache.org/sedonadb)
 
-## Contributing
+### Contributing
 
-There are many different ways to contribute to SedonaDB:
+We welcome contributions! Here's how you can get involved:
 
-* Join the Discord and chat with us
-* Open a GitHub Discussion with questions or ideas
-* Work on an existing issue.  Just comment “take” on the issue and we will assign you the task.
-* Brainstorm features with the contributors and then contribute a pull request.
+* 🐛 **Report Issues:** Found a bug? Open an issue on GitHub
+* 💡 **Suggest Features:** Have an idea? Start a GitHub Discussion
+* 🔧 **Fix Issues:** Comment "take" on any open issue to claim it
+* 🚀 **Submit PRs:** Brainstorm features with contributors and submit pull requests
+* 📅 **Join Meetings:** Monthly contributor meetings - we'd love to have you!
 
-The contributors meet on a monthly basis and we’re happy to add you to the call if you would like to join the community!
+### About SedonaDB
 
-## Community
+SedonaDB is a subproject of **Apache Sedona**, an Apache Software Foundation project. The project is governed by the Apache Software Foundation and subject to all the rules and oversight requirements. SedonaDB is built on top of **Apache Arrow** and **Apache DataFusion** for fast query processing.
 
-SedonaDB is a subproject of Apache Sedona, an Apache Software Foundation project.
+### Related Projects
 
-The project is governed by the Apache Software Foundation and subject to all the rules and oversight requirements.
+- **[Apache Sedona](https://sedona.apache.org/)** - The main Apache Sedona project for distributed spatial analytics
+- **[Sedona SpatialBench](https://sedona.apache.org/spatialbench)** - Comprehensive benchmarking suite for spatial analytics performance testing

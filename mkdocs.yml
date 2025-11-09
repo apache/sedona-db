@@ -14,17 +14,52 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+extra:
+  version:
+    provider: mike
+    default:
+      - latest
+  social:
+    - icon: fontawesome/brands/github
+      link: 'https://github.com/apache/sedona-db/'
+    - icon: fontawesome/brands/twitter
+      link: 'https://twitter.com/ApacheSedona'
+    - icon: fontawesome/brands/discord
+      link: 'https://discord.gg/9A3k5dEBsY'
+
 site_name: SedonaDB
-site_description: "Documentation for Apache SedonaDB"
+site_description: "Documentation for SedonaDB"
+site_url: https://sedona.apache.org/sedonadb/
 nav:
-   - Home: index.md
-   - CLI Quickstart: quickstart-cli.md
-   - Python Quickstart: quickstart-python.ipynb
-   - Development: development.md
-   - API Reference:
-      - Python: reference/python.md
-      - SQL: reference/sql.md
+  - Home: https://sedona.apache.org/latest/
+  - Setup: https://sedona.apache.org/latest/setup/overview/
+  - Download: https://sedona.apache.org/latest/download/
+  - Programming Guides: https://sedona.apache.org/latest/tutorial/sql/
+  - API Docs: https://sedona.apache.org/latest/api/sql/Overview/
+  - SedonaDB:
+      - Home: index.md
+      - Quickstart: quickstart-python.md
+      - Programming Guide: programming-guide.md
+      - API:
+        - Python: reference/python.md
+        - SQL: reference/sql.md
+        - Spatial Joins: reference/sql-joins.md
+      - Examples:
+        - GeoPandas interop: geopandas-interop.md
+        - Overture Examples: overture-examples.md
+        - CRS Examples: crs-examples.md
+        - Delta Lake: delta-lake.md
+        - Working with Parquet Files: working-with-parquet-files.md
+        - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
+      - Contributors Guide: contributors-guide.md
+  - SpatialBench: https://sedona.apache.org/spatialbench/
+  - Blog: https://sedona.apache.org/latest/blog/
+  - Community: https://sedona.apache.org/latest/setup/compile/
+  - Apache Software Foundation: https://sedona.apache.org/latest/asf/asf/
+
 repo_url: https://github.com/apache/sedona-db
+edit_uri: https://github.com/apache/sedona-db/blob/main/docs/
 repo_name: apache/sedona-db
 theme:
   name: material
@@ -32,10 +67,10 @@ theme:
     font: false
     name: 'material'
   palette:
-    primary: 'deep orange'
+    primary: custom
     accent: 'green'
   favicon: image/sedona_logo_symbol.png
-  logo: image/sedona_logo_symbol_white.svg
+  logo: image/sedona_logo_symbol.png
   icon:
     logo: fontawesome/solid/earth-americas
     repo: fontawesome/brands/github
@@ -47,14 +82,20 @@ theme:
     - search.suggest
     - navigation.footer
     - navigation.instant
+    - navigation.top
+    - navigation.sections
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.top
+
+
+extra_css:
+  - stylesheets/extra.css
 
 copyright: Copyright © 2025 The Apache Software Foundation. Apache Sedona, Sedona, Apache, the Apache feather logo, and the Apache Sedona project logo are either registered trademarks or trademarks of The Apache Software Foundation in the United States and other countries. All other marks mentioned may be trademarks or registered trademarks of their respective owners. Please visit <a href="https://www.apache.org/">Apache Software Foundation</a> for more details.<img referrerpolicy="no-referrer-when-downgrade" src="https://static.scarf.sh/a.png?x-pxid=f3e121f6-c909-4592-8be6-5bd345768cba" /><img referrerpolicy="no-referrer-when-downgrade" src="https://analytics.apache.org/matomo.php?idsite=74&rec=1" />
 
 exclude_docs: |
      snippets/*
+     README.md
 markdown_extensions:
    - admonition
    - attr_list
@@ -91,9 +132,9 @@ plugins:
    - macros
    - git-revision-date-localized:
         type: datetime
-   - mkdocs-jupyter
    - mike:
-        version_selector: false
+        version_selector: true
+        canonical_version: 'latest'
    - glightbox:
         touchNavigation: true
         loop: false
@@ -111,23 +152,23 @@ plugins:
         background: white
         shadow: false
         manual: false
-   - tags
    - mkdocstrings:
-        enable_inventory: true
         handlers:
-          python:
-            paths: [python/sedonadb]
-            inventories:
-              - https://docs.python.org/3/objects.inv
-              - https://geopandas.org/en/stable/objects.inv
-              - https://pandas.pydata.org/docs/objects.inv
-            options:
-              docstring_section_style: list
-              docstring_style: google
-              line_length: 80
-              separate_signature: true
-              show_root_heading: true
-              show_signature_annotations: true
-              show_source: false
-              show_symbol_type_toc: true
-              signature_crossrefs: true
+           python:
+              inventories:
+                 - https://docs.python.org/3/objects.inv
+                 - https://geopandas.org/en/stable/objects.inv
+                 - https://pandas.pydata.org/docs/objects.inv
+              options:
+                 docstring_section_style: list
+                 docstring_style: google
+                 line_length: 80
+                 separate_signature: true
+                 show_root_heading: true
+                 show_signature_annotations: true
+                 show_source: false
+                 show_symbol_type_toc: true
+                 signature_crossrefs: true
+                 preload_modules:
+                   - sedonadb
+                 search_paths: [python]

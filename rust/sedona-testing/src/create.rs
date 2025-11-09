@@ -20,46 +20,35 @@ use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
 use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
 use sedona_schema::datatypes::SedonaType;
+use wkb::{writer::WriteOptions, Endianness};
 use wkt::Wkt;
 
 /// Create a [`ColumnarValue`] array from a sequence of WKT literals
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array_value(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ColumnarValue {
-    data_type
-        .wrap_arg(&ColumnarValue::Array(create_array_storage(
-            wkt_values, data_type,
-        )))
-        .unwrap()
+    ColumnarValue::Array(create_array_storage(wkt_values, data_type))
 }
 
 /// Create a [`ColumnarValue`] scalar from a WKT literal
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar_value(wkt_value: Option<&str>, data_type: &SedonaType) -> ColumnarValue {
-    data_type
-        .wrap_arg(&ColumnarValue::Scalar(create_scalar_storage(
-            wkt_value, data_type,
-        )))
-        .unwrap()
+    ColumnarValue::Scalar(create_scalar_storage(wkt_value, data_type))
 }
 
 /// Create a [`ScalarValue`] from a WKT literal
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_scalar(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarValue {
-    data_type
-        .wrap_scalar(&create_scalar_storage(wkt_value, data_type))
-        .unwrap()
+    create_scalar_storage(wkt_value, data_type)
 }
 
 /// Create an [`ArrayRef`] from a sequence of WKT literals
 ///
 /// Panics on invalid WKT or unsupported data type.
 pub fn create_array(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ArrayRef {
-    data_type
-        .wrap_array(&create_array_storage(wkt_values, data_type))
-        .unwrap()
+    create_array_storage(wkt_values, data_type)
 }
 
 /// Create the storage [`ArrayRef`] from a sequence of WKT literals
@@ -98,7 +87,14 @@ where
 pub fn make_wkb(wkt_value: &str) -> Vec<u8> {
     let geom = Wkt::<f64>::from_str(wkt_value).unwrap();
     let mut out: Vec<u8> = vec![];
-    wkb::writer::write_geometry(&mut out, &geom, Default::default()).unwrap();
+    wkb::writer::write_geometry(
+        &mut out,
+        &geom,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .unwrap();
     out
 }
 

@@ -25,8 +25,8 @@ use datafusion_expr::{
 };
 use geo_traits::{GeometryCollectionTrait, GeometryTrait, GeometryType};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 pub fn st_dimension_udf() -> SedonaScalarUDF {
@@ -54,7 +54,10 @@ struct STDimension {}
 
 impl SedonaScalarKernel for STDimension {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], DataType::Int8.try_into()?);
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_geometry()],
+            SedonaType::Arrow(DataType::Int8),
+        );
 
         matcher.match_args(args)
     }
@@ -100,6 +103,7 @@ fn invoke_scalar(item: &Wkb) -> Result<i8> {
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
@@ -116,8 +120,6 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use datafusion_common::ScalarValue;
-
         let tester = ScalarUdfTester::new(st_dimension_udf().into(), vec![sedona_type.clone()]);
 
         tester.assert_return_type(DataType::Int8);

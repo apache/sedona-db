@@ -28,8 +28,8 @@ use geo_traits::{
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_X() scalar UDF implementation
@@ -106,7 +106,7 @@ impl SedonaScalarKernel for STXyzm {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Float64.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Float64),
         );
 
         matcher.match_args(args)
@@ -447,11 +447,7 @@ mod tests {
         let z_tester = ScalarUdfTester::new(st_z_udf().into(), vec![WKB_GEOMETRY]);
         let m_tester = ScalarUdfTester::new(st_m_udf().into(), vec![WKB_GEOMETRY]);
 
-        let scalar = WKB_GEOMETRY
-            .wrap_scalar(&ScalarValue::Binary(Some(
-                MULTIPOINT_WITH_EMPTY_CHILD_WKB.to_vec(),
-            )))
-            .unwrap();
+        let scalar = ScalarValue::Binary(Some(MULTIPOINT_WITH_EMPTY_CHILD_WKB.to_vec()));
         assert_eq!(
             x_tester.invoke_scalar(scalar.clone()).unwrap(),
             ScalarValue::Float64(None)

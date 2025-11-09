@@ -29,6 +29,7 @@ result_large_err = "allow"
 
 [dependencies]
 adbc_core = { workspace = true }
+adbc_ffi = { workspace = true }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion = { workspace = true }

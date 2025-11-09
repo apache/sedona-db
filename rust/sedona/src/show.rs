@@ -21,12 +21,10 @@ use comfy_table::{Cell, CellAlignment, ColumnConstraint, ContentArrangement, Row
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
-use datafusion_common::{DataFusionError, ScalarValue};
-use datafusion_expr::ColumnarValue;
-use sedona_expr::projection::unwrap_batch;
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
-use sedona_schema::projection::unwrap_schema;
+use datafusion_common::{config::ConfigOptions, DataFusionError, ScalarValue};
+use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
+use sedona_expr::scalar_udf::SedonaScalarUDF;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use std::iter::zip;
 use std::sync::Arc;
 
@@ -145,11 +143,6 @@ impl<'a> DisplayTable<'a> {
         options: DisplayTableOptions<'a>,
     ) -> Result<Self> {
         let num_rows = batches.iter().map(|batch| batch.num_rows()).sum();
-
-        // It's helpful to be able to work with wrapped or unwrapped batches, so we
-        // unwrap here (which has no effect on something that was already unwrapped)
-        let schema = unwrap_schema(schema);
-        let batches = batches.into_iter().map(unwrap_batch).collect::<Vec<_>>();
 
         let columns = schema
             .fields()
@@ -399,13 +392,9 @@ impl DisplayColumn {
     pub fn header(&self, options: &DisplayTableOptions) -> Cell {
         // Don't print the type ever if it's a continuation column
         let is_continuation = self.name == "…" || self.name == "...";
+        let display_type = self.sedona_type.logical_type_name();
         if options.arrow_options.types_info() && !is_continuation {
-            Cell::new(format!(
-                "{}\n{}",
-                self.name,
-                self.sedona_type.to_string().to_lowercase()
-            ))
-            .set_delimiter('\0')
+            Cell::new(format!("{}\n{}", self.name, display_type)).set_delimiter('\0')
         } else {
             Cell::new(self.name.clone()).set_delimiter('\0')
         }
@@ -483,17 +472,35 @@ impl DisplayColumn {
     /// their raw storage bytes.
     fn format_proxy(&self, array: &ArrayRef, options: &DisplayTableOptions) -> Result<ArrayRef> {
         if let Some(format) = &self.format_fn {
+            let format_udf: ScalarUDF = format.clone().into();
+
             let options_scalar = ScalarValue::Utf8(Some(format!(
                 r#"{{"width_hint": {}}}"#,
                 (options.table_width as usize).saturating_mul(options.max_row_height)
             )));
-            let format_proxy_value = format.invoke_batch(
-                &[
-                    ColumnarValue::Array(self.sedona_type.wrap_array(array)?),
-                    options_scalar.into(),
-                ],
-                array.len(),
-            )?;
+
+            let arg_fields = vec![
+                Arc::new(self.sedona_type.to_storage_field("", true)?),
+                Arc::new(Field::new("", DataType::Utf8, true)),
+            ];
+
+            let args = ReturnFieldArgs {
+                arg_fields: &arg_fields,
+                scalar_arguments: &[None, None],
+            };
+            let return_field = format_udf.return_field_from_args(args)?;
+
+            let args = ScalarFunctionArgs {
+                args: vec![ColumnarValue::Array(array.clone()), options_scalar.into()],
+                arg_fields,
+                number_rows: array.len(),
+                return_field,
+                // TODO: Pipe actual ConfigOptions from SedonaContext instead of using defaults
+                // See: https://github.com/apache/sedona-db/issues/248
+                config_options: Arc::new(ConfigOptions::default()),
+            };
+
+            let format_proxy_value = format_udf.invoke_with_args(args)?;
             format_proxy_value.to_array(array.len())
         } else {
             Ok(array.clone())
@@ -516,12 +523,15 @@ impl DisplayColumn {
 #[cfg(test)]
 mod test {
 
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use rstest::rstest;
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::create::create_array;
 
     use super::*;
 
-    fn test_cols() -> Vec<(&'static str, ArrayRef)> {
+    fn test_cols() -> Vec<(&'static str, (SedonaType, ArrayRef))> {
         let short_chars: ArrayRef =
             arrow_array::create_array!(Utf8, [Some("abcd"), Some("efgh"), None]);
         let long_chars: ArrayRef = arrow_array::create_array!(
@@ -546,18 +556,25 @@ mod test {
         );
 
         vec![
-            ("shrt", short_chars),
-            ("long", long_chars),
-            ("numeric", numeric),
-            ("geometry", geometry),
+            ("shrt", (SedonaType::Arrow(DataType::Utf8), short_chars)),
+            ("long", (SedonaType::Arrow(DataType::Utf8), long_chars)),
+            ("numeric", (SedonaType::Arrow(DataType::Int32), numeric)),
+            ("geometry", (WKB_GEOMETRY, geometry)),
         ]
     }
 
     fn render_cols<'a>(
-        cols: Vec<(&'static str, ArrayRef)>,
+        cols: Vec<(&'static str, (SedonaType, ArrayRef))>,
         options: DisplayTableOptions<'a>,
     ) -> Vec<String> {
-        let batch = RecordBatch::try_from_iter(cols).unwrap();
+        let fields = cols
+            .iter()
+            .map(|(name, (sedona_type, _))| sedona_type.to_storage_field(name, true).unwrap())
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(fields));
+        let batch =
+            RecordBatch::try_new(schema, cols.into_iter().map(|(_, (_, col))| col).collect())
+                .unwrap();
         let ctx = SedonaContext::new();
 
         let mut out = Vec::new();
@@ -594,7 +611,10 @@ mod test {
     fn render_multiline() {
         let cols = vec![(
             "multiline",
-            arrow_array::create_array!(Utf8, [Some("one\ntwo\nthree")]) as ArrayRef,
+            (
+                SedonaType::Arrow(DataType::Utf8),
+                arrow_array::create_array!(Utf8, [Some("one\ntwo\nthree")]) as ArrayRef,
+            ),
         )];
 
         // By default, multiple lines are truncated
@@ -630,7 +650,10 @@ mod test {
     fn numeric_truncate_header_but_not_content() {
         let cols = vec![(
             "a very long column name",
-            arrow_array::create_array!(Int32, [123456789]) as ArrayRef,
+            (
+                SedonaType::Arrow(DataType::Int32),
+                arrow_array::create_array!(Int32, [123456789]) as ArrayRef,
+            ),
         )];
 
         // The content should never be truncated but the header can be
@@ -662,6 +685,76 @@ mod test {
         );
     }
 
+    #[rstest]
+    #[case(WKB_GEOMETRY)]
+    #[case(WKB_VIEW_GEOMETRY)]
+    fn geometry_header(#[case] sedona_type: SedonaType) {
+        let cols = vec![(
+            "geometry",
+            (
+                sedona_type.clone(),
+                create_array(
+                    &[
+                        Some("POINT (0 1)"),
+                        Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"),
+                        None,
+                    ],
+                    &sedona_type,
+                ) as ArrayRef,
+            ),
+        )];
+
+        let mut options = DisplayTableOptions::new();
+        options.table_width = 50;
+        assert_eq!(
+            render_cols(cols.clone(), options.clone()),
+            vec![
+                "+----------------------------+",
+                "|          geometry          |",
+                "+----------------------------+",
+                "| POINT(0 1)                 |",
+                "| POLYGON((0 0,1 0,0 1,0 0)) |",
+                "|                            |",
+                "+----------------------------+"
+            ]
+        );
+    }
+
+    #[rstest]
+    #[case(WKB_GEOGRAPHY)]
+    #[case(WKB_VIEW_GEOGRAPHY)]
+    fn geography_header(#[case] sedona_type: SedonaType) {
+        let cols = vec![(
+            "geography",
+            (
+                sedona_type.clone(),
+                create_array(
+                    &[
+                        Some("POINT (0 1)"),
+                        Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"),
+                        None,
+                    ],
+                    &sedona_type,
+                ) as ArrayRef,
+            ),
+        )];
+
+        let mut options = DisplayTableOptions::new();
+        options.table_width = 50;
+        assert_eq!(
+            render_cols(cols.clone(), options.clone()),
+            vec![
+                "+----------------------------+",
+                "|          geography         |",
+                "+----------------------------+",
+                "| POINT(0 1)                 |",
+                "| POLYGON((0 0,1 0,0 1,0 0)) |",
+                "|                            |",
+                "+----------------------------+"
+            ]
+        );
+    }
+
     #[test]
     fn render_col_type() {
         let mut options = DisplayTableOptions::new();
@@ -672,7 +765,7 @@ mod test {
             vec![
                 "+------+--------------+-----------+--------------+",
                 "| shrt |     long     |  numeric  |   geometry   |",
-                "| utf8 |     utf8     |   int32   |      wkb     |",
+                "| utf8 |     utf8     |   int32   |   geometry   |",
                 "+------+--------------+-----------+--------------+",
                 "| abcd | you see, ... | 123456789 | POINT(0 1)   |",
                 "| efgh | the eleph... | 987654321 | POLYGON((... |",

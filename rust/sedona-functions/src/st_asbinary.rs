@@ -21,20 +21,20 @@ use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{ArgMatcher, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_AsBinary() scalar UDF implementation
 ///
 /// An implementation of WKB writing using GeoRust's wkt crate.
 pub fn st_asbinary_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_with_aliases(
+    let udf = SedonaScalarUDF::new(
         "st_asbinary",
         vec![Arc::new(STAsBinary {})],
         Volatility::Immutable,
         Some(st_asbinary_doc()),
-        vec!["st_aswkb".to_string()],
-    )
+    );
+    udf.with_aliases(vec!["st_aswkb".to_string()])
 }
 
 fn st_asbinary_doc() -> Documentation {
@@ -62,7 +62,7 @@ impl SedonaScalarKernel for STAsBinary {
 
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            DataType::Binary.try_into().unwrap(),
+            SedonaType::Arrow(DataType::Binary),
         );
 
         matcher.match_args(args)
