@@ -1271,6 +1271,32 @@ def test_st_perimeter(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("LINESTRING(0 0, 1 1, 2 2)", "LINESTRING (2 2, 1 1, 0 0)"),
+        ("POINT (1 2)", "POINT (1 2)"),
+        ("POLYGON ((0 0, 1 0, 2 2, 1 2, 0 0))", "POLYGON ((0 0, 1 2, 2 2, 1 0, 0 0))"),
+        # Note MultiPoints don't change since each point is separate (e.g not a line string)
+        ("MULTIPOINT (1 2, 3 4)", "MULTIPOINT (1 2, 3 4)"),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 2, 0 0)), ((5 5, 6 0, 7 1, 0 1, 5 5)))",
+            "MULTIPOLYGON (((0 0, 0 2, 1 1, 1 0, 0 0)), ((5 5, 0 1, 7 1, 6 0, 5 5)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (5 6, 3 4), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
+        ),
+    ],
+)
+def test_st_reverse(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Reverse({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("x", "y", "expected"),
     [
         (None, None, None),
