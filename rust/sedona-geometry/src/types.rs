@@ -293,6 +293,14 @@ impl FromStr for GeometryTypeAndDimensions {
 }
 
 /// A set containing [`GeometryTypeAndDimensions`] values
+///
+/// This set is conceptually similar to `HashSet<GeometryTypeAndDimensions>` but
+/// uses a compact bitset representation for efficiency.
+///
+/// This set only supports the standard dimensions: XY, XYZ, XYM, and XYZM.
+/// Unknown dimensions (other than these four standard types) are not supported
+/// and will be rejected by [`insert`](Self::insert) or silently ignored by
+/// [`insert_or_ignore`](Self::insert_or_ignore).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeometryTypeAndDimensionsSet {
     /// Bitset encoding geometry types and dimensions.
@@ -312,6 +320,11 @@ impl GeometryTypeAndDimensionsSet {
         Self { types: 0 }
     }
 
+    /// Insert a geometry type and dimensions into the set.
+    ///
+    /// Returns an error if the dimensions are unknown (not one of XY, XYZ, XYM, or XYZM).
+    /// Only the standard four dimension types are supported; attempting to insert
+    /// a geometry with `Dimensions::Unknown(_)` will result in an error.
     #[inline]
     pub fn insert(
         &mut self,
@@ -327,6 +340,12 @@ impl GeometryTypeAndDimensionsSet {
         Ok(())
     }
 
+    /// Insert a geometry type and dimensions into the set, ignoring unknown dimensions.
+    ///
+    /// If the dimensions are unknown (not one of XY, XYZ, XYM, or XYZM), this method
+    /// silently ignores the insertion without returning an error. This is useful when
+    /// processing data that may contain unsupported dimension types that should be
+    /// skipped rather than causing an error.
     #[inline]
     pub fn insert_or_ignore(&mut self, type_and_dim: &GeometryTypeAndDimensions) {
         let geom_shift = type_and_dim.geometry_type().wkb_id();
@@ -351,6 +370,7 @@ impl GeometryTypeAndDimensionsSet {
         self.types |= 1 << bit_position;
     }
 
+    /// Merge the given set into this set.
     #[inline]
     pub fn merge(&mut self, other: &Self) {
         self.types |= other.types;
