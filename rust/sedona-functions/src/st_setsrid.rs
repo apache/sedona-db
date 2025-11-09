@@ -311,8 +311,11 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         let orig_arg_types = &arg_types[..orig_args_len];
         let orig_args = &args[..orig_args_len];
 
-        // If the specified SRID is NULL, the result is also NULL. So, return
-        // NULL early and doesn't run `invoke_batch()`.
+        // Invoke the inner UDF first to propagate any errors even when the CRS is NULL.
+        // Note that, this behavior is different from PostGIS.
+        let result = self.inner.invoke_batch(orig_arg_types, orig_args)?;
+
+        // If the specified SRID is NULL, the result is also NULL.
         if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
             if sc.is_null() {
                 let n = WkbExecutor::new(orig_arg_types, orig_args).num_iterations();
@@ -325,7 +328,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
             }
         }
 
-        self.inner.invoke_batch(orig_arg_types, orig_args)
+        Ok(result)
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
