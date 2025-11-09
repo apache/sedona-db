@@ -104,7 +104,7 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))")
             .unwrap();
-        tester.assert_scalar_result_equals(result, "POINT (0.5 0.5)");
+        tester.assert_scalar_result_equals(result, "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))");
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
@@ -112,11 +112,21 @@ mod tests {
         let input_wkt = vec![
             Some("POLYGON ((2 2, 2 3, 3 3, 3 2, 2 2))"),
             Some("POINT EMPTY"),
+            Some("POINT (1 2)"),
+            Some("LINESTRING (1 2, 1 10)"),
+            Some("GEOMETRYCOLLECTION (MULTIPOINT (3 4, 1 2, 7 8, 5 6), LINESTRING (1 10, 1 2))"),
             None,
         ];
 
         let expected = create_array(
-            &[Some("POINT (2.5 2.5)"), Some("POINT EMPTY"), None],
+            &[
+                Some("POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))"),
+                Some("POINT EMPTY"),
+                Some("POINT (1 2)"),
+                Some("LINESTRING (1 10, 1 2)"),
+                Some("GEOMETRYCOLLECTION (MULTIPOINT (3 4, 1 2, 7 8, 5 6), LINESTRING(1 2, 1 10))"),
+                None,
+            ],
             &WKB_GEOMETRY,
         );
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
