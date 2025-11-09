@@ -28,6 +28,7 @@ use crate::{
     st_isvalid::st_is_valid_impl,
     st_isvalidreason::st_is_valid_reason_impl,
     st_length::st_length_impl,
+    st_numinteriorrings::st_num_interior_rings_impl,
     st_perimeter::st_perimeter_impl,
     st_reverse::st_reverse_impl,
     st_simplifypreservetopology::st_simplify_preserve_topology_impl,
@@ -67,6 +68,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_isvalidreason", st_is_valid_reason_impl()),
         ("st_length", st_length_impl()),
         ("st_overlaps", st_overlaps_impl()),
+        ("st_numinteriorrings", st_num_interior_rings_impl()),
         ("st_perimeter", st_perimeter_impl()),
         ("st_reverse", st_reverse_impl()),
         (
