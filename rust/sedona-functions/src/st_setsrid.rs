@@ -27,8 +27,6 @@ use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarU
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::executor::WkbExecutor;
-
 /// ST_SetSRID() scalar UDF implementation
 ///
 /// An implementation of ST_SetSRID providing a scalar function implementation
