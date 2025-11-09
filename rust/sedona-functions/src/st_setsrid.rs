@@ -318,9 +318,14 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         // If the specified SRID is NULL, the result is also NULL.
         if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
             if sc.is_null() {
-                let n = WkbExecutor::new(orig_arg_types, orig_args).num_iterations();
-                let mut builder = BinaryBuilder::with_capacity(n, 0);
-                for _ in 0..n {
+                // Create the same length of NULLs as the original result.
+                let len = match &result {
+                    ColumnarValue::Array(array) => array.len(),
+                    ColumnarValue::Scalar(_) => 1,
+                };
+
+                let mut builder = BinaryBuilder::with_capacity(len, 0);
+                for _ in 0..len {
                     builder.append_null();
                 }
                 let new_array = builder.finish();
