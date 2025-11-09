@@ -30,6 +30,7 @@ mod st_issimple;
 mod st_isvalid;
 mod st_isvalidreason;
 mod st_length;
+mod st_numinteriorrings;
 mod st_perimeter;
 mod st_reverse;
 mod st_simplifypreservetopology;
