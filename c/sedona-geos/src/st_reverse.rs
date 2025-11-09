@@ -29,15 +29,15 @@ use sedona_schema::{
 
 use crate::executor::GeosExecutor;
 
-/// ST_Centroid() implementation using the geos crate
-pub fn st_centroid_impl() -> ScalarKernelRef {
-    Arc::new(STCentroid {})
+/// ST_Reverse() implementation using the geos crate
+pub fn st_reverse_impl() -> ScalarKernelRef {
+    Arc::new(STReverse {})
 }
 
 #[derive(Debug)]
-struct STCentroid {}
+struct STReverse {}
 
-impl SedonaScalarKernel for STCentroid {
+impl SedonaScalarKernel for STReverse {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
 
@@ -97,7 +97,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_centroid", st_centroid_impl());
+        let udf = SedonaScalarUDF::from_kernel("st_reverse", st_reverse_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(WKB_GEOMETRY);
 
