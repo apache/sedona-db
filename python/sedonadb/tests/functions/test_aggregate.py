@@ -196,7 +196,10 @@ def test_st_polygonize_multiple_polygons(eng):
             "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
             "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 10, 10 10)))",
         ),
-        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))", "GEOMETRYCOLLECTION EMPTY"),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            "GEOMETRYCOLLECTION EMPTY",
+        ),
         ("LINESTRING EMPTY", "GEOMETRYCOLLECTION EMPTY"),
     ],
 )
