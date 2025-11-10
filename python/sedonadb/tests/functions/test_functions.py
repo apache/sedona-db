@@ -1964,7 +1964,11 @@ def test_st_isvalidreason(eng, geom, expected):
         # (None, None, None),
         ("LINESTRING (0 0, 1 1, 2 2)", None, None),
         ("LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)", 1.5, "LINESTRING (0 0, 4 0)"),
-        ("LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)", 0.0, "LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)"),
+        (
+            "LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)",
+            0.0,
+            "LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)",
+        ),
         (
             "POLYGON ((0 0, 0 10, 1 11, 10 10, 10 0, 0 0))",
             1.5,
