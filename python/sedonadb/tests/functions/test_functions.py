@@ -1958,6 +1958,58 @@ def test_st_isvalidreason(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "tolerance", "expected"),
     [
+        # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
+        # doesn't work on SedonaDB yet.
+        # (None, 2, None),
+        # (None, None, None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None, None),
+        ("LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)", 1.5, "LINESTRING (0 0, 4 0)"),
+        ("LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)", 0.0, "LINESTRING (0 0, 1 1, 2 0, 3 1, 4 0)"),
+        (
+            "POLYGON ((0 0, 0 10, 1 11, 10 10, 10 0, 0 0))",
+            1.5,
+            "POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))",
+        ),
+        ("POINT (10 20)", 10.0, "POINT (10 20)"),
+        ("LINESTRING EMPTY", 1.0, "LINESTRING EMPTY"),
+        ("POINT EMPTY", 1.0, "POINT (nan nan)"),
+        ("POLYGON EMPTY", 1.0, "POLYGON EMPTY"),
+        ("LINESTRING (0 0, 0 1)", 1.0, "LINESTRING (0 0, 0 1)"),
+        (
+            "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",
+            2.0,
+            "LINESTRING (0 0, 0 51, 50 20, 30 20, 7 32)",
+        ),
+        (
+            "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",
+            10.0,
+            "LINESTRING (0 0, 0 51, 50 20, 7 32)",
+        ),
+        (
+            "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",
+            50.0,
+            "LINESTRING (0 0, 7 32)",
+        ),
+        ("MULTIPOINT ((0 0), (1 1))", 1.0, "MULTIPOINT (0 0, 1 1)"),
+        (
+            "POLYGON ((0 0, 1 0, 2 0, 3 0, 4 0, 4 1, 4 2, 4 3, 4 4, 3 4, 2 4, 1 4, 0 4, 0 3, 0 2, 0 1, 0 0))",
+            1.5,
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))",
+        ),
+    ],
+)
+def test_st_simplify(eng, geom, tolerance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Simplify({geom_or_null(geom)}, {val_or_null(tolerance)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "tolerance", "expected"),
+    [
         # removes intermediate point
         (
             "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",

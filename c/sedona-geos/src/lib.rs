@@ -32,6 +32,7 @@ mod st_isvalidreason;
 mod st_length;
 mod st_perimeter;
 mod st_reverse;
+mod st_simplify;
 mod st_simplifypreservetopology;
 mod st_unaryunion;
 pub mod wkb_to_geos;
