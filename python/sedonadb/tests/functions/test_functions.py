@@ -2000,6 +2000,76 @@ def test_st_isvalidreason(eng, geom, expected):
             1.5,
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))",
         ),
+        # Collapsed
+        ("LINESTRING(0 0, 1 0, 2 0.1, 3 0)", 5.0, "LINESTRING (0 0, 3 0)"),
+        ("LINESTRING(0 0, 0.1 0.1, 0.2 0.2)", 1.0, "LINESTRING (0 0, 0.2 0.2)"),
+        (
+            "MULTIPOINT((0 0), (0.1 0.1), (5 5))",
+            1.0,
+            "MULTIPOINT (0 0, 0.1 0.1, 5 5)",
+        ),
+        (
+            "MULTILINESTRING((0 0, 5 0.1, 10 0), (20 20, 21 21, 22 22))",
+            1.0,
+            "MULTILINESTRING ((0 0, 10 0), (20 20, 22 22))",
+        ),
+        (
+            "MULTIPOLYGON(((0 0, 0.1 0, 0.1 0.1, 0 0.1, 0 0)), ((10 10, 20 10, 20 20, 10 20, 10 10)))",
+            1.0,
+            "MULTIPOLYGON (((10 10, 20 10, 20 20, 10 20, 10 10)))",
+        ),
+        (
+            "POLYGON((0 0, 0 100, 1 101, 100 100, 100 0, 0 0), (20 20, 20 80, 21 81, 80 80, 80 20, 20 20))",
+            10.0,
+            "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0), (20 20, 20 80, 80 80, 80 20, 20 20))",
+        ),
+        (
+            "POLYGON((0 0, 0 100, 100 100, 100 0, 0 0), (40 40, 40.1 40, 40.1 40.1, 40 40.1, 40 40))",
+            1.0,
+            "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))",
+        ),
+        (
+            "MULTILINESTRING((0 0, 1 0.1, 2 0.2, 3 0), (10 10, 11 10, 12 10), (20 20, 21 25, 22 20))",
+            1.0,
+            "MULTILINESTRING ((0 0, 3 0), (10 10, 12 10), (20 20, 21 25, 22 20))",
+        ),
+        (
+            "MULTIPOLYGON(((0 0, 100 0, 100 100, 0 100, 0 0)), ((200 200, 200.1 200, 200.1 200.1, 200 200.1, 200 200)))",
+            1.0,
+            "MULTIPOLYGON (((0 0, 100 0, 100 100, 0 100, 0 0)))",
+        ),
+        (
+            "MULTIPOLYGON(((0 0, 10 0, 10 10, 0 10, 0 0)), ((20 20, 20.1 20, 20.1 20.1, 20 20.1, 20 20)), ((30 30, 40 30, 40 40, 30 40, 30 30)))",
+            1.0,
+            "MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), ((30 30, 40 30, 40 40, 30 40, 30 30)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(10 10, 11 10.1, 12 10), POLYGON((20 20, 30 20, 30 30, 20 30, 20 20)))",
+            1.0,
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (10 10, 12 10), POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(POINT(0 0)), LINESTRING(10 10, 11 10.1, 12 10))",
+            1.0,
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (0 0)), LINESTRING (10 10, 12 10))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(MULTIPOINT((0 0), (1 1)), MULTILINESTRING((10 10, 11 10.1, 12 10), (20 20, 21 21)))",
+            1.0,
+            "GEOMETRYCOLLECTION (MULTIPOINT (0 0, 1 1), MULTILINESTRING ((10 10, 12 10), (20 20, 21 21)))",
+        ),
+        ("LINESTRING(0 0, 1 0, 2 0, 3 0, 4 0, 5 0)", 0.0, "LINESTRING (0 0, 5 0)"),
+        ("LINESTRING(0 0, 1 0.01, 2 0.02, 3 0.01, 4 0)", 0.1, "LINESTRING (0 0, 4 0)"),
+        (
+            "LINESTRING(0 0, 0.00001 0.00001, 0.00002 0.00002)",
+            1.0,
+            "LINESTRING (0 0, 0.00002 0.00002)",
+        ),
+        (
+            "LINESTRING(0 0, 10 0, 10 10, 5 15, 0 10, 0 0)",
+            5.0,
+            "LINESTRING (0 0, 10 0, 5 15, 0 0)",
+        ),
     ],
 )
 def test_st_simplify(eng, geom, tolerance, expected):
