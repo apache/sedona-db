@@ -594,6 +594,61 @@ def test_st_makeline(eng):
         "SELECT ST_MakeLine(ST_Point(0, 1), ST_GeomFromText('LINESTRING (2 3, 4 5)'))",
         "LINESTRING (0 1, 2 3, 4 5)",
     )
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "target_percent", "expected"),
+    [
+        # Null input should return null
+        (None, 0.5, None),
+
+        # Simple polygon – concave hull of polygon should be the same polygon
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0.5, "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+
+        # MultiPoint forming a concave hull shape
+        (
+            "MULTIPOINT ((0 0), (1 0), (1 1), (0 1), (0.5 0.5))",
+            0.5,
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        ),
+
+        # More concave shape with small concavity
+        (
+            "MULTIPOINT ((0 0), (2 0), (2 2), (0 2), (1 1))",
+            0.7,
+            "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+        ),
+
+        # Single point — concave hull should return the same point
+        ("POINT (1 1)", 0.5, "POINT (1 1)"),
+
+        # Empty geometry should remain empty
+        ("GEOMETRYCOLLECTION EMPTY", 0.5, "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_concavehull(eng, geom, target_percent, expected):
+    """Test ST_ConcaveHull on different geometry types."""
+    eng = eng.create_or_skip()
+
+    # NULL case
+    if expected is None:
+        eng.assert_query_result(
+            f"SELECT ST_ConcaveHull({geom_or_null(geom)}, {target_percent})",
+            expected,
+        )
+
+    # Empty geometry → should return empty geometry
+    elif "EMPTY" in expected.upper():
+        eng.assert_query_result(
+            f"SELECT ST_IsEmpty(ST_ConcaveHull({geom_or_null(geom)}, {target_percent}))",
+            True,
+        )
+
+    # Otherwise, check geometrical equality
+    else:
+        eng.assert_query_result(
+            f"SELECT ST_Equals(ST_ConcaveHull({geom_or_null(geom)}, {target_percent}), {geom_or_null(expected)})",
+            True,
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
