@@ -18,14 +18,14 @@
 use std::sync::Arc;
 
 use crate::wkb_to_geos::GEOSWkbFactory;
-use arrow_array::{
-    builder::OffsetBufferBuilder, cast::as_list_array, Array, ArrayRef, BinaryArray,
-};
+use arrow_array::{cast::AsArray, types::UInt64Type, Array, ArrayRef};
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{cast::as_binary_array, error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{Accumulator, ColumnarValue};
+use geo_traits::Dimensions;
 use geos::Geom;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use sedona_geometry::wkb_factory::write_wkb_geometrycollection_header;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -55,42 +55,67 @@ impl SedonaAccumulator for STPolygonize {
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
-        Ok(vec![Arc::new(Field::new(
-            "geometries",
-            DataType::List(Arc::new(Field::new("item", DataType::Binary, true))),
-            false,
-        ))])
+        Ok(vec![
+            Arc::new(Field::new("count", DataType::UInt64, false)),
+            Arc::new(Field::new("item", DataType::Binary, true)),
+        ])
     }
 }
 
 #[derive(Debug)]
 struct PolygonizeAccumulator {
     input_type: SedonaType,
-    geometries: Vec<Arc<[u8]>>,
+    item: Option<Vec<u8>>,
+    count: usize,
 }
+
+const WKB_HEADER_SIZE: usize = 1 + 4 + 4;
 
 impl PolygonizeAccumulator {
     pub fn new(input_type: SedonaType) -> Self {
+        let mut item = Vec::new();
+        write_wkb_geometrycollection_header(&mut item, Dimensions::Xy, 0)
+            .expect("Failed to write initial GeometryCollection header");
+
         Self {
             input_type,
-            geometries: Vec::new(),
+            item: Some(item),
+            count: 0,
         }
     }
 
-    fn make_wkb_result(&self) -> Result<Option<Vec<u8>>> {
-        if self.geometries.is_empty() {
+    fn make_wkb_result(&mut self) -> Result<Option<Vec<u8>>> {
+        if self.count == 0 {
             return Ok(None);
         }
 
+        let collection_wkb = self.item.as_mut().unwrap();
+        let mut header = Vec::new();
+        write_wkb_geometrycollection_header(&mut header, Dimensions::Xy, self.count)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to write header: {e}")))?;
+        collection_wkb[0..WKB_HEADER_SIZE].copy_from_slice(&header);
+
+        let wkb = read_wkb(collection_wkb)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to read WKB: {e}")))?;
+
         let factory = GEOSWkbFactory::new();
-        let mut geos_geoms = Vec::with_capacity(self.geometries.len());
-        for wkb_bytes in &self.geometries {
-            let wkb = read_wkb(wkb_bytes)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to read WKB: {e}")))?;
-            let geom = factory
-                .create(&wkb)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to create geometry from WKB: {e}")))?;
-            geos_geoms.push(geom);
+        let collection = factory.create(&wkb).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create geometry from WKB: {e}"))
+        })?;
+
+        let num_geoms = collection.get_num_geometries().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to get number of geometries: {e}"))
+        })?;
+
+        let mut geos_geoms = Vec::with_capacity(num_geoms);
+        for i in 0..num_geoms {
+            let geom = collection.get_geometry_n(i).map_err(|e| {
+                DataFusionError::Execution(format!("Failed to get geometry {}: {e}", i))
+            })?;
+            // Clone is necessary: get_geometry_n() returns ConstGeometry<'_> which doesn't
+            // implement Borrow<Geometry>. The GEOS polygonize() function signature requires
+            // T: Borrow<Geometry>, so we must clone to get owned Geometry instances.
+            geos_geoms.push(geom.clone());
         }
 
         let result = geos::Geometry::polygonize(&geos_geoms)
@@ -116,9 +141,11 @@ impl Accumulator for PolygonizeAccumulator {
         let args = [ColumnarValue::Array(values[0].clone())];
         let executor = sedona_functions::executor::WkbExecutor::new(arg_types, &args);
 
+        let item_ref = self.item.as_mut().unwrap();
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.geometries.push(item.buf().into());
+                item_ref.extend_from_slice(item.buf());
+                self.count += 1;
             }
             Ok(())
         })?;
@@ -132,44 +159,46 @@ impl Accumulator for PolygonizeAccumulator {
     }
 
     fn size(&self) -> usize {
-        std::mem::size_of::<Self>() + self.geometries.iter().map(|g| g.len()).sum::<usize>()
+        let item_capacity = self.item.as_ref().map(|e| e.capacity()).unwrap_or(0);
+        size_of::<PolygonizeAccumulator>() + item_capacity
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        let binary_array = BinaryArray::from_iter(self.geometries.iter().map(|g| Some(g.as_ref())));
-        let mut offsets_builder = OffsetBufferBuilder::new(1);
-        offsets_builder.push_length(binary_array.len());
-        let offsets = offsets_builder.finish();
+        let serialized_count = ScalarValue::UInt64(Some(self.count as u64));
+        let serialized_item = ScalarValue::Binary(self.item.take());
 
-        let list_array = arrow_array::ListArray::new(
-            Arc::new(Field::new("item", DataType::Binary, true)),
-            offsets,
-            Arc::new(binary_array),
-            None,
-        );
+        let mut item = Vec::new();
+        write_wkb_geometrycollection_header(&mut item, Dimensions::Xy, 0)
+            .expect("Failed to write initial GeometryCollection header");
+        self.item = Some(item);
+        self.count = 0;
 
-        Ok(vec![ScalarValue::List(Arc::new(list_array))])
+        Ok(vec![serialized_count, serialized_item])
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        if states.is_empty() {
-            return Err(DataFusionError::Internal(
-                "No input arrays provided to accumulator in merge_batch".to_string(),
-            ));
+        if states.len() != 2 {
+            return Err(DataFusionError::Internal(format!(
+                "Unexpected number of state fields for st_polygonize() (expected 2, got {})",
+                states.len()
+            )));
         }
 
-        let list_array = as_list_array(&states[0]);
+        let item_ref = self.item.as_mut().ok_or_else(|| {
+            DataFusionError::Internal("Unexpected internal state in ST_Polygonize()".to_string())
+        })?;
 
-        for i in 0..list_array.len() {
-            if list_array.is_null(i) {
-                continue;
-            }
+        let count_array = states[0].as_primitive::<UInt64Type>();
+        let item_array = as_binary_array(&states[1])?;
 
-            let value_ref = list_array.value(i);
-            let binary_array = as_binary_array(&value_ref)?;
-            for j in 0..binary_array.len() {
-                if !binary_array.is_null(j) {
-                    self.geometries.push(binary_array.value(j).into());
+        for i in 0..count_array.len() {
+            let count = count_array.value(i) as usize;
+            if count > 0 {
+                if !item_array.is_null(i) {
+                    let item = item_array.value(i);
+                    // Skip the header and append the geometry data
+                    item_ref.extend_from_slice(&item[WKB_HEADER_SIZE..]);
+                    self.count += count;
                 }
             }
         }
