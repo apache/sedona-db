@@ -112,9 +112,6 @@ impl PolygonizeAccumulator {
             let geom = collection.get_geometry_n(i).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to get geometry {}: {e}", i))
             })?;
-            // Clone is necessary: get_geometry_n() returns ConstGeometry<'_> which doesn't
-            // implement Borrow<Geometry>. The GEOS polygonize() function signature requires
-            // T: Borrow<Geometry>, so we must clone to get owned Geometry instances.
             geos_geoms.push(geom.clone());
         }
 
