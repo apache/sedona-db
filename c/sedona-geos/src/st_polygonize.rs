@@ -193,13 +193,12 @@ impl Accumulator for PolygonizeAccumulator {
 
         for i in 0..count_array.len() {
             let count = count_array.value(i) as usize;
-            if count > 0
-                && !item_array.is_null(i) {
-                    let item = item_array.value(i);
-                    // Skip the header and append the geometry data
-                    item_ref.extend_from_slice(&item[WKB_HEADER_SIZE..]);
-                    self.count += count;
-                }
+            if count > 0 && !item_array.is_null(i) {
+                let item = item_array.value(i);
+                // Skip the header and append the geometry data
+                item_ref.extend_from_slice(&item[WKB_HEADER_SIZE..]);
+                self.count += count;
+            }
         }
 
         Ok(())
