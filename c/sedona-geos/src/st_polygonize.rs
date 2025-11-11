@@ -30,19 +30,7 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::{read_wkb, Wkb};
-
-thread_local! {
-    static GEOS_WKB_FACTORY: GEOSWkbFactory = GEOSWkbFactory::new();
-}
-
-fn wkb_to_geos_geometry(wkb: &Wkb) -> Result<geos::Geometry> {
-    GEOS_WKB_FACTORY.with(|factory| {
-        factory.create(wkb).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create geometry from WKB: {e}"))
-        })
-    })
-}
+use wkb::reader::read_wkb;
 
 /// ST_Polygonize() aggregate implementation using GEOS
 pub fn st_polygonize_impl() -> SedonaAccumulatorRef {
@@ -94,11 +82,14 @@ impl PolygonizeAccumulator {
             return Ok(None);
         }
 
+        let factory = GEOSWkbFactory::new();
         let mut geos_geoms = Vec::with_capacity(self.geometries.len());
         for wkb_bytes in &self.geometries {
             let wkb = read_wkb(wkb_bytes)
                 .map_err(|e| DataFusionError::Execution(format!("Failed to read WKB: {e}")))?;
-            let geom = wkb_to_geos_geometry(&wkb)?;
+            let geom = factory
+                .create(&wkb)
+                .map_err(|e| DataFusionError::Execution(format!("Failed to create geometry from WKB: {e}")))?;
             geos_geoms.push(geom);
         }
 
