@@ -33,15 +33,15 @@ use sedona_schema::{
 };
 use wkb::reader::read_wkb;
 
-/// ST_Polygonize() aggregate implementation using GEOS
-pub fn st_polygonize_impl() -> SedonaAccumulatorRef {
-    Arc::new(STPolygonize {})
+/// ST_Polygonize_Agg() aggregate implementation using GEOS
+pub fn st_polygonize_agg_impl() -> SedonaAccumulatorRef {
+    Arc::new(STPolygonizeAgg {})
 }
 
 #[derive(Debug)]
-struct STPolygonize {}
+struct STPolygonizeAgg {}
 
-impl SedonaAccumulator for STPolygonize {
+impl SedonaAccumulator for STPolygonizeAgg {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
@@ -214,8 +214,8 @@ mod tests {
 
     fn create_udf() -> SedonaAggregateUDF {
         SedonaAggregateUDF::new(
-            "st_polygonize",
-            vec![st_polygonize_impl()],
+            "st_polygonize_agg",
+            vec![st_polygonize_agg_impl()],
             datafusion_expr::Volatility::Immutable,
             None,
         )
@@ -225,7 +225,7 @@ mod tests {
     fn udf_metadata() {
         let udf = create_udf();
         let aggregate_udf: AggregateUDF = udf.into();
-        assert_eq!(aggregate_udf.name(), "st_polygonize");
+        assert_eq!(aggregate_udf.name(), "st_polygonize_agg");
     }
 
     #[rstest]

@@ -20,28 +20,28 @@ use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Vol
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
-/// ST_Polygonize() aggregate UDF implementation
+/// ST_Polygonize_Agg() aggregate UDF implementation
 ///
 /// Creates polygons from a set of linework that forms closed rings.
-pub fn st_polygonize_udf() -> SedonaAggregateUDF {
+pub fn st_polygonize_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new_stub(
-        "st_polygonize",
+        "st_polygonize_agg",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        Some(st_polygonize_doc()),
+        Some(st_polygonize_agg_doc()),
     )
 }
 
-fn st_polygonize_doc() -> Documentation {
+fn st_polygonize_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         "Creates a GeometryCollection containing polygons formed from the linework of a set of geometries. \
          Returns an empty GeometryCollection if no polygons can be formed.",
-        "ST_Polygonize (geom: Geometry)",
+        "ST_Polygonize_Agg (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry (typically linestrings that form closed rings)")
     .with_sql_example(
-        "SELECT ST_AsText(ST_Polygonize(geom)) FROM (VALUES \
+        "SELECT ST_AsText(ST_Polygonize_Agg(geom)) FROM (VALUES \
          (ST_GeomFromText('LINESTRING (0 0, 10 0)')), \
          (ST_GeomFromText('LINESTRING (10 0, 10 10)')), \
          (ST_GeomFromText('LINESTRING (10 10, 0 0)'))  \
@@ -58,8 +58,8 @@ mod test {
 
     #[test]
     fn udf_metadata() {
-        let udf: AggregateUDF = st_polygonize_udf().into();
-        assert_eq!(udf.name(), "st_polygonize");
+        let udf: AggregateUDF = st_polygonize_agg_udf().into();
+        assert_eq!(udf.name(), "st_polygonize_agg");
         assert!(udf.documentation().is_some());
     }
 }
