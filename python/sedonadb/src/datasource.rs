@@ -194,6 +194,11 @@ impl PyOpenReaderArgs {
     }
 
     #[getter]
+    fn batch_size(&self) -> Option<usize> {
+        self.inner.batch_size
+    }
+
+    #[getter]
     fn file_schema(&self) -> Option<PySedonaSchema> {
         self.inner
             .file_schema
@@ -204,6 +209,19 @@ impl PyOpenReaderArgs {
     #[getter]
     fn file_projection(&self) -> Option<Vec<usize>> {
         self.inner.file_projection.clone()
+    }
+
+    fn is_projected(&self) -> Result<bool, PySedonaError> {
+        match (&self.inner.file_projection, &self.inner.file_schema) {
+            (None, None) | (None, Some(_)) => Ok(false),
+            (Some(projection), Some(schema)) => {
+                let seq_along_schema = (0..schema.fields().len()).collect::<Vec<_>>();
+                Ok(&seq_along_schema != projection)
+            }
+            (Some(_), None) => Err(PySedonaError::SedonaPython(
+                "Can't check projection for OpenReaderArgs with no schena".to_string(),
+            )),
+        }
     }
 }
 

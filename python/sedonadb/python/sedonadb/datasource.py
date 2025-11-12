@@ -75,7 +75,15 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         else:
             raise ValueError(f"Can't open {url} with OGR")
 
-        return PyogrioReaderShelter(self._raw.ogr_open_arrow(ogr_src, {}))
+        if args.is_projected():
+            file_names = args.file_schema.names
+            columns = [file_names[i] for i in args.file_projection]
+        else:
+            columns = None
+
+        # TODO: Column order is not respected here, so we still need a utility to
+        # ensure match with the projected file schema
+        PyogrioReaderShelter(self._raw.ogr_open_arrow(ogr_src, {}, columns=columns))
 
 
 class PyogrioReaderShelter:

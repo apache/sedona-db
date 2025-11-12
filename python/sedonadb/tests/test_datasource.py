@@ -32,8 +32,15 @@ def test_read_ogr(con):
     with tempfile.TemporaryDirectory() as td:
         temp_fgb_path = f"{td}/temp.fgb"
         gdf.to_file(temp_fgb_path)
-
         con.read_ogr(temp_fgb_path).to_view("test_fgb", overwrite=True)
+
+        # With no projection
         geopandas.testing.assert_geodataframe_equal(
             con.sql("SELECT * FROM test_fgb ORDER BY idx").to_pandas(), gdf
+        )
+
+        # With only not geometry selected
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql("SELECT idx FROM test_fgb ORDER BY idx").to_pandas(),
+            gdf.filter(["idx"]),
         )

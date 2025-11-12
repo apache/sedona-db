@@ -59,6 +59,15 @@ impl PySedonaSchema {
 
 #[pymethods]
 impl PySedonaSchema {
+    #[getter]
+    fn names(&self) -> Vec<String> {
+        self.inner
+            .fields()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect()
+    }
+
     fn field<'py>(
         &self,
         py: Python<'py>,
