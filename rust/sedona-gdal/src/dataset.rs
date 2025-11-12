@@ -16,9 +16,9 @@
 // under the License.
 
 use arrow_schema::ArrowError;
+use gdal::raster::GdalDataType;
 use gdal::Dataset;
 use gdal::Metadata;
-use gdal::raster::GdalDataType;
 use sedona_schema::raster::BandDataType;
 
 /// Extract geotransform components from a GDAL dataset
@@ -40,7 +40,7 @@ pub fn geotransform_components(
 }
 
 /// Extract tile size from a GDAL dataset
-/// If not provided, defaults to raster size. In future, will consider 
+/// If not provided, defaults to raster size. In future, will consider
 /// defaulting to an ideal tile size instead of full raster size once we know
 /// what the idea tile size should be.
 pub fn tile_size(dataset: &Dataset) -> Result<(usize, usize), ArrowError> {
@@ -82,9 +82,8 @@ mod tests {
 
     #[test]
     fn test_geotransform_components() -> Result<(), ArrowError> {
-        let driver = DriverManager::get_driver_by_name("MEM").map_err(|e| {
-            ArrowError::ParseError(format!("Failed to get MEM driver: {e}"))
-        })?;
+        let driver = DriverManager::get_driver_by_name("MEM")
+            .map_err(|e| ArrowError::ParseError(format!("Failed to get MEM driver: {e}")))?;
         let mut dataset = driver
             .create_with_band_type::<u8, _>("", 100, 100, 1)
             .map_err(|e| ArrowError::ParseError(format!("Failed to create dataset: {e}")))?;

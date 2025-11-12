@@ -5064,6 +5064,7 @@ dependencies = [
  "sedona-raster",
  "sedona-schema",
  "sedona-testing",
+ "tempfile",
 ]
 
 [[package]]
@@ -5363,6 +5364,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "fastrand",
  "geo",
  "geo-traits",
  "geo-types",
