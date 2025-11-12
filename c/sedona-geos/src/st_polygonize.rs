@@ -24,6 +24,7 @@ use datafusion_common::{cast::as_binary_array, error::Result, DataFusionError, S
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo_traits::Dimensions;
 use geos::Geom;
+use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
 use sedona_geometry::wkb_factory::write_wkb_geometrycollection_header;
 use sedona_schema::{
@@ -129,9 +130,7 @@ impl PolygonizeAccumulator {
 impl Accumulator for PolygonizeAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
-            return Err(DataFusionError::Internal(
-                "No input arrays provided to accumulator in update_batch".to_string(),
-            ));
+            return sedona_internal_err!("No input arrays provided to accumulator in update_batch");
         }
 
         let arg_types = std::slice::from_ref(&self.input_type);
@@ -175,15 +174,16 @@ impl Accumulator for PolygonizeAccumulator {
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
         if states.len() != 2 {
-            return Err(DataFusionError::Internal(format!(
+            return sedona_internal_err!(
                 "Unexpected number of state fields for st_polygonize() (expected 2, got {})",
                 states.len()
-            )));
+            );
         }
 
-        let item_ref = self.item.as_mut().ok_or_else(|| {
-            DataFusionError::Internal("Unexpected internal state in ST_Polygonize()".to_string())
-        })?;
+        let item_ref = match self.item.as_mut() {
+            Some(item) => item,
+            None => return sedona_internal_err!("Unexpected internal state in ST_Polygonize()"),
+        };
 
         let count_array = states[0].as_primitive::<UInt64Type>();
         let item_array = as_binary_array(&states[1])?;

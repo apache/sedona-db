@@ -5108,6 +5108,7 @@ dependencies = [
  "geos",
  "rstest",
  "sedona",
+ "sedona-common",
  "sedona-expr",
  "sedona-functions",
  "sedona-geometry",
