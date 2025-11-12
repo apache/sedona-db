@@ -91,17 +91,30 @@ fn invoke_scalar(
         .simplify(tolerance)
         .map_err(|e| DataFusionError::Execution(format!("Failed to simplify geometry: {e}")))?;
 
+    // GEOS inherently "promotes" a multi-geometry type (e.g., MultiPolygon, MultiLineString)
+    // to its simpler, single-component counterpart (Polygon, LineString) if the
+    // simplification process reduces the number of resulting components to exactly one.
+    //
+    // However, to ensure that the geometry type remains invariant after ST_Simplify
+    // (e.g., an initial MultiPolygon must always return a MultiPolygon), we revert
+    // this promotion by re-wrapping the single component back into its original
+    // multi-geometry container.
     let geometry = match (initial_type, geometry.geometry_type()) {
+        // If the original was a MultiPolygon but GEOS returned a Polygon (promotion),
+        // wrap the Polygon back into a MultiPolygon.
         (GeometryTypes::MultiPolygon, GeometryTypes::Polygon) => {
             Geometry::create_multipolygon(vec![geometry]).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to revert geometry promotion: {e}"))
             })?
         }
+        // If the original was a MultiLineString but GEOS returned a LineString (promotion),
+        // wrap the LineString back into a MultiLineString.
         (GeometryTypes::MultiLineString, GeometryTypes::LineString) => {
             Geometry::create_multiline_string(vec![geometry]).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to revert geometry promotion: {e}"))
             })?
         }
+        // Keep as is (type is correct)
         _ => geometry,
     };
 
