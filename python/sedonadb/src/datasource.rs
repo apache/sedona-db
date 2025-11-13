@@ -15,14 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ffi::CString, sync::Arc};
 
-use arrow_array::{RecordBatch, RecordBatchReader};
+use arrow_array::{ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result};
-use pyo3::{exceptions::PyNotImplementedError, pyclass, pymethods, PyObject, Python};
-use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs};
+use pyo3::{
+    exceptions::PyNotImplementedError, pyclass, pymethods, types::PyCapsule, Bound, PyObject,
+    Python,
+};
+use sedona_datasource::{
+    spec::{ExternalFormatSpec, Object, OpenReaderArgs},
+    utility::ProjectedRecordBatchReader,
+};
 
 use crate::{
     error::PySedonaError,
@@ -219,9 +225,44 @@ impl PyOpenReaderArgs {
                 Ok(&seq_along_schema != projection)
             }
             (Some(_), None) => Err(PySedonaError::SedonaPython(
-                "Can't check projection for OpenReaderArgs with no schena".to_string(),
+                "Can't check projection for OpenReaderArgs with no schema".to_string(),
             )),
         }
+    }
+}
+
+#[pyclass]
+pub struct PyProjectedRecordBatchReader {
+    inner_object: PyObject,
+    projection_indices: Option<Vec<usize>>,
+    projection_names: Option<Vec<String>>,
+}
+
+#[pymethods]
+impl PyProjectedRecordBatchReader {
+    #[pyo3(signature = (requested_schema=None))]
+    fn __arrow_c_stream__<'py>(
+        &self,
+        py: Python<'py>,
+        #[allow(unused_variables)] requested_schema: Option<Bound<'py, PyCapsule>>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        let inner = import_arrow_array_stream(py, self.inner_object.bind(py), None)?;
+
+        let reader = match (&self.projection_indices, &self.projection_names) {
+            (None, None) | (Some(_), Some(_)) => {
+                return Err(PySedonaError::SedonaPython("PyProjectedRecordBatchReader must be specified by one of projection_indices or projection_names".to_string()))
+            }
+            (Some(indices), None) => {
+                ProjectedRecordBatchReader::from_projection(inner, indices.clone())?
+            }
+            (None, Some(names)) => {
+                ProjectedRecordBatchReader::from_output_names(inner, &names.iter().map(|s| s.as_str()).collect::<Vec<&str>>())?
+            }
+        };
+
+        let ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
+        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
+        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
     }
 }
 

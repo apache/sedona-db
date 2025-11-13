@@ -96,6 +96,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
     m.add_class::<datasource::PyExternalFormat>()?;
+    m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
     m.add("SedonaError", py.get_type::<error::SedonaError>())?;
     m.add_class::<schema::PySedonaSchema>()?;
     m.add_class::<schema::PySedonaField>()?;
