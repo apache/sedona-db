@@ -157,12 +157,78 @@ def test_st_azimuth(eng, geom1, geom2, expected):
             "POLYGON (( 10 130, 50 190, 110 190, 140 150, 150 80, 100 10, 20 40, 10 130 ), ( 70 40, 100 50, 120 80, 80 110, 50 90, 70 40 ))",
             "MULTILINESTRING ((10 130, 50 190, 110 190, 140 150, 150 80, 100 10, 20 40, 10 130), (70 40, 100 50, 120 80, 80 110, 50 90, 70 40))",
         ),
+        (
+            "MULTILINESTRING ((1 1, 2 2), (3 3, 4 4))",
+            "MULTIPOINT (1 1, 2 2, 3 3, 4 4)",
+        ),
+        (
+            "MULTILINESTRING ((10 10, 20 20), (30 30, 40 40, 30 30))",
+            "MULTIPOINT (10 10, 20 20)",
+        ),
+        ("POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))", "LINESTRING (0 0, 0 1, 1 1, 1 0, 0 0)"),
+        (
+            "MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((10 10, 10 11, 11 11, 11 10, 10 10)))",
+            "MULTILINESTRING ((0 0, 0 1, 1 1, 1 0, 0 0), (10 10, 10 11, 11 11, 11 10, 10 10))",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 0 10, 10 10, 10 0, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2)))",
+            "MULTILINESTRING ((0 0, 0 10, 10 10, 10 0, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2))",  # Note: Order of points in inner ring may vary by implementation, but boundary is correct.
+        ),
+        (
+            "GEOMETRYCOLLECTION(POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)), GEOMETRYCOLLECTION(LINESTRING(10 10, 10 20)))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (10 10, 10 20), LINESTRING (0 0, 0 1, 1 1, 1 0, 0 0))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2),GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)),GEOMETRYCOLLECTION(LINESTRING(6 6,7 7),POLYGON((8 8,9 9,10 10,8 8)))))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (1 1, 2 2, 6 6, 7 7), MULTILINESTRING ((3 3, 4 4, 5 5, 3 3), (8 8, 9 9, 10 10, 8 8)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(LINESTRING(10 10,20 20),GEOMETRYCOLLECTION(POLYGON((30 30,40 40,50 50,30 30)),GEOMETRYCOLLECTION(LINESTRING(60 60,70 70),LINESTRING(80 80,90 90))))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (10 10, 20 20, 60 60, 70 70, 80 80, 90 90), LINESTRING (30 30, 40 40, 50 50, 30 30))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(POLYGON((1 1,2 2,3 3,1 1)),GEOMETRYCOLLECTION(LINESTRING(4 4,5 5),GEOMETRYCOLLECTION(POLYGON((6 6,7 7,8 8,6 6)),LINESTRING(9 9,10 10))))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (4 4, 5 5, 9 9, 10 10), MULTILINESTRING ((1 1, 2 2, 3 3, 1 1), (6 6, 7 7, 8 8, 6 6)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(LINESTRING(1 1,1 10,10 10,10 1,1 1),GEOMETRYCOLLECTION(LINESTRING(2 2,2 9,9 9,9 2,2 2),GEOMETRYCOLLECTION(POLYGON((3 3,3 8,8 8,8 3,3 3)),POLYGON((4 4,4 7,7 7,7 4,4 4)))))",
+            "MULTILINESTRING ((3 3, 3 8, 8 8, 8 3, 3 3), (4 4, 4 7, 7 7, 7 4, 4 4))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(POLYGON((0 0,10 0,10 10,0 10,0 0)),GEOMETRYCOLLECTION(LINESTRING(1 1,9 9),GEOMETRYCOLLECTION(LINESTRING(1 9,9 1),POLYGON((2 2,8 2,8 8,2 8,2 2)))))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (1 1, 9 9, 1 9, 9 1), MULTILINESTRING ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(LINESTRING(1 2,3 4),POLYGON((5 6,7 8,9 10,5 6))),POLYGON((11 12,13 14,15 16,11 12))),LINESTRING(17 18,19 20))",
+            "GEOMETRYCOLLECTION (MULTIPOINT (1 2, 3 4, 17 18, 19 20), MULTILINESTRING ((5 6, 7 8, 9 10, 5 6), (11 12, 13 14, 15 16, 11 12)))",
+        ),
     ],
 )
 def test_st_boundary(eng, geom, expected_boundary):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Boundary({geom_or_null(geom)})", expected_boundary
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "is_empty"),
+    [
+        ("POINT (5 10)", True),
+        ("POINT (0 0)", True),
+        ("POINT (-1 -5)", True),
+        ("MULTIPOINT (100 200)", True),
+        ("MULTIPOINT (5 10, 15 20)", True),
+        ("MULTIPOINT (1 1, 2 2, 3 3, 1 1)", True),
+        ("LINESTRING(10 10, 20 20, 30 10, 10 10)", True),
+        ("MULTILINESTRING ((0 0, 0 1, 1 0, 0 0), (10 10, 10 20, 20 10, 10 10))", True),
+    ],
+)
+def test_st_boundary_empty(eng, geom, is_empty):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_IsEmpty(ST_Boundary({geom_or_null(geom)}))", is_empty
     )
 
 
