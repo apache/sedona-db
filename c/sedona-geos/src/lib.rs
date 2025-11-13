@@ -21,6 +21,7 @@ mod geos;
 mod overlay;
 pub mod register;
 mod st_area;
+mod st_boundary;
 mod st_buffer;
 mod st_centroid;
 mod st_convexhull;

@@ -31,6 +31,7 @@ use sedona_schema::{
 
 use crate::executor::GeosExecutor;
 
+/// ST_Simplify() implementation using the geos crate
 pub fn st_simplify_impl() -> ScalarKernelRef {
     Arc::new(STSimplify {})
 }

@@ -144,6 +144,30 @@ def test_st_azimuth(eng, geom1, geom2, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected_boundary"),
+    [
+        (None, None),
+        ("LINESTRING(1 1, 0 0, -1 1)", "MULTIPOINT (1 1, -1 1)"),
+        ("POLYGON((1 1,0 0, -1 1, 1 1))", "LINESTRING (1 1, 0 0, -1 1, 1 1)"),
+        (
+            "LINESTRING(100 150,50 60, 70 80, 160 170)",
+            "MULTIPOINT (100 150, 160 170)",
+        ),
+        (
+            "POLYGON (( 10 130, 50 190, 110 190, 140 150, 150 80, 100 10, 20 40, 10 130 ), ( 70 40, 100 50, 120 80, 80 110, 50 90, 70 40 ))",
+            "MULTILINESTRING ((10 130, 50 190, 110 190, 140 150, 150 80, 100 10, 20 40, 10 130), (70 40, 100 50, 120 80, 80 110, 50 90, 70 40))",
+        ),
+    ],
+)
+def test_st_boundary(eng, geom, expected_boundary):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Boundary({geom_or_null(geom)})", expected_boundary
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "dist", "expected_area"),
     [
         (None, None, None),

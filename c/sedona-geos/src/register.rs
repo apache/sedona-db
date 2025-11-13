@@ -20,6 +20,7 @@ use sedona_expr::scalar_udf::ScalarKernelRef;
 use crate::{
     distance::st_distance_impl,
     st_area::st_area_impl,
+    st_boundary::st_boundary_impl,
     st_buffer::{st_buffer_impl, st_buffer_style_impl},
     st_centroid::st_centroid_impl,
     st_convexhull::st_convex_hull_impl,
@@ -49,6 +50,7 @@ use crate::overlay::{
 pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
     vec![
         ("st_area", st_area_impl()),
+        ("st_boundary", st_boundary_impl()),
         ("st_buffer", st_buffer_impl()),
         ("st_buffer", st_buffer_style_impl()),
         ("st_centroid", st_centroid_impl()),
