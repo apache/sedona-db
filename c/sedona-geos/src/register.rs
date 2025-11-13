@@ -34,6 +34,7 @@ use crate::{
     st_reverse::st_reverse_impl,
     st_simplify::st_simplify_impl,
     st_simplifypreservetopology::st_simplify_preserve_topology_impl,
+    st_snap::st_snap_impl,
     st_unaryunion::st_unary_union_impl,
 };
 
@@ -77,6 +78,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
             "st_simplifypreservetopology",
             st_simplify_preserve_topology_impl(),
         ),
+        ("st_snap", st_snap_impl()),
         ("st_symdifference", st_sym_difference_impl()),
         ("st_touches", st_touches_impl()),
         ("st_unaryunion", st_unary_union_impl()),

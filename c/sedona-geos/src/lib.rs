@@ -35,5 +35,6 @@ mod st_polygonize_agg;
 mod st_reverse;
 mod st_simplify;
 mod st_simplifypreservetopology;
+mod st_snap;
 mod st_unaryunion;
 pub mod wkb_to_geos;

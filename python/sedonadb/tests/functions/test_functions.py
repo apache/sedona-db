@@ -2128,6 +2128,129 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("input", "reference", "tolerance", "expected"),
+    [
+        (
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            "LINESTRING (5 107, 54 84, 101 100)",
+            25.0 * 1.01,
+            "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 101 100, 26 125), (51 150, 101 150, 76 175, 51 150)), ((151 100, 151 200, 176 175, 151 100)))",
+        ),
+        (
+            "MULTIPOLYGON((( 26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            "LINESTRING (5 107, 54 84, 101 100)",
+            25.0 * 1.25,
+            "MULTIPOLYGON (((5 107, 26 200, 126 200, 126 125, 101 100, 54 84, 5 107), (51 150, 101 150, 76 175, 51 150)), ((151 100, 151 200, 176 175, 151 100)))",
+        ),
+        (
+            "LINESTRING (5 107, 54 84, 101 100)",
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125),(51 150, 101 150, 76 175, 51 150 )),((151 100, 151 200, 176 175, 151 100)))",
+            25.0 * 1.01,
+            "LINESTRING (5 107, 26 125, 54 84, 101 100)",
+        ),
+        (
+            "LINESTRING (5 107, 54 84, 101 100)",
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125),(51 150, 101 150, 76 175, 51 150 )),((151 100, 151 200, 176 175, 151 100)))",
+            25.0 * 1.25,
+            "LINESTRING (26 125, 54 84, 101 100)",
+        ),
+        (
+            "POINT (1.1 2.1)",
+            "POINT (1 2)",
+            0.5,
+            "POINT (1 2)",
+        ),  # Should snap to reference
+        (
+            "POINT (5.9 6.9)",
+            "POINT (6 7)",
+            0.5,
+            "POINT (6 7)",
+        ),  # Should snap to reference
+        (
+            "LINESTRING (0.9 0.9, 2.1 2.1, 4.9 4.9)",
+            "POINT (1 1)",
+            0.5,
+            "LINESTRING (1 1, 2.1 2.1, 4.9 4.9)",  # First and last vertices snap
+        ),
+        (
+            "LINESTRING (10.1 10.1, 12 12)",
+            "MULTIPOINT ((5 5), (10 10))",
+            0.5,
+            "LINESTRING (10 10, 12 12)",  # First vertex snaps
+        ),
+        (
+            "POLYGON ((0.9 0.9, 0.9 3.1, 3.1 3.1, 3.1 0.9, 0.9 0.9))",
+            "LINESTRING (1 1, 1 3, 3 3, 3 1, 1 1)",
+            0.5,
+            "POLYGON ((1 1, 1 3, 3 3, 3 1, 1 1))",  # All vertices snap
+        ),
+        (
+            "POLYGON ((5 5, 5 8, 8 8, 8 5, 5 5))",
+            "LINESTRING (4.9 4.9, 4.9 8.1, 8.1 8.1, 8.1 4.9, 4.9 4.9)",
+            0.5,
+            "POLYGON ((4.9 4.9, 4.9 8.1, 8.1 8.1, 8.1 4.9, 4.9 4.9))",  # Partial snapping
+        ),
+        (
+            "MULTILINESTRING ((0.9 0.9, 2 2), (3.1 3.1, 4 4))",
+            "MULTIPOINT ((1 1), (3 3))",
+            0.5,
+            "MULTILINESTRING ((1 1, 2 2), (3 3, 4 4))",  # Endpoints snap
+        ),
+        (
+            "MULTIPOINT (0.9 0.9, 2.1 2.1, 3.9 3.9)",
+            "LINESTRING (1 1, 2 2, 3 3, 4 4)",
+            0.5,
+            "MULTIPOINT (1 1, 2 2, 4 4)",  # Points snap to line
+        ),
+        (
+            "POINT (1.1 2.1)",
+            "POINT (1 2)",
+            0.5,
+            "POINT (1 2)",
+        ),  # Snaps within tolerance
+        (
+            "POINT (1.6 2.6)",
+            "POINT (1 2)",
+            0.5,
+            "POINT (1.6 2.6)",
+        ),  # No snap (outside tolerance)
+        (
+            "LINESTRING (0 0, 10 10)",
+            "POINT (5 5)",
+            1.0,
+            "LINESTRING (0 0, 5 5, 10 10)",  # Vertex inserted on line
+        ),
+        ("POINT (5 5)", "POINT (5 5)", 0.0, "POINT (5 5)"),  # Exact match, no change
+        (
+            "POLYGON ((0.9 0.9, 0.9 5.1, 5.1 5.1, 5.1 0.9, 0.9 0.9), (1.9 1.9, 1.9 4.1, 4.1 4.1, 4.1 1.9, 1.9 1.9))",
+            "POLYGON ((1 1, 1 5, 5 5, 5 1, 1 1), (2 2, 2 4, 4 4, 4 2, 2 2))",
+            0.5,
+            "POLYGON ((1 1, 1 5, 5 5, 5 1, 1 1), (2 2, 2 4, 4 4, 4 2, 2 2))",
+        ),
+        (
+            "LINESTRING (0.1 0.1, 0.2 0.2, 0.3 0.3, 0.4 0.4, 0.5 0.5, 0.6 0.6, 0.7 0.7, 0.8 0.8, 0.9 0.9)",
+            "LINESTRING (0 0, 1 1)",
+            0.5,
+            "LINESTRING (0 0, 0.2 0.2, 0.3 0.3, 0.4 0.4, 0.5 0.5, 0.6 0.6, 0.7 0.7, 0.8 0.8, 1 1)",
+        ),
+        (
+            "POINT (1 2)",
+            "POINT (3 4)",
+            0.5,
+            "POINT (1 2)",
+        ),  # No snap (outside tolerance)
+    ],
+)
+def test_st_snap(eng, input, reference, tolerance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Snap({geom_or_null(input)}, {geom_or_null(reference)}, {val_or_null(tolerance)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
