@@ -112,4 +112,30 @@ mod tests {
         assert_eq!(ry, rotation_y);
         Ok(())
     }
+
+    #[test]
+    fn test_tile_size() -> Result<(), ArrowError> {
+        let driver = DriverManager::get_driver_by_name("MEM").map_err(|e| {
+            ArrowError::ParseError(format!("Failed to get MEM driver: {e}"))
+        })?;
+        let dataset = driver
+            .create_with_band_type::<u8, _>("", 256, 512, 1)
+            .map_err(|e| ArrowError::ParseError(format!("Failed to create dataset: {e}")))?;
+        let (tile_width, tile_height) = tile_size(&dataset)?;
+        assert_eq!(tile_width, 256);
+        assert_eq!(tile_height, 512);
+        Ok(())  
+    }
+
+    #[test]
+    fn test_to_banddatatype() -> Result<(), ArrowError> {
+        assert_eq!(
+            to_banddatatype(GdalDataType::UInt8)?,
+            BandDataType::UInt8
+        );
+        let result = to_banddatatype(GdalDataType::Unknown);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("Unsupported GDAL data type"));
+        Ok(())
+    }
 }
