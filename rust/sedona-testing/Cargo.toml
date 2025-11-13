@@ -43,7 +43,6 @@ criterion = { workspace = true, optional = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
-fastrand = { workspace = true }
 geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
