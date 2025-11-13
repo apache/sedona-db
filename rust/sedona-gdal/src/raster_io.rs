@@ -550,7 +550,7 @@ mod tests {
         let read_original_tiling_raster_array =
             read_raster_geotiff(retiled_filepath_str, Some(tile_size)).unwrap();
 
-        // Validate that we get back the orginal raster array
+        // Validate that we get back the original raster array
         assert!(raster_arrays_equal(
             &raster_array,
             &RasterStructArray::new(&read_original_tiling_raster_array)
