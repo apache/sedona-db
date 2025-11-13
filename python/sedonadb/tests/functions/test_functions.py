@@ -2029,6 +2029,7 @@ def test_st_zmflag(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_ZmFlag({geom_or_null(geom)})", expected)
 
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
