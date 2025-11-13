@@ -240,6 +240,19 @@ pub struct PyProjectedRecordBatchReader {
 
 #[pymethods]
 impl PyProjectedRecordBatchReader {
+    #[new]
+    fn new(
+        inner_object: PyObject,
+        projection_indices: Option<Vec<usize>>,
+        projection_names: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            inner_object,
+            projection_indices,
+            projection_names,
+        }
+    }
+
     #[pyo3(signature = (requested_schema=None))]
     fn __arrow_c_stream__<'py>(
         &self,

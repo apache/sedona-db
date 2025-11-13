@@ -19,6 +19,7 @@ import tempfile
 
 import geopandas
 import geopandas.testing
+import pandas as pd
 
 
 def test_read_ogr(con):
@@ -40,7 +41,13 @@ def test_read_ogr(con):
         )
 
         # With only not geometry selected
-        geopandas.testing.assert_geodataframe_equal(
+        pd.testing.assert_frame_equal(
             con.sql("SELECT idx FROM test_fgb ORDER BY idx").to_pandas(),
             gdf.filter(["idx"]),
+        )
+
+        # With reversed columns
+        pd.testing.assert_frame_equal(
+            con.sql("SELECT wkb_geometry, idx FROM test_fgb ORDER BY idx").to_pandas(),
+            gdf.filter(["wkb_geometry", "idx"]),
         )

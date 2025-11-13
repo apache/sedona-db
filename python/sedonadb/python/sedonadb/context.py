@@ -168,7 +168,9 @@ class SedonaContext:
 
         return DataFrame(
             self._impl,
-            self._impl.read_external_format(spec, [str(path) for path in table_paths], False),
+            self._impl.read_external_format(
+                spec, [str(path) for path in table_paths], False
+            ),
             self.options,
         )
 

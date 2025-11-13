@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from sedonadb._lib import PyExternalFormat
+from sedonadb._lib import PyExternalFormat, PyProjectedRecordBatchReader
 
 
 class ExternalFormatSpec:
@@ -81,18 +81,25 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         else:
             columns = None
 
-        # TODO: Column order is not respected here, so we still need a utility to
-        # ensure match with the projected file schema
-        PyogrioReaderShelter(self._raw.ogr_open_arrow(ogr_src, {}, columns=columns))
+        return PyogrioReaderShelter(
+            self._raw.ogr_open_arrow(ogr_src, {}, columns=columns), columns
+        )
 
 
 class PyogrioReaderShelter:
-    def __init__(self, inner):
+    def __init__(self, inner, output_names=None):
         self._inner = inner
+        self._output_names = output_names
         self._meta, self._reader = self._inner.__enter__()
 
     def __del__(self):
         self._inner.__exit__(None, None, None)
 
     def __arrow_c_stream__(self, requested_schema=None):
-        return self._reader.__arrow_c_stream__()
+        if self._output_names is None:
+            return self._reader.__arrow_c_stream__()
+        else:
+            projected = PyProjectedRecordBatchReader(
+                self._reader, None, self._output_names
+            )
+            return projected.__arrow_c_stream__()
