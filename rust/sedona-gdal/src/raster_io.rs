@@ -110,18 +110,26 @@ pub fn read_raster_geotiff(
 
                 raster_builder.start_band(band_metadata)?;
 
-                // Read band data using GDAL, converting from typed buffer to bytes
-                let band_data = read_band_data(
+                // Reserve capacity and write band data directly from GDAL
+                let pixel_count = actual_tile_width * actual_tile_height;
+                let bytes_needed = pixel_count * bytes_per_pixel(data_type.clone())?;
+
+                // Pre-allocate a vector of the exact size needed
+                let mut band_data = vec![0u8; bytes_needed];
+
+                // Read directly into the pre-allocated buffer
+                read_band_data_into(
                     &band,
                     (x_offset as isize, y_offset as isize),
                     (actual_tile_width, actual_tile_height),
                     &data_type,
+                    &mut band_data,
                 )?;
 
-                // Write the band data
+                // Write the band data (now zero-copy since we're just passing the vec)
                 raster_builder.band_data_writer().append_value(&band_data);
 
-                // Finalize the band (no arguments)
+                // Finalize the band
                 raster_builder.finish_band()?;
             }
 
@@ -135,79 +143,71 @@ pub fn read_raster_geotiff(
     Ok(Arc::new(raster_struct))
 }
 
-/// Helper function to read band data from GDAL, converting from typed buffer to bytes
-fn read_band_data(
+/// Helper function to read band data from GDAL directly into a pre-allocated byte buffer
+fn read_band_data_into(
     band: &RasterBand,
     window_origin: (isize, isize),
     window_size: (usize, usize),
     data_type: &BandDataType,
-) -> Result<Vec<u8>, ArrowError> {
+    output: &mut [u8],
+) -> Result<(), ArrowError> {
+    let pixel_count = window_size.0 * window_size.1;
+
     match data_type {
         BandDataType::UInt8 => {
-            let mut buffer = vec![0u8; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            // For UInt8, we can read directly into the output buffer
+            band.read_into_slice(window_origin, window_size, window_size, output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            Ok(buffer)
+            Ok(())
         }
         BandDataType::UInt16 => {
-            let mut buffer = vec![0u16; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            // Cast the output buffer to the appropriate type
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut u16, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 2);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
         BandDataType::Int16 => {
-            let mut buffer = vec![0i16; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut i16, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 2);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
         BandDataType::UInt32 => {
-            let mut buffer = vec![0u32; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut u32, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 4);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
         BandDataType::Int32 => {
-            let mut buffer = vec![0i32; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut i32, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 4);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
         BandDataType::Float32 => {
-            let mut buffer = vec![0f32; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut f32, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 4);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
         BandDataType::Float64 => {
-            let mut buffer = vec![0f64; window_size.0 * window_size.1];
-            band.read_into_slice(window_origin, window_size, window_size, &mut buffer, None)
+            let typed_output = unsafe {
+                std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut f64, pixel_count)
+            };
+            band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
                 .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
-            let mut bytes = Vec::with_capacity(buffer.len() * 8);
-            for value in buffer {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-            Ok(bytes)
+            Ok(())
         }
     }
 }
