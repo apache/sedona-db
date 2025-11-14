@@ -20,6 +20,7 @@ use std::{collections::HashMap, ffi::CString, sync::Arc};
 use arrow_array::{ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use async_trait::async_trait;
+use datafusion::physical_plan::PhysicalExpr;
 use datafusion_common::{DataFusionError, Result};
 use pyo3::{
     exceptions::PyNotImplementedError, pyclass, pymethods, types::PyCapsule, Bound, PyObject,
@@ -217,6 +218,15 @@ impl PyOpenReaderArgs {
         self.inner.file_projection.clone()
     }
 
+    #[getter]
+    fn filters(&self) -> Vec<PyFilter> {
+        self.inner
+            .filters
+            .iter()
+            .map(|f| PyFilter { _inner: f.clone() })
+            .collect()
+    }
+
     fn is_projected(&self) -> Result<bool, PySedonaError> {
         match (&self.inner.file_projection, &self.inner.file_schema) {
             (None, None) | (None, Some(_)) => Ok(false),
@@ -228,6 +238,19 @@ impl PyOpenReaderArgs {
                 "Can't check projection for OpenReaderArgs with no schema".to_string(),
             )),
         }
+    }
+}
+
+#[pyclass]
+#[derive(Debug)]
+pub struct PyFilter {
+    _inner: Arc<dyn PhysicalExpr>,
+}
+
+#[pymethods]
+impl PyFilter {
+    fn __repr__(&self) -> String {
+        format!("{self:?}")
     }
 }
 
