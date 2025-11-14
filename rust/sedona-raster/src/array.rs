@@ -73,34 +73,42 @@ struct MetadataRefImpl<'a> {
 }
 
 impl<'a> MetadataRef for MetadataRefImpl<'a> {
+    #[inline(always)]
     fn width(&self) -> u64 {
         self.width_array.value(self.index)
     }
 
+    #[inline(always)]
     fn height(&self) -> u64 {
         self.height_array.value(self.index)
     }
 
+    #[inline(always)]
     fn upper_left_x(&self) -> f64 {
         self.upper_left_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn upper_left_y(&self) -> f64 {
         self.upper_left_y_array.value(self.index)
     }
 
+    #[inline(always)]
     fn scale_x(&self) -> f64 {
         self.scale_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn scale_y(&self) -> f64 {
         self.scale_y_array.value(self.index)
     }
 
+    #[inline(always)]
     fn skew_x(&self) -> f64 {
         self.skew_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn skew_y(&self) -> f64 {
         self.skew_y_array.value(self.index)
     }
@@ -328,6 +336,7 @@ pub struct RasterRefImpl<'a> {
 
 impl<'a> RasterRefImpl<'a> {
     /// Create a new RasterRefImpl from a struct array and index using hard-coded indices
+    #[inline(always)]
     pub fn new(raster_struct_array: &RasterStructArray<'a>, raster_index: usize) -> Self {
         let metadata = MetadataRefImpl {
             width_array: raster_struct_array.width_array,
@@ -357,10 +366,12 @@ impl<'a> RasterRefImpl<'a> {
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
+    #[inline(always)]
     fn metadata(&self) -> &dyn MetadataRef {
         &self.metadata
     }
 
+    #[inline(always)]
     fn crs(&self) -> Option<&str> {
         if self.crs.is_null(self.bands.raster_index) {
             None
@@ -369,6 +380,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         }
     }
 
+    #[inline(always)]
     fn bands(&self) -> &dyn BandsRef {
         &self.bands
     }
@@ -395,6 +407,7 @@ pub struct RasterStructArray<'a> {
 
 impl<'a> RasterStructArray<'a> {
     /// Create a new RasterStructArray from an existing StructArray
+    #[inline]
     pub fn new(raster_array: &'a StructArray) -> Self {
         let crs = raster_array
             .column(raster_indices::CRS)
@@ -489,16 +502,19 @@ impl<'a> RasterStructArray<'a> {
     }
 
     /// Get the total number of rasters in the array
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.raster_array.len()
     }
 
     /// Check if the array is empty
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.raster_array.is_empty()
     }
 
     /// Get a specific raster by index without consuming the iterator
+    #[inline(always)]
     pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
@@ -510,6 +526,7 @@ impl<'a> RasterStructArray<'a> {
         Ok(RasterRefImpl::new(self, index))
     }
 
+    #[inline(always)]
     pub fn is_null(&self, index: usize) -> bool {
         self.raster_array.is_null(index)
     }
