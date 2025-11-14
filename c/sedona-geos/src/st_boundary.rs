@@ -154,7 +154,7 @@ fn geos_boundary(geometry: &impl Geom) -> Result<Geometry> {
         }
 
         if result_components.len() == 1 {
-            Ok(Geom::clone(result_components.iter().next().unwrap()))
+            Ok(Geom::clone(result_components.first().unwrap()))
         } else {
             Geometry::create_geometry_collection(result_components).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to create geometry collection: {e}"))
