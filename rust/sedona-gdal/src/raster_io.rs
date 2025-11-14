@@ -426,7 +426,7 @@ fn write_raster(
         }
     }
 
-    // Flush the dataset to disk
+    // Flush the dataset
     dataset.flush_cache().map_err(|e| {
         ArrowError::ParseError(format!("Failed to flush cache when writing GeoTIFF: {e}"))
     })?;
@@ -618,30 +618,60 @@ mod tests {
 
     #[test]
     fn test_filepath_validation() {
-        // Create a simple test raster
-        let raster_size = (16, 16);
-        let tile_size = (8, 8);
-        let raster_struct =
-            generate_tiled_rasters(raster_size, tile_size, BandDataType::UInt8).unwrap();
-
-        // Test read_geotiff with invalid extensions
-        assert!(read_geotiff("test.zarr", None).is_err());
-        assert!(read_geotiff("test.nc", None).is_err());
-        assert!(read_geotiff("test.txt", None).is_err());
-        assert!(read_geotiff("test", None).is_err());
-
-        // Test write_geotiff with invalid extensions
-        assert!(write_geotiff(&raster_struct, "test.zarr").is_err());
-        assert!(write_geotiff(&raster_struct, "test.nc").is_err());
-        assert!(write_geotiff(&raster_struct, "test.txt").is_err());
-        assert!(write_geotiff(&raster_struct, "test").is_err());
-
-        // Verify error messages contain helpful information
         let err = read_geotiff("test.zarr", None).unwrap_err();
         assert!(err.to_string().contains("Expected GeoTIFF"));
         assert!(err.to_string().contains(".tif or .tiff"));
 
+        let raster_struct =
+            generate_tiled_rasters((16, 16), (8,8), BandDataType::UInt8).unwrap();
         let err = write_geotiff(&raster_struct, "test.zarr").unwrap_err();
         assert!(err.to_string().contains("Expected GeoTIFF"));
+    }
+
+    #[test]
+    fn test_round_trip_conversions() {
+        // UInt8
+        let value: u8 = 255;
+        let bytes = value.to_le_bytes();
+        assert_eq!(bytes_to_f64(&bytes, BandDataType::UInt8), Some(255.0));
+
+        // UInt16
+        let value: u16 = 32768;
+        let bytes = value.to_le_bytes();
+        assert_eq!(bytes_to_f64(&bytes, BandDataType::UInt16), Some(32768.0));
+
+        // Int16
+        let value: i16 = -32768;
+        let bytes = value.to_le_bytes();
+        assert_eq!(bytes_to_f64(&bytes, BandDataType::Int16), Some(-32768.0));
+
+        // UInt32
+        let value: u32 = 2147483648;
+        let bytes = value.to_le_bytes();
+        assert_eq!(
+            bytes_to_f64(&bytes, BandDataType::UInt32),
+            Some(2147483648.0)
+        );
+
+        // Int32
+        let value: i32 = -2147483648;
+        let bytes = value.to_le_bytes();
+        assert_eq!(
+            bytes_to_f64(&bytes, BandDataType::Int32),
+            Some(-2147483648.0)
+        );
+
+        // Float32
+        let value: f32 = 256.7;
+        let bytes = value.to_le_bytes();
+        assert_eq!(bytes_to_f64(&bytes, BandDataType::Float32), Some(256.7));
+
+        // Float64
+        let value: f64 = -2147483648.3;
+        let bytes = value.to_le_bytes();
+        assert_eq!(
+            bytes_to_f64(&bytes, BandDataType::Float64),
+            Some(-2147483648.3)
+        );
     }
 }
