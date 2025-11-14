@@ -156,13 +156,14 @@ class SedonaContext:
         self,
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
+        extension: str = "",
     ) -> DataFrame:
         from sedonadb.datasource import PyogrioFormatSpec
 
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
 
-        spec = PyogrioFormatSpec()
+        spec = PyogrioFormatSpec(extension)
         if options is not None:
             spec = spec.with_options(options)
 

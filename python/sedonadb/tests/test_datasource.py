@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from pathlib import Path
 import tempfile
 
 import geopandas
@@ -50,4 +51,42 @@ def test_read_ogr(con):
         pd.testing.assert_frame_equal(
             con.sql("SELECT wkb_geometry, idx FROM test_fgb ORDER BY idx").to_pandas(),
             gdf.filter(["wkb_geometry", "idx"]),
+        )
+
+
+def test_read_ogr_multi_file(con):
+    n = 1024 * 16
+    partitions = ["part_a", "part_b", "part_d", "part_e", "part_f", "part_g", "part_h"]
+    series = geopandas.GeoSeries.from_xy(
+        list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
+    )
+    gdf = geopandas.GeoDataFrame(
+        {
+            "idx": list(range(n)),
+            "partition": [partitions[i % len(partitions)] for i in range(n)],
+            "wkb_geometry": series,
+        }
+    )
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        # Create partitioned files by writing Parquet first and translating
+        # one file at a time
+        con.create_data_frame(gdf).to_parquet(td, partition_by="partition")
+        for parquet_path in Path(td).rglob("*.parquet"):
+            fgb_path = str(parquet_path).replace(".parquet", ".fgb")
+            con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)
+
+        # Reading a directory while specifying the extension should work
+        con.read_ogr(f"{td}", extension="fgb").to_view("gdf_from_dir", overwrite=True)
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql("SELECT * FROM gdf_from_dir ORDER BY idx").to_pandas(),
+            gdf.filter(["idx", "wkb_geometry"]),
+        )
+
+        # Reading using a glob without specifying the extension should work
+        con.read_ogr(f"{td}/**/*.fgb").to_view("gdf_from_glob", overwrite=True)
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql("SELECT * FROM gdf_from_glob ORDER BY idx").to_pandas(),
+            gdf.filter(["idx", "wkb_geometry"]),
         )
