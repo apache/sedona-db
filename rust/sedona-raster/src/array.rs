@@ -335,7 +335,11 @@ pub struct RasterRefImpl<'a> {
 }
 
 impl<'a> RasterRefImpl<'a> {
-    /// Create a new RasterRefImpl from a struct array and index using hard-coded indices
+    /// Creates a new RasterRefImpl that provides zero-copy access to the raster at the specified index.
+    ///
+    /// # Arguments
+    /// * `raster_struct_array` - The Arrow StructArray containing raster data
+    /// * `raster_index` - The zero-based index of the raster to access
     #[inline(always)]
     pub fn new(raster_struct_array: &RasterStructArray<'a>, raster_index: usize) -> Self {
         let metadata = MetadataRefImpl {
