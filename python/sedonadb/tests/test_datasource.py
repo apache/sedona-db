@@ -56,7 +56,7 @@ def test_read_ogr(con):
 
 def test_read_ogr_multi_file(con):
     n = 1024 * 16
-    partitions = ["part_a", "part_b", "part_d", "part_e", "part_f", "part_g", "part_h"]
+    partitions = ["part_{c}" for c in "abcdefghijklmnop"]
     series = geopandas.GeoSeries.from_xy(
         list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
     )
