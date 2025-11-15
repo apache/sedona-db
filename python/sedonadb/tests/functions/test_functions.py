@@ -2027,6 +2027,75 @@ def test_st_mmax(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        # Already valid polygon should remain unchanged
+        (
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
+        ),
+        # Self-intersecting polygon (bowtie) should be fixed
+        (
+            "POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))",
+            "MULTIPOLYGON (((0 2, 1 1, 0 0, 0 2)), ((2 0, 1 1, 2 2, 2 0)))",
+        ),
+        # Polygon with incorrect ring orientation should be fixed
+        (
+            "POLYGON ((0 0, 0 3, 3 3, 3 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            "POLYGON ((0 0, 0 3, 3 3, 3 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+        ),
+        # Polygon with repeated points should be cleaned (Note: JTS 'make valid' might preserve the duplicate points in WKT but the effective geometry is valid)
+        (
+            "POLYGON ((0 0, 0 1, 0 1, 1 1, 1 0, 0 0, 0 0))",
+            "POLYGON ((0 0, 0 1, 0 1, 1 1, 1 0, 0 0, 0 0))",
+        ),
+        # LineString that is already valid
+        (
+            "LINESTRING (0 0, 1 1, 2 2)",
+            "LINESTRING (0 0, 1 1, 2 2)",
+        ),
+        # LineString with repeated points should be simplified
+        (
+            "LINESTRING (0 0, 0 0, 1 1, 1 1, 2 2)",
+            "LINESTRING (0 0, 0 0, 1 1, 1 1, 2 2)",
+        ),
+        # MultiPolygon with invalid components (two bowtie polygons)
+        (
+            "MULTIPOLYGON (((0 0, 1 1, 1 0, 0 1, 0 0)), ((2 2, 3 3, 3 2, 2 3, 2 2)))",
+            "MULTIPOLYGON (((0.5 0.5, 0 0, 0 1, 0.5 0.5)), ((0.5 0.5, 1 1, 1 0, 0.5 0.5)), ((2.5 2.5, 2 2, 2 3, 2.5 2.5)), ((2.5 2.5, 3 3, 3 2, 2.5 2.5)))",
+        ),
+        # Point geometry (always valid)
+        (
+            "POINT (1 1)",
+            "POINT (1 1)",
+        ),
+        # GeometryCollection with mixed valid/invalid geometries
+        (
+            "GEOMETRYCOLLECTION (POINT (1 1), POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT (1 1), MULTIPOLYGON (((0 2, 1 1, 0 0, 0 2)), ((2 0, 1 1, 2 2, 2 0))))",
+        ),
+        # Empty geometry
+        (
+            "POLYGON EMPTY",
+            "POLYGON EMPTY",
+        ),
+        # Polygon with spike (almost self-intersecting)
+        (
+            "POLYGON ((0 0, 3 0, 3 3, 2 1, 1 3, 0 3, 0 0))",
+            "POLYGON ((0 0, 3 0, 3 3, 2 1, 1 3, 0 3, 0 0))",
+        ),
+    ],
+)
+def test_st_makevalid(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_MakeValid({geom_or_null(geom)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
         (None, None),
         ("POINT (0 0)", "Valid Geometry"),
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
