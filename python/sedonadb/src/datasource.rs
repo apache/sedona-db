@@ -30,6 +30,8 @@ use sedona_datasource::{
     spec::{ExternalFormatSpec, Object, OpenReaderArgs},
     utility::ProjectedRecordBatchReader,
 };
+use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_geometry::interval::IntervalTrait;
 
 use crate::{
     error::PySedonaError,
@@ -223,7 +225,7 @@ impl PyOpenReaderArgs {
         self.inner
             .filters
             .iter()
-            .map(|f| PyFilter { _inner: f.clone() })
+            .map(|f| PyFilter { inner: f.clone() })
             .collect()
     }
 
@@ -244,11 +246,22 @@ impl PyOpenReaderArgs {
 #[pyclass]
 #[derive(Debug)]
 pub struct PyFilter {
-    _inner: Arc<dyn PhysicalExpr>,
+    inner: Arc<dyn PhysicalExpr>,
 }
 
 #[pymethods]
 impl PyFilter {
+    fn bounding_box(&self, column_index: usize) -> Result<(f64, f64, f64, f64), PySedonaError> {
+        let filter = SpatialFilter::try_from_expr(&self.inner)?;
+        let filter_bbox = filter.filter_bbox(column_index);
+        Ok((
+            filter_bbox.x().lo(),
+            filter_bbox.y().lo(),
+            filter_bbox.x().hi(),
+            filter_bbox.y().hi(),
+        ))
+    }
+
     fn __repr__(&self) -> String {
         format!("{self:?}")
     }

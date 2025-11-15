@@ -25,7 +25,11 @@ use datafusion_physical_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    bounds::wkb_bounds_xy,
+    interval::{Interval, IntervalTrait},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
@@ -60,6 +64,35 @@ pub enum SpatialFilter {
 }
 
 impl SpatialFilter {
+    pub fn filter_bbox(&self, column_index: usize) -> BoundingBox {
+        match self {
+            SpatialFilter::Intersects(column, bounding_box)
+            | SpatialFilter::Covers(column, bounding_box) => {
+                if column.index() == column_index {
+                    return bounding_box.clone();
+                }
+            }
+            SpatialFilter::HasZ(_) => return BoundingBox::xy(Interval::full(), Interval::full()),
+            SpatialFilter::And(lhs, rhs) => {
+                let _lhs_box = lhs.filter_bbox(column_index);
+                let _rhs_box = rhs.filter_bbox(column_index);
+                // We don't implement intersection of boxes yet?
+                todo!()
+            }
+            SpatialFilter::Or(lhs, rhs) => {
+                let mut bounds = lhs.filter_bbox(column_index);
+                bounds.update_box(&rhs.filter_bbox(column_index));
+                return bounds;
+            }
+            SpatialFilter::LiteralFalse => {
+                return BoundingBox::xy(Interval::empty(), Interval::empty())
+            }
+            SpatialFilter::Unknown => {}
+        }
+
+        BoundingBox::xy(Interval::full(), Interval::full())
+    }
+
     /// Returns true if there is any chance the expression might be true
     ///
     /// In other words, returns false if and only if the expression is guaranteed

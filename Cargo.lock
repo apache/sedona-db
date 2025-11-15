@@ -5313,6 +5313,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-datasource",
  "sedona-expr",
+ "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
  "sedona-schema",

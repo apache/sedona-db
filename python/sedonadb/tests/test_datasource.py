@@ -21,6 +21,7 @@ import tempfile
 import geopandas
 import geopandas.testing
 import pandas as pd
+import shapely
 
 
 def test_read_ogr(con):
@@ -89,4 +90,24 @@ def test_read_ogr_multi_file(con):
         geopandas.testing.assert_geodataframe_equal(
             con.sql("SELECT * FROM gdf_from_glob ORDER BY idx").to_pandas(),
             gdf.filter(["idx", "wkb_geometry"]),
+        )
+
+
+def test_read_ogr_filter(con):
+    n = 1024
+    series = geopandas.GeoSeries.from_xy(list(range(n)), list(range(1, n + 1)))
+    gdf = geopandas.GeoDataFrame({"idx": list(range(n)), "wkb_geometry": series})
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        temp_fgb_path = f"{td}/temp.fgb"
+        gdf.to_file(temp_fgb_path)
+        con.read_ogr(temp_fgb_path).to_view("test_fgb", overwrite=True)
+
+        # With no projection
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT * FROM test_fgb WHERE ST_Equals(wkb_geometry, ST_Point(1, 2))"
+            ).to_pandas(),
+            gdf[gdf.geometry.geom_equals(shapely.Point(1, 2))].reset_index(drop=True),
         )

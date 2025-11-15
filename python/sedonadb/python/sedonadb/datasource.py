@@ -83,6 +83,9 @@ class PyogrioFormatSpec(ExternalFormatSpec):
 
         batch_size = args.batch_size if args.batch_size is not None else 0
 
+        if args.filters:
+            pass
+
         return PyogrioReaderShelter(
             self._raw.ogr_open_arrow(
                 ogr_src, {}, columns=columns, batch_size=batch_size
