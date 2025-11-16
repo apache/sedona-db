@@ -74,10 +74,11 @@ impl SpatialFilter {
             }
             SpatialFilter::HasZ(_) => return BoundingBox::xy(Interval::full(), Interval::full()),
             SpatialFilter::And(lhs, rhs) => {
-                let _lhs_box = lhs.filter_bbox(column_index);
-                let _rhs_box = rhs.filter_bbox(column_index);
-                // We don't implement intersection of boxes yet?
-                todo!()
+                let lhs_box = lhs.filter_bbox(column_index);
+                let rhs_box = rhs.filter_bbox(column_index);
+                if let Ok(bounds) = lhs_box.intersection(&rhs_box) {
+                    return bounds;
+                }
             }
             SpatialFilter::Or(lhs, rhs) => {
                 let mut bounds = lhs.filter_bbox(column_index);
