@@ -23,6 +23,7 @@ use tokio::runtime::Runtime;
 
 use crate::{
     dataframe::InternalDataFrame,
+    datasource::PyExternalFormat,
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
@@ -104,6 +105,26 @@ impl InternalContext {
             &self.runtime,
             self.inner.read_parquet(table_paths, geo_options),
         )??;
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
+    pub fn read_external_format<'py>(
+        &self,
+        py: Python<'py>,
+        format_spec: Bound<PyAny>,
+        table_paths: Vec<String>,
+        check_extension: bool,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let spec = format_spec
+            .call_method0("__sedona_external_format__")?
+            .extract::<PyExternalFormat>()?;
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner
+                .read_external_format(Arc::new(spec), table_paths, None, check_extension),
+        )??;
+
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 

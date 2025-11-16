@@ -26,6 +26,7 @@ use datafusion_common::{Result, Statistics};
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_physical_expr::PhysicalExpr;
 use object_store::{ObjectMeta, ObjectStore};
+use regex::Regex;
 
 /// Simple file format specification
 ///
@@ -182,7 +183,14 @@ impl Object {
                 // GDAL to be able to translate.
                 let object_store_debug = format!("{:?}", self.store).to_lowercase();
                 if object_store_debug.contains("http") {
-                    Some(format!("https://{}", meta.location))
+                    let pattern = r#"host: some\(domain\("([A-Za-z0-9.-]+)"\)\)"#;
+                    let re = Regex::new(pattern).ok()?;
+                    if let Some(caps) = re.captures(&object_store_debug) {
+                        caps.get(1)
+                            .map(|host| format!("https://{}/{}", host.as_str(), meta.location))
+                    } else {
+                        None
+                    }
                 } else if object_store_debug.contains("local") {
                     Some(format!("file:///{}", meta.location))
                 } else {
@@ -190,7 +198,7 @@ impl Object {
                 }
             }
             (Some(url), None) => Some(url.to_string()),
-            (Some(url), Some(meta)) => Some(format!("{url}/{}", meta.location)),
+            (Some(url), Some(meta)) => Some(format!("{url}{}", meta.location)),
             (None, None) => None,
         }
     }
