@@ -16,7 +16,10 @@
 // under the License.
 use serde::{Deserialize, Serialize};
 
-use crate::interval::{Interval, IntervalTrait, WraparoundInterval};
+use crate::{
+    error::SedonaGeometryError,
+    interval::{Interval, IntervalTrait, WraparoundInterval},
+};
 
 /// Bounding Box implementation with wraparound support
 ///
@@ -161,6 +164,21 @@ impl BoundingBox {
             (Some(m), Some(other_m)) => Some(m.merge_interval(&other_m)),
             _ => None,
         };
+    }
+
+    pub fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        Ok(Self {
+            x: self.x.intersection(&other.x)?,
+            y: self.y.intersection(&other.y)?,
+            z: match (self.z, other.z) {
+                (Some(z), Some(other_z)) => Some(z.intersection(&other_z)?),
+                _ => None,
+            },
+            m: match (self.m, other.m) {
+                (Some(m), Some(other_m)) => Some(m.intersection(&other_m)?),
+                _ => None,
+            },
+        })
     }
 }
 
