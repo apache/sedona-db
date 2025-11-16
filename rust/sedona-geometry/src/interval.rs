@@ -98,6 +98,9 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq + Sized {
     /// True if this interval is empty (i.e. intersects no values)
     fn is_empty(&self) -> bool;
 
+    /// True if this interval is full (i.e. intersects all values)
+    fn is_full(&self) -> bool;
+
     /// Compute a new interval that is the union of both
     ///
     /// When accumulating intervals in a loop, use [Interval::update_interval].
@@ -239,6 +242,10 @@ impl IntervalTrait for Interval {
         self.width() == -f64::INFINITY
     }
 
+    fn is_full(&self) -> bool {
+        self == &Self::full()
+    }
+
     fn merge_interval(&self, other: &Self) -> Self {
         let mut out = *self;
         out.update_interval(other);
@@ -377,6 +384,10 @@ impl IntervalTrait for WraparoundInterval {
 
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self == &Self::full()
     }
 
     fn merge_interval(&self, other: &Self) -> Self {

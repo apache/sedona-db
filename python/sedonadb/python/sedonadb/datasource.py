@@ -83,12 +83,18 @@ class PyogrioFormatSpec(ExternalFormatSpec):
 
         batch_size = args.batch_size if args.batch_size is not None else 0
 
-        if args.filters:
-            pass
+        if args.filter and args.file_schema is not None:
+            geometry_column_indices = args.file_schema.geometry_column_indices
+            if len(geometry_column_indices) == 1:
+                bbox = args.filter.bounding_box(geometry_column_indices[0])
+            else:
+                bbox = None
+        else:
+            bbox = None
 
         return PyogrioReaderShelter(
             self._raw.ogr_open_arrow(
-                ogr_src, {}, columns=columns, batch_size=batch_size
+                ogr_src, {}, columns=columns, batch_size=batch_size, bbox=bbox
             ),
             columns,
         )

@@ -20,7 +20,7 @@ use std::{collections::HashMap, ffi::CString, sync::Arc};
 use arrow_array::{ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::physical_plan::PhysicalExpr;
+use datafusion::{physical_expr::conjunction, physical_plan::PhysicalExpr};
 use datafusion_common::{DataFusionError, Result};
 use pyo3::{
     exceptions::PyNotImplementedError, pyclass, pymethods, types::PyCapsule, Bound, PyObject,
@@ -229,6 +229,17 @@ impl PyOpenReaderArgs {
             .collect()
     }
 
+    #[getter]
+    fn filter(&self) -> Option<PyFilter> {
+        if self.inner.filters.is_empty() {
+            None
+        } else {
+            Some(PyFilter {
+                inner: conjunction(self.inner.filters.iter().cloned()),
+            })
+        }
+    }
+
     fn is_projected(&self) -> Result<bool, PySedonaError> {
         match (&self.inner.file_projection, &self.inner.file_schema) {
             (None, None) | (None, Some(_)) => Ok(false),
@@ -251,15 +262,22 @@ pub struct PyFilter {
 
 #[pymethods]
 impl PyFilter {
-    fn bounding_box(&self, column_index: usize) -> Result<(f64, f64, f64, f64), PySedonaError> {
+    fn bounding_box(
+        &self,
+        column_index: usize,
+    ) -> Result<Option<(f64, f64, f64, f64)>, PySedonaError> {
         let filter = SpatialFilter::try_from_expr(&self.inner)?;
         let filter_bbox = filter.filter_bbox(column_index);
-        Ok((
-            filter_bbox.x().lo(),
-            filter_bbox.y().lo(),
-            filter_bbox.x().hi(),
-            filter_bbox.y().hi(),
-        ))
+        if filter_bbox.x().is_full() || filter_bbox.y().is_full() {
+            Ok(None)
+        } else {
+            Ok(Some((
+                filter_bbox.x().lo(),
+                filter_bbox.y().lo(),
+                filter_bbox.x().hi(),
+                filter_bbox.y().hi(),
+            )))
+        }
     }
 
     fn __repr__(&self) -> String {
