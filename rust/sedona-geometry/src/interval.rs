@@ -26,7 +26,7 @@ use crate::error::SedonaGeometryError;
 /// incurs overhead (particularly in a loop). This trait is mostly used to
 /// simplify testing and unify documentation for the two concrete
 /// implementations.
-pub trait IntervalTrait: std::fmt::Debug + PartialEq {
+pub trait IntervalTrait: std::fmt::Debug + PartialEq + Sized {
     /// Create an interval from lo and hi values
     fn new(lo: f64, hi: f64) -> Self;
 
@@ -114,6 +114,9 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq {
     /// For regular intervals, this expands both lo and hi by the distance.
     /// For wraparound intervals, this may result in the full interval if expansion is large enough.
     fn expand_by(&self, distance: f64) -> Self;
+
+    /// Compute the interval contained by both self and other
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError>;
 }
 
 /// 1D Interval that never wraps around
@@ -254,6 +257,12 @@ impl IntervalTrait for Interval {
         }
 
         Self::new(self.lo - distance, self.hi + distance)
+    }
+
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        let new_lo = self.lo.max(other.lo);
+        let new_hi = self.hi.min(other.hi);
+        Ok(Self::new(new_lo, new_hi))
     }
 }
 
@@ -485,6 +494,46 @@ impl IntervalTrait for WraparoundInterval {
         // The new wraparound interval excludes (excluded_lo, excluded_hi)
         // So the interval itself is (excluded_hi, excluded_lo)
         Self::new(excluded_hi, excluded_lo)
+    }
+
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        match (self.is_wraparound(), other.is_wraparound()) {
+            // Neither is wraparound
+            (false, false) => Ok(self.inner.intersection(&other.inner)?.into()),
+            // One is wraparound
+            (true, false) => other.intersection(self),
+            (false, true) => {
+                let inner = self.inner;
+                let (left, right) = other.split();
+                match (inner.intersects_interval(&left), inner.intersects_interval(&right)) {
+                    // Intersects both the left and right intervals
+                    (true, true) => {
+                        Err(SedonaGeometryError::Invalid(format!("Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval")))
+                    },
+                    // Intersects only the left interval
+                    (true, false) => Ok(inner.intersection(&left)?.into()),
+                    // Intersects only the right interval
+                    (false, true) => Ok(inner.intersection(&right)?.into()),
+                    (false, false) => Ok(WraparoundInterval::empty()),
+                }
+            }
+            // Both are wraparound
+            (true, true) => {
+                // Both wraparound intervals represent complements of excluded regions
+                // Intersection of complements = complement of union of excluded regions
+                // self excludes (hi, lo), other excludes (other.hi, other.lo)
+                // We need to find the union of these excluded regions
+                let excluded_self = Interval::new(self.inner.hi, self.inner.lo);
+                let excluded_other = Interval::new(other.inner.hi, other.inner.lo);
+                let excluded_union = excluded_self.merge_interval(&excluded_other);
+
+                // The intersection is the complement of the union of excluded regions
+                Ok(WraparoundInterval::new(
+                    excluded_union.hi(),
+                    excluded_union.lo(),
+                ))
+            }
+        }
     }
 }
 
