@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::{Debug, Display}, sync::Arc};
 
 use arrow_array::RecordBatchReader;
 use arrow_schema::{Schema, SchemaRef};
@@ -200,6 +200,18 @@ impl Object {
             (Some(url), None) => Some(url.to_string()),
             (Some(url), Some(meta)) => Some(format!("{url}{}", meta.location)),
             (None, None) => None,
+        }
+    }
+}
+
+impl Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(url) = self.to_url_string() {
+            write!(f, "{url}")
+        } else if let Some(meta) = &self.meta {
+            write!(f, "<object store> {}", meta.location)
+        } else {
+            write!(f, "<object store> <unknown location>")
         }
     }
 }

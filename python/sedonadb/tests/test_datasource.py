@@ -23,6 +23,7 @@ import geopandas.testing
 import pandas as pd
 import pytest
 import shapely
+import sedonadb
 
 
 def test_read_ogr_projection(con):
@@ -113,10 +114,15 @@ def test_read_ogr_filter(con):
             gdf[gdf.geometry.geom_equals(shapely.Point(1, 2))].reset_index(drop=True),
         )
 
+
 def test_read_ogr_file_not_found(con):
-    with pytest.raises(ValueError, match="foofy"):
+    with pytest.raises(
+        sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"
+    ):
         con.read_ogr("this/is/not/a/directory")
 
     with tempfile.TemporaryDirectory() as td:
-        with pytest.raises(ValueError, match="foofy"):
+        with pytest.raises(
+            sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"
+        ):
             con.read_ogr(Path(td) / "file_does_not_exist")
