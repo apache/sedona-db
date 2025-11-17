@@ -43,9 +43,6 @@ class ExternalFormatSpec:
 
 class PyogrioFormatSpec(ExternalFormatSpec):
     def __init__(self, extension=""):
-        import pyogrio.raw
-
-        self._raw = pyogrio.raw
         self._extension = extension
         self._options = {}
 
@@ -64,6 +61,8 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         return self._extension
 
     def open_reader(self, args):
+        import pyogrio.raw
+
         url = args.src.to_url()
         if url is None:
             raise ValueError(f"Can't convert {args.src} to OGR-openable object")
@@ -74,6 +73,9 @@ class PyogrioFormatSpec(ExternalFormatSpec):
             ogr_src = url.removeprefix("file://")
         else:
             raise ValueError(f"Can't open {url} with OGR")
+
+        if ogr_src.endswith(".zip"):
+            ogr_src = f"/vsizip/{ogr_src}"
 
         if args.is_projected():
             file_names = args.file_schema.names
@@ -93,7 +95,7 @@ class PyogrioFormatSpec(ExternalFormatSpec):
             bbox = None
 
         return PyogrioReaderShelter(
-            self._raw.ogr_open_arrow(
+            pyogrio.raw.ogr_open_arrow(
                 ogr_src, {}, columns=columns, batch_size=batch_size, bbox=bbox
             ),
             columns,

@@ -21,10 +21,11 @@ import tempfile
 import geopandas
 import geopandas.testing
 import pandas as pd
+import pytest
 import shapely
 
 
-def test_read_ogr(con):
+def test_read_ogr_projection(con):
     n = 1024
     series = geopandas.GeoSeries.from_xy(
         list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
@@ -104,10 +105,18 @@ def test_read_ogr_filter(con):
         gdf.to_file(temp_fgb_path)
         con.read_ogr(temp_fgb_path).to_view("test_fgb", overwrite=True)
 
-        # With no projection
+        # With something that should trigger a bounding box filter
         geopandas.testing.assert_geodataframe_equal(
             con.sql(
                 "SELECT * FROM test_fgb WHERE ST_Equals(wkb_geometry, ST_Point(1, 2))"
             ).to_pandas(),
             gdf[gdf.geometry.geom_equals(shapely.Point(1, 2))].reset_index(drop=True),
         )
+
+def test_read_ogr_file_not_found(con):
+    with pytest.raises(ValueError, match="foofy"):
+        con.read_ogr("this/is/not/a/directory")
+
+    with tempfile.TemporaryDirectory() as td:
+        with pytest.raises(ValueError, match="foofy"):
+            con.read_ogr(Path(td) / "file_does_not_exist")
