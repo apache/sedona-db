@@ -228,6 +228,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_length", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_length", LineString(500));
 
+    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(10));
+    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(500));
+
     benchmark::scalar(
         c,
         &f,

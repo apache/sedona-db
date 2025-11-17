@@ -2096,6 +2096,68 @@ def test_st_makevalid(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        (
+            None,
+            None,
+        ),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0.5 3.2e-4, 0 0))",
+            "LINESTRING (0.5 0.00032, 0.5 0)",
+        ),
+        (
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            "LINESTRING (76 175, 76 150)",
+        ),
+        (
+            "LINESTRING (5 107, 54 84, 101 100)",
+            "LINESTRING (54 84, 101 100)",
+        ),
+        (
+            "POLYGON((0 0,0 3,3 3,3 0,0 0),(1 1,1 2,2 2,2 1,1 1))",
+            "LINESTRING (1 1, 1 2)",
+        ),
+        (
+            "POLYGON((0 0,0 1,0 1,1 1,1 0,0 0,0 0))",
+            "LINESTRING (0 0, 0 1)",
+        ),
+        (
+            "LINESTRING (0 0, 1 1, 2 2)",
+            "LINESTRING (0 0, 1 1)",
+        ),
+        (
+            "MULTIPOLYGON(((0.5 0.5,0 0,0 1,0.5 0.5)),((0.5 0.5,1 1,1 0,0.5 0.5)),((2.5 2.5,2 2,2 3,2.5 2.5)),((2.5 2.5,3 3,3 2,2.5 2.5)))",
+            "LINESTRING (2.5 2.5, 3 2.5)",
+        ),
+        (
+            "POINT (1 1)",
+            "LINESTRING EMPTY",
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(1 1),MULTIPOLYGON(((0 2,1 1,0 0,0 2)),((2 0,1 1,2 2,2 0))))",
+            "LINESTRING (1 1, 2 1)",
+        ),
+        (
+            "POLYGON EMPTY",
+            "LINESTRING EMPTY",
+        ),
+        (
+            "POLYGON((0 0,3 0,3 3,2 1,1 3,0 3,0 0))",
+            "LINESTRING (1 3, 0 3)",
+        ),
+    ],
+)
+def test_st_minimum_clearance_line(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_MinimumClearanceLine({geom_or_null(geom)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
         (None, None),
         ("POINT (0 0)", "Valid Geometry"),
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
