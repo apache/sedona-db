@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, fmt::{Debug, Display}, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use arrow_array::RecordBatchReader;
 use arrow_schema::{Schema, SchemaRef};
