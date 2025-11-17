@@ -109,12 +109,12 @@ mod tests {
                 Some(49.64876634922564),
                 Some(1.0),
                 Some(1.0),
-                Some(1.4142135623730951),
-                Some(1.4142135623730951),
+                Some(std::f64::consts::SQRT_2),
+                Some(std::f64::consts::SQRT_2),
                 Some(0.5),
-                Some(std::f64::INFINITY),
+                Some(f64::INFINITY),
                 Some(1.0),
-                Some(std::f64::INFINITY),
+                Some(f64::INFINITY),
                 Some(1.0)
             ]
         );
