@@ -228,6 +228,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_length", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_length", LineString(500));
 
+    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
+
+    benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
+
     benchmark::scalar(
         c,
         &f,
@@ -250,8 +256,23 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "geos",
-        "st_symdifference",
+        "st_snap",
         ArrayScalar(Polygon(10), Polygon(10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_snap",
+        ArrayArrayScalar(Polygon(500), Polygon(500), Float64(1.0, 2.0)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_symdifference",
+        ArrayArrayScalar(Polygon(10), Polygon(10), Float64(1.0, 2.0)),
     );
     benchmark::scalar(
         c,

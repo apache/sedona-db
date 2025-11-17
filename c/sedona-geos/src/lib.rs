@@ -32,6 +32,7 @@ mod st_isvalid;
 mod st_isvalidreason;
 mod st_length;
 mod st_makevalid;
+mod st_minimumclearance;
 mod st_perimeter;
 mod st_polygonize_agg;
 mod st_reverse;

@@ -2096,6 +2096,64 @@ def test_st_makevalid(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        (
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            25.0,
+        ),
+        (
+            "LINESTRING (5 107, 54 84, 101 100)",
+            49.64876634922564,
+        ),
+        (
+            "POLYGON((0 0,0 3,3 3,3 0,0 0),(1 1,1 2,2 2,2 1,1 1))",
+            1.0,
+        ),
+        (
+            "POLYGON((0 0,0 1,0 1,1 1,1 0,0 0,0 0))",
+            1.0,
+        ),
+        (
+            "LINESTRING (0 0, 1 1, 2 2)",
+            1.4142135623730951,
+        ),
+        (
+            "LINESTRING(0 0,0 0,1 1,1 1,2 2)",
+            1.4142135623730951,
+        ),
+        (
+            "MULTIPOLYGON(((0.5 0.5,0 0,0 1,0.5 0.5)),((0.5 0.5,1 1,1 0,0.5 0.5)),((2.5 2.5,2 2,2 3,2.5 2.5)),((2.5 2.5,3 3,3 2,2.5 2.5)))",
+            0.5,
+        ),
+        (
+            "POINT (1 1)",
+            float("inf"),
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(1 1),MULTIPOLYGON(((0 2,1 1,0 0,0 2)),((2 0,1 1,2 2,2 0))))",
+            1.0,
+        ),
+        (
+            "POLYGON EMPTY",
+            float("inf"),
+        ),
+        (
+            "POLYGON((0 0,3 0,3 3,2 1,1 3,0 3,0 0))",
+            1.0,
+        ),
+    ],
+)
+def test_st_minimum_clearance(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_MinimumClearance({geom_or_null(geom)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
         (None, None),
         ("POINT (0 0)", "Valid Geometry"),
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
