@@ -39,6 +39,10 @@ use crate::{
     schema::PySedonaSchema,
 };
 
+/// Python object that calls the methods of Python-level ExternalFormatSpec
+///
+/// The main purpose of this object is to implement [ExternalFormatSpec] such
+/// that it can be used by SedonaDB/DataFusion internals.
 #[pyclass]
 #[derive(Debug)]
 pub struct PyExternalFormat {
@@ -91,7 +95,9 @@ impl PyExternalFormat {
             Ok(py_schema) => import_arrow_schema(py_schema.bind(py)),
             Err(e) => {
                 if e.is_instance_of::<PyNotImplementedError>(py) {
-                    // Fall back on the open_reader implementation
+                    // Fall back on the open_reader implementation, as for some
+                    // external formats there is no other mechanism to infer a schema
+                    // other than to open a reader and query the schema at that point.
                     let reader_args = OpenReaderArgs {
                         src: object.clone(),
                         batch_size: None,
@@ -174,6 +180,11 @@ impl ExternalFormatSpec for PyExternalFormat {
     }
 }
 
+/// Wrapper around the [Object] such that the [PyExternalFormatSpec] can pass
+/// required information into Python method calls
+///
+/// Currently this only exposes `to_url()`; however, we can and should expose
+/// the ability to read portions of files using the underlying object_store.
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyDataSourceObject {
@@ -187,6 +198,8 @@ impl PyDataSourceObject {
     }
 }
 
+/// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormatSpec] can pass
+/// required information into Python method calls
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyOpenReaderArgs {
@@ -254,6 +267,11 @@ impl PyOpenReaderArgs {
     }
 }
 
+/// Wrapper around a PhysicalExpr such that the [PyExternalFormatSpec] can pass
+/// required information into Python method calls
+///
+/// This currently only exposes `bounding_box()`, but in the future could expose
+/// various ways to serialize the expression (SQL, DataFusion ProtoBuf, Substrait).
 #[pyclass]
 #[derive(Debug)]
 pub struct PyFilter {
@@ -285,6 +303,12 @@ impl PyFilter {
     }
 }
 
+/// RecordBatchReader utility that helps ensure projected output
+///
+/// Because the output of `open_reader()` is required to take into account
+/// the projection, we need to provide a utility to ensure this is take into account.
+/// This wrapper is a thin wrapper around the [ProjectedRecordBatchReader] that allows
+/// it to be constructed from Python using either a set of indices or a set of names.
 #[pyclass]
 pub struct PyProjectedRecordBatchReader {
     inner_object: PyObject,
@@ -333,6 +357,12 @@ impl PyProjectedRecordBatchReader {
     }
 }
 
+/// Helper to ensure a Python object stays in scope for the duration of a
+/// [RecordBatchReader]'s output.
+///
+/// Some Python frameworks require that some parent object outlive a returned
+/// ArrowArrayStream/RecordBatchReader (e.g., the pyogrio context manager, or
+/// an ADBC statement/cursor).
 struct WrappedRecordBatchReader {
     pub inner: Box<dyn RecordBatchReader + Send>,
     pub shelter: Option<PyObject>,
