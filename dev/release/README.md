@@ -50,7 +50,7 @@ conda install -y curl gnupg geos proj openssl libabseil cmake pkg-config
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib"
 ```
 
-Currently system libclang is required to generate C bindings at build time:
+Currently, system libclang is required to generate C bindings at build time:
 
 ```shell
 apt-get update && apt-get install -y libclang-dev
