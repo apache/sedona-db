@@ -233,7 +233,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
-  
+
     benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(500));
 
