@@ -26,6 +26,7 @@ mod st_buffer;
 mod st_centroid;
 mod st_convexhull;
 mod st_dwithin;
+mod st_geometryn;
 mod st_isring;
 mod st_issimple;
 mod st_isvalid;

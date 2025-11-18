@@ -1066,6 +1066,79 @@ def test_st_geomfromwkb(eng, geom):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "index", "expected"),
+    [
+        (
+            "GEOMETRYCOLLECTION(POINT(1 1),MULTIPOLYGON(((0 2,1 1,0 0,0 2)),((2 0,1 1,2 2,2 0))))",
+            1,
+            "POINT (1 1)",
+        ),
+        (
+            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            2,
+            "POLYGON ((151 100, 151 200, 176 175, 151 100))",
+        ),
+        (
+            "MULTILINESTRING((1 2, 3 4), (4 5, 6 7), (8 9, 10 11))",
+            2,
+            "LINESTRING (4 5, 6 7)",
+        ),
+        (
+            "MULTIPOINT((1 1), (2 2), (5 5), (6 6))",
+            3,
+            "POINT (5 5)",
+        ),
+        (
+            "MULTIPOINT((1 1), (2 2))",
+            3,
+            None,
+        ),
+        (
+            "MULTIPOLYGON(((1 1, 2 2, 1 2, 1 1)))",
+            0,
+            None,
+        ),
+        (
+            "POINT(10 10)",
+            1,
+            "POINT (10 10)",
+        ),
+        (
+            "POINT(20 20)",
+            2,
+            None,
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(1 1), POINT(2 2))",
+            3,
+            None,
+        ),
+        (
+            "GEOMETRYCOLLECTION EMPTY",
+            1,
+            None,
+        ),
+        (
+            None,
+            1,
+            None,
+        ),
+        (
+            "MULTIPOINT((0 0))",
+            None,
+            None,
+        ),
+    ],
+)
+def test_st_geometryn(eng, geom, index, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_GeometryN({geom_or_null(geom)}, {val_or_null(index)})", expected
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
