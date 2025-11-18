@@ -36,6 +36,7 @@ mod st_dwithin;
 pub mod st_envelope;
 pub mod st_envelope_aggr;
 pub mod st_flipcoordinates;
+mod st_geometryn;
 mod st_geometrytype;
 mod st_geomfromwkb;
 mod st_geomfromwkt;

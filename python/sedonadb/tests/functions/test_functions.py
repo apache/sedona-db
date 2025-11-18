@@ -1068,66 +1068,75 @@ def test_st_geomfromwkb(eng, geom):
 @pytest.mark.parametrize(
     ("geom", "index", "expected"),
     [
+        # 1. POINT
+        ("POINT(1 1)", 1, "POINT (1 1)"),  # n=1 (Valid)
+        ("POINT(1 1)", 2, None),  # n=2 (OOB)
+        ("POINT(1 1)", 99, None),  # n=99 (Large OOB)
+        # 2. LINESTRING
+        ("LINESTRING(2 2, 3 3, 4 4)", 1, "LINESTRING (2 2, 3 3, 4 4)"),  # n=1 (Valid)
+        (None, 2, None),  # Null input (n=2)
+        ("LINESTRING(2 2, 3 3, 4 4)", 0, None),  # n=0 (OOB)
+        # 3. POLYGON
         (
-            "GEOMETRYCOLLECTION(POINT(1 1),MULTIPOLYGON(((0 2,1 1,0 0,0 2)),((2 0,1 1,2 2,2 0))))",
+            "POLYGON((0 0, 1 0, 1 1, 0 0))",
             1,
-            "POINT (1 1)",
-        ),
+            "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+        ),  # n=1 (Valid)
+        ("POLYGON((0 0, 1 0, 1 1, 0 0))", 3, None),  # n=3 (OOB)
+        # 4. MULTIPOINT
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 2, "POINT (2 2)"),  # n=2 (Valid)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 3, "POINT (3 3)"),  # n=3 (Valid)
+        (None, 0, None),  # Null Input (n=0)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 1, "POINT (1 1)"),  # n=1 (Valid)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 0, None),  # n=0 (OOB)
+        # 5. MULTILINESTRING
         (
-            "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
+            "MULTILINESTRING((1 1, 2 2), (3 3, 4 4))",
+            1,
+            "LINESTRING (1 1, 2 2)",
+        ),  # n=1 (Valid)
+        ("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))", 3, None),  # n=3 (OOB)
+        (
+            "MULTILINESTRING((1 1, 2 2), (3 3, 4 4))",
             2,
-            "POLYGON ((151 100, 151 200, 176 175, 151 100))",
-        ),
+            "LINESTRING (3 3, 4 4)",
+        ),  # n=2 (Valid)
+        # 6. MULTIPOLYGON
         (
-            "MULTILINESTRING((1 2, 3 4), (4 5, 6 7), (8 9, 10 11))",
+            "MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))",
             2,
-            "LINESTRING (4 5, 6 7)",
-        ),
+            "POLYGON ((5 5, 6 6, 5 6, 5 5))",
+        ),  # n=2 (Valid)
+        ("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))", 2, None),  # n=2 (OOB)
         (
-            "MULTIPOINT((1 1), (2 2), (5 5), (6 6))",
-            3,
-            "POINT (5 5)",
-        ),
+            "MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))",
+            1,
+            "POLYGON ((0 0, 1 1, 0 1, 0 0))",
+        ),  # n=1 (Valid)
+        ("MULTIPOLYGON EMPTY", 1, None),  # Empty Multi (n=1)
+        # 7. GEOMETRYCOLLECTION
         (
-            "MULTIPOINT((1 1), (2 2))",
-            3,
-            None,
-        ),
-        (
-            "MULTIPOLYGON(((1 1, 2 2, 1 2, 1 1)))",
-            0,
-            None,
-        ),
-        (
-            "POINT(10 10)",
+            "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
             1,
             "POINT (10 10)",
-        ),
+        ),  # n=1 (Point)
         (
-            "POINT(20 20)",
+            "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
             2,
-            None,
-        ),
+            "LINESTRING (20 20, 30 30)",
+        ),  # n=2 (LineString)
+        ("GEOMETRYCOLLECTION(POINT(10 10))", 2, None),  # n=2 (OOB)
         (
-            "GEOMETRYCOLLECTION(POINT(1 1), POINT(2 2))",
-            3,
-            None,
-        ),
-        (
-            "GEOMETRYCOLLECTION EMPTY",
+            "GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))",
             1,
-            None,
-        ),
+            "POINT (1 1)",
+        ),  # n=1 (Nested: Point)
         (
-            None,
-            1,
-            None,
-        ),
-        (
-            "MULTIPOINT((0 0))",
-            None,
-            None,
-        ),
+            "GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))",
+            2,
+            "GEOMETRYCOLLECTION (LINESTRING (2 2, 3 3))",
+        ),  # n=2 (Nested: GC)
+        ("GEOMETRYCOLLECTION(POINT(1 1))", 0, None),  # n=0 (OOB)
     ],
 )
 def test_st_geometryn(eng, geom, index, expected):
