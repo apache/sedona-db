@@ -29,6 +29,7 @@ rust-version.workspace = true
 default = []
 
 [dev-dependencies]
+object_store = { workspace = true, features = ["http"] }
 url = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

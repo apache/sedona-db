@@ -34,7 +34,7 @@ class ExternalFormatSpec:
 
     Implementations are only required to implement `open_reader()`; however, if
     opening a reader is expensive and there is a more efficient way to infer a
-    schema from a given source, implementors may wish to also implement
+    schema from a given source, implementers may wish to also implement
     `infer_schema()`.
 
     This extension point is experimental and may evolve to serve the needs of
@@ -173,7 +173,7 @@ class PyogrioReaderShelter:
     manager; however, the internals can only manage Rust object references.
     This object ensures that the context manager is closed when the object
     is deleted (which occurs as soon as possible when the returned reader
-    is no longer reqired).
+    is no longer required).
     """
 
     def __init__(self, inner, output_names=None):

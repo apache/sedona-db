@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -15,7 +14,10 @@ use std::collections::HashMap;
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;

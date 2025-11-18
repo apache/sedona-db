@@ -201,9 +201,8 @@ impl Object {
                     None
                 }
             }
-            (Some(url), None) => Some(url.to_string()),
             (Some(url), Some(meta)) => Some(format!("{url}{}", meta.location)),
-            (None, None) => None,
+            (Some(_), None) | (None, None) => None,
         }
     }
 }
@@ -217,5 +216,65 @@ impl Display for Object {
         } else {
             write!(f, "<object store> <unknown location>")
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use object_store::http::HttpBuilder;
+
+    use super::*;
+
+    #[test]
+    fn http_object() {
+        let url_string = "https://foofy.foof/path/to/file.ext";
+
+        let store = Arc::new(HttpBuilder::new().with_url(url_string).build().unwrap());
+
+        let url = ObjectStoreUrl::parse("https://foofy.foof").unwrap();
+
+        let meta = ObjectMeta {
+            location: "/path/to/file.ext".into(),
+            last_modified: Default::default(),
+            size: 0,
+            e_tag: None,
+            version: None,
+        };
+
+        // Should be able to reconstruct the url with ObjectStoreUrl + meta
+        let obj = Object {
+            store: None,
+            url: Some(url.clone()),
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), url_string);
+
+        // Should be able to reconstruct the url with the ObjectStore + meta
+        let obj = Object {
+            store: Some(store),
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), url_string);
+
+        // With only Meta, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+
+        // With only ObjectStoreUrl, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: Some(url),
+            meta: None,
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
     }
 }
