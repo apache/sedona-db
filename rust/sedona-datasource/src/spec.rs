@@ -195,7 +195,7 @@ impl Object {
                     } else {
                         None
                     }
-                } else if object_store_debug.contains("local") {
+                } else if object_store_debug.contains("localfilesystem") {
                     Some(format!("file:///{}", meta.location))
                 } else {
                     None
@@ -221,7 +221,7 @@ impl Display for Object {
 
 #[cfg(test)]
 mod test {
-    use object_store::http::HttpBuilder;
+    use object_store::{http::HttpBuilder, local::LocalFileSystem};
 
     use super::*;
 
@@ -258,6 +258,57 @@ mod test {
             range: None,
         };
         assert_eq!(obj.to_url_string().unwrap(), url_string);
+
+        // With only Meta, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+
+        // With only ObjectStoreUrl, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: Some(url),
+            meta: None,
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+    }
+
+    #[test]
+    fn filesystem_object() {
+        let store = Arc::new(LocalFileSystem::new());
+
+        let url = ObjectStoreUrl::parse("file://").unwrap();
+
+        let meta = ObjectMeta {
+            location: "/path/to/file.ext".into(),
+            last_modified: Default::default(),
+            size: 0,
+            e_tag: None,
+            version: None,
+        };
+
+        // Should be able to reconstruct the url with ObjectStoreUrl + meta
+        let obj = Object {
+            store: None,
+            url: Some(url.clone()),
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), "file:///path/to/file.ext");
+
+        // Should be able to reconstruct the url with the ObjectStore + meta
+        let obj = Object {
+            store: Some(store),
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), "file:///path/to/file.ext");
 
         // With only Meta, this should fail to compute a url
         let obj = Object {
