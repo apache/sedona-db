@@ -72,6 +72,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_dwithin::st_dwithin_udf,
         crate::st_envelope::st_envelope_udf,
         crate::st_flipcoordinates::st_flipcoordinates_udf,
+        crate::st_geometryn::st_geometryn_udf,
         crate::st_geometrytype::st_geometry_type_udf,
         crate::st_geomfromwkb::st_geogfromwkb_udf,
         crate::st_geomfromwkb::st_geomfromwkb_udf,
