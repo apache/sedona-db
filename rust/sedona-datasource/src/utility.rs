@@ -72,3 +72,67 @@ impl Iterator for ProjectedRecordBatchReader {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use arrow_array::{create_array, ArrayRef, RecordBatchIterator};
+    use datafusion::assert_batches_eq;
+
+    use super::*;
+
+    #[test]
+    fn projected_record_batch_reader() {
+        let batch = RecordBatch::try_from_iter([
+            (
+                "x",
+                create_array!(Utf8, ["one", "two", "three", "four"]) as ArrayRef,
+            ),
+            (
+                "y",
+                create_array!(Utf8, ["five", "six", "seven", "eight"]) as ArrayRef,
+            ),
+        ])
+        .unwrap();
+
+        let schema = batch.schema();
+
+        // From indices
+        let reader = RecordBatchIterator::new([Ok(batch.clone())], schema.clone());
+        let projected =
+            ProjectedRecordBatchReader::from_projection(Box::new(reader), vec![1, 0]).unwrap();
+        let projected_batches = projected.collect::<Result<Vec<_>, ArrowError>>().unwrap();
+        assert_batches_eq!(
+            [
+                "+-------+-------+",
+                "| y     | x     |",
+                "+-------+-------+",
+                "| five  | one   |",
+                "| six   | two   |",
+                "| seven | three |",
+                "| eight | four  |",
+                "+-------+-------+",
+            ],
+            &projected_batches
+        );
+
+        // From output names
+        let reader = RecordBatchIterator::new([Ok(batch.clone())], schema.clone());
+        let projected =
+            ProjectedRecordBatchReader::from_output_names(Box::new(reader), &["y", "x"]).unwrap();
+        let projected_batches = projected.collect::<Result<Vec<_>, ArrowError>>().unwrap();
+        assert_batches_eq!(
+            [
+                "+-------+-------+",
+                "| y     | x     |",
+                "+-------+-------+",
+                "| five  | one   |",
+                "| six   | two   |",
+                "| seven | three |",
+                "| eight | four  |",
+                "+-------+-------+",
+            ],
+            &projected_batches
+        );
+    }
+}
