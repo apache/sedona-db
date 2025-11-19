@@ -79,7 +79,7 @@ class ExternalFormatSpec:
                 - `src`: An object/file abstraction. Currently, `.to_url()` is the best way
                   to extract the underlying URL from the source.
                 - `filter`: An object representing the filter expression that was pushed
-                  down, if one exits. Currently, `.bounding_box(column_index)` is the only
+                  down, if one exists. Currently, `.bounding_box(column_index)` is the only
                   way to interact with this object.
                 - `file_schema`: An optional schema. If `None`, the implementation must
                   infer the schema.
