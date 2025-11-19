@@ -21,6 +21,11 @@ use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, SchemaRef};
 use datafusion_common::Result;
 
+/// [RecordBatchReader] wrapper that applies a projection
+///
+/// This utility can be used to implement a reader that conforms to the
+/// DataFusion requirement that datasources apply the specified projection
+/// when producing output.
 pub struct ProjectedRecordBatchReader {
     inner: Box<dyn RecordBatchReader + Send>,
     projection: Vec<usize>,
@@ -28,6 +33,7 @@ pub struct ProjectedRecordBatchReader {
 }
 
 impl ProjectedRecordBatchReader {
+    /// Create a new wrapper from the indices into the input desired in the output
     pub fn from_projection(
         inner: Box<dyn RecordBatchReader + Send>,
         projection: Vec<usize>,
@@ -40,6 +46,7 @@ impl ProjectedRecordBatchReader {
         })
     }
 
+    /// Create a new wrapper from the column names from the input desired in the output
     pub fn from_output_names(
         inner: Box<dyn RecordBatchReader + Send>,
         projection: &[&str],
