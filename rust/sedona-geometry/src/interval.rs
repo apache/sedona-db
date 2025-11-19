@@ -654,7 +654,7 @@ mod test {
 
     #[test]
     fn wraparound_interval_full() {
-        test_full(Interval::full());
+        test_full(WraparoundInterval::full());
     }
 
     fn test_finite<T: IntervalTrait>(finite: T) {
