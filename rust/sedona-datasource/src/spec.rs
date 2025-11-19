@@ -56,11 +56,6 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
     async fn open_reader(&self, args: &OpenReaderArgs)
         -> Result<Box<dyn RecordBatchReader + Send>>;
 
-    /// A file extension or `""` if this concept does not apply
-    fn extension(&self) -> &str {
-        ""
-    }
-
     /// Compute a clone of self but with the key/value options specified
     ///
     /// Implementations should error for invalid key/value input that does
@@ -69,6 +64,11 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
         &self,
         options: &HashMap<String, String>,
     ) -> Result<Arc<dyn ExternalFormatSpec>>;
+
+    /// A file extension or `""` if this concept does not apply
+    fn extension(&self) -> &str {
+        ""
+    }
 
     /// Fill in default options from [TableOptions]
     ///
