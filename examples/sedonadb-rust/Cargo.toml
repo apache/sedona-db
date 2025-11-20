@@ -16,8 +16,8 @@
 # under the License.
 
 [package]
-name = "sedonadb-rust"
-version = "0.2.0"
+name = "sedonadb-rust-example"
+version = "0.0.1"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -26,6 +26,8 @@ description = "Apache SedonaDB Rust API Example"
 readme = "README.md"
 edition = "2021"
 rust-version = "1.86"
+
+[workspace]
 
 [dependencies]
 datafusion = { version = "50.2.0"}
