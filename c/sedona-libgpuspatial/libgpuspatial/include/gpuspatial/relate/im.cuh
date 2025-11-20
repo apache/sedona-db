@@ -1,0 +1,59 @@
+/*
+ * PG-Strom Extension for GPU Acceleration on PostgreSQL Database
+ *
+ * Copyright (c) 2012-2024, KaiGai Kohei <kaigai@kaigai.gr.jp>
+ * Copyright (c) 2017-2024, HeteroDB,Inc <contact@heterodb.com>
+ *
+ * Permission to use, copy, modify, and distribute this software and its
+ * documentation for any purpose, without fee, and without a written agreement
+ * is hereby granted, provided that the above copyright notice and this
+ * paragraph and the following two paragraphs appear in all copies.
+ *
+ * IN NO EVENT SHALL HETERODB,INC BE LIABLE TO ANY PARTY FOR DIRECT, INDIRECT,
+ * SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS,
+ * ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS DOCUMENTATION,
+ * EVEN IF HETERODB,INC HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * HETERODB,INC SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+ * THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND HETERODB,INC HAS
+ * NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ */
+
+#pragma once
+// octal numbers,
+/** Intersection Matrix (IM) defined by octal numbers
+ * Dimension	Octal	Binary	Meaning
+ *      F	0	0	Empty set (no intersection)
+ *      0D	1	001	Point-dimensional intersection
+ *      1D	3	011	Line-dimensional intersection
+ *      2D	7	111	Area-dimensional intersection
+ */
+#define IM__INTER_INTER_0D 0000000001U
+#define IM__INTER_INTER_1D 0000000003U
+#define IM__INTER_INTER_2D 0000000007U
+#define IM__INTER_BOUND_0D 0000000010U
+#define IM__INTER_BOUND_1D 0000000030U
+#define IM__INTER_BOUND_2D 0000000070U
+#define IM__INTER_EXTER_0D 0000000100U
+#define IM__INTER_EXTER_1D 0000000300U
+#define IM__INTER_EXTER_2D 0000000700U
+#define IM__BOUND_INTER_0D 0000001000U
+#define IM__BOUND_INTER_1D 0000003000U
+#define IM__BOUND_INTER_2D 0000007000U
+#define IM__BOUND_BOUND_0D 0000010000U
+#define IM__BOUND_BOUND_1D 0000030000U
+#define IM__BOUND_BOUND_2D 0000070000U
+#define IM__BOUND_EXTER_0D 0000100000U
+#define IM__BOUND_EXTER_1D 0000300000U
+#define IM__BOUND_EXTER_2D 0000700000U
+#define IM__EXTER_INTER_0D 0001000000U
+#define IM__EXTER_INTER_1D 0003000000U
+#define IM__EXTER_INTER_2D 0007000000U
+#define IM__EXTER_BOUND_0D 0010000000U
+#define IM__EXTER_BOUND_1D 0030000000U
+#define IM__EXTER_BOUND_2D 0070000000U
+#define IM__EXTER_EXTER_0D 0100000000U
+#define IM__EXTER_EXTER_1D 0300000000U
+#define IM__EXTER_EXTER_2D 0700000000U
+#define IM__MASK_FULL 0777777777U
