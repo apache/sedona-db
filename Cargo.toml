@@ -38,7 +38,7 @@ members = [
     "rust/sedona-spatial-join",
     "rust/sedona-testing",
     "rust/sedona",
-    "sedona-cli",
+    "sedona-cli", "examples/sedonadb-rust",
 ]
 resolver = "2"
 

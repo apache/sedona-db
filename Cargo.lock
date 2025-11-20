@@ -4831,23 +4831,64 @@ dependencies = [
  "object_store",
  "parking_lot",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-functions",
- "sedona-geo",
- "sedona-geometry",
- "sedona-geoparquet",
- "sedona-geos",
- "sedona-proj",
- "sedona-raster-functions",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geo 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-geoparquet 0.2.0",
+ "sedona-geos 0.2.0",
+ "sedona-proj 0.2.0",
+ "sedona-raster-functions 0.2.0",
  "sedona-s2geography",
- "sedona-schema",
- "sedona-spatial-join",
- "sedona-testing",
- "sedona-tg",
+ "sedona-schema 0.2.0",
+ "sedona-spatial-join 0.2.0",
+ "sedona-testing 0.2.0",
+ "sedona-tg 0.2.0",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "sedona"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "abi_stable",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "comfy-table",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-expr",
+ "datafusion-ffi",
+ "dirs",
+ "futures",
+ "geo-traits",
+ "geo-types",
+ "object_store",
+ "parking_lot",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geo 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geoparquet 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geos 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-proj 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-raster-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-spatial-join 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-testing 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-tg 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "serde",
+ "serde_json",
  "tokio",
  "url",
 ]
@@ -4862,7 +4903,7 @@ dependencies = [
  "arrow-schema",
  "datafusion",
  "futures",
- "sedona",
+ "sedona 0.2.0",
  "tokio",
 ]
 
@@ -4880,14 +4921,24 @@ dependencies = [
  "mimalloc",
  "regex",
  "rustyline",
- "sedona",
- "sedona-tg",
+ "sedona 0.2.0",
+ "sedona-tg 0.2.0",
  "tokio",
 ]
 
 [[package]]
 name = "sedona-common"
 version = "0.2.0"
+dependencies = [
+ "datafusion",
+ "datafusion-common",
+ "regex",
+]
+
+[[package]]
+name = "sedona-common"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
 dependencies = [
  "datafusion",
  "datafusion-common",
@@ -4909,9 +4960,9 @@ dependencies = [
  "datafusion-physical-plan",
  "futures",
  "object_store",
- "sedona-common",
- "sedona-expr",
- "sedona-schema",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-schema 0.2.0",
  "tempfile",
  "tokio",
  "url",
@@ -4928,10 +4979,28 @@ dependencies = [
  "datafusion-physical-expr",
  "geo-traits",
  "rstest",
- "sedona-common",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona-common 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "sedona-expr"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "geo-traits",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "serde",
  "serde_json",
 ]
@@ -4949,13 +5018,32 @@ dependencies = [
  "datafusion-expr",
  "geo-traits",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "serde_json",
  "tokio",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-functions"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "geo-traits",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "serde_json",
  "wkb",
  "wkt 0.14.0",
 ]
@@ -4973,14 +5061,34 @@ dependencies = [
  "geo-traits",
  "geo-types",
  "rstest",
- "sedona-expr",
- "sedona-functions",
- "sedona-geo-generic-alg",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geo-generic-alg 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geo"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "geo",
+ "geo-traits",
+ "geo-types",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geo-generic-alg 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "wkb",
 ]
 
 [[package]]
@@ -5001,10 +5109,26 @@ dependencies = [
  "rand_distr",
  "robust",
  "rstar",
- "sedona-geo-traits-ext",
- "sedona-testing",
+ "sedona-geo-traits-ext 0.2.0",
+ "sedona-testing 0.2.0",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geo-generic-alg"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "float_next_after",
+ "geo-traits",
+ "geo-types",
+ "i_overlay",
+ "log",
+ "num-traits",
+ "robust",
+ "rstar",
+ "sedona-geo-traits-ext 0.2.0 (git+https://github.com/apache/sedona-db.git)",
 ]
 
 [[package]]
@@ -5021,6 +5145,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-geo-traits-ext"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "byteorder",
+ "geo-traits",
+ "geo-types",
+ "num-traits",
+ "wkb",
+]
+
+[[package]]
 name = "sedona-geoarrow-c"
 version = "0.2.0"
 dependencies = [
@@ -5032,11 +5168,11 @@ dependencies = [
  "datafusion-expr",
  "errno",
  "rstest",
- "sedona",
- "sedona-expr",
- "sedona-functions",
- "sedona-schema",
- "sedona-testing",
+ "sedona 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "thiserror 2.0.17",
 ]
 
@@ -5048,13 +5184,26 @@ dependencies = [
  "geo-types",
  "lru",
  "rstest",
- "sedona-testing",
+ "sedona-testing 0.2.0",
  "serde",
  "serde_json",
  "serde_with",
  "thiserror 2.0.17",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-geometry"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "geo-traits",
+ "lru",
+ "serde",
+ "serde_with",
+ "thiserror 2.0.17",
+ "wkb",
 ]
 
 [[package]]
@@ -5080,18 +5229,51 @@ dependencies = [
  "object_store",
  "parquet",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-functions",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "serde",
  "serde_json",
  "serde_with",
  "tempfile",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "sedona-geoparquet"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "datafusion",
+ "datafusion-catalog",
+ "datafusion-common",
+ "datafusion-datasource-parquet",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "float_next_after",
+ "futures",
+ "geo-traits",
+ "object_store",
+ "parquet",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "serde",
+ "serde_json",
+ "serde_with",
 ]
 
 [[package]]
@@ -5108,13 +5290,33 @@ dependencies = [
  "geo-types",
  "geos",
  "rstest",
- "sedona",
- "sedona-common",
- "sedona-expr",
- "sedona-functions",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona 0.2.0",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+ "wkb",
+]
+
+[[package]]
+name = "sedona-geos"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "byteorder",
+ "datafusion-common",
+ "datafusion-expr",
+ "geo-traits",
+ "geos",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "wkb",
 ]
 
@@ -5133,11 +5335,31 @@ dependencies = [
  "geo-types",
  "proj-sys",
  "rstest",
- "sedona-expr",
- "sedona-functions",
- "sedona-geometry",
- "sedona-schema",
- "sedona-testing",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+ "serde_json",
+ "thiserror 2.0.17",
+ "wkb",
+]
+
+[[package]]
+name = "sedona-proj"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "cc",
+ "datafusion-common",
+ "datafusion-expr",
+ "geo-traits",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "serde_json",
  "thiserror 2.0.17",
  "wkb",
@@ -5150,9 +5372,21 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
- "sedona-common",
- "sedona-schema",
- "sedona-testing",
+ "sedona-common 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+]
+
+[[package]]
+name = "sedona-raster"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-schema",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
 ]
 
 [[package]]
@@ -5166,11 +5400,27 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-raster",
- "sedona-schema",
- "sedona-testing",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-raster 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+]
+
+[[package]]
+name = "sedona-raster-functions"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-raster 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
 ]
 
 [[package]]
@@ -5187,11 +5437,11 @@ dependencies = [
  "paste",
  "regex",
  "rstest",
- "sedona",
- "sedona-expr",
- "sedona-functions",
- "sedona-schema",
- "sedona-testing",
+ "sedona 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "thiserror 2.0.17",
 ]
 
@@ -5202,7 +5452,19 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "datafusion-common",
- "sedona-common",
+ "sedona-common 0.2.0",
+ "serde_json",
+]
+
+[[package]]
+name = "sedona-schema"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "serde_json",
 ]
 
@@ -5232,20 +5494,57 @@ dependencies = [
  "parking_lot",
  "rand 0.8.5",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-functions",
- "sedona-geo",
- "sedona-geo-generic-alg",
- "sedona-geo-traits-ext",
- "sedona-geometry",
- "sedona-geos",
- "sedona-schema",
- "sedona-testing",
- "sedona-tg",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-geo 0.2.0",
+ "sedona-geo-generic-alg 0.2.0",
+ "sedona-geo-traits-ext 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-geos 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
+ "sedona-tg 0.2.0",
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-common-runtime",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "float_next_after",
+ "futures",
+ "geo",
+ "geo-index",
+ "geo-traits",
+ "geo-types",
+ "geos",
+ "once_cell",
+ "parking_lot",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geo 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geo-generic-alg 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geo-traits-ext 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geos 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-tg 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "wkb",
 ]
 
 [[package]]
@@ -5266,11 +5565,36 @@ dependencies = [
  "parquet",
  "rand 0.8.5",
  "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-geometry",
- "sedona-raster",
- "sedona-schema",
+ "sedona-common 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-geometry 0.2.0",
+ "sedona-raster 0.2.0",
+ "sedona-schema 0.2.0",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-testing"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-cast",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "fastrand",
+ "geo-traits",
+ "geo-types",
+ "parquet",
+ "rand 0.8.5",
+ "sedona-common 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-geometry 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-raster 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "wkb",
  "wkt 0.14.0",
 ]
@@ -5287,13 +5611,29 @@ dependencies = [
  "datafusion-expr",
  "geo",
  "rstest",
- "sedona",
- "sedona-expr",
- "sedona-functions",
- "sedona-schema",
- "sedona-testing",
+ "sedona 0.2.0",
+ "sedona-expr 0.2.0",
+ "sedona-functions 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-testing 0.2.0",
  "thiserror 2.0.17",
  "wkb",
+]
+
+[[package]]
+name = "sedona-tg"
+version = "0.2.0"
+source = "git+https://github.com/apache/sedona-db.git#cb32cdf4cab171b6f377de2d71e2f466a69c0e64"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "cc",
+ "datafusion-common",
+ "datafusion-expr",
+ "sedona-expr 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-functions 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "sedona-schema 0.2.0 (git+https://github.com/apache/sedona-db.git)",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -5312,14 +5652,23 @@ dependencies = [
  "libmimalloc-sys",
  "mimalloc",
  "pyo3",
- "sedona",
+ "sedona 0.2.0",
  "sedona-adbc",
- "sedona-expr",
- "sedona-geoparquet",
- "sedona-proj",
- "sedona-schema",
- "sedona-tg",
+ "sedona-expr 0.2.0",
+ "sedona-geoparquet 0.2.0",
+ "sedona-proj 0.2.0",
+ "sedona-schema 0.2.0",
+ "sedona-tg 0.2.0",
  "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "sedonadb-rust"
+version = "0.2.0"
+dependencies = [
+ "datafusion",
+ "sedona 0.2.0 (git+https://github.com/apache/sedona-db.git)",
  "tokio",
 ]
 
@@ -5335,12 +5684,12 @@ dependencies = [
  "datafusion-ffi",
  "savvy",
  "savvy-ffi",
- "sedona",
+ "sedona 0.2.0",
  "sedona-adbc",
- "sedona-expr",
- "sedona-geoparquet",
- "sedona-proj",
- "sedona-schema",
+ "sedona-expr 0.2.0",
+ "sedona-geoparquet 0.2.0",
+ "sedona-proj 0.2.0",
+ "sedona-schema 0.2.0",
  "thiserror 2.0.17",
  "tokio",
 ]

@@ -1,0 +1,26 @@
+[package]
+name = "sedonadb-rust"
+version = "0.2.0"
+authors = ["Apache Sedona <dev@sedona.apache.org>"]
+license = "Apache-2.0"
+homepage = "https://github.com/apache/sedona-db"
+repository = "https://github.com/apache/sedona-db"
+description = "Apache SedonaDB Rust API"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.86"
+
+[dependencies]
+datafusion = { version = "*"}
+sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona"}
+tokio = { version = "1.44", features = ["rt-multi-thread"]}
+
+
+[patch.crates-io]
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
+
+# TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
+geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
+wkb = { git = "https://github.com/georust/wkb.git", rev = "3158e6295e4a39dc7fd75f3cfebee113c8b844d0" }
