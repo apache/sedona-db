@@ -269,7 +269,11 @@ impl IntervalTrait for Interval {
     fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
         let new_lo = self.lo.max(other.lo);
         let new_hi = self.hi.min(other.hi);
-        Ok(Self::new(new_lo, new_hi))
+        if new_lo > new_hi {
+            Ok(Self::empty())
+        } else {
+            Ok(Self::new(new_lo, new_hi))
+        }
     }
 }
 
@@ -766,6 +770,22 @@ mod test {
 
         // Intersecting an interval with the full interval
         assert_eq!(finite.intersection(&T::full()).unwrap(), finite);
+
+        // Intersecting finite intervals with a non-empty result
+        assert_eq!(
+            finite
+                .intersection(&T::new(finite.mid(), finite.hi() + 1.0))
+                .unwrap(),
+            T::new(finite.mid(), finite.hi())
+        );
+
+        // Intersecting finite intervals with an empty result
+        assert_eq!(
+            finite
+                .intersection(&T::new(finite.hi() + 1.0, finite.hi() + 2.0))
+                .unwrap(),
+            T::empty()
+        );
 
         // Expanding by positive distance
         assert_eq!(finite.expand_by(2.0), T::new(8.0, 22.0));
