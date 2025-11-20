@@ -28,6 +28,59 @@
 #include <numeric>  // For std::iota
 
 namespace gpuspatial {
+// Function to read a single Parquet file and extract a column.
+static arrow::Status ReadParquetFromFile(
+    arrow::fs::FileSystem* fs,     // 1. Filesystem pointer (e.g., LocalFileSystem)
+    const std::string& file_path,  // 2. Single file path instead of a folder
+    int64_t batch_size, const char* column_name,
+    std::vector<std::shared_ptr<arrow::Array>>& out_arrays) {
+  // 1. Get FileInfo for the single path
+  ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
+
+  // Check if the path points to a file
+  if (file_info.type() != arrow::fs::FileType::File) {
+    return arrow::Status::Invalid("Path is not a file: ", file_path);
+  }
+
+  std::cout << "--- Processing Parquet file: " << file_path << " ---" << std::endl;
+
+  // 2. Open the input file
+  ARROW_ASSIGN_OR_RAISE(auto input_file, fs->OpenInputFile(file_info));
+
+  // 3. Open the Parquet file and create an Arrow reader
+  ARROW_ASSIGN_OR_RAISE(auto arrow_reader, parquet::arrow::OpenFile(
+                                               input_file, arrow::default_memory_pool()));
+
+  // 4. Set the batch size
+  arrow_reader->set_batch_size(batch_size);
+
+  // 5. Get the RecordBatchReader
+  auto rb_reader = arrow_reader->GetRecordBatchReader().ValueOrDie();
+  // 6. Read all record batches and extract the column
+  while (true) {
+    std::shared_ptr<arrow::RecordBatch> batch;
+
+    // Read the next batch
+    ARROW_THROW_NOT_OK(rb_reader->ReadNext(&batch));
+
+    // Check for end of stream
+    if (!batch) {
+      break;
+    }
+
+    // Extract the specified column and add to the output vector
+    std::shared_ptr<arrow::Array> column_array = batch->GetColumnByName(column_name);
+    if (!column_array) {
+      return arrow::Status::Invalid("Column not found: ", column_name);
+    }
+    out_arrays.push_back(column_array);
+  }
+
+  std::cout << "Finished reading. Total arrays extracted: " << out_arrays.size()
+            << std::endl;
+  return arrow::Status::OK();
+}
+
 using GeosBinaryPredicateFn = char (*)(GEOSContextHandle_t, const GEOSGeometry*,
                                        const GEOSGeometry*);
 static GeosBinaryPredicateFn GetGeosPredicateFn(Predicate predicate) {
@@ -53,7 +106,7 @@ void TestJoiner(const std::string& build_parquet_path,
   using namespace TestUtils;
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
   SpatialJoiner::SpatialJoinerConfig config;
-  std::string ptx_root = TestUtils::GetTestDataPath("../shaders_ptx");
+  std::string ptx_root = TestUtils::GetTestShaderPath();
 
   config.ptx_root = ptx_root.c_str();
   SpatialJoiner spatial_joiner;
@@ -124,7 +177,7 @@ void TestJoiner(const std::string& build_parquet_path,
   ASSERT_EQ(GEOSSTRtree_build_r(handle.handle, tree), 1);
 
   std::vector<std::shared_ptr<arrow::Array>> stream_arrays;
-  ARROW_THROW_NOT_OK(TestUtils::ReadParquetFromFile(
+  ARROW_THROW_NOT_OK(ReadParquetFromFile(
       fs.get(), stream_parquet_path, batch_size, "geometry", stream_arrays));
   int array_index_offset = 0;
   auto context = spatial_joiner.CreateContext();
@@ -204,10 +257,10 @@ TEST(JoinerTest, PIPContainsParquet) {
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
 
   std::vector<std::string> polys{
-      "../../test/data/cities/natural-earth_cities_geo.parquet",
-      "../../test/data/countries/natural-earth_countries_geo.parquet"};
-  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
-                                  "../../test/data/countries/generated_points.parquet"};
+      GetTestDataPath("cities/natural-earth_cities_geo.parquet"),
+      GetTestDataPath("countries/natural-earth_countries_geo.parquet")};
+  std::vector<std::string> points{GetTestDataPath("cities/generated_points.parquet"),
+                                  GetTestDataPath("countries/generated_points.parquet")};
 
   for (int i = 0; i < polys.size(); i++) {
     auto poly_path = TestUtils::GetTestDataPath(polys[i]);
@@ -221,10 +274,10 @@ TEST(JoinerTest, PIPWithinParquet) {
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
 
   std::vector<std::string> polys{
-      "../../test/data/cities/natural-earth_cities_geo.parquet",
-      "../../test/data/countries/natural-earth_countries_geo.parquet"};
-  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
-                                  "../../test/data/countries/generated_points.parquet"};
+      GetTestDataPath("cities/natural-earth_cities_geo.parquet"),
+      GetTestDataPath("countries/natural-earth_countries_geo.parquet")};
+  std::vector<std::string> points{GetTestDataPath("cities/generated_points.parquet"),
+                                  GetTestDataPath("countries/generated_points.parquet")};
 
   for (int i = 0; i < polys.size(); i++) {
     auto poly_path = TestUtils::GetTestDataPath(polys[i]);
@@ -238,10 +291,10 @@ TEST(JoinerTest, PolyPointIntersectsParquet) {
   auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
 
   std::vector<std::string> polys{
-      "../../test/data/cities/natural-earth_cities_geo.parquet",
-      "../../test/data/countries/natural-earth_countries_geo.parquet"};
-  std::vector<std::string> points{"../../test/data/cities/generated_points.parquet",
-                                  "../../test/data/countries/generated_points.parquet"};
+      GetTestDataPath("cities/natural-earth_cities_geo.parquet"),
+      GetTestDataPath("countries/natural-earth_countries_geo.parquet")};
+  std::vector<std::string> points{GetTestDataPath("cities/generated_points.parquet"),
+                                  GetTestDataPath("countries/generated_points.parquet")};
 
   for (int i = 0; i < polys.size(); i++) {
     auto poly_path = TestUtils::GetTestDataPath(polys[i]);
@@ -250,19 +303,16 @@ TEST(JoinerTest, PolyPointIntersectsParquet) {
   }
 }
 
-#if 0
-
 TEST(JoinerTest, PolygonPolygonContains) {
   SpatialJoiner::SpatialJoinerConfig config;
-  std::string ptx_root = TestUtils::GetTestDataPath("shaders_ptx");
-
+  std::string ptx_root = TestUtils::GetTestShaderPath();
   config.ptx_root = ptx_root.c_str();
   SpatialJoiner spatial_joiner;
 
   nanoarrow::UniqueArrayStream poly1_stream, poly2_stream;
 
-  auto poly1_path = TestUtils::GetTestDataPath("../test_data/test_polygons1.arrows");
-  auto poly2_path = TestUtils::GetTestDataPath("../test_data/test_polygons2.arrows");
+  auto poly1_path = TestUtils::GetTestDataPath("arrowipc/test_polygons1.arrows");
+  auto poly2_path = TestUtils::GetTestDataPath("arrowipc/test_polygons2.arrows");
 
   ArrayStreamFromIpc(poly1_path, "geometry", poly1_stream.get());
   ArrayStreamFromIpc(poly2_path, "geometry", poly2_stream.get());
@@ -384,6 +434,5 @@ TEST(JoinerTest, PolygonPolygonContains) {
     array_index_offset += stream_array->length;
   }
 }
-#endif
 
 }  // namespace gpuspatial

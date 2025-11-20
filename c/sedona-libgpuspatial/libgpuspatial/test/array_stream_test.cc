@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#include "test_common.hpp"
+
 #include <gtest/gtest.h>
 
 #include "array_stream.hpp"
@@ -59,14 +61,9 @@ TEST(ArrayStream, StreamFromWkt) {
 }
 
 TEST(ArrayStream, StreamFromIpc) {
-  const char* test_dir = std::getenv("GPUSPATIAL_TEST_DIR");
-  if (test_dir == nullptr || std::string_view(test_dir) == "") {
-    throw std::runtime_error("Environment variable GPUSPATIAL_TEST_DIR is not set");
-  }
-
   nanoarrow::UniqueArrayStream stream;
-  ArrayStreamFromIpc(std::string(test_dir) + "/test_points.arrows", "geometry",
-                     stream.get());
+  ArrayStreamFromIpc(TestUtils::GetTestDataPath("arrowipc/test_points.arrows"),
+                     "geometry", stream.get());
 
   struct ArrowError error{};
   nanoarrow::UniqueSchema schema;
@@ -91,8 +88,8 @@ TEST(ArrayStream, StreamFromIpc) {
     array.reset();
   }
 
-  ASSERT_EQ(n_batches, 1000);
-  ASSERT_EQ(n_rows, 1000000);
+  ASSERT_EQ(n_batches, 100);
+  ASSERT_EQ(n_rows, 100000);
 
   EXPECT_NEAR(bounder.Bounds().xmin(), -100, 0.01);
   EXPECT_NEAR(bounder.Bounds().ymin(), -100, 0.01);

@@ -216,3 +216,11 @@ jobs:
           # Build library only (skip tests - they require CUDA driver which isn't available)
           # --lib builds only the library, not test binaries
           cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
+
+      - name: Build libgpuspatial Tests
+        run: |
+          echo "=== Building libgpuspatial tests ==="
+          cd c/sedona-libgpuspatial/libgpuspatial
+          mkdir build
+          cmake --preset=default-with-tests -S . -B build
+          cmake --build build --target all

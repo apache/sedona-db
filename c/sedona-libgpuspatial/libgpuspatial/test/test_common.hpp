@@ -32,6 +32,8 @@
 #include "arrow/util/macros.h"
 #include "parquet/arrow/reader.h"
 
+#include <thrust/copy.h>
+
 #include <filesystem>
 
 #define ARROW_THROW_NOT_OK(status_expr)       \
@@ -52,6 +54,8 @@ using PointIndexTypePairs =
                      std::pair<gpuspatial::Point<double, 2>, uint64_t>>;
 
 std::string GetTestDataPath(const std::string& relative_path_to_file);
+std::string GetTestShaderPath();
+
 template <typename T>
 gpuspatial::PinnedVector<T> ToVector(const rmm::cuda_stream_view& stream,
                                      const rmm::device_uvector<T>& d_vec) {
@@ -68,13 +72,8 @@ gpuspatial::PinnedVector<T> ToVector(const rmm::cuda_stream_view& stream,
   thrust::copy(rmm::exec_policy_nosync(stream), arr.begin(), arr.end(), vec.begin());
   return vec;
 }
-// Helper function to check if a string ends with a specific suffix
-static bool HasSuffix(const std::string& str, const std::string& suffix) {
-  if (str.length() >= suffix.length()) {
-    return (0 == str.compare(str.length() - suffix.length(), suffix.length(), suffix));
-  }
-  return false;
-}
+
+
 
 // Function to convert a relative path string to an absolute path string
 std::string GetCanonicalPath(const std::string& relative_path_str) {
@@ -94,107 +93,6 @@ std::string GetCanonicalPath(const std::string& relative_path_str) {
   }
 }
 
-arrow::Status ReadParquetFromFolder(
-    arrow::fs::FileSystem* fs, const std::string& folder, int64_t batch_size,
-    const char* column_name, std::vector<std::shared_ptr<arrow::Array>>& record_batches) {
-  arrow::fs::FileSelector selector;
-  selector.base_dir = folder;
-  selector.recursive = true;
-
-  ARROW_ASSIGN_OR_RAISE(auto file_infos, fs->GetFileInfo(selector));
-  std::cout << "Found " << file_infos.size() << " total objects in " << folder
-            << std::endl;
-
-  // 4. Iterate through files, filter for Parquet, and read them
-  for (const auto& file_info : file_infos) {
-    // Skip directories (which are just prefixes in S3)
-    if (file_info.type() != arrow::fs::FileType::File) {
-      continue;
-    }
-
-    const std::string& path = file_info.path();
-
-    // Optional: Filter for files with a .parquet extension
-    if (!HasSuffix(path, ".parquet")) {
-      std::cout << "  - Skipping non-parquet file: " << path << std::endl;
-      continue;
-    }
-    std::cout << "--- Processing Parquet file: " << path << " ---" << std::endl;
-
-    auto input_file = fs->OpenInputFile(file_info);
-
-    auto arrow_reader =
-        parquet::arrow::OpenFile(input_file.ValueOrDie(), arrow::default_memory_pool())
-            .ValueOrDie();
-
-    arrow_reader->set_batch_size(batch_size);
-
-    auto rb_reader = arrow_reader->GetRecordBatchReader().ValueOrDie();
-    while (true) {
-      std::shared_ptr<arrow::RecordBatch> batch;
-      ARROW_THROW_NOT_OK(rb_reader->ReadNext(&batch));
-      if (!batch) {
-        break;
-      }
-      record_batches.push_back(batch->GetColumnByName(column_name));
-    }
-  }
-
-  return arrow::Status::OK();
-}
-
-// Function to read a single Parquet file and extract a column.
-arrow::Status ReadParquetFromFile(
-    arrow::fs::FileSystem* fs,     // 1. Filesystem pointer (e.g., LocalFileSystem)
-    const std::string& file_path,  // 2. Single file path instead of a folder
-    int64_t batch_size, const char* column_name,
-    std::vector<std::shared_ptr<arrow::Array>>& out_arrays) {
-  // 1. Get FileInfo for the single path
-  ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
-
-  // Check if the path points to a file
-  if (file_info.type() != arrow::fs::FileType::File) {
-    return arrow::Status::Invalid("Path is not a file: ", file_path);
-  }
-
-  std::cout << "--- Processing Parquet file: " << file_path << " ---" << std::endl;
-
-  // 2. Open the input file
-  ARROW_ASSIGN_OR_RAISE(auto input_file, fs->OpenInputFile(file_info));
-
-  // 3. Open the Parquet file and create an Arrow reader
-  ARROW_ASSIGN_OR_RAISE(auto arrow_reader, parquet::arrow::OpenFile(
-                                               input_file, arrow::default_memory_pool()));
-
-  // 4. Set the batch size
-  arrow_reader->set_batch_size(batch_size);
-
-  // 5. Get the RecordBatchReader
-  auto rb_reader = arrow_reader->GetRecordBatchReader().ValueOrDie();
-  // 6. Read all record batches and extract the column
-  while (true) {
-    std::shared_ptr<arrow::RecordBatch> batch;
-
-    // Read the next batch
-    ARROW_THROW_NOT_OK(rb_reader->ReadNext(&batch));
-
-    // Check for end of stream
-    if (!batch) {
-      break;
-    }
-
-    // Extract the specified column and add to the output vector
-    std::shared_ptr<arrow::Array> column_array = batch->GetColumnByName(column_name);
-    if (!column_array) {
-      return arrow::Status::Invalid("Column not found: ", column_name);
-    }
-    out_arrays.push_back(column_array);
-  }
-
-  std::cout << "Finished reading. Total arrays extracted: " << out_arrays.size()
-            << std::endl;
-  return arrow::Status::OK();
-}
 
 template <typename KeyType, typename ValueType>
 void sort_vectors_by_index(std::vector<KeyType>& keys, std::vector<ValueType>& values) {

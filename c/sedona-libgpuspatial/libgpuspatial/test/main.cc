@@ -24,16 +24,18 @@ namespace TestUtils {
 // Alternatively, use a singleton or pass it through test fixtures.
 std::filesystem::path g_executable_dir;
 
-// Helper function to get the full path to a test data file
-std::string GetTestDataPath(const std::string& relative_path_to_file) {
-  if (g_executable_dir.empty()) {
-    // Fallback or error if g_executable_dir was not initialized.
-    // This indicates an issue with main() or test setup.
-    throw std::runtime_error(
-        "Executable directory not set. Ensure TestUtils::Initialize is called from main().");
+std::string GetTestDataPath(const std::string& relative_path_to_dir) {
+  const char* test_dir = std::getenv("GPUSPATIAL_TEST_DIR");
+  if (test_dir == nullptr || std::string_view(test_dir) == "") {
+    throw std::runtime_error("Environment variable GPUSPATIAL_TEST_DIR is not set");
   }
-  std::filesystem::path full_path = g_executable_dir / relative_path_to_file;
-  return full_path.string();
+  std::filesystem::path dir(test_dir);
+  return dir / relative_path_to_dir;
+}
+
+std::string GetTestShaderPath() {
+  std::filesystem::path dir(g_executable_dir);
+  return dir / "../shaders_ptx";
 }
 
 // Call this from main()

@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "test_common.hpp"
+
+#include "gpuspatial/gpuspatial_c.h"
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <random>
@@ -22,7 +26,7 @@
 #include "array_stream.hpp"
 #include "nanoarrow/nanoarrow.hpp"
 
-#include "../include/gpuspatial/gpuspatial_c.h"
+
 namespace TestUtils {
 std::string GetTestDataPath(const std::string& relative_path_to_file);
 }
@@ -56,8 +60,8 @@ TEST_F(CWrapperTest, InitializeJoiner) {
   struct GpuSpatialJoinerContext context_;
   joiner_.create_context(&joiner_, &context_);
 
-  auto poly_path = TestUtils::GetTestDataPath("../test_data/test_polygons.arrows");
-  auto point_path = TestUtils::GetTestDataPath("../test_data/test_points.arrows");
+  auto poly_path = TestUtils::GetTestDataPath("arrowipc/test_polygons.arrows");
+  auto point_path = TestUtils::GetTestDataPath("arrowipc/test_points.arrows");
   nanoarrow::UniqueArrayStream poly_stream, point_stream;
 
   gpuspatial::ArrayStreamFromIpc(poly_path, "geometry", poly_stream.get());

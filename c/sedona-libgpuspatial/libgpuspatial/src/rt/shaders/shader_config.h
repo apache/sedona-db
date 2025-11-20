@@ -17,14 +17,13 @@
 
 #pragma once
 
-#include "gpuspatial/geom/point.cuh"
-
 namespace gpuspatial {
 
 #define SHADER_FUNCTION_SUFFIX "gpuspatial"
 // TODO: Set separated parameters
 #define SHADER_NUM_PAYLOADS (8)
-
+template <typename SCALA_T, int N_DIM>
+class Point;
 #if defined(SHADER_POINT_FLOAT_2D)
 using ShaderPointType = Point<float, 2>;
 #define SHADER_POINT_TYPE_ID "SHADER_POINT_FLOAT_2D"
