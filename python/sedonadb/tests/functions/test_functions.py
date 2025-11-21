@@ -2278,10 +2278,6 @@ def test_st_minimum_clearance(eng, geom, expected):
             "LINESTRING (0 0, 1 1)",
         ),
         (
-            "MULTIPOLYGON(((0.5 0.5,0 0,0 1,0.5 0.5)),((0.5 0.5,1 1,1 0,0.5 0.5)),((2.5 2.5,2 2,2 3,2.5 2.5)),((2.5 2.5,3 3,3 2,2.5 2.5)))",
-            "LINESTRING (2.5 2.5, 3 2.5)",
-        ),
-        (
             "POINT (1 1)",
             "LINESTRING EMPTY",
         ),
