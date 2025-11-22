@@ -1767,6 +1767,52 @@ def test_st_pointzm(eng, x, y, z, m, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        (
+            "LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+        ),
+        (
+            "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0)))",
+        ),
+        (
+            "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2)), POLYGON ((2 2, 2 8, 8 8, 8 2, 2 2)))",
+        ),
+        (
+            "MULTILINESTRING((0 0, 0 1, 1 1, 1 0, 0 0), (10 10, 10 11, 11 11, 11 10, 10 10))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 11, 11 10, 10 10)))",
+        ),
+        (
+            "MULTILINESTRING((0 0, 10 0), (10 0, 10 10), (10 10, 0 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+        ),
+        (
+            "MULTIPOLYGON(((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 10, 10 10)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(POINT(5 5), LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0)), LINESTRING(10 0, 10 10), LINESTRING(10 10, 0 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+        ),
+        ("LINESTRING(0 0, 10 10)", "GEOMETRYCOLLECTION EMPTY"),
+        ("POINT(0 0)", "GEOMETRYCOLLECTION EMPTY"),
+        ("MULTIPOINT((0 0), (1 1))", "GEOMETRYCOLLECTION EMPTY"),
+        ("LINESTRING EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_polygonize(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Polygonize({geom_or_null(geom)})", expected)
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
         (None, None),
         ("POINT EMPTY", None),
         ("POINT Z EMPTY", None),
