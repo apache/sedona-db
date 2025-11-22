@@ -62,20 +62,20 @@ geo-traits = { workspace = true }
 geo-types = { workspace = true }
 object_store = { workspace = true }
 parking_lot = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-functions = { path = "../sedona-functions" }
-sedona-geo = { path = "../sedona-geo", optional = true }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-geoparquet = { path = "../sedona-geoparquet" }
-sedona-geos = { path = "../../c/sedona-geos", optional = true }
-sedona-proj = { path = "../../c/sedona-proj", default-features = false }
-sedona-raster-functions = { path = "../../rust/sedona-raster-functions" }
-sedona-schema = { path = "../sedona-schema" }
-sedona-spatial-join = { path = "../sedona-spatial-join", optional = true }
-sedona-s2geography = { path = "../../c/sedona-s2geography", optional = true }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-geo = { workspace = true, optional = true }
+sedona-geometry = { workspace = true }
+sedona-geoparquet = { workspace = true }
+sedona-geos = { workspace = true, optional = true }
+sedona-proj = { workspace = true }
+sedona-raster-functions = { workspace = true }
+sedona-schema = { workspace = true }
+sedona-spatial-join = { workspace = true, optional = true }
+sedona-s2geography = { workspace = true, optional = true }
 sedona-testing = { path = "../sedona-testing" }
-sedona-tg = { path = "../../c/sedona-tg", optional = true }
+sedona-tg = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

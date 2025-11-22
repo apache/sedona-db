@@ -49,10 +49,10 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
 proj-sys = { version = "0.26.0", optional = true }
-sedona-expr = { path = "../../rust/sedona-expr" }
-sedona-functions = { path = "../../rust/sedona-functions" }
-sedona-geometry = { path = "../../rust/sedona-geometry" }
-sedona-schema = { path = "../../rust/sedona-schema" }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
 thiserror = { workspace = true }
 wkb = { workspace = true }
 

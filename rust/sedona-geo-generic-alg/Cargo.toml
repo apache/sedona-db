@@ -28,7 +28,7 @@ rust-version.workspace = true
 float_next_after = { workspace = true }
 geo-traits = { workspace = true }
 geo-types = { workspace = true, features = ["approx", "use-rstar_0_12"] }
-sedona-geo-traits-ext = { path = "../sedona-geo-traits-ext" }
+sedona-geo-traits-ext = { workspace = true }
 log = "0.4.11"
 num-traits = { workspace = true }
 robust = "1.1.0"

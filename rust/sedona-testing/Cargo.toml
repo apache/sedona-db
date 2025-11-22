@@ -23,6 +23,7 @@ description.workspace = true
 readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish = false  # This crate is for testing only and not published to crates.io
 
 [lints.clippy]
 result_large_err = "allow"
@@ -48,11 +49,11 @@ geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
 rand = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-raster = { path = "../sedona-raster" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-raster = { workspace = true }
+sedona-schema = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
 geo = { workspace = true, optional = true }
