@@ -21,6 +21,7 @@ build-backend = "maturin"
 
 [project]
 name = "sedonadb"
+readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Rust",
