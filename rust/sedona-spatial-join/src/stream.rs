@@ -27,7 +27,7 @@ use futures::stream::StreamExt;
 use futures::{ready, task::Poll};
 use parking_lot::Mutex;
 use sedona_common::sedona_internal_err;
-use sedona_functions::st_analyze_aggr::AnalyzeAccumulator;
+use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use std::collections::HashMap;
 use std::ops::Range;
