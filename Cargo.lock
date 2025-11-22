@@ -53,7 +53,8 @@ dependencies = [
 [[package]]
 name = "adbc_core"
 version = "0.21.0"
-source = "git+https://github.com/apache/arrow-adbc.git#d57cc5013f9e6a38f97c77c05149d9ee5669d46a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a38cdcc3e43dc645038c2b6339dd98610c48ae593cc67839452e6670fa09f27"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -62,7 +63,8 @@ dependencies = [
 [[package]]
 name = "adbc_ffi"
 version = "0.21.0"
-source = "git+https://github.com/apache/arrow-adbc.git#d57cc5013f9e6a38f97c77c05149d9ee5669d46a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d36274376fdc4849cf47a78f3baeef4ae1654ef703dc3148d91adde3336c11"
 dependencies = [
  "adbc_core",
  "arrow-array",
