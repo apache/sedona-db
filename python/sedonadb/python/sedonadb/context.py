@@ -152,6 +152,74 @@ class SedonaContext:
             self.options,
         )
 
+    def read_pyogrio(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+        extension: str = "",
+    ) -> DataFrame:
+        """Read spatial file formats using GDAL/OGR via pyogrio
+
+        Creates a DataFrame from one or more paths or URLs to a file supported by
+        [pyogrio](https://pyogrio.readthedocs.io/en/latest/), which is the same package
+        that powers `geopandas.read_file()` by default. Some common formats that can be
+        opened using GDAL/OGR are FlatGeoBuf, GeoPackage, Shapefile, GeoJSON, and many,
+        many more. See <https://gdal.org/en/stable/drivers/vector/index.html> for a list
+        of available vector drivers.
+
+        Like `read_parquet()`, globs and directories can be specified in addition to
+        individual file paths. Paths ending in `.zip` are automatically prepended with
+        `/vsizip/` (i.e., are automatically unzipped by GDAL). HTTP(s) URLs are
+        supported via `/vsicurl/`.
+
+        Args:
+            table_paths: A str, Path, or iterable of paths containing URLs or
+                paths. Globs (i.e., `path/*.gpkg`), directories, and zipped
+                versions of otherwise readable files are supported.
+            options: An optional mapping of key/value pairs (open options)
+                passed to GDAL/OGR.
+            extension: An optional file extension (e.g., `"fgb"`) used when
+                `table_paths` specifies one or more directories or a glob
+                that does not enforce a file extension.
+
+        Examples:
+
+            >>> import geopandas
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> df = geopandas.GeoDataFrame({
+            ...     "geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"], crs=3857)
+            ... })
+            >>>
+            >>> with tempfile.TemporaryDirectory() as td:
+            ...     df.to_file(f"{td}/df.fgb")
+            ...     sd.read_pyogrio(f"{td}/df.fgb").show()
+            ...
+            ┌──────────────┐
+            │ wkb_geometry │
+            │   geometry   │
+            ╞══════════════╡
+            │ POINT(0 1)   │
+            └──────────────┘
+
+        """
+        from sedonadb.datasource import PyogrioFormatSpec
+
+        if isinstance(table_paths, (str, Path)):
+            table_paths = [table_paths]
+
+        spec = PyogrioFormatSpec(extension)
+        if options is not None:
+            spec = spec.with_options(options)
+
+        return DataFrame(
+            self._impl,
+            self._impl.read_external_format(
+                spec, [str(path) for path in table_paths], False
+            ),
+            self.options,
+        )
+
     def sql(self, sql: str) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
 

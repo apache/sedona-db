@@ -16,7 +16,10 @@
 // under the License.
 use serde::{Deserialize, Serialize};
 
-use crate::interval::{Interval, IntervalTrait, WraparoundInterval};
+use crate::{
+    error::SedonaGeometryError,
+    interval::{Interval, IntervalTrait, WraparoundInterval},
+};
 
 /// Bounding Box implementation with wraparound support
 ///
@@ -161,6 +164,25 @@ impl BoundingBox {
             (Some(m), Some(other_m)) => Some(m.merge_interval(&other_m)),
             _ => None,
         };
+    }
+
+    /// Compute the intersection of this bounding box with another
+    ///
+    /// This method will propagate missingness of Z or M dimensions from the two boxes
+    /// (e.g., Z will be `None` if Z if `self.z().is_none()` OR `other.z().is_none()`).
+    pub fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        Ok(Self {
+            x: self.x.intersection(&other.x)?,
+            y: self.y.intersection(&other.y)?,
+            z: match (self.z, other.z) {
+                (Some(z), Some(other_z)) => Some(z.intersection(&other_z)?),
+                _ => None,
+            },
+            m: match (self.m, other.m) {
+                (Some(m), Some(other_m)) => Some(m.intersection(&other_m)?),
+                _ => None,
+            },
+        })
     }
 }
 
@@ -356,6 +378,53 @@ mod test {
         assert_eq!(bounding_box.y(), xyzm.y());
         assert!(bounding_box.z().is_none());
         assert!(bounding_box.m().is_none());
+    }
+
+    #[test]
+    fn bounding_box_intersection() {
+        assert_eq!(
+            BoundingBox::xy((1, 2), (3, 4))
+                .intersection(&BoundingBox::xy((1.5, 2.5), (3.5, 4.5)))
+                .unwrap(),
+            BoundingBox::xy((1.5, 2.0), (3.5, 4.0))
+        );
+
+        // If z and m are present in one input but not the other, we propagate the unknownness
+        // to the intersection
+        assert_eq!(
+            BoundingBox::xyzm(
+                (1, 2),
+                (3, 4),
+                Some(Interval::empty()),
+                Some(Interval::empty())
+            )
+            .intersection(&BoundingBox::xy((1.5, 2.5), (3.5, 4.5)))
+            .unwrap(),
+            BoundingBox::xy((1.5, 2.0), (3.5, 4.0))
+        );
+
+        // If z and m are specified in both, we include the intersection in the output
+        assert_eq!(
+            BoundingBox::xyzm(
+                (1, 2),
+                (3, 4),
+                Some(Interval::empty()),
+                Some(Interval::empty())
+            )
+            .intersection(&BoundingBox::xyzm(
+                (1.5, 2.5),
+                (3.5, 4.5),
+                Some(Interval::empty()),
+                Some(Interval::empty())
+            ))
+            .unwrap(),
+            BoundingBox::xyzm(
+                (1.5, 2.0),
+                (3.5, 4.0),
+                Some(Interval::empty()),
+                Some(Interval::empty())
+            )
+        );
     }
 
     fn check_serialize_deserialize_roundtrip(bounding_box: BoundingBox) {

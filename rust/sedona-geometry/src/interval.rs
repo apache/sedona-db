@@ -26,7 +26,7 @@ use crate::error::SedonaGeometryError;
 /// incurs overhead (particularly in a loop). This trait is mostly used to
 /// simplify testing and unify documentation for the two concrete
 /// implementations.
-pub trait IntervalTrait: std::fmt::Debug + PartialEq {
+pub trait IntervalTrait: std::fmt::Debug + PartialEq + Sized {
     /// Create an interval from lo and hi values
     fn new(lo: f64, hi: f64) -> Self;
 
@@ -98,6 +98,9 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq {
     /// True if this interval is empty (i.e. intersects no values)
     fn is_empty(&self) -> bool;
 
+    /// True if this interval is full (i.e. intersects all values)
+    fn is_full(&self) -> bool;
+
     /// Compute a new interval that is the union of both
     ///
     /// When accumulating intervals in a loop, use [Interval::update_interval].
@@ -114,6 +117,9 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq {
     /// For regular intervals, this expands both lo and hi by the distance.
     /// For wraparound intervals, this may result in the full interval if expansion is large enough.
     fn expand_by(&self, distance: f64) -> Self;
+
+    /// Compute the interval contained by both self and other
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError>;
 }
 
 /// 1D Interval that never wraps around
@@ -236,6 +242,10 @@ impl IntervalTrait for Interval {
         self.width() == -f64::INFINITY
     }
 
+    fn is_full(&self) -> bool {
+        self == &Self::full()
+    }
+
     fn merge_interval(&self, other: &Self) -> Self {
         let mut out = *self;
         out.update_interval(other);
@@ -254,6 +264,16 @@ impl IntervalTrait for Interval {
         }
 
         Self::new(self.lo - distance, self.hi + distance)
+    }
+
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        let new_lo = self.lo.max(other.lo);
+        let new_hi = self.hi.min(other.hi);
+        if new_lo > new_hi {
+            Ok(Self::empty())
+        } else {
+            Ok(Self::new(new_lo, new_hi))
+        }
     }
 }
 
@@ -368,6 +388,10 @@ impl IntervalTrait for WraparoundInterval {
 
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self == &Self::full()
     }
 
     fn merge_interval(&self, other: &Self) -> Self {
@@ -486,6 +510,53 @@ impl IntervalTrait for WraparoundInterval {
         // So the interval itself is (excluded_hi, excluded_lo)
         Self::new(excluded_hi, excluded_lo)
     }
+
+    fn intersection(&self, other: &Self) -> Result<Self, SedonaGeometryError> {
+        match (self.is_wraparound(), other.is_wraparound()) {
+            // Neither is wraparound
+            (false, false) => Ok(self.inner.intersection(&other.inner)?.into()),
+            // One is wraparound
+            (true, false) => other.intersection(self),
+            (false, true) => {
+                let inner = self.inner;
+                let (left, right) = other.split();
+                match (inner.intersects_interval(&left), inner.intersects_interval(&right)) {
+                    // Intersects both the left and right intervals
+                    (true, true) => {
+                        Err(SedonaGeometryError::Invalid(format!("Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval")))
+                    },
+                    // Intersects only the left interval
+                    (true, false) => Ok(inner.intersection(&left)?.into()),
+                    // Intersects only the right interval
+                    (false, true) => Ok(inner.intersection(&right)?.into()),
+                    (false, false) => Ok(WraparoundInterval::empty()),
+                }
+            }
+            // Both are wraparound
+            (true, true) => {
+                // Both wraparound intervals represent complements of excluded regions
+                // Intersection of complements = complement of union of excluded regions
+                // self excludes (hi, lo), other excludes (other.hi, other.lo)
+                // We need to find the union of these excluded regions
+                let excluded_self = Interval::new(self.inner.hi, self.inner.lo);
+                let excluded_other = Interval::new(other.inner.hi, other.inner.lo);
+
+                // We can't use the excluded union if the excluded region of self and other
+                // are disjoint
+                if excluded_self.intersects_interval(&excluded_other) {
+                    let excluded_union = excluded_self.merge_interval(&excluded_other);
+
+                    // The intersection is the complement of the union of excluded regions
+                    Ok(WraparoundInterval::new(
+                        excluded_union.hi(),
+                        excluded_union.lo(),
+                    ))
+                } else {
+                    Err(SedonaGeometryError::Invalid(format!("Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval")))
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -495,6 +566,8 @@ mod test {
     use super::*;
 
     fn test_empty<T: IntervalTrait>(empty: T) {
+        assert!(empty.is_empty());
+
         // Equals itself
         #[allow(clippy::eq_op)]
         {
@@ -536,6 +609,12 @@ mod test {
             T::new(10.0, 20.0)
         );
 
+        // Intersecting an empty interval results in an empty interval
+        assert_eq!(empty.intersection(&empty).unwrap(), empty);
+
+        // Intersecting a full interval results in an empty interval
+        assert_eq!(empty.intersection(&T::full()).unwrap(), empty);
+
         // Expanding empty interval keeps it empty
         assert_eq!(empty.expand_by(5.0), empty);
         assert_eq!(empty.expand_by(0.0), empty);
@@ -565,6 +644,21 @@ mod test {
             empty.merge_interval(&WraparoundInterval::new(20.0, 10.0)),
             WraparoundInterval::new(20.0, 10.0)
         );
+    }
+
+    fn test_full<T: IntervalTrait>(full: T) {
+        assert!(full.is_full());
+        assert_eq!(full.intersection(&full).unwrap(), full);
+    }
+
+    #[test]
+    fn interval_full() {
+        test_full(Interval::full());
+    }
+
+    #[test]
+    fn wraparound_interval_full() {
+        test_full(WraparoundInterval::full());
     }
 
     fn test_finite<T: IntervalTrait>(finite: T) {
@@ -669,6 +763,28 @@ mod test {
         assert_eq!(
             finite.merge_interval(&T::new(25.0, 30.0)),
             T::new(10.0, 30.0)
+        );
+
+        // Intersecting an interval with the empty interval
+        assert_eq!(finite.intersection(&T::empty()).unwrap(), T::empty());
+
+        // Intersecting an interval with the full interval
+        assert_eq!(finite.intersection(&T::full()).unwrap(), finite);
+
+        // Intersecting finite intervals with a non-empty result
+        assert_eq!(
+            finite
+                .intersection(&T::new(finite.mid(), finite.hi() + 1.0))
+                .unwrap(),
+            T::new(finite.mid(), finite.hi())
+        );
+
+        // Intersecting finite intervals with an empty result
+        assert_eq!(
+            finite
+                .intersection(&T::new(finite.hi() + 1.0, finite.hi() + 2.0))
+                .unwrap(),
+            T::empty()
         );
 
         // Expanding by positive distance
@@ -976,6 +1092,158 @@ mod test {
         assert_eq!(
             wraparound.merge_interval(&WraparoundInterval::new(15.0, 18.0)),
             WraparoundInterval::new(15.0, 10.0)
+        );
+    }
+
+    #[test]
+    fn wraparound_interval_actually_wraparound_intersection() {
+        // Everything *except* the interval (10, 20)
+        let wraparound = WraparoundInterval::new(20.0, 10.0);
+
+        // Intersecting an empty interval
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::empty())
+                .unwrap(),
+            WraparoundInterval::empty()
+        );
+
+        // Intersecting an interval with itself
+        assert_eq!(wraparound.intersection(&wraparound).unwrap(), wraparound);
+
+        // Intersecting a wraparound interval with a "larger" wraparound interval
+        //           10         20
+        // <==========|          |============>
+        // <==============|  |================>
+        //               14  16
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(16.0, 14.0))
+                .unwrap(),
+            wraparound
+        );
+
+        // Intersecting a wraparound interval with a "smaller" wraparound interval
+        //           10         20
+        // <==========|          |============>
+        // <=====|                    |=======>
+        //       5                    25
+        // <=====|                    |=======>
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(25.0, 5.0))
+                .unwrap(),
+            WraparoundInterval::new(25.0, 5.0)
+        );
+
+        // Intersecting with partially intersecting wraparounds
+        //           10         20
+        // <==========|          |============>
+        // <=====|          |=================>
+        //       5          15
+        // <=====|               |============>
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(15.0, 5.0))
+                .unwrap(),
+            WraparoundInterval::new(20.0, 5.0)
+        );
+
+        //           10         20
+        // <==========|          |============>
+        // <================|          |======>
+        //                  15         25
+        // <==========|                |======>
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(25.0, 15.0))
+                .unwrap(),
+            WraparoundInterval::new(25.0, 10.0)
+        );
+
+        // Intersecting wraparound with that would require >1 interval to represent
+        //           10         20
+        // <==========|          |=========================>
+        // <=============================|          |======>
+        //                               25         30
+        // <==========|          |=======|          |======>
+        wraparound
+            .intersection(&WraparoundInterval::new(30.0, 25.0))
+            .unwrap_err();
+
+        //                    10         20
+        // <===================|          |================>
+        // <==|          |=================================>
+        //    0          5
+        // <==|          |=====|          |================>
+        wraparound
+            .intersection(&WraparoundInterval::new(5.0, 0.0))
+            .unwrap_err();
+
+        // Intersecting wraparound with a regular interval completely contained by the original
+        //                  10         20
+        // <=================|          |==================>
+        //                                   |=========|
+        //                                  25         30
+        //                                   |=========|
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(25.0, 30.0))
+                .unwrap(),
+            WraparoundInterval::new(25.0, 30.0)
+        );
+
+        //                  10         20
+        // <=================|          |==================>
+        //  |=========|
+        //  0         5
+        //  |=========|
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(0.0, 5.0))
+                .unwrap(),
+            WraparoundInterval::new(0.0, 5.0)
+        );
+
+        // Intersecting wraparound with a partially intersecting regular interval that
+        // intersects the left side
+        //                  10         20
+        // <=================|          |==================>
+        //              |=========|
+        //              5         15
+        //              |====|
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(5.0, 15.0))
+                .unwrap(),
+            WraparoundInterval::new(5.0, 10.0)
+        );
+
+        // Intersecting wraparound with a partially intersecting regular interval that
+        // intersects the right side
+        //                  10         20
+        // <=================|          |==================>
+        //                         |=========|
+        //                         15        25
+        //                              |====|
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(15.0, 25.0))
+                .unwrap(),
+            WraparoundInterval::new(20.0, 25.0)
+        );
+
+        // Intersecting wraparound with a disjoint regular interval
+        //                  10         20
+        // <=================|          |==================>
+        //                     |==|
+        //                    12  15
+        //
+        assert_eq!(
+            wraparound
+                .intersection(&WraparoundInterval::new(12.0, 15.0))
+                .unwrap(),
+            WraparoundInterval::empty()
         );
     }
 

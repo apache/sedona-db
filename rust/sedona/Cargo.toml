@@ -63,6 +63,7 @@ geo-types = { workspace = true }
 object_store = { workspace = true }
 parking_lot = { workspace = true }
 sedona-common = { path = "../sedona-common" }
+sedona-datasource = { path = "../sedona-datasource" }
 sedona-expr = { path = "../sedona-expr" }
 sedona-functions = { path = "../sedona-functions" }
 sedona-geo = { path = "../sedona-geo", optional = true }
