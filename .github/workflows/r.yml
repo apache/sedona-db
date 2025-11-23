@@ -103,6 +103,7 @@ jobs:
         with:
           needs: check
           working-directory: r/sedonadb
+          cache: false
 
       - name: Install R Package
         run: |
