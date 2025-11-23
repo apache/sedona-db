@@ -9,6 +9,14 @@ c/sedona-geoarrow-c/src/geoarrow/ryu/*
 c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-s2geography/s2geography/*
 c/sedona-s2geography/s2geometry/*
+c/sedona-libgpuspatial/libgpuspatial/test/geoarrow_geos/*
+c/sedona-libgpuspatial/libgpuspatial/cmake/RAPIDS_VERSION
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/im.cuh
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/relate.cuh
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/doubledouble.h
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/floating_point.h
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/morton_code.h
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.h
 c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/windows/Cargo.lock

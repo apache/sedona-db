@@ -1,0 +1,38 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default Config",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "default-with-tests",
+            "inherits": [
+                "default"
+            ],
+            "displayName": "Default with tests",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "GPUSPATIAL_BUILD_TESTS": "ON"
+            }
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default-with-tests",
+            "environment": {
+                "GPUSPATIAL_TEST_DIR": "${sourceDir}/test_data"
+            }
+        }
+    ]
+}
