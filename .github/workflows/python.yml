@@ -57,7 +57,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
 
@@ -67,7 +67,7 @@ jobs:
           cache: 'pip'
 
       - name: Clone vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
