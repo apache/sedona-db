@@ -70,7 +70,7 @@ arrow-json = { version = "56.0.0" }
 arrow-schema = { version = "56.0.0" }
 arrow-buffer = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
-bytes = "1.10"
+bytes = "1.11"
 byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
 comfy-table = { version = "7.1.4" }
