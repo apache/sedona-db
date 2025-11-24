@@ -200,7 +200,7 @@ jobs:
         with:
           prefix-key: "rust-gpu-v3"
           # Cache key includes GPU packages and vcpkg config
-          key: "${{ runner.os }}-${{ hashFiles('c/sedona-libgpuspatial/**', 'vcpkg.json') }}"
+          key: "${{ runner.os }}-${{ hashFiles('c/sedona-libgpuspatial/**') }}"
 
       # Build WITH GPU feature to compile CUDA code
       # CUDA compilation (nvcc) works without GPU hardware
