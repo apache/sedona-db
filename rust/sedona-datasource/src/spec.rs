@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use arrow_array::RecordBatchReader;
 use arrow_schema::{Schema, SchemaRef};
@@ -26,6 +30,7 @@ use datafusion_common::{Result, Statistics};
 use datafusion_execution::object_store::ObjectStoreUrl;
 use datafusion_physical_expr::PhysicalExpr;
 use object_store::{ObjectMeta, ObjectStore};
+use regex::Regex;
 
 /// Simple file format specification
 ///
@@ -51,11 +56,6 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
     async fn open_reader(&self, args: &OpenReaderArgs)
         -> Result<Box<dyn RecordBatchReader + Send>>;
 
-    /// A file extension or `""` if this concept does not apply
-    fn extension(&self) -> &str {
-        ""
-    }
-
     /// Compute a clone of self but with the key/value options specified
     ///
     /// Implementations should error for invalid key/value input that does
@@ -64,6 +64,11 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
         &self,
         options: &HashMap<String, String>,
     ) -> Result<Arc<dyn ExternalFormatSpec>>;
+
+    /// A file extension or `""` if this concept does not apply
+    fn extension(&self) -> &str {
+        ""
+    }
 
     /// Fill in default options from [TableOptions]
     ///
@@ -182,16 +187,145 @@ impl Object {
                 // GDAL to be able to translate.
                 let object_store_debug = format!("{:?}", self.store).to_lowercase();
                 if object_store_debug.contains("http") {
-                    Some(format!("https://{}", meta.location))
-                } else if object_store_debug.contains("local") {
+                    let pattern = r#"host: some\(domain\("([A-Za-z0-9.-]+)"\)\)"#;
+                    let re = Regex::new(pattern).ok()?;
+                    if let Some(caps) = re.captures(&object_store_debug) {
+                        caps.get(1)
+                            .map(|host| format!("https://{}/{}", host.as_str(), meta.location))
+                    } else {
+                        None
+                    }
+                } else if object_store_debug.contains("localfilesystem") {
                     Some(format!("file:///{}", meta.location))
                 } else {
                     None
                 }
             }
-            (Some(url), None) => Some(url.to_string()),
-            (Some(url), Some(meta)) => Some(format!("{url}/{}", meta.location)),
-            (None, None) => None,
+            (Some(url), Some(meta)) => Some(format!("{url}{}", meta.location)),
+            (Some(_), None) | (None, None) => None,
         }
+    }
+}
+
+impl Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(url) = self.to_url_string() {
+            write!(f, "{url}")
+        } else if let Some(meta) = &self.meta {
+            write!(f, "<object store> {}", meta.location)
+        } else {
+            write!(f, "<object store> <unknown location>")
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use object_store::{http::HttpBuilder, local::LocalFileSystem};
+
+    use super::*;
+
+    #[test]
+    fn http_object() {
+        let url_string = "https://foofy.foof/path/to/file.ext";
+
+        let store = Arc::new(HttpBuilder::new().with_url(url_string).build().unwrap());
+
+        let url = ObjectStoreUrl::parse("https://foofy.foof").unwrap();
+
+        let meta = ObjectMeta {
+            location: "/path/to/file.ext".into(),
+            last_modified: Default::default(),
+            size: 0,
+            e_tag: None,
+            version: None,
+        };
+
+        // Should be able to reconstruct the url with ObjectStoreUrl + meta
+        let obj = Object {
+            store: None,
+            url: Some(url.clone()),
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), url_string);
+
+        // Should be able to reconstruct the url with the ObjectStore + meta
+        let obj = Object {
+            store: Some(store),
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), url_string);
+
+        // With only Meta, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+
+        // With only ObjectStoreUrl, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: Some(url),
+            meta: None,
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+    }
+
+    #[test]
+    fn filesystem_object() {
+        let store = Arc::new(LocalFileSystem::new());
+
+        let url = ObjectStoreUrl::parse("file://").unwrap();
+
+        let meta = ObjectMeta {
+            location: "/path/to/file.ext".into(),
+            last_modified: Default::default(),
+            size: 0,
+            e_tag: None,
+            version: None,
+        };
+
+        // Should be able to reconstruct the url with ObjectStoreUrl + meta
+        let obj = Object {
+            store: None,
+            url: Some(url.clone()),
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), "file:///path/to/file.ext");
+
+        // Should be able to reconstruct the url with the ObjectStore + meta
+        let obj = Object {
+            store: Some(store),
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert_eq!(obj.to_url_string().unwrap(), "file:///path/to/file.ext");
+
+        // With only Meta, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: None,
+            meta: Some(meta.clone()),
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
+
+        // With only ObjectStoreUrl, this should fail to compute a url
+        let obj = Object {
+            store: None,
+            url: Some(url),
+            meta: None,
+            range: None,
+        };
+        assert!(obj.to_url_string().is_none());
     }
 }

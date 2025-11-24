@@ -31,7 +31,7 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{not_impl_err, DataFusionError, GetExt, Result, Statistics};
+use datafusion_common::{not_impl_err, plan_err, DataFusionError, GetExt, Result, Statistics};
 use datafusion_physical_expr::{LexOrdering, LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
@@ -124,6 +124,10 @@ impl FileFormat for ExternalFileFormat {
         store: &Arc<dyn ObjectStore>,
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
+        if objects.is_empty() {
+            return plan_err!("Can't infer schema for zero objects. Does the input path exist?");
+        }
+
         let mut schemas: Vec<_> = futures::stream::iter(objects)
             .map(|object| async move {
                 let schema = self

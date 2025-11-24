@@ -42,6 +42,8 @@ futures = { workspace = true }
 pyo3 = { version = "0.25.1" }
 sedona = { workspace = true }
 sedona-adbc = { workspace = true }
+sedona-datasource = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }
 sedona-schema = { workspace = true }
