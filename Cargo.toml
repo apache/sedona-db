@@ -102,9 +102,9 @@ geo-types = "0.7.17"
 geo-traits = "0.3.0"
 geo = "0.31.0"
 
-geo-index = { version = "0.3.1" }
+geo-index = { version = "0.3.2", features = ["use-geo_0_31"] }
 
-wkb = "0.9.1"
+wkb = "0.9.2"
 wkt = "0.14.0"
 
 parking_lot = "0.12"
@@ -124,9 +124,27 @@ thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
 
-# After releases of geo-index and wkb we can remove this patch
-# https://github.com/apache/sedona-db/issues/124
-# https://github.com/apache/sedona-db/issues/123
-[patch.crates-io]
-geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
-wkb = { git = "https://github.com/georust/wkb.git", rev = "3158e6295e4a39dc7fd75f3cfebee113c8b844d0" }
+# Workspace path dependencies for internal crates
+sedona = { version = "0.2.0", path = "rust/sedona" }
+sedona-adbc = { version = "0.2.0", path = "rust/sedona-adbc" }
+sedona-common = { version = "0.2.0", path = "rust/sedona-common" }
+sedona-datasource = { version = "0.2.0", path = "rust/sedona-datasource" }
+sedona-expr = { version = "0.2.0", path = "rust/sedona-expr" }
+sedona-functions = { version = "0.2.0", path = "rust/sedona-functions" }
+sedona-geo = { version = "0.2.0", path = "rust/sedona-geo" }
+sedona-geo-generic-alg = { version = "0.2.0", path = "rust/sedona-geo-generic-alg" }
+sedona-geo-traits-ext = { version = "0.2.0", path = "rust/sedona-geo-traits-ext" }
+sedona-geometry = { version = "0.2.0", path = "rust/sedona-geometry" }
+sedona-geoparquet = { version = "0.2.0", path = "rust/sedona-geoparquet" }
+sedona-raster = { version = "0.2.0", path = "rust/sedona-raster" }
+sedona-raster-functions = { version = "0.2.0", path = "rust/sedona-raster-functions" }
+sedona-schema = { version = "0.2.0", path = "rust/sedona-schema" }
+sedona-spatial-join = { version = "0.2.0", path = "rust/sedona-spatial-join" }
+# sedona-testing is not published to crates.io, so it uses path-only in individual crates
+
+# C wrapper crates
+sedona-geoarrow-c = { version = "0.2.0", path = "c/sedona-geoarrow-c" }
+sedona-geos = { version = "0.2.0", path = "c/sedona-geos" }
+sedona-proj = { version = "0.2.0", path = "c/sedona-proj", default-features = false }
+sedona-s2geography = { version = "0.2.0", path = "c/sedona-s2geography" }
+sedona-tg = { version = "0.2.0", path = "c/sedona-tg" }

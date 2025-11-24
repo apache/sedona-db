@@ -32,7 +32,7 @@ cc = { version = "1" }
 [dev-dependencies]
 criterion = { workspace = true }
 rstest = { workspace = true }
-sedona = { path = "../../rust/sedona" }
+sedona = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
 
 [dependencies]
@@ -41,9 +41,9 @@ arrow-array = { workspace = true, features = ["ffi"] }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 errno = { version = "0.3" }
-sedona-expr = { path = "../../rust/sedona-expr" }
-sedona-functions = { path = "../../rust/sedona-functions" }
-sedona-schema = { path = "../../rust/sedona-schema" }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-schema = { workspace = true }
 thiserror = { workspace = true }
 
 [[bench]]

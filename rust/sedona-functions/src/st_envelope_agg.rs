@@ -38,33 +38,33 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-/// ST_Envelope_Aggr() aggregate UDF implementation
+/// ST_Envelope_Agg() aggregate UDF implementation
 ///
 /// An implementation of envelope (bounding shape) calculation.
-pub fn st_envelope_aggr_udf() -> SedonaAggregateUDF {
+pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
-        "st_envelope_aggr",
-        vec![Arc::new(STEnvelopeAggr {})],
+        "st_envelope_agg",
+        vec![Arc::new(STEnvelopeAgg {})],
         Volatility::Immutable,
-        Some(st_envelope_aggr_doc()),
+        Some(st_envelope_agg_doc()),
     )
 }
 
-fn st_envelope_aggr_doc() -> Documentation {
+fn st_envelope_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         "Return the entire envelope boundary of all geometries in geom",
-        "ST_Envelope_Aggr (geom: Geometry)",
+        "ST_Envelope_Agg (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_Envelope_Aggr(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
+    .with_sql_example("SELECT ST_Envelope_Agg(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
     .build()
 }
 
 #[derive(Debug)]
-struct STEnvelopeAggr {}
+struct STEnvelopeAgg {}
 
-impl SedonaAccumulator for STEnvelopeAggr {
+impl SedonaAccumulator for STEnvelopeAgg {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
@@ -189,15 +189,15 @@ mod test {
 
     #[test]
     fn udf_metadata() {
-        let udf: AggregateUDF = st_envelope_aggr_udf().into();
-        assert_eq!(udf.name(), "st_envelope_aggr");
+        let udf: AggregateUDF = st_envelope_agg_udf().into();
+        assert_eq!(udf.name(), "st_envelope_agg");
         assert!(udf.documentation().is_some());
     }
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester =
-            AggregateUdfTester::new(st_envelope_aggr_udf().into(), vec![sedona_type.clone()]);
+            AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         // Finite input with nulls

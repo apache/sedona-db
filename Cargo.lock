@@ -2681,14 +2681,14 @@ dependencies = [
 
 [[package]]
 name = "geo-index"
-version = "0.3.1"
-source = "git+https://github.com/wherobots/geo-index.git?branch=main#3213c162b1dfdac9effdef3083afc17261c9f6fc"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27fb4e4ffdde62f8aa7a4165b30f6fe8e8337d35b657ebf86c98d884ee7c750"
 dependencies = [
  "bytemuck",
  "float_next_after",
  "geo",
  "geo-traits",
- "geo-types",
  "num-traits",
  "thiserror 1.0.69",
  "tinyvec",
@@ -4923,7 +4923,6 @@ dependencies = [
 name = "sedona-expr"
 version = "0.2.0"
 dependencies = [
- "arrow-array",
  "arrow-schema",
  "datafusion-common",
  "datafusion-expr",
@@ -6528,8 +6527,9 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wkb"
-version = "0.9.1"
-source = "git+https://github.com/georust/wkb.git?rev=3158e6295e4a39dc7fd75f3cfebee113c8b844d0#3158e6295e4a39dc7fd75f3cfebee113c8b844d0"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a120b336c7ad17749026d50427c23d838ecb50cd64aaea6254b5030152f890a9"
 dependencies = [
  "byteorder",
  "geo-traits",

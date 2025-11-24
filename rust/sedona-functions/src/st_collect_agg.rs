@@ -42,26 +42,26 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-/// ST_Collect() aggregate UDF implementation
+/// ST_Collect_Agg() aggregate UDF implementation
 ///
 /// An implementation of envelope (bounding shape) calculation.
-pub fn st_collect_udf() -> SedonaAggregateUDF {
+pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
-        "st_collect",
+        "st_collect_agg",
         vec![Arc::new(STCollectAggr {})],
         Volatility::Immutable,
-        Some(st_collect_doc()),
+        Some(st_collect_agg_doc()),
     )
 }
 
-fn st_collect_doc() -> Documentation {
+fn st_collect_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         "Return the entire envelope boundary of all geometries in geom",
-        "ST_Collect (geom: Geometry)",
+        "ST_Collect_Agg (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
+    .with_sql_example("SELECT ST_Collect_Agg(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
     .build()
 }
 
@@ -136,7 +136,7 @@ impl CollectionAccumulator {
         let count_usize = self.count.try_into().unwrap();
 
         if self.unique_dimensions.len() != 1 {
-            return exec_err!("Can't ST_Collect() mixed dimension geometries");
+            return exec_err!("Can't ST_Collect_Agg() mixed dimension geometries");
         }
 
         let dimensions = *self.unique_dimensions.iter().next().unwrap();
@@ -169,7 +169,7 @@ impl CollectionAccumulator {
             out[0..WKB_HEADER_SIZE].copy_from_slice(&new_header);
             Ok(Some(out))
         } else {
-            sedona_internal_err!("Unexpected internal state in ST_Collect()")
+            sedona_internal_err!("Unexpected internal state in ST_Collect_Agg()")
         }
     }
 }
@@ -179,7 +179,7 @@ impl Accumulator for CollectionAccumulator {
         let item_ref = if let Some(item_ref) = self.item.as_mut() {
             item_ref
         } else {
-            return sedona_internal_err!("Unexpected internal state in ST_Collect()");
+            return sedona_internal_err!("Unexpected internal state in ST_Collect_Agg()");
         };
 
         let arg_types = [self.input_type.clone()];
@@ -247,7 +247,7 @@ impl Accumulator for CollectionAccumulator {
         let item_ref = if let Some(item_ref) = self.item.as_mut() {
             item_ref
         } else {
-            return sedona_internal_err!("Unexpected internal state in ST_Collect()");
+            return sedona_internal_err!("Unexpected internal state in ST_Collect_Agg()");
         };
 
         let mut geometry_types_iter = as_string_array(&states[0])?.into_iter();
@@ -306,14 +306,15 @@ mod test {
 
     #[test]
     fn udf_metadata() {
-        let udf: AggregateUDF = st_collect_udf().into();
-        assert_eq!(udf.name(), "st_collect");
+        let udf: AggregateUDF = st_collect_agg_udf().into();
+        assert_eq!(udf.name(), "st_collect_agg");
         assert!(udf.documentation().is_some());
     }
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = AggregateUdfTester::new(st_collect_udf().into(), vec![sedona_type.clone()]);
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         // Finite point input with nulls
@@ -367,7 +368,7 @@ mod test {
         let err = tester.aggregate_wkt(batches).unwrap_err();
         assert_eq!(
             err.message(),
-            "Can't ST_Collect() mixed dimension geometries"
+            "Can't ST_Collect_Agg() mixed dimension geometries"
         );
     }
 }

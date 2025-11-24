@@ -41,10 +41,10 @@ arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
 serde_json = { workspace = true }

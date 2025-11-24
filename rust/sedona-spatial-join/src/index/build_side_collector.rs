@@ -23,7 +23,7 @@ use datafusion_execution::{memory_pool::MemoryReservation, SendableRecordBatchSt
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use futures::StreamExt;
 use sedona_expr::statistics::GeoStatistics;
-use sedona_functions::st_analyze_aggr::AnalyzeAccumulator;
+use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
