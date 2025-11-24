@@ -140,6 +140,7 @@ pub mod stubs {
     pub use crate::overlay::*;
     pub use crate::predicates::*;
     pub use crate::referencing::*;
+    pub use crate::sd_order;
     pub use crate::st_area::st_area_udf;
     pub use crate::st_azimuth::st_azimuth_udf;
     pub use crate::st_centroid::st_centroid_udf;
