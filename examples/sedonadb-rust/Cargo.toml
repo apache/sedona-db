@@ -34,10 +34,3 @@ datafusion = { version = "50.2.0"}
 # When sedona is released on crates.io, this can be a version and not a git repo
 sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona"}
 tokio = { version = "1.44", features = ["rt-multi-thread"]}
-
-# After releases of geo-index and wkb we can remove this patch
-# https://github.com/apache/sedona-db/issues/124
-# https://github.com/apache/sedona-db/issues/123
-[patch.crates-io]
-geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
-wkb = { git = "https://github.com/georust/wkb.git", rev = "3158e6295e4a39dc7fd75f3cfebee113c8b844d0" }
