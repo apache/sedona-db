@@ -26,7 +26,6 @@
 #include "array_stream.hpp"
 #include "nanoarrow/nanoarrow.hpp"
 
-
 namespace TestUtils {
 std::string GetTestDataPath(const std::string& relative_path_to_file);
 }

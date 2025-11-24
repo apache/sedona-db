@@ -161,8 +161,8 @@ jobs:
             # Remove any existing CUDA toolkit
             sudo apt purge cuda-toolkit* -y || true
 
-            # Install CUDA 12
-            sudo apt-get install -y cuda-toolkit-12
+            # Install CUDA 12 and driver (libcuda.so comes with driver)
+            sudo apt-get install -y cuda-toolkit-12 nvidia-driver-580-server
 
             # Set CUDA path
             echo "/usr/local/cuda/bin" >> $GITHUB_PATH

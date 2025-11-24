@@ -73,8 +73,6 @@ gpuspatial::PinnedVector<T> ToVector(const rmm::cuda_stream_view& stream,
   return vec;
 }
 
-
-
 // Function to convert a relative path string to an absolute path string
 std::string GetCanonicalPath(const std::string& relative_path_str) {
   try {
@@ -92,7 +90,6 @@ std::string GetCanonicalPath(const std::string& relative_path_str) {
     return "";  // Return an empty string on error
   }
 }
-
 
 template <typename KeyType, typename ValueType>
 void sort_vectors_by_index(std::vector<KeyType>& keys, std::vector<ValueType>& values) {
