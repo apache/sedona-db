@@ -34,6 +34,7 @@ use crate::{
     st_minimumclearance::st_minimum_clearance_impl,
     st_minimumclearance_line::st_minimum_clearance_line_impl,
     st_perimeter::st_perimeter_impl,
+    st_polygonize::st_polygonize_impl,
     st_polygonize_agg::st_polygonize_agg_impl,
     st_reverse::st_reverse_impl,
     st_simplify::st_simplify_impl,
@@ -80,6 +81,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_minimumclearanceline", st_minimum_clearance_line_impl()),
         ("st_overlaps", st_overlaps_impl()),
         ("st_perimeter", st_perimeter_impl()),
+        ("st_polygonize", st_polygonize_impl()),
         ("st_reverse", st_reverse_impl()),
         ("st_simplify", st_simplify_impl()),
         (
