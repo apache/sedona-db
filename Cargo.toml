@@ -60,8 +60,8 @@ rust-version = "1.86"
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
-adbc_core = ">=0.20.0"
-adbc_ffi = ">=0.20.0"
+adbc_core = ">=0.21.0"
+adbc_ffi = ">=0.21.0"
 lru = "0.12"
 arrow = { version = "56.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "56.0.0" }
