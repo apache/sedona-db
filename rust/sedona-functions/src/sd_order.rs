@@ -47,7 +47,7 @@ fn sd_order_doc() -> Documentation {
         "SD_Order (value: Any)",
     )
     .with_argument("value", "Any: An arbitrary value")
-    .with_sql_example("SELECT SD_Order(ST_Point(1.0, 2.0, '{}'))")
+    .with_sql_example("SELECT SD_Order()")
     .build()
 }
 
@@ -77,12 +77,45 @@ impl SedonaScalarKernel for SDOrderDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::create_array;
+    use arrow_schema::DataType;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
+    use sedona_schema::datatypes::SedonaType;
+    use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
     fn udf_metadata() {
         let udf: ScalarUDF = sd_order_udf().into();
         assert_eq!(udf.name(), "sd_order");
         assert!(udf.documentation().is_some())
+    }
+
+    #[rstest]
+    fn order_not_geometry(
+        #[values(
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::LargeUtf8)
+        )]
+        sedona_type: SedonaType,
+    ) {
+        use arrow_array::ArrayRef;
+
+        let udf = sd_order_udf();
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type.clone());
+
+        tester.assert_scalar_result_equals("foofy", "foofy");
+        tester.assert_scalar_result_equals(ScalarValue::Null, ScalarValue::Null);
+
+        let array: ArrayRef = create_array!(Utf8, [Some("foofy"), None, Some("other foofy")]);
+        let array_casted = ColumnarValue::Array(array)
+            .cast_to(sedona_type.storage_type(), None)
+            .unwrap()
+            .to_array(3)
+            .unwrap();
+        let result = tester.invoke_array(array_casted.clone()).unwrap();
+        assert_eq!(&array_casted, &result);
     }
 }
