@@ -2701,14 +2701,14 @@ dependencies = [
 
 [[package]]
 name = "geo-index"
-version = "0.3.1"
-source = "git+https://github.com/wherobots/geo-index.git?branch=main#3213c162b1dfdac9effdef3083afc17261c9f6fc"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27fb4e4ffdde62f8aa7a4165b30f6fe8e8337d35b657ebf86c98d884ee7c750"
 dependencies = [
  "bytemuck",
  "float_next_after",
  "geo",
  "geo-traits",
- "geo-types",
  "num-traits",
  "thiserror 1.0.69",
  "tinyvec",
