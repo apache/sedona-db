@@ -33,9 +33,25 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn rs_width_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_width",
-        vec![Arc::new(RsWidth {})],
+        vec![Arc::new(RsSize {
+            size_type: SizeType::Width,
+        })],
         Volatility::Immutable,
         Some(rs_width_doc()),
+    )
+}
+
+/// RS_Height() scalar UDF documentation
+///
+/// Extract the height of the raster
+pub fn rs_height_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "rs_height",
+        vec![Arc::new(RsSize {
+            size_type: SizeType::Height,
+        })],
+        Volatility::Immutable,
+        Some(rs_height_doc()),
     )
 }
 
@@ -46,14 +62,33 @@ fn rs_width_doc() -> Documentation {
         "RS_Width(raster: Raster)".to_string(),
     )
     .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Width(raster)".to_string())
+    .with_sql_example("SELECT RS_Width(RS_Example())".to_string())
     .build()
 }
 
-#[derive(Debug)]
-struct RsWidth {}
+fn rs_height_doc() -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Return the height component of a raster".to_string(),
+        "RS_Height(raster: Raster)".to_string(),
+    )
+    .with_argument("raster", "Raster: Input raster")
+    .with_sql_example("SELECT RS_Height(RS_Example())".to_string())
+    .build()
+}
 
-impl SedonaScalarKernel for RsWidth {
+#[derive(Debug, Clone)]
+enum SizeType {
+    Width,
+    Height,
+}
+
+#[derive(Debug)]
+struct RsSize {
+    size_type: SizeType,
+}
+
+impl SedonaScalarKernel for RsSize {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_raster()],
@@ -74,10 +109,16 @@ impl SedonaScalarKernel for RsWidth {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 None => builder.append_null(),
-                Some(raster) => {
-                    let width = raster.metadata().width();
-                    builder.append_value(width);
-                }
+                Some(raster) => match self.size_type {
+                    SizeType::Width => {
+                        let width = raster.metadata().width();
+                        builder.append_value(width);
+                    }
+                    SizeType::Height => {
+                        let height = raster.metadata().height();
+                        builder.append_value(height);
+                    }
+                },
             }
             Ok(())
         })?;
@@ -89,40 +130,42 @@ impl SedonaScalarKernel for RsWidth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, UInt64Array};
+    use arrow_array::UInt64Array;
     use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
     use sedona_schema::datatypes::RASTER;
+    use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
     fn udf_size() {
         let udf: ScalarUDF = rs_width_udf().into();
         assert_eq!(udf.name(), "rs_width");
         assert!(udf.documentation().is_some());
+
+        let udf: ScalarUDF = rs_height_udf().into();
+        assert_eq!(udf.name(), "rs_height");
+        assert!(udf.documentation().is_some());
     }
 
-    #[test]
-    fn udf_invoke() {
-        // 3 rasters, second one is null
+    #[rstest]
+    fn udf_invoke(#[values(SizeType::Width, SizeType::Height)] st: SizeType) {
+        let udf = match st {
+            SizeType::Height => rs_height_udf(),
+            SizeType::Width => rs_width_udf(),
+        };
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let expected_values = match st {
+            SizeType::Height => vec![Some(2), None, Some(4)],
+            SizeType::Width => vec![Some(1), None, Some(3)],
+        };
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt64Array::from(expected_values));
 
-        // Create the UDF and invoke it
-        let kernel = RsWidth {};
-        let args = [ColumnarValue::Array(Arc::new(rasters))];
-        let arg_types = vec![RASTER];
-
-        let result = kernel.invoke_batch(&arg_types, &args).unwrap();
-
-        // Check the result
-        if let ColumnarValue::Array(result_array) = result {
-            let width_array = result_array.as_any().downcast_ref::<UInt64Array>().unwrap();
-
-            assert_eq!(width_array.len(), 3);
-            assert_eq!(width_array.value(0), 1); // First raster width
-            assert!(width_array.is_null(1)); // Second raster is null
-            assert_eq!(width_array.value(2), 3); // Third raster width
-        } else {
-            panic!("Expected array result");
-        }
+        // Check scalars
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        assert_array_equal(&result, &expected);
     }
 }

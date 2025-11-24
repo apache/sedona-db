@@ -19,11 +19,17 @@ import pytest
 from sedonadb.testing import PostGIS, SedonaDB
 
 
+def agg_fn_suffix(eng):
+    """Return the appropriate suffix for the aggregate function for the given engine."""
+    return "" if isinstance(eng, PostGIS) else "_Agg"
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_points(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
+        f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) FROM (
             VALUES
                 ('POINT (1 2)'),
                 ('POINT (3 4)'),
@@ -36,8 +42,9 @@ def test_st_collect_points(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_linestrings(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
+        f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) FROM (
             VALUES
                 ('LINESTRING (1 2, 3 4)'),
                 ('LINESTRING (5 6, 7 8)'),
@@ -50,8 +57,9 @@ def test_st_collect_linestrings(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_polygons(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
+        f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) FROM (
             VALUES
                 ('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
                 ('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
@@ -64,8 +72,9 @@ def test_st_collect_polygons(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_mixed_types(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
+        f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) FROM (
             VALUES
                 ('POINT (1 2)'),
                 ('LINESTRING (3 4, 5 6)'),
@@ -78,10 +87,10 @@ def test_st_collect_mixed_types(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_mixed_dimensions(eng):
     eng = eng.create_or_skip()
-
+    suffix = agg_fn_suffix(eng)
     with pytest.raises(Exception, match="mixed dimension geometries"):
         eng.assert_query_result(
-            """SELECT ST_Collect(ST_GeomFromText(geom)) FROM (
+            f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) FROM (
                 VALUES
                     ('POINT (1 2)'),
                     ('POINT Z (3 4 5)'),
@@ -94,8 +103,9 @@ def test_st_collect_mixed_dimensions(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_all_null(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(geom) FROM (
+        f"""SELECT ST_Collect{suffix}(geom) FROM (
             VALUES
                 (NULL),
                 (NULL),
@@ -108,10 +118,112 @@ def test_st_collect_all_null(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_zero_input(eng):
     eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
     eng.assert_query_result(
-        """SELECT ST_Collect(ST_GeomFromText(geom)) AS empty FROM (
+        f"""SELECT ST_Collect{suffix}(ST_GeomFromText(geom)) AS empty FROM (
             VALUES
                 ('POINT (1 2)')
         ) AS t(geom) WHERE false""",
         None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_basic_triangle(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (10 0, 10 10)'),
+                ('LINESTRING (10 10, 0 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_with_nulls(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                (NULL),
+                ('LINESTRING (10 0, 10 10)'),
+                (NULL),
+                ('LINESTRING (10 10, 0 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_no_polygons_formed(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (20 0, 30 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION EMPTY",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_polygonize_multiple_polygons(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES
+                ('LINESTRING (0 0, 10 0)'),
+                ('LINESTRING (10 0, 5 10)'),
+                ('LINESTRING (5 10, 0 0)'),
+                ('LINESTRING (20 0, 30 0)'),
+                ('LINESTRING (30 0, 25 10)'),
+                ('LINESTRING (25 10, 20 0)')
+        ) AS t(geom)""",
+        "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 5 10, 10 0)), POLYGON ((30 0, 20 0, 25 10, 30 0)))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (
+            "POLYGON ((10 0, 0 0, 10 10, 10 0))",
+            "GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))",
+        ),
+        (
+            "LINESTRING (0 0, 0 1, 1 1, 1 0, 0 0)",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+        ),
+        ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
+        ("MULTIPOINT ((0 0), (1 1))", "GEOMETRYCOLLECTION EMPTY"),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", "GEOMETRYCOLLECTION EMPTY"),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)), ((10 10, 11 10, 10 11, 10 10)))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 0, 0 0)), POLYGON ((10 10, 10 11, 11 10, 10 10)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            "GEOMETRYCOLLECTION EMPTY",
+        ),
+        ("LINESTRING EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_polygonize_single_geom(eng, geom, expected):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Polygonize{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES ('{geom}')
+        ) AS t(geom)""",
+        expected,
     )

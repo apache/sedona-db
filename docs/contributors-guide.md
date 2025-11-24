@@ -119,10 +119,13 @@ Configure environment variables (PowerShell example — update paths as needed):
 $env:VCPKG_ROOT = 'C:\dev\vcpkg'
 $env:CMAKE_TOOLCHAIN_FILE = "${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
 
-# pkg-config/ msys path (hash may vary)
-$env:PATH = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/bin/;$env:PATH"
+# Add pkg-config/ msys path (hash may vary) for using pkg-config command
+$env:PATH = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/bin/;${env:PATH}"
+# Add path to DLLs (without this, the build still succeeds, but loading fails)
+$env:PATH = "${env:VCPKG_ROOT}/installed/x64-windows/bin/;${env:PATH}"
+# Add other pkg-config related settings
 $env:PKG_CONFIG_SYSROOT_DIR = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/"
-$env:PKG_CONFIG_PATH = "${env:VCPKG_ROOT}/installed/x64-windows-dynamic-release/lib/pkgconfig/"
+$env:PKG_CONFIG_PATH = "${env:VCPKG_ROOT}/installed/x64-windows/lib/pkgconfig/"
 ```
 
 

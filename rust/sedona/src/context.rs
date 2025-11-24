@@ -134,6 +134,10 @@ impl SedonaContext {
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
 
+        // Register geos aggregate kernels if built with geos support
+        #[cfg(feature = "geos")]
+        out.register_aggregate_kernels(sedona_geos::register::aggregate_kernels().into_iter())?;
+
         // Register geo kernels if built with geo support
         #[cfg(feature = "geo")]
         out.register_scalar_kernels(sedona_geo::register::scalar_kernels().into_iter())?;
@@ -153,6 +157,9 @@ impl SedonaContext {
         // without this feature unless sedona_proj::register::configure_global_proj_engine()
         // is called).
         out.register_scalar_kernels(sedona_proj::register::scalar_kernels().into_iter())?;
+
+        // Always register raster functions
+        out.register_function_set(sedona_raster_functions::register::default_function_set());
 
         Ok(out)
     }

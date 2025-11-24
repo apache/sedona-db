@@ -28,6 +28,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_area", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_area", Polygon(500));
 
+    benchmark::scalar(c, &f, "geos", "st_boundary", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_boundary", Polygon(500));
+
     benchmark::scalar(
         c,
         &f,
@@ -225,6 +228,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_length", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_length", LineString(500));
 
+    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
+
+    benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
+
+    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(10));
+    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(500));
+
     benchmark::scalar(
         c,
         &f,
@@ -242,6 +254,21 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(500));
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_snap",
+        ArrayArrayScalar(Polygon(10), Polygon(10), Float64(1.0, 10.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_snap",
+        ArrayArrayScalar(Polygon(10), Polygon(500), Float64(1.0, 10.0)),
+    );
 
     benchmark::scalar(
         c,

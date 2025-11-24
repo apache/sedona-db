@@ -34,5 +34,5 @@ arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion = { workspace = true }
 futures = { workspace = true }
-sedona = { path = "../sedona" }
+sedona = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

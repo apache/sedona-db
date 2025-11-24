@@ -14,11 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashSet, str::FromStr};
+use std::str::FromStr;
 
 use datafusion_common::{stats::Precision, ColumnStatistics, DataFusionError, Result, ScalarValue};
 use sedona_geometry::interval::{Interval, IntervalTrait};
-use sedona_geometry::{bounding_box::BoundingBox, types::GeometryTypeAndDimensions};
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
+};
 use serde::{Deserialize, Serialize};
 
 /// Statistics specific to spatial data types
@@ -33,7 +36,7 @@ use serde::{Deserialize, Serialize};
 pub struct GeoStatistics {
     // Core spatial statistics for pruning
     bbox: Option<BoundingBox>, // The overall bounding box (min/max coordinates) containing all geometries
-    geometry_types: Option<HashSet<GeometryTypeAndDimensions>>, // Set of all geometry types and dimensions present
+    geometry_types: Option<GeometryTypeAndDimensionsSet>, // Set of all geometry types and dimensions present
 
     // Extended statistics for analysis
     total_geometries: Option<i64>, // Total count of all geometries
@@ -73,16 +76,16 @@ impl GeoStatistics {
     pub fn empty() -> Self {
         Self {
             bbox: Some(BoundingBox::xy(Interval::empty(), Interval::empty())),
-            geometry_types: Some(HashSet::new()), // Empty set of geometry types
-            total_geometries: Some(0),            // Zero geometries
-            total_size_bytes: Some(0),            // Zero bytes
-            total_points: Some(0),                // Zero points
-            puntal_count: Some(0),                // Zero point geometries
-            lineal_count: Some(0),                // Zero line geometries
-            polygonal_count: Some(0),             // Zero polygon geometries
-            collection_count: Some(0),            // Zero collection geometries
-            total_envelope_width: Some(0.0),      // Zero width
-            total_envelope_height: Some(0.0),     // Zero height
+            geometry_types: Some(GeometryTypeAndDimensionsSet::new()), // Empty set of geometry types
+            total_geometries: Some(0),                                 // Zero geometries
+            total_size_bytes: Some(0),                                 // Zero bytes
+            total_points: Some(0),                                     // Zero points
+            puntal_count: Some(0),                                     // Zero point geometries
+            lineal_count: Some(0),                                     // Zero line geometries
+            polygonal_count: Some(0),                                  // Zero polygon geometries
+            collection_count: Some(0),                                 // Zero collection geometries
+            total_envelope_width: Some(0.0),                           // Zero width
+            total_envelope_height: Some(0.0),                          // Zero height
         }
     }
 
@@ -92,20 +95,10 @@ impl GeoStatistics {
     }
 
     /// Update the geometry types and return self
-    pub fn with_geometry_types(self, types: Option<&[GeometryTypeAndDimensions]>) -> Self {
-        match types {
-            Some(type_slice) => {
-                let type_set: HashSet<GeometryTypeAndDimensions> =
-                    type_slice.iter().cloned().collect();
-                Self {
-                    geometry_types: Some(type_set),
-                    ..self
-                }
-            }
-            None => Self {
-                geometry_types: None,
-                ..self
-            },
+    pub fn with_geometry_types(self, types: Option<GeometryTypeAndDimensionsSet>) -> Self {
+        Self {
+            geometry_types: types,
+            ..self
         }
     }
 
@@ -115,7 +108,7 @@ impl GeoStatistics {
     }
 
     /// Get the geometry types if available
-    pub fn geometry_types(&self) -> Option<&HashSet<GeometryTypeAndDimensions>> {
+    pub fn geometry_types(&self) -> Option<&GeometryTypeAndDimensionsSet> {
         self.geometry_types.as_ref()
     }
 
@@ -290,9 +283,7 @@ impl GeoStatistics {
         if let Some(other_types) = &other.geometry_types {
             match &mut self.geometry_types {
                 Some(types) => {
-                    let mut new_types = types.clone();
-                    new_types.extend(other_types.iter().cloned());
-                    self.geometry_types = Some(new_types);
+                    types.merge(other_types);
                 }
                 None => self.geometry_types = Some(other_types.clone()),
             }
@@ -374,13 +365,12 @@ impl GeoStatistics {
     pub fn try_with_str_geometry_types(self, geometry_types: Option<&[&str]>) -> Result<Self> {
         match geometry_types {
             Some(strings) => {
-                let new_geometry_types = strings
-                    .iter()
-                    .map(|string| {
-                        GeometryTypeAndDimensions::from_str(string)
-                            .map_err(|e| DataFusionError::External(Box::new(e)))
-                    })
-                    .collect::<Result<HashSet<GeometryTypeAndDimensions>>>()?;
+                let mut new_geometry_types = GeometryTypeAndDimensionsSet::new();
+                for string in strings {
+                    let type_and_dim = GeometryTypeAndDimensions::from_str(string)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    new_geometry_types.insert_or_ignore(&type_and_dim);
+                }
 
                 Ok(Self {
                     geometry_types: Some(new_geometry_types),
@@ -442,7 +432,10 @@ mod test {
         // Test with_bbox
         let stats = GeoStatistics::empty().with_bbox(Some(bbox.clone()));
         assert_eq!(stats.bbox(), Some(&bbox));
-        assert_eq!(stats.geometry_types(), Some(HashSet::new()).as_ref());
+        assert_eq!(
+            stats.geometry_types(),
+            Some(&GeometryTypeAndDimensionsSet::new())
+        );
 
         let regular_stats = stats.to_column_statistics().unwrap();
         assert_eq!(
@@ -459,15 +452,17 @@ mod test {
 
     #[test]
     fn specified_geometry_types() {
-        let type_array = [GeometryTypeAndDimensions::new(
-            GeometryTypeId::Polygon,
-            Dimensions::Xy,
-        )];
+        let mut types = GeometryTypeAndDimensionsSet::new();
+        types
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Polygon,
+                Dimensions::Xy,
+            ))
+            .unwrap();
 
         // Test with_geometry_types
-        let stats = GeoStatistics::empty().with_geometry_types(Some(&type_array));
-        let expected_set: HashSet<GeometryTypeAndDimensions> = type_array.iter().cloned().collect();
-        assert_eq!(stats.geometry_types(), Some(&expected_set));
+        let stats = GeoStatistics::empty().with_geometry_types(Some(types.clone()));
+        assert_eq!(stats.geometry_types(), Some(&types));
         assert_eq!(
             stats.bbox(),
             Some(&BoundingBox::xy(Interval::empty(), Interval::empty()))
@@ -493,15 +488,19 @@ mod test {
             .try_with_str_geometry_types(Some(&["polygon", "point"]))
             .unwrap();
 
-        let mut expected_types = HashSet::new();
-        expected_types.insert(GeometryTypeAndDimensions::new(
-            GeometryTypeId::Polygon,
-            Dimensions::Xy,
-        ));
-        expected_types.insert(GeometryTypeAndDimensions::new(
-            GeometryTypeId::Point,
-            Dimensions::Xy,
-        ));
+        let mut expected_types = GeometryTypeAndDimensionsSet::new();
+        expected_types
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Polygon,
+                Dimensions::Xy,
+            ))
+            .unwrap();
+        expected_types
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Point,
+                Dimensions::Xy,
+            ))
+            .unwrap();
 
         assert_eq!(stats.geometry_types(), Some(&expected_types));
         assert_eq!(

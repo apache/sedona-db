@@ -18,37 +18,34 @@ use std::vec;
 
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
-use sedona_schema::{
-    datatypes::{Edges, SedonaType},
-    matchers::ArgMatcher,
-};
+use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
-/// ST_Intersection_Aggr() aggregate UDF implementation
+/// ST_Polygonize_Agg() aggregate UDF implementation
 ///
-/// An implementation of intersection calculation.
-pub fn st_intersection_aggr_udf() -> SedonaAggregateUDF {
+/// Creates polygons from a set of linework that forms closed rings.
+pub fn st_polygonize_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new_stub(
-        "st_intersection_aggr",
-        ArgMatcher::new(
-            vec![ArgMatcher::is_geometry_or_geography()],
-            SedonaType::Wkb(Edges::Planar, None),
-        ),
+        "st_polygonize_agg",
+        ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        Some(st_intersection_aggr_doc()),
+        Some(st_polygonize_agg_doc()),
     )
 }
 
-fn st_intersection_aggr_doc() -> Documentation {
+fn st_polygonize_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Return the polygon intersection of all polygons in geom.",
-        "ST_Intersection_Aggr (A: Geometry, B: Geometry)",
+        "Creates a GeometryCollection containing polygons formed from the linework of a set of geometries. \
+         Returns an empty GeometryCollection if no polygons can be formed.",
+        "ST_Polygonize_Agg (geom: Geometry)",
     )
-    .with_argument("geom", "geometry: Input geometry or geography")
+    .with_argument("geom", "geometry: Input geometry (typically linestrings that form closed rings)")
     .with_sql_example(
-        "
-            SELECT ST_Intersection_Aggr(ST_GeomFromText('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
-                   ST_GeomFromText('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))')",
+        "SELECT ST_AsText(ST_Polygonize_Agg(geom)) FROM (VALUES \
+         (ST_GeomFromText('LINESTRING (0 0, 10 0)')), \
+         (ST_GeomFromText('LINESTRING (10 0, 10 10)')), \
+         (ST_GeomFromText('LINESTRING (10 10, 0 0)'))  \
+         ) AS t(geom)"
     )
     .build()
 }
@@ -61,8 +58,8 @@ mod test {
 
     #[test]
     fn udf_metadata() {
-        let udf: AggregateUDF = st_intersection_aggr_udf().into();
-        assert_eq!(udf.name(), "st_intersection_aggr");
+        let udf: AggregateUDF = st_polygonize_agg_udf().into();
+        assert_eq!(udf.name(), "st_polygonize_agg");
         assert!(udf.documentation().is_some());
     }
 }

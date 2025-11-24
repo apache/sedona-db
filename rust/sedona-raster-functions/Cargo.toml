@@ -33,8 +33,16 @@ arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-raster = { path = "../sedona-raster" }
-sedona-schema = { path = "../sedona-schema" }
-sedona-testing = { path = "../sedona-testing" }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-raster = { workspace = true }
+sedona-schema = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
+rstest = { workspace = true }
+
+[[bench]]
+harness = false
+name = "native-raster-functions"

@@ -56,11 +56,11 @@ geo-traits = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
 parquet = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-functions = { path = "../sedona-functions" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }

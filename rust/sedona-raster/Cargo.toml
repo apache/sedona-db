@@ -31,8 +31,8 @@ result_large_err = "allow"
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-schema = { workspace = true }
 
 [dev-dependencies]
 sedona-testing = { path = "../sedona-testing" }

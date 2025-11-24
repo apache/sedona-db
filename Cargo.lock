@@ -53,7 +53,8 @@ dependencies = [
 [[package]]
 name = "adbc_core"
 version = "0.21.0"
-source = "git+https://github.com/apache/arrow-adbc.git#d57cc5013f9e6a38f97c77c05149d9ee5669d46a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a38cdcc3e43dc645038c2b6339dd98610c48ae593cc67839452e6670fa09f27"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -62,7 +63,8 @@ dependencies = [
 [[package]]
 name = "adbc_ffi"
 version = "0.21.0"
-source = "git+https://github.com/apache/arrow-adbc.git#d57cc5013f9e6a38f97c77c05149d9ee5669d46a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d36274376fdc4849cf47a78f3baeef4ae1654ef703dc3148d91adde3336c11"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -2679,14 +2681,14 @@ dependencies = [
 
 [[package]]
 name = "geo-index"
-version = "0.3.1"
-source = "git+https://github.com/wherobots/geo-index.git?branch=main#3213c162b1dfdac9effdef3083afc17261c9f6fc"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27fb4e4ffdde62f8aa7a4165b30f6fe8e8337d35b657ebf86c98d884ee7c750"
 dependencies = [
  "bytemuck",
  "float_next_after",
  "geo",
  "geo-traits",
- "geo-types",
  "num-traits",
  "thiserror 1.0.69",
  "tinyvec",
@@ -4840,6 +4842,7 @@ dependencies = [
  "sedona-geoparquet",
  "sedona-geos",
  "sedona-proj",
+ "sedona-raster-functions",
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
@@ -4922,7 +4925,6 @@ dependencies = [
 name = "sedona-expr"
 version = "0.2.0"
 dependencies = [
- "arrow-array",
  "arrow-schema",
  "datafusion-common",
  "datafusion-expr",
@@ -5110,6 +5112,7 @@ dependencies = [
  "geos",
  "rstest",
  "sedona",
+ "sedona-common",
  "sedona-expr",
  "sedona-functions",
  "sedona-geometry",
@@ -5162,8 +5165,10 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
+ "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "rstest",
  "sedona-common",
  "sedona-expr",
  "sedona-raster",
@@ -5257,6 +5262,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "fastrand",
  "geo",
  "geo-traits",
  "geo-types",
@@ -6525,8 +6531,9 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wkb"
-version = "0.9.1"
-source = "git+https://github.com/georust/wkb.git?rev=130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a#130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a120b336c7ad17749026d50427c23d838ecb50cd64aaea6254b5030152f890a9"
 dependencies = [
  "byteorder",
  "geo-traits",

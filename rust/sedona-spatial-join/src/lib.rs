@@ -14,16 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod concurrent_reservation;
+
+mod build_index;
+mod evaluated_batch;
 pub mod exec;
-pub mod index;
-pub mod init_once_array;
-pub mod once_fut;
+mod index;
 pub mod operand_evaluator;
 pub mod optimizer;
 pub mod refine;
 pub mod spatial_predicate;
-pub mod stream;
+mod stream;
 pub mod utils;
 
 pub use exec::SpatialJoinExec;

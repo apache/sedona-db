@@ -54,7 +54,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     ///
     /// This handles the common pattern of:
     /// 1. Downcasting array to StructArray
-    /// 2. Creating raster iterator
+    /// 2. Creating raster array
     /// 3. Iterating with null checks
     /// 4. Calling the provided function with each raster
     pub fn execute_raster_void<F>(&self, mut func: F) -> Result<()>
@@ -64,38 +64,46 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
         if self.arg_types[0] != RASTER {
             return sedona_internal_err!("First argument must be a raster type");
         }
-        let raster_array = match &self.args[0] {
-            ColumnarValue::Array(array) => array,
-            ColumnarValue::Scalar(_) => {
-                return Err(DataFusionError::NotImplemented(
-                    "Scalar raster input not yet supported".to_string(),
-                ));
+
+        match &self.args[0] {
+            ColumnarValue::Array(array) => {
+                // Downcast to StructArray (rasters are stored as structs)
+                let raster_struct =
+                    array
+                        .as_any()
+                        .downcast_ref::<StructArray>()
+                        .ok_or_else(|| {
+                            DataFusionError::Internal(
+                                "Expected StructArray for raster data".to_string(),
+                            )
+                        })?;
+
+                let raster_array = RasterStructArray::new(raster_struct);
+
+                // Iterate through each raster in the array
+                for i in 0..self.num_iterations {
+                    if raster_array.is_null(i) {
+                        func(i, None)?;
+                        continue;
+                    }
+                    let raster = raster_array.get(i)?;
+                    func(i, Some(raster))?;
+                }
+
+                Ok(())
             }
-        };
-
-        // Downcast to StructArray (rasters are stored as structs)
-        let raster_struct = raster_array
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .ok_or_else(|| {
-                DataFusionError::Internal("Expected StructArray for raster data".to_string())
-            })?;
-
-        // Create raster iterator
-        let raster_array = RasterStructArray::new(raster_struct);
-
-        // Iterate through each raster in the array
-        for i in 0..self.num_iterations {
-            if raster_array.is_null(i) {
-                func(i, None)?;
-                continue;
-            }
-            let raster = raster_array.get(i)?;
-
-            func(i, Some(raster))?;
+            ColumnarValue::Scalar(scalar_value) => match scalar_value {
+                ScalarValue::Struct(arc_struct) => {
+                    let raster_array = RasterStructArray::new(arc_struct.as_ref());
+                    let raster = raster_array.get(0)?;
+                    func(0, Some(raster))
+                }
+                ScalarValue::Null => func(0, None),
+                _ => Err(DataFusionError::Internal(
+                    "Expected Struct scalar for raster".to_string(),
+                )),
+            },
         }
-
-        Ok(())
     }
 
     /// Finish an [ArrayRef] output as the appropriate [ColumnarValue]
@@ -113,7 +121,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
         }
 
-        // For all scalar arguments, we return a scalar
+        // All arguments are scalars, return a scalar
         Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(&out, 0)?))
     }
 
@@ -122,7 +130,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     fn calc_num_iterations(args: &[ColumnarValue]) -> usize {
         for arg in args {
             match arg {
-                // If any argument is an array, we have to iterate array.len() times
+                // If any argument is an array, iterate array.len() times
                 ColumnarValue::Array(array) => {
                     return array.len();
                 }
@@ -130,7 +138,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
         }
 
-        // All scalars: we iterate once
+        // All arguments are scalars, iterate once
         1
     }
 }
@@ -183,5 +191,79 @@ mod tests {
         assert_eq!(width_array.value(0), 1);
         assert!(width_array.is_null(1));
         assert_eq!(width_array.value(2), 3);
+    }
+
+    #[test]
+    fn test_raster_executor_scalar_input() {
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_struct.clone()));
+
+        let args = [ColumnarValue::Scalar(scalar_raster)];
+        let arg_types = vec![RASTER];
+
+        let executor = RasterExecutor::new(&arg_types, &args);
+        assert_eq!(executor.num_iterations(), 1);
+
+        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        executor
+            .execute_raster_void(|_i, raster_opt| {
+                match raster_opt {
+                    None => builder.append_null(),
+                    Some(raster) => {
+                        let width = raster.metadata().width();
+                        builder.append_value(width);
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let result = executor.finish(Arc::new(builder.finish())).unwrap();
+
+        // With scalar input, result should be a scalar
+        let width_scalar = match &result {
+            ColumnarValue::Scalar(scalar) => scalar,
+            ColumnarValue::Array(_) => panic!("Expected scalar, got array"),
+        };
+
+        match width_scalar {
+            ScalarValue::UInt64(Some(width)) => assert_eq!(*width, 1),
+            _ => panic!("Expected UInt64 scalar"),
+        }
+    }
+
+    #[test]
+    fn test_raster_executor_null_scalar() {
+        // Test with a null scalar
+        let args = [ColumnarValue::Scalar(ScalarValue::Null)];
+        let arg_types = vec![RASTER];
+
+        let executor = RasterExecutor::new(&arg_types, &args);
+        assert_eq!(executor.num_iterations(), 1);
+
+        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        executor
+            .execute_raster_void(|_i, raster_opt| {
+                match raster_opt {
+                    None => builder.append_null(),
+                    Some(raster) => {
+                        let width = raster.metadata().width();
+                        builder.append_value(width);
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let result = executor.finish(Arc::new(builder.finish())).unwrap();
+
+        // With null scalar input, result should be null scalar
+        let width_scalar = match &result {
+            ColumnarValue::Scalar(scalar) => scalar,
+            ColumnarValue::Array(_) => panic!("Expected scalar, got array"),
+        };
+
+        assert_eq!(width_scalar, &ScalarValue::UInt64(None));
     }
 }

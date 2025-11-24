@@ -73,34 +73,42 @@ struct MetadataRefImpl<'a> {
 }
 
 impl<'a> MetadataRef for MetadataRefImpl<'a> {
+    #[inline(always)]
     fn width(&self) -> u64 {
         self.width_array.value(self.index)
     }
 
+    #[inline(always)]
     fn height(&self) -> u64 {
         self.height_array.value(self.index)
     }
 
+    #[inline(always)]
     fn upper_left_x(&self) -> f64 {
         self.upper_left_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn upper_left_y(&self) -> f64 {
         self.upper_left_y_array.value(self.index)
     }
 
+    #[inline(always)]
     fn scale_x(&self) -> f64 {
         self.scale_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn scale_y(&self) -> f64 {
         self.scale_y_array.value(self.index)
     }
 
+    #[inline(always)]
     fn skew_x(&self) -> f64 {
         self.skew_x_array.value(self.index)
     }
 
+    #[inline(always)]
     fn skew_y(&self) -> f64 {
         self.skew_y_array.value(self.index)
     }
@@ -327,109 +335,47 @@ pub struct RasterRefImpl<'a> {
 }
 
 impl<'a> RasterRefImpl<'a> {
-    /// Create a new RasterRefImpl from a struct array and index using hard-coded indices
-    pub fn new(raster_struct: &'a StructArray, raster_index: usize) -> Self {
-        let metadata_struct = raster_struct
-            .column(raster_indices::METADATA)
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-
-        let crs = raster_struct
-            .column(raster_indices::CRS)
-            .as_any()
-            .downcast_ref::<StringViewArray>()
-            .unwrap();
-
-        let bands_list = raster_struct
-            .column(raster_indices::BANDS)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-
+    /// Creates a new RasterRefImpl that provides zero-copy access to the raster at the specified index.
+    ///
+    /// # Arguments
+    /// * `raster_struct_array` - The Arrow StructArray containing raster data
+    /// * `raster_index` - The zero-based index of the raster to access
+    #[inline(always)]
+    pub fn new(raster_struct_array: &RasterStructArray<'a>, raster_index: usize) -> Self {
         let metadata = MetadataRefImpl {
-            width_array: metadata_struct
-                .column(metadata_indices::WIDTH)
-                .as_any()
-                .downcast_ref::<UInt64Array>()
-                .unwrap(),
-            height_array: metadata_struct
-                .column(metadata_indices::HEIGHT)
-                .as_any()
-                .downcast_ref::<UInt64Array>()
-                .unwrap(),
-            upper_left_x_array: metadata_struct
-                .column(metadata_indices::UPPERLEFT_X)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
-            upper_left_y_array: metadata_struct
-                .column(metadata_indices::UPPERLEFT_Y)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
-            scale_x_array: metadata_struct
-                .column(metadata_indices::SCALE_X)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
-            scale_y_array: metadata_struct
-                .column(metadata_indices::SCALE_Y)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
-            skew_x_array: metadata_struct
-                .column(metadata_indices::SKEW_X)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
-            skew_y_array: metadata_struct
-                .column(metadata_indices::SKEW_Y)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap(),
+            width_array: raster_struct_array.width_array,
+            height_array: raster_struct_array.height_array,
+            upper_left_x_array: raster_struct_array.upper_left_x_array,
+            upper_left_y_array: raster_struct_array.upper_left_y_array,
+            scale_x_array: raster_struct_array.scale_x_array,
+            scale_y_array: raster_struct_array.scale_y_array,
+            skew_x_array: raster_struct_array.skew_x_array,
+            skew_y_array: raster_struct_array.skew_y_array,
             index: raster_index,
         };
 
-        // Extract the band structs for direct access
-        let bands_struct = bands_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-
-        let band_metadata_struct = bands_struct
-            .column(band_indices::METADATA)
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-
-        let band_data_array = bands_struct
-            .column(band_indices::DATA)
-            .as_any()
-            .downcast_ref::<BinaryViewArray>()
-            .unwrap();
-
         let bands = BandsRefImpl {
-            bands_list,
+            bands_list: raster_struct_array.bands_list,
             raster_index,
-            band_metadata_struct,
-            band_data_array,
+            band_metadata_struct: raster_struct_array.band_metadata_struct,
+            band_data_array: raster_struct_array.band_data_array,
         };
 
         Self {
             metadata,
-            crs,
+            crs: raster_struct_array.crs,
             bands,
         }
     }
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
+    #[inline(always)]
     fn metadata(&self) -> &dyn MetadataRef {
         &self.metadata
     }
 
+    #[inline(always)]
     fn crs(&self) -> Option<&str> {
         if self.crs.is_null(self.bands.raster_index) {
             None
@@ -438,6 +384,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         }
     }
 
+    #[inline(always)]
     fn bands(&self) -> &dyn BandsRef {
         &self.bands
     }
@@ -448,25 +395,130 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
 /// This provides efficient, zero-copy access to raster data stored in Arrow format.
 pub struct RasterStructArray<'a> {
     raster_array: &'a StructArray,
+    width_array: &'a UInt64Array,
+    height_array: &'a UInt64Array,
+    upper_left_x_array: &'a Float64Array,
+    upper_left_y_array: &'a Float64Array,
+    scale_x_array: &'a Float64Array,
+    scale_y_array: &'a Float64Array,
+    skew_x_array: &'a Float64Array,
+    skew_y_array: &'a Float64Array,
+    crs: &'a StringViewArray,
+    bands_list: &'a ListArray,
+    band_metadata_struct: &'a StructArray,
+    band_data_array: &'a BinaryViewArray,
 }
 
 impl<'a> RasterStructArray<'a> {
     /// Create a new RasterStructArray from an existing StructArray
+    #[inline]
     pub fn new(raster_array: &'a StructArray) -> Self {
-        Self { raster_array }
+        let crs = raster_array
+            .column(raster_indices::CRS)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+
+        // Extract the metadata arrays for direct access
+        let metadata_struct = raster_array
+            .column(raster_indices::METADATA)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let width_array = metadata_struct
+            .column(metadata_indices::WIDTH)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let height_array = metadata_struct
+            .column(metadata_indices::HEIGHT)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let upper_left_x_array = metadata_struct
+            .column(metadata_indices::UPPERLEFT_X)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let upper_left_y_array = metadata_struct
+            .column(metadata_indices::UPPERLEFT_Y)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let scale_x_array = metadata_struct
+            .column(metadata_indices::SCALE_X)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let scale_y_array = metadata_struct
+            .column(metadata_indices::SCALE_Y)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let skew_x_array = metadata_struct
+            .column(metadata_indices::SKEW_X)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let skew_y_array = metadata_struct
+            .column(metadata_indices::SKEW_Y)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        // Extract the band arrays for direct access
+        let bands_list = raster_array
+            .column(raster_indices::BANDS)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let bands_struct = bands_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let band_metadata_struct = bands_struct
+            .column(band_indices::METADATA)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let band_data_array = bands_struct
+            .column(band_indices::DATA)
+            .as_any()
+            .downcast_ref::<BinaryViewArray>()
+            .unwrap();
+
+        Self {
+            raster_array,
+            width_array,
+            height_array,
+            upper_left_x_array,
+            upper_left_y_array,
+            scale_x_array,
+            scale_y_array,
+            skew_x_array,
+            skew_y_array,
+            crs,
+            bands_list,
+            band_metadata_struct,
+            band_data_array,
+        }
     }
 
     /// Get the total number of rasters in the array
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.raster_array.len()
     }
 
     /// Check if the array is empty
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.raster_array.is_empty()
     }
 
     /// Get a specific raster by index without consuming the iterator
+    #[inline(always)]
     pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
@@ -475,9 +527,10 @@ impl<'a> RasterStructArray<'a> {
             )));
         }
 
-        Ok(RasterRefImpl::new(self.raster_array, index))
+        Ok(RasterRefImpl::new(self, index))
     }
 
+    #[inline(always)]
     pub fn is_null(&self, index: usize) -> bool {
         self.raster_array.is_null(index)
     }
