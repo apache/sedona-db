@@ -1,5 +1,3 @@
-use std::{fmt::Debug, sync::Arc};
-
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -23,6 +21,7 @@ use datafusion_expr::{
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
+use std::{fmt::Debug, sync::Arc};
 
 /// SD_Order() scalar UDF implementation
 ///
