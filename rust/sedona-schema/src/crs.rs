@@ -111,7 +111,7 @@ pub trait CoordinateReferenceSystem: Debug {
     ///
     /// CRS equality is a relatively thorny topic and can be difficult to compute;
     /// however, this method should try to compare self and other on value (e.g.,
-    /// comparign authority_code where possible).
+    /// comparing authority_code where possible).
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
 
     /// Reduce this beautiful, rich CRS representation to a mere integer if possible
