@@ -147,6 +147,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    benchmark::scalar(c, &f, "native", "st_reverse", Polygon(10));
+    benchmark::scalar(c, &f, "native", "st_reverse", MultiPoint(10));
+
     benchmark::scalar(
         c,
         &f,
