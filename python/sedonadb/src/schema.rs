@@ -22,6 +22,7 @@ use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona_schema::datatypes::SedonaType;
+use sedona_schema::schema::SedonaSchema;
 
 use crate::error::PySedonaError;
 
@@ -59,6 +60,20 @@ impl PySedonaSchema {
 
 #[pymethods]
 impl PySedonaSchema {
+    #[getter]
+    fn names(&self) -> Vec<String> {
+        self.inner
+            .fields()
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect()
+    }
+
+    #[getter]
+    fn geometry_column_indices(&self) -> Result<Vec<usize>, PySedonaError> {
+        Ok(self.inner.geometry_column_indices()?)
+    }
+
     fn field<'py>(
         &self,
         py: Python<'py>,

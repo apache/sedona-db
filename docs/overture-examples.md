@@ -21,7 +21,7 @@
 
 > Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "apache-sedona[db]"`
 
-This notebook demonstrates how to query and analyze the [Overture Maps](https://overturemaps.org/) dataset using SedonaDB.
+This notebook demonstrates how to query and analyze the [Overture Maps](https://overturemaps.org/) dataset using SedonaDB.  See [this page](https://docs.overturemaps.org/release-calendar/) to get the latest version of the Overture data.
 
 The notebook explains how to:
 
@@ -33,6 +33,40 @@ The notebook explains how to:
 ```python
 %pip install lonboard
 ```
+
+    Requirement already satisfied: lonboard in /opt/miniconda3/lib/python3.12/site-packages (0.12.1)
+    Requirement already satisfied: anywidget~=0.9.0 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (0.9.18)
+    Requirement already satisfied: arro3-compute>=0.4.1 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (0.6.3)
+    Requirement already satisfied: arro3-core>=0.4.1 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (0.6.3)
+    Requirement already satisfied: arro3-io>=0.4.1 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (0.6.3)
+    Requirement already satisfied: geoarrow-rust-core>=0.5.2 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (0.5.2)
+    Requirement already satisfied: ipywidgets>=7.6.0 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (8.1.7)
+    Requirement already satisfied: numpy>=1.14 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (2.3.3)
+    Requirement already satisfied: pyproj>=3.3 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (3.7.2)
+    Requirement already satisfied: traitlets>=5.7.1 in /opt/miniconda3/lib/python3.12/site-packages (from lonboard) (5.14.3)
+    Requirement already satisfied: psygnal>=0.8.1 in /opt/miniconda3/lib/python3.12/site-packages (from anywidget~=0.9.0->lonboard) (0.14.1)
+    Requirement already satisfied: typing-extensions>=4.2.0 in /opt/miniconda3/lib/python3.12/site-packages (from anywidget~=0.9.0->lonboard) (4.15.0)
+    Requirement already satisfied: comm>=0.1.3 in /opt/miniconda3/lib/python3.12/site-packages (from ipywidgets>=7.6.0->lonboard) (0.2.3)
+    Requirement already satisfied: ipython>=6.1.0 in /opt/miniconda3/lib/python3.12/site-packages (from ipywidgets>=7.6.0->lonboard) (9.5.0)
+    Requirement already satisfied: widgetsnbextension~=4.0.14 in /opt/miniconda3/lib/python3.12/site-packages (from ipywidgets>=7.6.0->lonboard) (4.0.14)
+    Requirement already satisfied: jupyterlab_widgets~=3.0.15 in /opt/miniconda3/lib/python3.12/site-packages (from ipywidgets>=7.6.0->lonboard) (3.0.15)
+    Requirement already satisfied: certifi in /opt/miniconda3/lib/python3.12/site-packages (from pyproj>=3.3->lonboard) (2025.8.3)
+    Requirement already satisfied: decorator in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (5.2.1)
+    Requirement already satisfied: ipython-pygments-lexers in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (1.1.1)
+    Requirement already satisfied: jedi>=0.16 in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.19.2)
+    Requirement already satisfied: matplotlib-inline in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.1.7)
+    Requirement already satisfied: pexpect>4.3 in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (4.9.0)
+    Requirement already satisfied: prompt_toolkit<3.1.0,>=3.0.41 in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (3.0.52)
+    Requirement already satisfied: pygments>=2.4.0 in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (2.19.2)
+    Requirement already satisfied: stack_data in /opt/miniconda3/lib/python3.12/site-packages (from ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.6.3)
+    Requirement already satisfied: parso<0.9.0,>=0.8.4 in /opt/miniconda3/lib/python3.12/site-packages (from jedi>=0.16->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.8.5)
+    Requirement already satisfied: ptyprocess>=0.5 in /opt/miniconda3/lib/python3.12/site-packages (from pexpect>4.3->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.7.0)
+    Requirement already satisfied: wcwidth in /opt/miniconda3/lib/python3.12/site-packages (from prompt_toolkit<3.1.0,>=3.0.41->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.2.14)
+    Requirement already satisfied: executing>=1.2.0 in /opt/miniconda3/lib/python3.12/site-packages (from stack_data->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (2.2.1)
+    Requirement already satisfied: asttokens>=2.1.0 in /opt/miniconda3/lib/python3.12/site-packages (from stack_data->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (3.0.0)
+    Requirement already satisfied: pure-eval in /opt/miniconda3/lib/python3.12/site-packages (from stack_data->ipython>=6.1.0->ipywidgets>=7.6.0->lonboard) (0.2.3)
+    Note: you may need to restart the kernel to use updated packages.
+
 
 
 ```python
@@ -50,7 +84,7 @@ sd = sedona.db.connect()
 
 ```python
 df = sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2025-08-20.0/theme=buildings/type=building/"
+    "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=buildings/type=building/"
 )
 ```
 
@@ -63,25 +97,25 @@ df.limit(10).show()
     │                  id                  ┆                 geometry                ┆ … ┆ roof_height │
     │                 utf8                 ┆                 geometry                ┆   ┆   float64   │
     ╞══════════════════════════════════════╪═════════════════════════════════════════╪═══╪═════════════╡
-    │ afc55d29-5916-42ad-8f9c-76ba9d749be9 ┆ POLYGON((-74.5920939 4.893956,-74.5920… ┆ … ┆             │
+    │ 85b47da4-1b8d-4132-ac6c-d8dc14fab4b8 ┆ POLYGON((-6.4292972 54.8290034,-6.4291… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 9c7ece54-88ff-48d4-8b48-11959fb058a1 ┆ POLYGON((-74.5906253 4.8896057,-74.590… ┆ … ┆             │
+    │ ec12e345-d44d-4e40-8e08-e1e6e68d4d17 ┆ POLYGON((-6.430836 54.8299412,-6.43095… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 24fde8c7-6771-4205-b9da-2599d825f85f ┆ POLYGON((-74.5905666 4.8896679,-74.590… ┆ … ┆             │
+    │ 285f9ff9-2d6d-409c-b214-74992c8d7e7d ┆ POLYGON((-6.4311579 54.8300247,-6.4313… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 79bdbb6f-5a9f-4b35-8e30-eb9019a6a1d7 ┆ POLYGON((-74.5905272 4.8896867,-74.590… ┆ … ┆             │
+    │ abedfc7c-e5fd-4a29-931e-da77b610d02d ┆ POLYGON((-6.4321833 54.8294427,-6.4322… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 45ca1264-1062-41de-9375-82d93d93ee31 ┆ POLYGON((-74.590441 4.8897205,-74.5904… ┆ … ┆             │
+    │ a203a2c6-e130-4979-a7d5-8a059c6f31fd ┆ POLYGON((-6.4300627 54.829276,-6.43006… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ b22e0827-bc09-439f-85cf-5401db561a23 ┆ POLYGON((-74.5903646 4.889949,-74.5903… ┆ … ┆             │
+    │ 1d14caf6-b12d-486e-87dd-feef82fba9a7 ┆ POLYGON((-6.4301786 54.8281533,-6.4299… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 754bf2dd-81a3-498f-910d-b2b2cc18e1a2 ┆ POLYGON((-74.589949 4.8891923,-74.5899… ┆ … ┆             │
+    │ 4b1e67cf-7355-439b-9a31-46a50f3ee227 ┆ POLYGON((-6.4298614 54.8278977,-6.4299… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 77464ae4-77d9-45ac-ac28-e6f972de9363 ┆ POLYGON((-74.5898331 4.889214,-74.5897… ┆ … ┆             │
+    │ 06de994e-efd4-4a1c-8a20-b4e883904cb2 ┆ POLYGON((-6.4296383 54.827599,-6.42956… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 0f02d3f6-bbec-4cc0-89e5-65c3c4676cf1 ┆ POLYGON((-74.5899092 4.8892714,-74.589… ┆ … ┆             │
+    │ ea0b2ea6-7c52-4395-9baa-bc023c7d3166 ┆ POLYGON((-6.4296844 54.8277379,-6.4296… ┆ … ┆             │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 696976a2-ff13-4b89-9953-8fd74b400828 ┆ POLYGON((-74.5902424 4.889916,-74.5902… ┆ … ┆             │
+    │ 49f022ef-5574-4613-ae54-af139666fde3 ┆ POLYGON((-6.4296843 54.8278169,-6.4296… ┆ … ┆             │
     └──────────────────────────────────────┴─────────────────────────────────────────┴───┴─────────────┘
 
 
@@ -105,7 +139,7 @@ FROM
     │  count(*)  │
     │    int64   │
     ╞════════════╡
-    │ 2539170484 │
+    │ 2541497985 │
     └────────────┘
 
 
@@ -123,7 +157,7 @@ df.schema
       geometry: geometry<WkbView(ogc:crs84)>
       bbox: struct<Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)>
       version: int32<Int32>
-      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
+      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "license", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
       level: int32<Int32>
       subtype: utf8<Utf8View>
       class: utf8<Utf8View>
@@ -178,15 +212,15 @@ LIMIT 5;
     │            id           ┆       height       ┆ num_floors ┆ roof_shape ┆         centroid        │
     │           utf8          ┆       float64      ┆    int32   ┆    utf8    ┆         geometry        │
     ╞═════════════════════════╪════════════════════╪════════════╪════════════╪═════════════════════════╡
-    │ 1b9040c2-2e79-4f56-aba… ┆               22.4 ┆            ┆            ┆ POINT(-74.230407502993… │
+    │ aa8e3a73-c72c-4f1a-b6e… ┆  20.38205909729004 ┆            ┆            ┆ POINT(-74.187673580307… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 1b5e1cd2-d697-489e-892… ┆               21.5 ┆            ┆            ┆ POINT(-74.231451103592… │
+    │ efe7616b-7f7e-464c-9ce… ┆  26.18361473083496 ┆            ┆            ┆ POINT(-74.189040982134… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ c1afdf78-bf84-4b8f-ae1… ┆               20.9 ┆            ┆            ┆ POINT(-74.232593032240… │
+    │ b3f734a1-325b-4e8c-b1d… ┆ 27.025876998901367 ┆            ┆            ┆ POINT(-74.2558161 40.8… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 88f36399-b09f-491b-bb6… ┆               24.5 ┆            ┆            ┆ POINT(-74.231878209597… │
+    │ 45d88655-e2f4-4a08-926… ┆ 25.485210418701172 ┆            ┆            ┆ POINT(-74.182252194444… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ df37a283-f5bd-4822-a05… ┆ 24.154542922973633 ┆            ┆            ┆ POINT(-74.241910239840… │
+    │ 31e8353c-7d5b-4b20-94e… ┆ 21.294815063476562 ┆            ┆            ┆ POINT(-74.197113787905… │
     └─────────────────────────┴────────────────────┴────────────┴────────────┴─────────────────────────┘
 
 
@@ -195,7 +229,7 @@ LIMIT 5;
 
 ```python
 df = sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2025-08-20.0/theme=divisions/type=division_area/"
+    "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=divisions/type=division_area/"
 )
 ```
 
@@ -209,25 +243,25 @@ df.show(10)
     │        id       ┆    geometry    ┆      bbox      ┆ … ┆ is_territorial ┆ region ┆   division_id  │
     │       utf8      ┆    geometry    ┆     struct     ┆   ┆     boolean    ┆  utf8  ┆      utf8      │
     ╞═════════════════╪════════════════╪════════════════╪═══╪════════════════╪════════╪════════════════╡
-    │ ae415364-9d06-… ┆ MULTIPOLYGON(… ┆ {xmin: 29.525… ┆ … ┆ true           ┆ BY-MA  ┆ 7665e731-6552… │
+    │ 3665c36d-d3a9-… ┆ POLYGON((12.5… ┆ {xmin: 12.455… ┆ … ┆ true           ┆ IT-34  ┆ f05aa29f-151f… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ d712e9e1-84c6-… ┆ POLYGON((29.5… ┆ {xmin: 29.577… ┆ … ┆ true           ┆ BY-MA  ┆ 4605a8a3-c576… │
+    │ 18a69439-a1da-… ┆ POLYGON((12.5… ┆ {xmin: 12.596… ┆ … ┆ true           ┆ IT-36  ┆ ae00d58c-6e67… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ bee9663a-af50-… ┆ POLYGON((29.5… ┆ {xmin: 29.587… ┆ … ┆ true           ┆ BY-MA  ┆ 826a2333-7584… │
+    │ 7d0f6d37-bb55-… ┆ POLYGON((12.6… ┆ {xmin: 12.567… ┆ … ┆ true           ┆ IT-36  ┆ bdfc82ca-5f23… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ a083b661-eb7b-… ┆ POLYGON((29.4… ┆ {xmin: 29.326… ┆ … ┆ true           ┆ BY-MA  ┆ 17456e57-ebb6… │
+    │ 3f480ff6-6361-… ┆ POLYGON((12.5… ┆ {xmin: 12.549… ┆ … ┆ true           ┆ IT-36  ┆ 1c750104-4470… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 83ef05fa-43ad-… ┆ POLYGON((29.6… ┆ {xmin: 29.598… ┆ … ┆ true           ┆ BY-MA  ┆ a44666eb-c61d… │
+    │ 31c3ab5e-eb6f-… ┆ POLYGON((12.6… ┆ {xmin: 12.612… ┆ … ┆ true           ┆ IT-34  ┆ d90804ee-19a4… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 4d01e5b4-86f9-… ┆ POLYGON((29.5… ┆ {xmin: 29.531… ┆ … ┆ true           ┆ BY-MA  ┆ 77cdd054-ec26… │
+    │ 308517e6-64b4-… ┆ POLYGON((12.5… ┆ {xmin: 12.589… ┆ … ┆ true           ┆ IT-34  ┆ aabd71e9-4d98… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ c2a12db9-a1d0-… ┆ POLYGON((29.5… ┆ {xmin: 29.537… ┆ … ┆ true           ┆ BY-MA  ┆ 4faa3881-e9a8… │
+    │ 646e5b1f-b76a-… ┆ POLYGON((12.5… ┆ {xmin: 12.485… ┆ … ┆ true           ┆ IT-34  ┆ 502c1c4e-fc19… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 7c290d7b-3f7f-… ┆ POLYGON((29.6… ┆ {xmin: 29.607… ┆ … ┆ true           ┆ BY-MA  ┆ e5233235-d513… │
+    │ f2809a49-1082-… ┆ POLYGON((12.5… ┆ {xmin: 12.538… ┆ … ┆ true           ┆ IT-34  ┆ 8b446eed-00ad… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 579063f0-f751-… ┆ POLYGON((29.6… ┆ {xmin: 29.614… ┆ … ┆ true           ┆ BY-MA  ┆ 3f0c8f4e-c9c8… │
+    │ 72b27245-c7fd-… ┆ POLYGON((12.5… ┆ {xmin: 12.501… ┆ … ┆ true           ┆ IT-34  ┆ 1d535e1f-d19e… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ 675aab04-ed91-… ┆ POLYGON((29.6… ┆ {xmin: 29.616… ┆ … ┆ true           ┆ BY-MA  ┆ 02f5979e-7976… │
+    │ 815855d9-05d0-… ┆ POLYGON((12.4… ┆ {xmin: 12.371… ┆ … ┆ true           ┆ IT-34  ┆ 5aa91354-9e8c… │
     └─────────────────┴────────────────┴────────────────┴───┴────────────────┴────────┴────────────────┘
 
 
@@ -249,7 +283,7 @@ FROM division_area
     │ count(*) │
     │   int64  │
     ╞══════════╡
-    │  1035749 │
+    │  1052542 │
     └──────────┘
 
 
@@ -267,7 +301,7 @@ df.schema
       bbox: struct<Struct(xmin Float32, xmax Float32, ymin Float32, ymax Float32)>
       country: utf8<Utf8View>
       version: int32<Int32>
-      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
+      sources: list<List(Field { name: "element", data_type: Struct([Field { name: "property", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "dataset", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "license", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "record_id", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "update_time", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "confidence", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} })>
       subtype: utf8<Utf8View>
       class: utf8<Utf8View>
       names: struct<Struct(primary Utf8, common Map(Field { name: "key_value", data_type: Struct([Field { name: "key", data_type: Utf8, nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: false, dict_id: 0, dict_is_ordered: false, metadata: {} }, false), rules List(Field { name: "element", data_type: Struct([Field { name: "variant", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "language", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "perspectives", data_type: Struct([Field { name: "mode", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "countries", data_type: List(Field { name: "element", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "value", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "between", data_type: List(Field { name: "element", data_type: Float64, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }, Field { name: "side", data_type: Utf8, nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }]), nullable: true, dict_id: 0, dict_is_ordered: false, metadata: {} }))>
@@ -321,12 +355,12 @@ df.show(2)
     │ __unnest_placeholder(n ┆ __unnest_placeholder(n ┆ __unnest_placeholder(n ┆        geometry       │
     │ s_divisions.names).pr… ┆ s_divisions.names).co… ┆ s_divisions.names).ru… ┆        geometry       │
     ╞════════════════════════╪════════════════════════╪════════════════════════╪═══════════════════════╡
-    │ Seal Island            ┆                        ┆                        ┆ POLYGON((-66.0528452… │
+    │ Apple River            ┆                        ┆                        ┆ POLYGON((-64.7260681… │
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ Mud Island             ┆                        ┆                        ┆ POLYGON((-66.0222822… │
+    │ Allen Hill             ┆                        ┆                        ┆ POLYGON((-64.6956656… │
     └────────────────────────┴────────────────────────┴────────────────────────┴───────────────────────┘
-    CPU times: user 1.51 ms, sys: 1.69 ms, total: 3.2 ms
-    Wall time: 3.14 ms
+    CPU times: user 1.25 ms, sys: 805 μs, total: 2.05 ms
+    Wall time: 1.42 ms
 
 
 ## Visualize the results with lonboard

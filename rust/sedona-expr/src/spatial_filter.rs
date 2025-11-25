@@ -25,7 +25,11 @@ use datafusion_physical_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    bounds::wkb_bounds_xy,
+    interval::{Interval, IntervalTrait},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
@@ -41,7 +45,7 @@ use crate::{
 /// to attempt pruning unnecessary files or parts of files specifically with respect
 /// to a spatial filter (i.e., non-spatial filters we leave to an underlying
 /// implementation).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SpatialFilter {
     /// ST_Intersects(\<column\>, \<literal\>) or ST_Intersects(\<literal\>, \<column\>)
     Intersects(Column, BoundingBox),
@@ -60,6 +64,44 @@ pub enum SpatialFilter {
 }
 
 impl SpatialFilter {
+    /// Compute the maximum extent of a filter for a specific column index
+    ///
+    /// Some spatial file formats have the ability to push down a bounding box
+    /// into an index. This function allows deriving that bounding box based
+    /// on what DataFusion provides, which is a physical expression.
+    ///
+    /// Note that this always succeeds; however, for a non-spatial expression or
+    /// a non-spatial expression that is unsupported, the full bounding box is
+    /// returned.
+    pub fn filter_bbox(&self, column_index: usize) -> BoundingBox {
+        match self {
+            SpatialFilter::Intersects(column, bounding_box)
+            | SpatialFilter::Covers(column, bounding_box) => {
+                if column.index() == column_index {
+                    return bounding_box.clone();
+                }
+            }
+            SpatialFilter::And(lhs, rhs) => {
+                let lhs_box = lhs.filter_bbox(column_index);
+                let rhs_box = rhs.filter_bbox(column_index);
+                if let Ok(bounds) = lhs_box.intersection(&rhs_box) {
+                    return bounds;
+                }
+            }
+            SpatialFilter::Or(lhs, rhs) => {
+                let mut bounds = lhs.filter_bbox(column_index);
+                bounds.update_box(&rhs.filter_bbox(column_index));
+                return bounds;
+            }
+            SpatialFilter::LiteralFalse => {
+                return BoundingBox::xy(Interval::empty(), Interval::empty())
+            }
+            SpatialFilter::HasZ(_) | SpatialFilter::Unknown => {}
+        }
+
+        BoundingBox::xy(Interval::full(), Interval::full())
+    }
+
     /// Returns true if there is any chance the expression might be true
     ///
     /// In other words, returns false if and only if the expression is guaranteed
@@ -1102,5 +1144,55 @@ mod test {
         } else {
             panic!("Parse incorrect!")
         }
+    }
+
+    #[test]
+    fn bounding_box() {
+        let col_zero = Column::new("foofy", 0);
+        let bbox_02 = BoundingBox::xy((0, 2), (0, 2));
+        let bbox_13 = BoundingBox::xy((1, 3), (1, 3));
+
+        assert_eq!(
+            SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone()).filter_bbox(0),
+            bbox_02
+        );
+
+        assert_eq!(
+            SpatialFilter::Covers(col_zero.clone(), bbox_02.clone()).filter_bbox(0),
+            bbox_02
+        );
+
+        assert_eq!(
+            SpatialFilter::LiteralFalse.filter_bbox(0),
+            BoundingBox::xy(Interval::empty(), Interval::empty())
+        );
+        assert_eq!(
+            SpatialFilter::HasZ(col_zero.clone()).filter_bbox(0),
+            BoundingBox::xy(Interval::full(), Interval::full())
+        );
+        assert_eq!(
+            SpatialFilter::Unknown.filter_bbox(0),
+            BoundingBox::xy(Interval::full(), Interval::full())
+        );
+
+        let intersects_02 = SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone());
+        let intersects_13 = SpatialFilter::Intersects(col_zero.clone(), bbox_13.clone());
+        assert_eq!(
+            SpatialFilter::And(
+                Box::new(intersects_02.clone()),
+                Box::new(intersects_13.clone())
+            )
+            .filter_bbox(0),
+            BoundingBox::xy((1, 2), (1, 2))
+        );
+
+        assert_eq!(
+            SpatialFilter::Or(
+                Box::new(intersects_02.clone()),
+                Box::new(intersects_13.clone())
+            )
+            .filter_bbox(0),
+            BoundingBox::xy((0, 3), (0, 3))
+        );
     }
 }

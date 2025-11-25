@@ -35,6 +35,7 @@ mod st_makevalid;
 mod st_minimumclearance;
 mod st_minimumclearance_line;
 mod st_perimeter;
+mod st_polygonize;
 mod st_polygonize_agg;
 mod st_simplify;
 mod st_simplifypreservetopology;
