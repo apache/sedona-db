@@ -114,7 +114,7 @@ pub trait CoordinateReferenceSystem: Debug {
     /// comparing authority_code where possible).
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
 
-    /// Reduce this beautiful, rich CRS representation to a mere integer if possible
+    /// Convert this CRS representation to an integer SRID if possible.
     ///
     /// For the purposes of this trait, an SRID is always equivalent to the
     /// authority_code `"EPSG<srid>"`. Note that other SRID representations
