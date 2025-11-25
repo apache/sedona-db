@@ -97,17 +97,37 @@ impl PartialEq<dyn CoordinateReferenceSystem + Send + Sync>
 /// A trait defining the minimum required properties of a concrete coordinate
 /// reference system, allowing the details of this to be implemented elsewhere.
 pub trait CoordinateReferenceSystem: Debug {
+    /// Compute the representation of this Crs in the form required for JSON output
+    ///
+    /// The output must be valid JSON (e.g., arbitrary strings must be quoted).
     fn to_json(&self) -> String;
+
+    /// Compute the representation of this Crs as a string in the form Authority:Code
+    ///
+    /// If there is no such representation, returns None.
     fn to_authority_code(&self) -> Result<Option<String>>;
+
+    /// Compute CRS equality
+    ///
+    /// CRS equality is a relatively thorny topic and can be difficult to compute;
+    /// however, this method should try to compare self and other on value (e.g.,
+    /// comparign authority_code where possible).
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
+
+    /// Reduce this beautiful, rich CRS representation to a mere integer if possible
+    ///
+    /// For the purposes of this trait, an SRID is always equivalent to the
+    /// authority_code `"EPSG<srid>"`. Note that other SRID representations
+    /// (e.g., GeoArrow, Parquet GEOMETRY/GEOGRAPHY) do not make any guarantees
+    /// that an SRID comes from the EPSG authority.
     fn srid(&self) -> Result<Option<u32>>;
-    fn to_crs_string(&self) -> String {
-        if let Ok(Some(auth_code)) = self.to_authority_code() {
-            auth_code
-        } else {
-            self.to_json()
-        }
-    }
+
+    /// Compute a CRS string representation
+    ///
+    /// Unlike `to_json()`, arbitrary string values returned by this method should
+    /// not be escaped. This is the representation expected as input to PROJ, GDAL,
+    /// and Parquet GEOMETRY/GEOGRAPHY representations of CRS.
+    fn to_crs_string(&self) -> String;
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system
@@ -242,6 +262,10 @@ impl CoordinateReferenceSystem for AuthorityCode {
             Ok(None)
         }
     }
+
+    fn to_crs_string(&self) -> String {
+        format!("{}:{}", self.authority, self.code)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -320,6 +344,10 @@ impl CoordinateReferenceSystem for ProjJSON {
 
         Ok(None)
     }
+
+    fn to_crs_string(&self) -> String {
+        self.to_json()
+    }
 }
 
 pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"WGS 84 (CRS84)","datum_ensemble":{"name":"World Geodetic System 1984 ensemble","members":[{"name":"World Geodetic System 1984 (Transit)","id":{"authority":"EPSG","code":1166}},{"name":"World Geodetic System 1984 (G730)","id":{"authority":"EPSG","code":1152}},{"name":"World Geodetic System 1984 (G873)","id":{"authority":"EPSG","code":1153}},{"name":"World Geodetic System 1984 (G1150)","id":{"authority":"EPSG","code":1154}},{"name":"World Geodetic System 1984 (G1674)","id":{"authority":"EPSG","code":1155}},{"name":"World Geodetic System 1984 (G1762)","id":{"authority":"EPSG","code":1156}},{"name":"World Geodetic System 1984 (G2139)","id":{"authority":"EPSG","code":1309}},{"name":"World Geodetic System 1984 (G2296)","id":{"authority":"EPSG","code":1383}}],"ellipsoid":{"name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563},"accuracy":"2.0","id":{"authority":"EPSG","code":6326}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"},{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"}]},"scope":"Not known.","area":"World.","bbox":{"south_latitude":-90,"west_longitude":-180,"north_latitude":90,"east_longitude":180},"id":{"authority":"OGC","code":"CRS84"}}"#;
@@ -354,6 +382,7 @@ mod test {
         let projjson = OGC_CRS84_PROJJSON.parse::<ProjJSON>().unwrap();
         assert_eq!(projjson.to_authority_code().unwrap().unwrap(), "OGC:CRS84");
         assert_eq!(projjson.srid().unwrap(), Some(4326));
+        assert_eq!(projjson.to_json(), projjson.to_crs_string());
 
         let json_value: Value = serde_json::from_str(OGC_CRS84_PROJJSON).unwrap();
         let json_value_roundtrip: Value = serde_json::from_str(&projjson.to_json()).unwrap();
@@ -383,6 +412,7 @@ mod test {
         assert!(auth_code.crs_equals(&auth_code));
         assert!(!auth_code.crs_equals(LngLat::crs().unwrap().as_ref()));
         assert_eq!(auth_code.srid().unwrap(), Some(4269));
+        assert_eq!(auth_code.to_crs_string(), "EPSG:4269");
 
         assert_eq!(
             auth_code.to_authority_code().unwrap(),
