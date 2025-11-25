@@ -101,6 +101,13 @@ pub trait CoordinateReferenceSystem: Debug {
     fn to_authority_code(&self) -> Result<Option<String>>;
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool;
     fn srid(&self) -> Result<Option<u32>>;
+    fn to_crs_string(&self) -> String {
+        if let Ok(Some(auth_code)) = self.to_authority_code() {
+            auth_code
+        } else {
+            self.to_json()
+        }
+    }
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system

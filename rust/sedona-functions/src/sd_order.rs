@@ -77,7 +77,7 @@ impl SedonaScalarKernel for SDOrderDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::create_array;
+    use arrow_array::{create_array, ArrayRef};
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -100,8 +100,6 @@ mod tests {
         )]
         sedona_type: SedonaType,
     ) {
-        use arrow_array::ArrayRef;
-
         let udf = sd_order_udf();
         let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type.clone());
