@@ -24,6 +24,10 @@ use arrow_schema::{ArrowError, Fields, Schema};
 
 use crate::{error::S2GeographyError, geography_glue_bindgen::*};
 
+pub fn s2_cell_id_from_lnglat(lnglat: (f64, f64)) -> u64 {
+    unsafe { SedonaGeographyGlueLngLatToCellId(lnglat.0, lnglat.1) }
+}
+
 /// Wrapper for scalar UDFs exposed by s2geography::arrow_udf
 ///
 /// Provides a minimal wrapper around the C callables that define

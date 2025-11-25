@@ -25,7 +25,7 @@ name = "_lib"
 crate-type = ["cdylib"]
 
 [features]
-default = ["mimalloc"]
+default = ["mimalloc", "s2geography"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
 

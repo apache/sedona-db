@@ -31,7 +31,7 @@ impl<F: Fn((f64, f64)) -> u64> SedonaScalarKernel for OrderLngLat<F> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
-            SedonaType::Arrow(DataType::Binary),
+            SedonaType::Arrow(DataType::UInt64),
         );
         matcher.match_args(args)
     }
