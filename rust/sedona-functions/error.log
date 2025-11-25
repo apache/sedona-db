@@ -1,0 +1,458 @@
+   Compiling sedona-functions v0.2.0 (/home/abee/Desktop/Odhack/sedona-db/rust/sedona-functions)
+error[E0603]: enum `Dimensions` is private
+   --> rust/sedona-functions/src/st_reverse.rs:156:47
+    |
+156 |             use sedona_geometry::wkb_factory::Dimensions;
+    |                                               ^^^^^^^^^^ private enum
+    |
+note: the enum `Dimensions` is defined here
+   --> /home/abee/Desktop/Odhack/sedona-db/rust/sedona-geometry/src/wkb_factory.rs:18:30
+    |
+ 18 | use geo_traits::{CoordTrait, Dimensions};
+    |                              ^^^^^^^^^^
+help: import `Dimensions` directly
+    |
+156 -             use sedona_geometry::wkb_factory::Dimensions;
+156 +             use geo_traits::dimension::Dimensions;
+    |
+
+warning: unused imports: `Dimensions`, `MultiLineStringTrait`, `MultiPointTrait`, and `PointTrait`
+  --> rust/sedona-functions/src/st_reverse.rs:25:17
+   |
+25 |     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
+   |                 ^^^^^^^^^^
+26 |     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^                     ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `wkb_multilinestring`, `wkb_multipoint`, `wkb_multipolygon`, `wkb_point`, and `wkb_polygon`
+  --> rust/sedona-functions/src/st_reverse.rs:29:21
+   |
+29 |     wkb_linestring, wkb_multilinestring, wkb_multipoint, wkb_multipolygon, wkb_point, wkb_polygon,
+   |                     ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^  ^^^^^^^^^^^
+
+warning: unused import: `write_wkb_coords`
+   --> rust/sedona-functions/src/st_reverse.rs:155:105
+    |
+155 |             use sedona_geometry::wkb_factory::{write_wkb_polygon_header, write_wkb_polygon_ring_header, write_wkb_coords};
+    |                                                                                                         ^^^^^^^^^^^^^^^^
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:125:90
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+125 |             Ok(wkb_linestring(reversed_coords).map_err(|e| sedona_internal_err!("{}", e))?)
+    |                ------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                |                               |
+    |                |                               this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:149:102
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+149 |             let exterior = pgn.exterior().ok_or(sedona_internal_err!("Polygon has no exterior ring"))?;
+    |                                           -----------------------------------------------------------^ unsatisfied trait bound
+    |                                           |
+    |                                           this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:201:119
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+201 |             write_wkb_polygon_header(&mut out_wkb, dims, 1 + num_interiors).map_err(|e| sedona_internal_err!("{}", e))?;
+    |             --------------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |             |                                                               |
+    |             |                                                               this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |             this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0599]: no method named `num_lines` found for reference `&wkb::reader::MultiLineString<'_>` in the current scope
+   --> rust/sedona-functions/src/st_reverse.rs:236:77
+    |
+236 |             write_wkb_multilinestring_header(&mut out_wkb, m_ln.dim(), m_ln.num_lines()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                                                                             ^^^^^^^^^
+    |
+help: there is a method `num_line_strings` with a similar name
+    |
+236 |             write_wkb_multilinestring_header(&mut out_wkb, m_ln.dim(), m_ln.num_line_strings()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                                                                                     +++++++
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:236:132
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+236 |             write_wkb_multilinestring_header(&mut out_wkb, m_ln.dim(), m_ln.num_lines()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |             ---------------------------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |             |                                                                            |
+    |             |                                                                            this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |             this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0599]: no method named `lines` found for reference `&wkb::reader::MultiLineString<'_>` in the current scope
+   --> rust/sedona-functions/src/st_reverse.rs:238:28
+    |
+238 |             for ln in m_ln.lines() {
+    |                            ^^^^^ method not found in `&wkb::reader::MultiLineString<'_>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:244:128
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+244 |                 write_wkb_linestring_header(&mut out_wkb, ln.dim(), ln.num_coords()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                 -------------------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                 |                                                                    |
+    |                 |                                                                    this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                 this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:247:107
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+247 |                     write_wkb_coord_trait(&mut out_wkb, &coord).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                     ------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                     |                                           |
+    |                     |                                           this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                     this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:257:134
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+257 |             write_wkb_multipolygon_header(&mut out_wkb, m_pgn.dim(), m_pgn.num_polygons()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |             ------------------------------------------------------------------------------ ------------------------------------------^ unsatisfied trait bound
+    |             |                                                                              |
+    |             |                                                                              this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |             this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:261:106
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+261 |                 let exterior = pgn.exterior().ok_or(sedona_internal_err!("Polygon has no exterior ring"))?;
+    |                                               -----------------------------------------------------------^ unsatisfied trait bound
+    |                                               |
+    |                                               this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:274:128
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+274 |                 write_wkb_polygon_header(&mut out_wkb, pgn.dim(), 1 + num_interiors).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                 -------------------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                 |                                                                    |
+    |                 |                                                                    this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                 this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:286:121
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+286 |                     write_wkb_polygon_ring_header(&mut out_wkb, coords.len()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                     --------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                     |                                                         |
+    |                     |                                                         this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                     this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:290:111
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+290 |                         write_wkb_coord_trait(&mut out_wkb, &coord).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                         ------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                         |                                           |
+    |                         |                                           this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                         this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:297:121
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+297 |                     write_wkb_polygon_ring_header(&mut out_wkb, coords.len()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                     --------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                     |                                                         |
+    |                     |                                                         this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                     this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:301:111
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+301 |                         write_wkb_coord_trait(&mut out_wkb, &coord).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                         ------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                         |                                           |
+    |                         |                                           this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                         this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:310:138
+    |
+109 | fn reverse_geom(geom: &Wkb) -> Result<Vec<u8>> {
+    |                                --------------- expected `datafusion_common::DataFusionError` because of this
+...
+310 |             write_wkb_geometrycollection_header(&mut out_wkb, gcn.dim(), gcn.num_geometries()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |             ---------------------------------------------------------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |             |                                                                                  |
+    |             |                                                                                  this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |             this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:178:108
+    |
+177 |             ) -> Result<()> {
+    |                  ---------- expected `datafusion_common::DataFusionError` because of this
+178 |                 write_wkb_polygon_ring_header(out, coords.len()).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                 ------------------------------------------------ ------------------------------------------^ unsatisfied trait bound
+    |                 |                                                |
+    |                 |                                                this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                 this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+error[E0277]: `?` couldn't convert the error to `datafusion_common::DataFusionError`
+   --> rust/sedona-functions/src/st_reverse.rs:189:98
+    |
+177 |             ) -> Result<()> {
+    |                  ---------- expected `datafusion_common::DataFusionError` because of this
+...
+189 |                     write_wkb_coord_trait(out, &coord).map_err(|e| sedona_internal_err!("{}", e))?;
+    |                     ---------------------------------- ------------------------------------------^ unsatisfied trait bound
+    |                     |                                  |
+    |                     |                                  this can't be annotated with `?` because it has type `Result<_, std::result::Result<_, datafusion_common::DataFusionError>>`
+    |                     this can't be annotated with `?` because it has type `Result<_, SedonaGeometryError>`
+    |
+    = help: the trait `std::convert::From<std::result::Result<_, datafusion_common::DataFusionError>>` is not implemented for `datafusion_common::DataFusionError`
+    = note: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait
+    = help: the following other types implement trait `std::convert::From<T>`:
+              `datafusion_common::DataFusionError` implements `std::convert::From<&std::sync::Arc<datafusion_common::DataFusionError>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<Box<dyn std::error::Error + Send + Sync>>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<BuilderError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<arrow_schema::ArrowError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion::object_store::path::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<datafusion_expr::sqlparser::parser::ParserError>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::fmt::Error>`
+              `datafusion_common::DataFusionError` implements `std::convert::From<std::io::Error>`
+
+Some errors have detailed explanations: E0277, E0599, E0603.
+For more information about an error, try `rustc --explain E0277`.
+warning: `sedona-functions` (lib test) generated 3 warnings
+error: could not compile `sedona-functions` (lib test) due to 19 previous errors; 3 warnings emitted
