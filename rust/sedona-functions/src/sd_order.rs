@@ -17,20 +17,12 @@ use std::{fmt::Debug, sync::Arc};
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_array::builder::BinaryBuilder;
-use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::{
-    wkb_factory::{write_wkb_coord, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
-    wkb_header::WkbHeader,
-};
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-
-use crate::executor::WkbBytesExecutor;
+use sedona_schema::datatypes::SedonaType;
 
 /// SD_Order() scalar UDF implementation
 ///
@@ -82,54 +74,6 @@ impl SedonaScalarKernel for SDOrderDefault {
     }
 }
 
-#[derive(Debug)]
-struct SDOrderLngLat {
-    st_transform: SedonaScalarUDF,
-    order_from_pt: SedonaScalarUDF,
-}
-
-impl SedonaScalarKernel for SDOrderLngLat {
-    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry_or_geography()],
-            SedonaType::Arrow(DataType::Binary),
-        );
-        matcher.match_args(args)
-    }
-
-    fn invoke_batch(
-        &self,
-        arg_types: &[SedonaType],
-        args: &[ColumnarValue],
-    ) -> Result<ColumnarValue> {
-        let executor = WkbBytesExecutor::new(arg_types, args);
-        let mut first_point_builder = BinaryBuilder::with_capacity(
-            executor.num_iterations(),
-            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
-        );
-
-        executor.execute_wkb_void(|maybe_wkb| {
-            match maybe_wkb {
-                Some(wkb_bytes) => {
-                    let header = WkbHeader::try_new(wkb_bytes)
-                        .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                    write_wkb_point_header(&mut first_point_builder, geo_traits::Dimensions::Xy)
-                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                    write_wkb_coord(&mut first_point_builder, header.first_xy())
-                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                    first_point_builder.append_value([]);
-                }
-                None => first_point_builder.append_null(),
-            }
-
-            Ok(())
-        })?;
-
-        let first_point = executor.finish(Arc::new(first_point_builder.finish()))?;
-        todo!()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,7 +118,4 @@ mod tests {
         let result = tester.invoke_array(array_casted.clone()).unwrap();
         assert_eq!(&array_casted, &result);
     }
-
-    #[test]
-    fn order_geometry() {}
 }
