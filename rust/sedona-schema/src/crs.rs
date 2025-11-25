@@ -117,7 +117,7 @@ pub trait CoordinateReferenceSystem: Debug {
     /// Convert this CRS representation to an integer SRID if possible.
     ///
     /// For the purposes of this trait, an SRID is always equivalent to the
-    /// authority_code `"EPSG<srid>"`. Note that other SRID representations
+    /// authority_code `"EPSG:{srid}"`. Note that other SRID representations
     /// (e.g., GeoArrow, Parquet GEOMETRY/GEOGRAPHY) do not make any guarantees
     /// that an SRID comes from the EPSG authority.
     fn srid(&self) -> Result<Option<u32>>;
