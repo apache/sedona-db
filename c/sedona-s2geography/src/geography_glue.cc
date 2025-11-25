@@ -73,7 +73,7 @@ uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
   if (std::isnan(lng) || std::isnan(lat)) {
     return S2CellId::Sentinel().id();
   } else {
-    return S2CellId(S2LatLng::FromDegrees(lat, lng).ToPoint()).id();
+    return S2CellId(S2LatLng::FromDegrees(lat, lng).Normalized().ToPoint()).id();
   }
 }
 
