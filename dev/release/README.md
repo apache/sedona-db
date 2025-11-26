@@ -46,14 +46,8 @@ install the required dependencies:
 ```shell
 conda create -y --name verify-sedona-db
 conda activate verify-sedona-db
-conda install -y curl gnupg geos proj openssl libabseil cmake pkg-config
+conda install -y compilers curl gnupg geos proj openssl libabseil cmake make pkg-config
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib"
-```
-
-Currently, system libclang is required to generate C bindings at build time:
-
-```shell
-apt-get update && apt-get install -y libclang-dev
 ```
 
 When verifying via Docker or on a smaller machine it may be necessary to limit the
