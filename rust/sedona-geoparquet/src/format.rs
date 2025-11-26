@@ -172,6 +172,12 @@ impl FileFormat for GeoParquetFormat {
         store: &Arc<dyn ObjectStore>,
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
+        if objects.is_empty() {
+            return plan_err!(
+                "Can't infer Parquet schema for zero objects. Does the input path exist?"
+            );
+        }
+
         // First, try the underlying format without schema metadata. This should work
         // for regular Parquet reads and will at least ensure that the underlying schemas
         // are compatible.
@@ -679,6 +685,16 @@ mod test {
             total_size += batch.num_rows();
         }
         assert_eq!(total_size, 244);
+    }
+
+    #[tokio::test]
+    async fn file_that_does_not_exist() {
+        let ctx = setup_context();
+        let err = ctx.table("file_does_not_exist.parquet").await.unwrap_err();
+        assert_eq!(
+            err.message(),
+            "failed to resolve schema: file_does_not_exist"
+        );
     }
 
     #[rstest]
