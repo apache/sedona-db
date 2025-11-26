@@ -22,6 +22,7 @@ mod predicates;
 mod referencing;
 pub mod register;
 mod sd_format;
+pub mod sd_order;
 pub mod st_analyze_agg;
 mod st_area;
 mod st_asbinary;

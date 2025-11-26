@@ -69,6 +69,14 @@ double SedonaGeographyGlueTestLinkage(void) {
   return S2Earth::RadiusMeters() * s2_distance(index1, index2);
 }
 
+uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
+  if (std::isnan(lng) || std::isnan(lat)) {
+    return S2CellId::Sentinel().id();
+  } else {
+    return S2CellId(S2LatLng::FromDegrees(lat, lng).Normalized().ToPoint()).id();
+  }
+}
+
 struct UdfExporter {
   static void Export(std::unique_ptr<s2geography::arrow_udf::ArrowUDF> udf,
                      struct SedonaGeographyArrowUdf* out) {

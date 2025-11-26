@@ -151,7 +151,7 @@ impl SedonaContext {
 
         // Register s2geography scalar kernels if built with s2geography support
         #[cfg(feature = "s2geography")]
-        out.register_scalar_kernels(sedona_s2geography::register::scalar_kernels().into_iter())?;
+        out.register_s2geography()?;
 
         // Always register proj scalar kernels (although actually calling them will error
         // without this feature unless sedona_proj::register::configure_global_proj_engine()
@@ -162,6 +162,22 @@ impl SedonaContext {
         out.register_function_set(sedona_raster_functions::register::default_function_set());
 
         Ok(out)
+    }
+
+    #[cfg(feature = "s2geography")]
+    fn register_s2geography(&mut self) -> Result<()> {
+        use sedona_proj::sd_order_lnglat;
+
+        self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels().into_iter())?;
+
+        let sd_order_kernel = sd_order_lnglat::OrderLngLat::new(
+            sedona_s2geography::s2geography::s2_cell_id_from_lnglat,
+        );
+        self.register_scalar_kernels(
+            [("sd_order", Arc::new(sd_order_kernel) as ScalarKernelRef)].into_iter(),
+        )?;
+
+        Ok(())
     }
 
     /// Register all functions in a [FunctionSet] with this context

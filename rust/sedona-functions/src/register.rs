@@ -61,6 +61,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::referencing::st_line_interpolate_point_udf,
         crate::referencing::st_line_locate_point_udf,
         crate::sd_format::sd_format_udf,
+        crate::sd_order::sd_order_udf,
         crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_astext::st_astext_udf,
