@@ -37,7 +37,7 @@ pub fn st_length_udf() -> SedonaScalarUDF {
 fn st_length_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the length of geom\
+        "Returns the length of geom. \
          This function only supports LineString, MultiLineString, and GeometryCollections \
          containing linear geometries. Use ST_Perimeter for polygons.\
         ",
