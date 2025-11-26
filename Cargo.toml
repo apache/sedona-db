@@ -74,7 +74,7 @@ bytes = "1.10"
 byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
 comfy-table = { version = "7.1.4" }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 datafusion = { version = "50.2.0", default-features = false }
 datafusion-catalog = { version = "50.2.0" }
 datafusion-common = { version = "50.2.0", default-features = false }
