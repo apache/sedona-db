@@ -268,6 +268,18 @@ impl InternalDataFrame {
             writer_options.geoparquet_version = GeoParquetVersion::Omitted;
         }
 
+        // Resolve writer options from the context configuration
+        let global_parquet_options = ctx
+            .inner
+            .ctx
+            .state()
+            .config()
+            .options()
+            .execution
+            .parquet
+            .clone();
+        writer_options.inner.global = global_parquet_options;
+
         let inner = self.inner.clone();
         let inner_context = ctx.inner.clone();
         let path_owned = path.to_string();
