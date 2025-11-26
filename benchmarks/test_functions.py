@@ -339,6 +339,24 @@ class TestBenchFunctions(TestBenchBase):
             "segments_large",
         ],
     )
+    def test_st_reverse(self, benchmark, eng, table):
+        eng = self._get_eng(eng)
+
+        def queries():
+            eng.execute_and_collect(f"SELECT ST_Reverse(geom1) from {table}")
+
+        benchmark(queries)
+
+    @pytest.mark.parametrize(
+        "eng", [SedonaDBSingleThread, PostGISSingleThread, DuckDBSingleThread]
+    )
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "collections_simple",
+            "segments_large",
+        ],
+    )
     def test_st_start_point(self, benchmark, eng, table):
         eng = self._get_eng(eng)
 

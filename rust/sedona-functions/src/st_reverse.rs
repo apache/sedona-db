@@ -23,12 +23,12 @@ use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use geo_traits::{
-    CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
-    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+    CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
+    MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::{
-    write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
+    write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
     write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
     write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
     write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
@@ -106,7 +106,8 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_coord(writer, pt.coord().unwrap())?;
+                write_wkb_coord_trait(writer, &pt.coord().unwrap())
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             } else {
                 write_wkb_empty_point(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -122,12 +123,9 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
         }
 
         geo_traits::GeometryType::LineString(ls) => {
-            let coords: Vec<_> = ls.coords().collect();
-            write_wkb_linestring_header(writer, dims, coords.len())
+            write_wkb_linestring_header(writer, dims, ls.coords().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for coord in coords.into_iter().rev() {
-                write_coord(writer, coord)?;
-            }
+            write_reversed_coords(writer, ls.coords())?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
@@ -178,48 +176,19 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
 }
 
 fn write_reversed_ring(writer: &mut impl Write, ring: impl LineStringTrait<T = f64>) -> Result<()> {
-    let coords: Vec<_> = ring.coords().collect();
-    write_wkb_polygon_ring_header(writer, coords.len())
+    write_wkb_polygon_ring_header(writer, ring.coords().count())
         .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-    for coord in coords.into_iter().rev() {
-        write_coord(writer, coord)?;
-    }
-    Ok(())
+    write_reversed_coords(writer, ring.coords())
 }
 
-fn write_coord(writer: &mut impl Write, coord: impl CoordTrait<T = f64>) -> Result<()> {
-    match coord.dim() {
-        Dimensions::Xy => {
-            write_wkb_coord(writer, (coord.x(), coord.y()))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-        }
-        Dimensions::Xyz => {
-            write_wkb_coord(writer, (coord.x(), coord.y(), coord.nth_or_panic(2)))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-        }
-        Dimensions::Xym => {
-            write_wkb_coord(writer, (coord.x(), coord.y(), coord.nth_or_panic(2)))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-        }
-        Dimensions::Xyzm => {
-            write_wkb_coord(
-                writer,
-                (
-                    coord.x(),
-                    coord.y(),
-                    coord.nth_or_panic(2),
-                    coord.nth_or_panic(3),
-                ),
-            )
-            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-        }
-        _ => {
-            return Err(DataFusionError::Execution(
-                "Unsupported dimensions for coordinate".to_string(),
-            ));
-        }
-    }
-    Ok(())
+fn write_reversed_coords<I>(writer: &mut impl Write, coords: I) -> Result<()>
+where
+    I: DoubleEndedIterator,
+    I::Item: CoordTrait<T = f64>,
+{
+    coords.rev().try_for_each(|coord| {
+        write_wkb_coord_trait(writer, &coord).map_err(|e| DataFusionError::Execution(e.to_string()))
+    })
 }
 
 #[cfg(test)]
@@ -330,22 +299,140 @@ mod tests {
         assert!(result.is_null());
 
         let input_wkt = vec![
-            Some("POLYGON ((2 2, 2 3, 3 3, 3 2, 2 2))"),
+            // Null case
+            None,
+            // POINT types
             Some("POINT EMPTY"),
             Some("POINT (1 2)"),
+            Some("POINT Z EMPTY"),
+            Some("POINT Z (1 2 3)"),
+            Some("POINT M EMPTY"),
+            Some("POINT M (1 2 3)"),
+            Some("POINT ZM EMPTY"),
+            Some("POINT ZM (1 2 3 4)"),
+            // LINESTRING types
+            Some("LINESTRING EMPTY"),
             Some("LINESTRING (1 2, 1 10)"),
-            Some("GEOMETRYCOLLECTION (MULTIPOINT (3 4, 1 2, 7 8, 5 6), LINESTRING (1 10, 1 2))"),
-            None,
+            Some("LINESTRING (0 0, 1 1, 2 2)"),
+            Some("LINESTRING (10 20, 30 40)"),
+            Some("LINESTRING Z EMPTY"),
+            Some("LINESTRING Z (1 2 3, 4 5 6)"),
+            Some("LINESTRING M EMPTY"),
+            Some("LINESTRING M (1 2 3, 4 5 6)"),
+            Some("LINESTRING ZM EMPTY"),
+            Some("LINESTRING ZM (1 2 3 4, 5 6 7 8)"),
+            // POLYGON types
+            Some("POLYGON EMPTY"),
+            Some("POLYGON ((2 2, 2 3, 3 3, 3 2, 2 2))"),
+            Some("POLYGON Z EMPTY"),
+            Some("POLYGON Z ((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0))"),
+            Some("POLYGON M EMPTY"),
+            Some("POLYGON M ((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0))"),
+            Some("POLYGON ZM EMPTY"),
+            Some("POLYGON ZM ((0 0 0 0, 0 1 0 0, 1 1 0 0, 1 0 0 0, 0 0 0 0))"),
+            // MULTIPOINT types
+            Some("MULTIPOINT EMPTY"),
+            Some("MULTIPOINT((3 4),(1 2),(7 8),(5 6))"),
+            Some("MULTIPOINT Z EMPTY"),
+            Some("MULTIPOINT Z ((1 2 3), (4 5 6))"),
+            Some("MULTIPOINT M EMPTY"),
+            Some("MULTIPOINT M ((1 2 3), (4 5 6))"),
+            Some("MULTIPOINT ZM EMPTY"),
+            Some("MULTIPOINT ZM ((1 2 3 4), (5 6 7 8))"),
+            // MULTILINESTRING types
+            Some("MULTILINESTRING EMPTY"),
+            Some("MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))"),
+            Some("MULTILINESTRING Z EMPTY"),
+            Some("MULTILINESTRING Z ((1 2 3, 4 5 6), (7 8 9, 10 11 12))"),
+            Some("MULTILINESTRING M EMPTY"),
+            Some("MULTILINESTRING M ((1 2 3, 4 5 6), (7 8 9, 10 11 12))"),
+            Some("MULTILINESTRING ZM EMPTY"),
+            Some("MULTILINESTRING ZM ((1 2 3 4, 5 6 7 8), (9 10 11 12, 13 14 15 16))"),
+            // MULTIPOLYGON types
+            Some("MULTIPOLYGON EMPTY"),
+            Some("MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((2 2, 2 3, 3 3, 3 2, 2 2)))"),
+            Some("MULTIPOLYGON Z EMPTY"),
+            Some("MULTIPOLYGON Z (((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0)))"),
+            Some("MULTIPOLYGON M EMPTY"),
+            Some("MULTIPOLYGON M (((0 0 0, 0 1 0, 1 1 0, 1 0 0, 0 0 0)))"),
+            Some("MULTIPOLYGON ZM EMPTY"),
+            Some("MULTIPOLYGON ZM (((0 0 0 0, 0 1 0 0, 1 1 0 0, 1 0 0 0, 0 0 0 0)))"),
+            // GEOMETRYCOLLECTION types
+            Some("GEOMETRYCOLLECTION EMPTY"),
+            Some(
+                "GEOMETRYCOLLECTION (MULTIPOINT((3 4),(1 2),(7 8),(5 6)), LINESTRING (1 10, 1 2))",
+            ),
+            Some("GEOMETRYCOLLECTION (POINT Z (1 2 3), LINESTRING Z (1 2 3, 4 5 6))"),
+            Some("GEOMETRYCOLLECTION (POINT M (1 2 3), LINESTRING M (1 2 3, 4 5 6))"),
+            Some("GEOMETRYCOLLECTION (POINT ZM (1 2 3 4), LINESTRING ZM (1 2 3 4, 5 6 7 8))"),
         ];
 
         let expected = create_array(
             &[
-                Some("POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))"),
+                // Null case
+                None,
+                // POINT types (unchanged - points have no direction)
                 Some("POINT EMPTY"),
                 Some("POINT (1 2)"),
+                Some("POINT Z EMPTY"),
+                Some("POINT Z (1 2 3)"),
+                Some("POINT M EMPTY"),
+                Some("POINT M (1 2 3)"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT ZM (1 2 3 4)"),
+                // LINESTRING types (vertex order reversed)
+                Some("LINESTRING EMPTY"),
                 Some("LINESTRING (1 10, 1 2)"),
-                Some("GEOMETRYCOLLECTION (MULTIPOINT ((3 4), (1 2), (7 8), (5 6)), LINESTRING (1 2, 1 10))"),
-                None,
+                Some("LINESTRING (2 2, 1 1, 0 0)"),
+                Some("LINESTRING (30 40, 10 20)"),
+                Some("LINESTRING Z EMPTY"),
+                Some("LINESTRING Z (4 5 6, 1 2 3)"),
+                Some("LINESTRING M EMPTY"),
+                Some("LINESTRING M (4 5 6, 1 2 3)"),
+                Some("LINESTRING ZM EMPTY"),
+                Some("LINESTRING ZM (5 6 7 8, 1 2 3 4)"),
+                // POLYGON types (ring vertex order reversed)
+                Some("POLYGON EMPTY"),
+                Some("POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))"),
+                Some("POLYGON Z EMPTY"),
+                Some("POLYGON Z ((0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 0))"),
+                Some("POLYGON M EMPTY"),
+                Some("POLYGON M ((0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 0))"),
+                Some("POLYGON ZM EMPTY"),
+                Some("POLYGON ZM ((0 0 0 0, 1 0 0 0, 1 1 0 0, 0 1 0 0, 0 0 0 0))"),
+                // MULTIPOINT types (no change)
+                Some("MULTIPOINT EMPTY"),
+                Some("MULTIPOINT((3 4),(1 2),(7 8),(5 6))"),
+                Some("MULTIPOINT Z EMPTY"),
+                Some("MULTIPOINT Z ((1 2 3), (4 5 6))"),
+                Some("MULTIPOINT M EMPTY"),
+                Some("MULTIPOINT M ((1 2 3), (4 5 6))"),
+                Some("MULTIPOINT ZM EMPTY"),
+                Some("MULTIPOINT ZM ((1 2 3 4), (5 6 7 8))"),
+                // MULTILINESTRING types (each linestring reversed individually)
+                Some("MULTILINESTRING EMPTY"),
+                Some("MULTILINESTRING ((3 4, 1 2), (7 8, 5 6))"),
+                Some("MULTILINESTRING Z EMPTY"),
+                Some("MULTILINESTRING Z ((4 5 6, 1 2 3), (10 11 12, 7 8 9))"),
+                Some("MULTILINESTRING M EMPTY"),
+                Some("MULTILINESTRING M ((4 5 6, 1 2 3), (10 11 12, 7 8 9))"),
+                Some("MULTILINESTRING ZM EMPTY"),
+                Some("MULTILINESTRING ZM ((5 6 7 8, 1 2 3 4), (13 14 15 16, 9 10 11 12))"),
+                // MULTIPOLYGON types (each polygon reversed individually)
+                Some("MULTIPOLYGON EMPTY"),
+                Some("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))"),
+                Some("MULTIPOLYGON Z EMPTY"),
+                Some("MULTIPOLYGON Z (((0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 0)))"),
+                Some("MULTIPOLYGON M EMPTY"),
+                Some("MULTIPOLYGON M (((0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 0)))"),
+                Some("MULTIPOLYGON ZM EMPTY"),
+                Some("MULTIPOLYGON ZM (((0 0 0 0, 1 0 0 0, 1 1 0 0, 0 1 0 0, 0 0 0 0)))"),
+                // GEOMETRYCOLLECTION types (each member geometry reversed)
+                Some("GEOMETRYCOLLECTION EMPTY"),
+                Some("GEOMETRYCOLLECTION (MULTIPOINT((3 4),(1 2),(7 8),(5 6)), LINESTRING (1 2, 1 10))"),
+                Some("GEOMETRYCOLLECTION (POINT Z (1 2 3), LINESTRING Z (4 5 6, 1 2 3))"),
+                Some("GEOMETRYCOLLECTION (POINT M (1 2 3), LINESTRING M (4 5 6, 1 2 3))"),
+                Some("GEOMETRYCOLLECTION (POINT ZM (1 2 3 4), LINESTRING ZM (5 6 7 8, 1 2 3 4))"),
             ],
             &WKB_GEOMETRY,
         );
