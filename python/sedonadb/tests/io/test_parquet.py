@@ -289,7 +289,7 @@ def test_write_geoparquet_options(geoarrow_data):
         geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
 
         metadata = parquet.read_metadata(tmp_parquet)
-        assert metadata.row_group(0).nun_rows == 1024
+        assert metadata.row_group(0).num_rows == 1024
 
 
 def test_write_geoparquet_1_1(con, geoarrow_data):
