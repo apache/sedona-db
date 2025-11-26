@@ -213,8 +213,7 @@ impl<'a> BandsRef for BandsRefImpl<'a> {
     fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
         if number == 0 {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "Invalid band number {}: band numbers must be 1-based",
-                number
+                "Invalid band number {number}: band numbers must be 1-based"
             )));
         }
         // By convention, band numbers are 1-based.
@@ -522,8 +521,7 @@ impl<'a> RasterStructArray<'a> {
     pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "Invalid raster index: {}",
-                index
+                "Invalid raster index: {index}"
             )));
         }
 
