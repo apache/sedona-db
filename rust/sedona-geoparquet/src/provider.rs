@@ -267,5 +267,17 @@ mod test {
         assert!(err
             .message()
             .ends_with("does not match the expected extension '.parquet'"));
+
+        let err = geoparquet_listing_table(
+            &ctx,
+            vec![ListingTableUrl::parse("this_file_does_not_exist.parquet").unwrap()],
+            GeoParquetReadOptions::default(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Can't infer Parquet schema for zero objects. Does the input path exist?"
+        );
     }
 }
