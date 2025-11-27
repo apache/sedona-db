@@ -69,9 +69,6 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
     // e.g., -lstdc++
     let re_linker_lib = Regex::new("^-l(.*)").unwrap();
 
-    // e.g., -march=xxx, and perhaps others as we find them
-    let re_linker_flag = Regex::new("^(-march.*?)").unwrap();
-
     let path = find_cmake_linker_flags(binary_dir);
     let linker_flags_string = read_file_maybe_utf16(&path);
 
@@ -94,10 +91,6 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
         } else if let Some(lib_match) = re_linker_lib.captures(item) {
             let (_, [lib]) = lib_match.extract();
             println!("cargo:rustc-link-lib={lib}");
-            continue;
-        } else if let Some(lib_match) = re_linker_flag.captures(item) {
-            let (_, [flag]) = lib_match.extract();
-            println!("cargo:rustc-link-arg={flag}");
             continue;
         }
 
