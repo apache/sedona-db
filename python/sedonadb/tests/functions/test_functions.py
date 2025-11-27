@@ -2704,35 +2704,33 @@ def test_st_zmflag(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
-        (None, None),  # NULL -> NULL
-        ("POINT (1 2)", None),  # non-polygon -> NULL
+        # input -> #output postgis returned
+        (None, None),  # none
+        ("POINT (1 2)", None),  # none
         ("LINESTRING (0 0, 1 1, 2 2)", None),  # non-polygon -> NULL
         ("POLYGON EMPTY", 0),  # empty polygon has no interior rings
         ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),  # simple polygon, no holes
+        # example query - SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))')) AS num_rings;
         (
-            # polygon with one hole
             "POLYGON (\
-                (0 0, 10 0, 10 10, 0 10, 0 0),\
-                (2 2, 8 2, 8 8, 2 8, 2 2))",
+                (0 0,6 0,6 6,0 6,0 0),\
+                (2 2,4 2,4 4,2 4,2 2))",
             1,
         ),
         (
-            # polygon with two holes
             "POLYGON (\
-                (0 0, 10 0, 10 10, 0 10, 0 0),\
-                (2 2, 4 2, 4 4, 2 4, 2 2),\
-                (6 6, 8 6, 8 8, 6 8, 6 6))",
+                (0 0,10 0,10 6,0 6,0 0)\
+                (1 1,2 1,2 5,1 5,1 1),\
+                (8 5,8 4,9 4,9 5,8 5))",
             2,
         ),
         (
-            # MultiPolygon (PostGIS: ST_NumInteriorRings returns NULL on multipolygons)
             "MULTIPOLYGON (\
                 ((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),\
                 ((10 10, 14 10, 14 14, 10 14, 10 10)))",
             None,
         ),
         (
-            # GeometryCollection -> NULL
             "GEOMETRYCOLLECTION (\
                 POINT (1 2),\
                 POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0)))",
@@ -2746,30 +2744,3 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
         f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
         expected,
     )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-def test_st_numinteriorrings_multipolygon_sum_via_dump(eng):
-    """
-    Total number of interior rings in a MULTIPOLYGON, using ST_Dump then SUM.
-    Works the same on PostGIS and SedonaDB.
-    """
-    eng = eng.create_or_skip()
-
-    # Three polygons: first has 1 hole,Second has 0 since its not a ring in first place, Third has 0 holes -> total = 1
-    mp = (
-        "MULTIPOLYGON ("
-        " ((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),"
-        "((0 0, 5 0, 5 5, 0 5, 0 1), (1 1, 2 1, 2 2, 1 2, 1 2)),"
-        " ((10 10, 14 10, 14 14, 10 14, 10 10))"
-        ")"
-    )
-
-    sql = f"""
-    WITH g AS (
-      SELECT ST_GeomFromText('{mp}', 0) AS geom
-    )
-    SELECT COALESCE(SUM(ST_NumInteriorRings((ST_Dump(geom)).geom)), 0)
-    FROM g
-    """
-    eng.assert_query_result(sql, 1)

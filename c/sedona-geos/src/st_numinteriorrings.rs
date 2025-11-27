@@ -14,20 +14,18 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use std::sync::Arc;
 
+use crate::executor::GeosExecutor;
 use arrow_array::builder::Int32Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::Geom;
-use geos::GeometryTypes;
+use geos::{Geom, Geometry, GeometryTypes};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::executor::GeosExecutor;
-
-/// ST_NumInteriorRings() implementation using the geos crate
 pub fn st_num_interior_rings_impl() -> ScalarKernelRef {
     Arc::new(STNumInteriorRings {})
 }
@@ -52,15 +50,17 @@ impl SedonaScalarKernel for STNumInteriorRings {
     ) -> Result<ColumnarValue> {
         let executor = GeosExecutor::new(arg_types, args);
         let mut builder = Int32Builder::with_capacity(executor.num_iterations());
-
-        // single-geometry executor path
-        executor.execute_wkb_void(|geom| {
-            match geom {
-                Some(g) => {
-                    let n = invoke_scalar(&g)?;
-                    builder.append_value(n);
-                }
+        executor.execute_wkb_void(|maybe_geom| {
+            match maybe_geom {
                 None => builder.append_null(),
+                Some(geom) => {
+                    let res = invoke_scalar(&geom)?;
+                    match res {
+                        Some(n) => builder.append_value(n),
+                        // non-polygon / unsupported -> NULL (matches PostGIS + py tests)
+                        None => builder.append_null(),
+                    }
+                }
             }
             Ok(())
         })?;
@@ -69,27 +69,38 @@ impl SedonaScalarKernel for STNumInteriorRings {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<i32> {
-    // Only polygons have interior rings; for everything else, return 0.
-    if matches!(geos_geom.geometry_type(), GeometryTypes::Polygon) {
-        let count = geos_geom.get_num_interior_rings().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
-        })?;
+fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
+    match geom.geometry_type() {
+        GeometryTypes::Polygon => {
+            let is_empty = geom.is_empty().map_err(|e| {
+                DataFusionError::Execution(format!("Failed to check if geometry is empty: {e}"))
+            })?;
 
-        Ok(count as i32)
-    } else {
-        // POINT, LINESTRING, MULTIPOINT, etc. -> 0 holes
-        Ok(0)
+            if is_empty {
+                // empty polygon has no interior rings
+                Ok(Some(0))
+            } else {
+                let count = geom.get_num_interior_rings().map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
+                })?;
+                Ok(Some(count as i32))
+            }
+        }
+        // non-polygon -> NULL
+        _ => Ok(None),
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use std::sync::Arc;
+
+    use arrow_array::{ArrayRef, Int32Array};
+    use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::compare::assert_array_equal;
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -100,13 +111,13 @@ mod tests {
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
 
-        // Polygon with two interior rings -> 2
+        // Polygon with 2 interior rings -> 2
         let result = tester
             .invoke_scalar(
-                "POLYGON(\
-                    (0 0,10 0,10 6,0 6,0 0),\
-                    (1 1,2 1,2 5,1 5,1 1),\
-                    (8 5,8 4,9 4,9 5,8 5)\
+                "POLYGON(
+                    (0 0,10 0,10 6,0 6,0 0),
+                    (1 1,2 1,2 5,1 5,1 1),
+                    (8 5,8 4,9 4,9 5,8 5)
                 )",
             )
             .unwrap();
@@ -116,17 +127,48 @@ mod tests {
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
-        // Array: polygon, point, null
-        // polygon has 1 hole -> 1
-        // point -> 0 (no interior rings)
-        // null -> null
         let input_wkt = vec![
-            Some("POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1))"),
-            Some("POINT (5 5)"),
             None,
+            Some("POINT (1 2)"),
+            Some("LINESTRING (0 0, 1 1, 2 2)"),
+            Some("POLYGON EMPTY"),
+            Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+            Some("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))"),
+            Some(
+                "POLYGON (
+                    (0 0,10 0,10 6,0 6,0 0),
+                    (1 1,2 1,2 5,1 5,1 1),
+                    (8 5,8 4,9 4,9 5,8 5)
+                )",
+            ),
+            Some(
+                "MULTIPOLYGON (
+                    ((0 0,5 0,5 5,0 5,0 0),(1 1,2 1,2 2,1 2,1 1)),
+                    ((10 10,14 10,14 14,10 14,10 10))
+                )",
+            ),
+            Some(
+                "GEOMETRYCOLLECTION (
+                    POINT (1 2),
+                    POLYGON ((0 0,3 0,3 3,0 3,0 0))
+                )",
+            ),
         ];
 
-        let expected: ArrayRef = create_array!(Int32, [Some(1), Some(0), None]);
-        assert_eq!(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+        // Build expected as ArrayRef (Arc<dyn Array>)
+        let expected: ArrayRef = Arc::new(Int32Array::from(vec![
+            None,
+            None,
+            None,
+            Some(0),
+            Some(0),
+            Some(1),
+            Some(2),
+            None,
+            None,
+        ]));
+
+        let result = tester.invoke_wkb_array(input_wkt).unwrap();
+        assert_array_equal(&result, &expected);
     }
 }
