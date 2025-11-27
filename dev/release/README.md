@@ -57,6 +57,14 @@ number of parallel jobs to avoid running out of memory:
 export CARGO_BUILD_JOBS=4
 ```
 
+Verifiers may opt in to additional features normally tested in CI with dedicated tooling.
+For example, to verify with specific Python build-time features, the `MATURIN_PEP517_ARGS`
+environment variable may be set.
+
+```shell
+export MATURIN_PEP517_ARGS="--features s2geography"
+```
+
 ## Creating a release
 
 Create a release branch on the corresponding remote pointing to the official Apache
