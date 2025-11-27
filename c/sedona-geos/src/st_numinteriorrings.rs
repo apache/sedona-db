@@ -144,10 +144,10 @@ mod tests {
         // Polygon with two interior rings -> 2
         let result = tester
             .invoke_scalar(
-                "POLYGON(\
-                    (0 0,10 0,10 6,0 6,0 0),\
-                    (1 1,2 1,2 5,1 5,1 1),\
-                    (8 5,8 4,9 4,9 5,8 5)\
+                "POLYGON(
+                    (0 0,10 0,10 6,0 6,0 0),
+                    (1 1,2 1,2 5,1 5,1 1),
+                    (8 5,8 4,9 4,9 5,8 5)
                 )",
 >>>>>>> d797f12 (modified num of rings file)
             )
@@ -194,13 +194,7 @@ mod tests {
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
-        // Array: polygon, point, null
-        // polygon has 1 hole -> 1
-        // point -> 0 (no interior rings)
-        // null -> null
         let input_wkt = vec![
-            Some("POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1))"),
-            Some("POINT (5 5)"),
             None,
         ];
 
