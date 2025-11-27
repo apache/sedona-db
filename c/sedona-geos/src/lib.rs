@@ -38,7 +38,6 @@ mod st_numinteriorrings;
 mod st_perimeter;
 mod st_polygonize;
 mod st_polygonize_agg;
-mod st_reverse;
 mod st_simplify;
 mod st_simplifypreservetopology;
 mod st_snap;

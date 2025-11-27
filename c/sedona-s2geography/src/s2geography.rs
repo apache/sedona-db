@@ -24,6 +24,16 @@ use arrow_schema::{ArrowError, Fields, Schema};
 
 use crate::{error::S2GeographyError, geography_glue_bindgen::*};
 
+/// Compute an S2 Cell identifier from a longitude/latitude pair
+///
+/// If either longitude or latitude are NaN (e.g., an empty point),
+/// the sentinel cell (`u64::MAX`) is returned. Lon/Lat pairs are
+/// normalized such that invalid lon/lat pairs will still compute
+/// a result (even though that result may be difficult to interpret).
+pub fn s2_cell_id_from_lnglat(lnglat: (f64, f64)) -> u64 {
+    unsafe { SedonaGeographyGlueLngLatToCellId(lnglat.0, lnglat.1) }
+}
+
 /// Wrapper for scalar UDFs exposed by s2geography::arrow_udf
 ///
 /// Provides a minimal wrapper around the C callables that define
@@ -257,6 +267,22 @@ mod test {
     use sedona_testing::create::create_array_storage;
 
     use super::*;
+
+    #[test]
+    fn test_s2_cell_id_from_lnglat() {
+        // Check a single, finite cell
+        assert_eq!(s2_cell_id_from_lnglat((0.0, 0.0)), 1152921504606846977);
+
+        // Emptyish cases should return the sentinel cell
+        assert_eq!(s2_cell_id_from_lnglat((f64::NAN, 0.0)), u64::MAX);
+        assert_eq!(s2_cell_id_from_lnglat((0.0, f64::NAN)), u64::MAX);
+        assert_eq!(s2_cell_id_from_lnglat((f64::NAN, f64::NAN)), u64::MAX);
+
+        // These should both return something (even if what it returns is difficult
+        // to interpret)
+        assert_ne!(s2_cell_id_from_lnglat((181.0, 0.0)), u64::MAX);
+        assert_ne!(s2_cell_id_from_lnglat((0.0, 91.0)), u64::MAX);
+    }
 
     #[test]
     fn scalar_udf() {

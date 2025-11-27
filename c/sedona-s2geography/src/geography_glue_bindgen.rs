@@ -69,6 +69,7 @@ unsafe extern "C" {
     pub fn SedonaGeographyGlueS2GeometryVersion() -> *const c_char;
     pub fn SedonaGeographyGlueAbseilVersion() -> *const c_char;
     pub fn SedonaGeographyGlueTestLinkage() -> f64;
+    pub fn SedonaGeographyGlueLngLatToCellId(lng: f64, lat: f64) -> u64;
 
     declare_s2_c_udfs!(
         Area,
