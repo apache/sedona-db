@@ -2704,36 +2704,32 @@ def test_st_zmflag(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
-        # input -> #output postgis returned
-        (None, None),  # none
-        ("POINT (1 2)", None),  # none
-        ("LINESTRING (0 0, 1 1, 2 2)", None),  # non-polygon -> NULL
-        ("POLYGON EMPTY", 0),  # empty polygon has no interior rings
-        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),  # simple polygon, no holes
-        # example query - SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))')) AS num_rings;
+        (None, None),
+        ("POINT (1 2)", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("POLYGON EMPTY", 0),
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),
         (
-            "POLYGON (\
-                (0 0,6 0,6 6,0 6,0 0),\
-                (2 2,4 2,4 4,2 4,2 2))",
+            "POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))",
             1,
         ),
         (
-            "POLYGON (\
-                (0 0,10 0,10 6,0 6,0 0)\
-                (1 1,2 1,2 5,1 5,1 1),\
-                (8 5,8 4,9 4,9 5,8 5))",
+            "POLYGON ("
+            "(0 0,10 0,10 6,0 6,0 0),"
+            "(1 1,2 1,2 5,1 5,1 1),"
+            "(8 5,8 4,9 4,9 5,8 5)"
+            ")",
             2,
         ),
         (
-            "MULTIPOLYGON (\
-                ((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),\
-                ((10 10, 14 10, 14 14, 10 14, 10 10)))",
+            "MULTIPOLYGON ("
+            "((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),"
+            "((10 10, 14 10, 14 14, 10 14, 10 10))"
+            ")",
             None,
         ),
         (
-            "GEOMETRYCOLLECTION (\
-                POINT (1 2),\
-                POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0)))",
             None,
         ),
     ],
