@@ -687,8 +687,7 @@ mod tests {
 
             assert_eq!(
                 actual_type, *expected_type,
-                "Band {} expected data type {:?}, got {:?}",
-                i, expected_type, actual_type
+                "Band {i} expected data type {expected_type:?}, got {actual_type:?}"
             );
         }
     }

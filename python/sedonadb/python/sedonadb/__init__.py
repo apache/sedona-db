@@ -19,6 +19,8 @@ from sedonadb.context import connect, configure_proj
 
 __version__ = _lib.sedona_python_version()
 
+__features__ = _lib.sedona_python_features()
+
 __all__ = ["connect", "options"]
 
 # Attempt to configure PROJ on import. This will warn if PROJ
