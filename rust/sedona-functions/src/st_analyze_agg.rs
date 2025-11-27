@@ -58,7 +58,7 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
 fn st_analyze_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Return Return the statistics of geometries for geom.",
+        "Return the statistics of geometries for geom.",
         "ST_Analyze_Agg (A: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
