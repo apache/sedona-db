@@ -17,9 +17,14 @@
 
 import geopandas
 import geopandas.testing
+import pytest
+import sedonadb
 
 
 def test_order_sql(con):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Ordering currently requires build with feature s2geography")
+
     wkt_unsorted = [
         None,
         "POINT EMPTY",

@@ -262,8 +262,6 @@ test_python() {
   show_info "Installing Python package"
   rm -rf "${SEDONADB_TMPDIR}/python"
 
-  # Keep this export in sync with the export in .github/workflows/python.yml
-  export MATURIN_PEP517_ARGS="--features s2geography"
   pip install "sedonadb/[test]" -v
 
   show_info "Testing Python package"

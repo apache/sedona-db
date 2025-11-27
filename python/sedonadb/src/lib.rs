@@ -53,6 +53,18 @@ fn sedona_python_version() -> PyResult<String> {
     Ok(VERSION.to_string())
 }
 
+#[cfg(feature = "s2geography")]
+#[pyfunction]
+fn sedona_python_features() -> PyResult<Vec<String>> {
+    Ok(vec!["s2geography".to_string()])
+}
+
+#[cfg(not(feature = "s2geography"))]
+#[pyfunction]
+fn sedona_python_features() -> PyResult<Vec<String>> {
+    Ok(vec![])
+}
+
 #[pyfunction]
 fn sedona_adbc_driver_init() -> PyResult<Py_uintptr_t> {
     let driver_init_void = AdbcSedonadbDriverInit as *const c_void;
@@ -91,6 +103,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
 
     m.add_class::<context::InternalContext>()?;

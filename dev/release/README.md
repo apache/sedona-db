@@ -22,13 +22,13 @@
 ## Verifying a release candidate
 
 Release candidates are verified using the script `verify-release-candidate.sh <version> <rc_num>`.
-For example, to verify SedonaDB 0.1.0 RC0, run:
+For example, to verify SedonaDB 0.2.0 RC0, run:
 
 ```shell
 # git clone https://github.com/apache/sedona-db.git && cd sedona-db
 # or
 # cd existing/sedona-db && git fetch upstream && git switch main && git pull upstream main
-dev/release/verify-release-candidate.sh 0.1.0 0
+dev/release/verify-release-candidate.sh 0.2.0 0
 ```
 
 Release verification requires a recent Rust toolchain. This toolchain can be installed
@@ -46,14 +46,8 @@ install the required dependencies:
 ```shell
 conda create -y --name verify-sedona-db
 conda activate verify-sedona-db
-conda install -y curl gnupg geos proj openssl libabseil cmake pkg-config
+conda install -y compilers curl gnupg geos proj openssl libabseil cmake make pkg-config
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib"
-```
-
-Currently, system libclang is required to generate C bindings at build time:
-
-```shell
-apt-get update && apt-get install -y libclang-dev
 ```
 
 When verifying via Docker or on a smaller machine it may be necessary to limit the
@@ -61,6 +55,14 @@ number of parallel jobs to avoid running out of memory:
 
 ```shell
 export CARGO_BUILD_JOBS=4
+```
+
+Verifiers may opt in to additional features normally tested in CI with dedicated tooling.
+For example, to verify with specific Python build-time features, the `MATURIN_PEP517_ARGS`
+environment variable may be set.
+
+```shell
+export MATURIN_PEP517_ARGS="--features s2geography"
 ```
 
 ## Creating a release
@@ -71,8 +73,8 @@ a committer.
 
 ```shell
 git pull upstream main
-git branch -b branch-0.1.0
-git push upstream -u branch-0.1.0:branch-0.1.0
+git branch -b branch-0.2.0
+git push upstream -u branch-0.2.0:branch-0.2.0
 ```
 
 This push should cause two CI runs to begin:
@@ -98,8 +100,8 @@ When the state of the `branch-x.x.x` branch is clean and checks are complete,
 the release candidate tag can be created:
 
 ```shell
-git tag -a apache-sedona-db-0.1.0-rc0 -m "Tag Apache SedonaDB 0.1.0-rc0"
-git push upstream apache-sedona-db-0.1.0-rc0
+git tag -a apache-sedona-db-0.2.0-rc0 -m "Tag Apache SedonaDB 0.2.0-rc0"
+git push upstream apache-sedona-db-0.2.0-rc0
 ```
 
 This will trigger another packaging CI run that, if successful, will create a
@@ -114,7 +116,7 @@ The GPG_KEY_ID in dev/release/.env must have its public component listed in the
 
 ```shell
 # sign-assets.sh <version> <rc_number>
-dev/release/sign-assets.sh 0.1.0 0
+dev/release/sign-assets.sh 0.2.0 0
 ```
 
 After the assets are signed, they can be committed and uploaded to the
@@ -123,7 +125,7 @@ is provided:
 
 ```shell
 # upload-candidate.sh <version> <rc_number>
-APACHE_USERNAME=your_apache_username dev/release/upload-candidate.sh 0.1.0 0
+APACHE_USERNAME=your_apache_username dev/release/upload-candidate.sh 0.2.0 0
 ```
 
 ## Vote
@@ -140,17 +142,17 @@ Apache release repository. A helper script is provided:
 
 ```shell
 # upload-release.sh <version> <rc_number>
-APACHE_USERNAME=your_apache_username dev/release/upload-release.sh 0.1.0 0
+APACHE_USERNAME=your_apache_username dev/release/upload-release.sh 0.2.0 0
 ```
 
 An official GitHub tag must also be created:
 
 ```shell
-git tag -a apache-sedona-db-0.1.0 -m "SedonaDB 0.1.0" apache-sedona-db-0.1.0-rc0
-git push upstream apache-sedona-db-0.1.0
+git tag -a apache-sedona-db-0.2.0 -m "SedonaDB 0.2.0" apache-sedona-db-0.2.0-rc0
+git push upstream apache-sedona-db-0.2.0
 ```
 
-The prerelease located at <https://github.com/apache/sedona-db/releases/tag/apache-sedona-db-0.1.0-rc0>
+The prerelease located at <https://github.com/apache/sedona-db/releases/tag/apache-sedona-db-0.2.0-rc0>
 can now be edited to point to the official release tag and the GitHub release published
 from the UI.
 
@@ -189,12 +191,12 @@ are currently all derived from `Cargo.toml`, which can be updated to:
 
 ```
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 ```
 
 The R package must also be updated. R Packages use a different convention for development
-versions such that in preparation for 0.2.0 the development version should be
-`0.1.0.9000`. This is set the DESCRIPTION of the requisite package.
+versions such that in preparation for 0.3.0 the development version should be
+`0.2.0.9000`. This is set the DESCRIPTION of the requisite package.
 
 Development versions and the changelog are derived from the presence of a development
 tag on the main branch signifying where development of that version "started". After
@@ -202,6 +204,6 @@ the version bump PR merges, that commit should be tagged with the appropriate
 development tag:
 
 ```shell
-git tag -a apache-sedona-db-0.2.0.dev -m "tag dev 0.2.0"
-git push upstream apache-sedona-db-0.2.0.dev
+git tag -a apache-sedona-db-0.3.0.dev -m "tag dev 0.3.0"
+git push upstream apache-sedona-db-0.3.0.dev
 ```
