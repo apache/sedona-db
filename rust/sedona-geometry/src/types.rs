@@ -332,8 +332,7 @@ impl GeometryTypeAndDimensionsSet {
     ) -> Result<(), SedonaGeometryError> {
         if let Dimensions::Unknown(n) = type_and_dim.dimensions() {
             return Err(SedonaGeometryError::Invalid(format!(
-                "Unknown dimensions {} in GeometryTypeAndDimensionsSet::insert",
-                n
+                "Unknown dimensions {n} in GeometryTypeAndDimensionsSet::insert"
             )));
         }
         self.insert_or_ignore(type_and_dim);
@@ -352,8 +351,7 @@ impl GeometryTypeAndDimensionsSet {
         // WKB ID must be < 8 to fit in the bitset layout (8 bits per dimension)
         if geom_shift >= 8 {
             panic!(
-                "Invalid geometry type wkb_id {} in GeometryTypeAndDimensionsSet::insert_or_ignore",
-                geom_shift
+                "Invalid geometry type wkb_id {geom_shift} in GeometryTypeAndDimensionsSet::insert_or_ignore"
             );
         }
         let dim_shift = match type_and_dim.dimensions() {
@@ -428,8 +426,7 @@ impl Iterator for GeometryTypeSetIter {
                     16 => Dimensions::Xym,
                     24 => Dimensions::Xyzm,
                     _ => panic!(
-                        "Invalid dimension bits at position {} in GeometryTypeAndDimensionsSet",
-                        bit
+                        "Invalid dimension bits at position {bit} in GeometryTypeAndDimensionsSet"
                     ),
                 };
 

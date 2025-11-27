@@ -111,7 +111,7 @@ impl PolygonizeAccumulator {
         let mut geos_geoms = Vec::with_capacity(num_geoms);
         for i in 0..num_geoms {
             let geom = collection.get_geometry_n(i).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to get geometry {}: {e}", i))
+                DataFusionError::Execution(format!("Failed to get geometry {i}: {e}"))
             })?;
             geos_geoms.push(geom.clone());
         }
