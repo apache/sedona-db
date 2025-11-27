@@ -36,7 +36,6 @@ use crate::{
     st_perimeter::st_perimeter_impl,
     st_polygonize::st_polygonize_impl,
     st_polygonize_agg::st_polygonize_agg_impl,
-    st_reverse::st_reverse_impl,
     st_simplify::st_simplify_impl,
     st_simplifypreservetopology::st_simplify_preserve_topology_impl,
     st_snap::st_snap_impl,
@@ -82,7 +81,6 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
         ("st_overlaps", st_overlaps_impl()),
         ("st_perimeter", st_perimeter_impl()),
         ("st_polygonize", st_polygonize_impl()),
-        ("st_reverse", st_reverse_impl()),
         ("st_simplify", st_simplify_impl()),
         (
             "st_simplifypreservetopology",
