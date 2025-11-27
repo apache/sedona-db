@@ -21,6 +21,7 @@ use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
+use geos::GeometryTypes;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -69,24 +70,26 @@ impl SedonaScalarKernel for STNumInteriorRings {
 }
 
 fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<i32> {
-    // geos::Geometry provides get_num_interior_rings() -> GResult<usize>
-    let count = geos_geom.get_num_interior_rings().map_err(|e| {
-        DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
-    })?;
+    // Only polygons have interior rings; for everything else, return 0.
+    if matches!(geos_geom.geometry_type(), GeometryTypes::Polygon) {
+        let count = geos_geom.get_num_interior_rings().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
+        })?;
 
-    // safe to cast to i32 for SQL integer return
-    Ok(count as i32)
+        Ok(count as i32)
+    } else {
+        // POINT, LINESTRING, MULTIPOINT, etc. -> 0 holes
+        Ok(0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{create_array, ArrayRef};
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::compare::assert_array_equal;
-    use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -94,38 +97,36 @@ mod tests {
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_kernel("st_numinteriorrings", st_num_interior_rings_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
 
-        // scalar-scalar: polygon with two interior rings -> 2
+        // Polygon with two interior rings -> 2
         let result = tester
-            .invoke_scalar_scalar(
-                "POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))", // returns 2
-                "POLYGON((0 0,10 0,10 6,0 6,0 0))", // second arg ignored, only single-arg UDF tester will pass one value, but keep pattern consistent
+            .invoke_scalar(
+                "POLYGON(\
+                    (0 0,10 0,10 6,0 6,0 0),\
+                    (1 1,2 1,2 5,1 5,1 1),\
+                    (8 5,8 4,9 4,9 5,8 5)\
+                )",
             )
             .unwrap();
-
-        // Note: Above tester.invoke_scalar_scalar in your testing harness for single-arg UDFs
-        // may accept two parameters; if not, use invoke_scalar("WKT") variant available in the tester.
         tester.assert_scalar_result_equals(result, 2_i32);
 
-        // Nulls -> Null
-        let result = tester
-            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
-            .unwrap();
+        // NULL -> NULL
+        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
-        // array-array style: mix of polygon, non-polygon and null
-        let lhs = create_array(
-            &[
-                Some("POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1))"), //returns 1
-                Some("POINT (5 5)"), //returns 0 only out circle is there
-                None,
-            ],
-            &WKB_GEOMETRY,
-        );
+        // Array: polygon, point, null
+        // polygon has 1 hole -> 1
+        // point -> 0 (no interior rings)
+        // null -> null
+        let input_wkt = vec![
+            Some("POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1))"),
+            Some("POINT (5 5)"),
+            None,
+        ];
 
-        let expected: ArrayRef = arrow_array!(Int32, [Some(1), Some(0), None]);
-        assert_array_equal(&tester.invoke_array_array(lhs).unwrap(), &expected);
+        let expected: ArrayRef = create_array!(Int32, [Some(1), Some(0), None]);
+        assert_eq!(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
     }
 }
