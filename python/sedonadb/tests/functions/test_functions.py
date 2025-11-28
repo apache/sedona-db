@@ -1250,6 +1250,34 @@ def test_st_hasz(eng, geom, expected):
             2,
             "LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)",
         ),
+        # Z Dimensions
+        ("POINT Z (1 1 5)", 1, None),
+        (
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
+            1,
+            "LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)",
+        ),
+        ("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))", 1, None),
+        # M Dimensions
+        ("LINESTRING M (0 0 1, 1 1 2)", 1, None),
+        ("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))", 1, None),
+        (
+            "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))",
+            1,
+            "LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)",
+        ),
+        # ZM Dimensions
+        ("POLYGON ZM EMPTY", 1, None),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+            2,
+            None,
+        ),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+            1,
+            "LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)",
+        ),
     ],
 )
 def test_st_interiorringn(eng, geom, index, expected):
