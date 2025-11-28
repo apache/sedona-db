@@ -111,11 +111,7 @@ mod tests {
         // Polygon with 2 interior rings -> 2
         let result = tester
             .invoke_scalar(
-                "POLYGON(
-                    (0 0,10 0,10 6,0 6,0 0),
-                    (1 1,2 1,2 5,1 5,1 1),
-                    (8 5,8 4,9 4,9 5,8 5)
-                )",
+                "POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, 2_i32);
@@ -131,23 +127,13 @@ mod tests {
             Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
             Some("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))"),
             Some(
-                "POLYGON (
-                    (0 0,10 0,10 6,0 6,0 0),
-                    (1 1,2 1,2 5,1 5,1 1),
-                    (8 5,8 4,9 4,9 5,8 5)
-                )",
+                "POLYGON ((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
             ),
             Some(
-                "MULTIPOLYGON (
-                    ((0 0,5 0,5 5,0 5,0 0),(1 1,2 1,2 2,1 2,1 1)),
-                    ((10 10,14 10,14 14,10 14,10 10))
-                )",
+                "MULTIPOLYGON (((0 0,5 0,5 5,0 5,0 0),(1 1,2 1,2 2,1 2,1 1)),((10 10,14 10,14 14,10 14,10 10)))",
             ),
             Some(
-                "GEOMETRYCOLLECTION (
-                    POINT (1 2),
-                    POLYGON ((0 0,3 0,3 3,0 3,0 0))
-                )",
+                "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0,3 0,3 3,0 3,0 0)))",
             ),
         ];
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
