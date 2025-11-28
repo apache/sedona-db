@@ -2698,3 +2698,47 @@ def test_st_snap(eng, input, reference, tolerance, expected):
 def test_st_zmflag(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_ZmFlag({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", None),
+        ("LINESTRING EMPTY", None),
+        ("POLYGON EMPTY", 0),
+        ("MULTIPOINT EMPTY", None),
+        ("MULTILINESTRING EMPTY", None),
+        ("MULTIPOLYGON EMPTY", None),
+        ("GEOMETRYCOLLECTION EMPTY", None),
+        ("POINT (1 2)", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),
+        ("MULTIPOINT ((0 0), (1 1))", None),
+        ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", None),
+        ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", None),
+        (
+            "POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))",
+            1,
+        ),
+        (
+            "POLYGON ((0 0,10 0,10 6,0 6,0 0), (1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
+            2,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),((10 10, 14 10, 14 14, 10 14, 10 10)))",
+            None,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0)))",
+            None,
+        ),
+    ],
+)
+def test_st_numinteriorrings_basic(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
+        expected,
+    )
