@@ -19,11 +19,7 @@
 
 # SQL API Reference
 
-The following SQL functions are available for SedonaDB.
-
-You can query data directly from files and URLs by treating them like database tables. This feature supports formats like **Parquet**, **CSV**, and **JSON**.
-
-## ST_Analyze_Aggr
+## ST_Analyze_Agg
 
 #### Description
 
@@ -33,7 +29,7 @@ Since: v0.1.
 
 #### Format
 
-`ST_Analyze_Aggr (A: Geometry)`
+`ST_Analyze_Agg (A: Geometry)`
 
 #### Arguments
 
@@ -42,7 +38,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_Analyze_Aggr(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'))
+SELECT ST_Analyze_Agg(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'));
 ```
 
 ## ST_Area
@@ -108,7 +104,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0))
+SELECT ST_AsText(ST_Point(1.0, 2.0));
 ```
 
 ## ST_Azimuth
@@ -120,7 +116,7 @@ Format: ST_Azimuth(pointA: Point, pointB: Point)
 Since: v0.2.
 
 ```sql
-SELECT ST_Azimuth(ST_POINT(0.0, 25.0), ST_POINT(0.0, 0.0))
+SELECT ST_Azimuth(ST_POINT(0.0, 25.0), ST_POINT(0.0, 0.0));
 ```
 
 ## ST_Boundary
@@ -132,7 +128,7 @@ Format: `ST_Boundary(geom: Geometry)`
 Since: v0.2.
 
 ```sql
-SELECT ST_Boundary(ST_GeomFromWKT('POLYGON((1 1,0 0, -1 1, 1 1))'))
+SELECT ST_Boundary(ST_GeomFromWKT('POLYGON((1 1,0 0, -1 1, 1 1))'));
 ```
 
 ## ST_Buffer
@@ -189,7 +185,7 @@ Format: `ST_ClosestPoint(g1: Geometry, g2: Geometry)`
 Since: v0.2.
 
 ```sql
-SELECT ST_AsText( ST_ClosestPoint(g1, g2)) As ptwkt;
+SELECT ST_AsText(ST_ClosestPoint(g1, g2)) As ptwkt;
 ```
 
 ## ST_Collect
@@ -211,8 +207,12 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))
+SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'));
 ```
+
+## ST_Collect_Agg
+
+TODO
 
 ## ST_Contains
 
@@ -234,7 +234,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_Contains(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Contains(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
 ## ST_ConvexHull
@@ -246,7 +246,7 @@ Format: `ST_ConvexHull (A: Geometry)`
 Since: v0.2.
 
 ```sql
-SELECT ST_ConvexHull(ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))'))
+SELECT ST_ConvexHull(ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))'));
 ```
 
 ## ST_CoveredBy
@@ -269,7 +269,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_CoveredBy(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_CoveredBy(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_Covers
@@ -304,7 +304,7 @@ Format: `ST_Crosses (A: Geometry, B: Geometry)`
 Since: v0.2.
 
 ```sql
-SELECT ST_Crosses(ST_GeomFromWKT('POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))'),ST_GeomFromWKT('POLYGON((2 2, 5 2, 5 5, 2 5, 2 2))'))
+SELECT ST_Crosses(ST_GeomFromWKT('POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))'),ST_GeomFromWKT('POLYGON((2 2, 5 2, 5 5, 2 5, 2 2))'));
 ```
 
 ## ST_CRS
@@ -331,7 +331,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_Difference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+SELECT ST_Difference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val;
 ```
 
 ## ST_Dimension
@@ -518,7 +518,7 @@ Since: v0.1.
 SELECT ST_Envelope(ST_Point(1.0, 2.0))
 ```
 
-## ST_Envelope_Aggr
+## ST_Envelope_Agg
 
 #### Description
 
@@ -528,7 +528,7 @@ Since: v0.1.
 
 #### Format
 
-`ST_Envelope_Aggr (geom: Geometry)`
+`ST_Envelope_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -542,7 +542,7 @@ WITH shapes(geom) AS (
     VALUES (ST_GeomFromWKT('POINT (0 1)')),
            (ST_GeomFromWKT('POINT (10 11)'))
 )
-SELECT ST_AsText(ST_Envelope_Aggr(geom)) FROM shapes;
+SELECT ST_AsText(ST_Envelope_Agg(geom)) FROM shapes;
 -- Returns: POLYGON ((0 1, 0 11, 10 11, 10 1, 0 1))
 ```
 
@@ -655,7 +655,7 @@ Format: ST_GeometryN(geom: Geometry, n: Integer)
 Since: v0.2.
 
 ```sql
-SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1)
+SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1);
 ```
 
 ## ST_GeomFromWKB
@@ -722,7 +722,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_HasM
@@ -744,7 +744,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_HasZ
@@ -766,7 +766,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_HausdorffDistance
@@ -815,7 +815,7 @@ Since: v0.1.
 SELECT ST_Intersection(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
 ```
 
-## ST_Intersection_Aggr
+## ST_Intersection_Agg
 
 #### Description
 
@@ -825,7 +825,7 @@ Since: v0.1.
 
 #### Format
 
-`ST_Intersection_Aggr (geom: Geometry)`
+`ST_Intersection_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -839,7 +839,7 @@ WITH shapes(geom) AS (
     VALUES (ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
            (ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'))
 )
-SELECT ST_AsText(ST_Intersection_Aggr(geom)) FROM shapes;
+SELECT ST_AsText(ST_Intersection_Agg(geom)) FROM shapes;
 -- Returns: POLYGON ((1 1, 1 2, 2 2, 2 1, 1 1))
 ```
 
@@ -930,7 +930,7 @@ Format: `ST_IsRing(geom: Geometry)`
 Since: v0.2.
 
 ```sql
-SELECT ST_IsRing(ST_GeomFromText("LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)"))
+SELECT ST_IsRing(ST_GeomFromText("LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)"));
 ```
 
 ## ST_IsSimple
@@ -1392,6 +1392,10 @@ Since: v0.2.
 SELECT ST_AsText(ST_Polygonize(ST_GeomFromEWKT('GEOMETRYCOLLECTION (LINESTRING (2 0, 2 1, 2 2), LINESTRING (2 2, 2 3, 2 4), LINESTRING (0 2, 1 2, 2 2), LINESTRING (2 2, 3 2, 4 2), LINESTRING (0 2, 1 3, 2 4), LINESTRING (2 4, 3 3, 4 2))')));
 ```
 
+## ST_Polygonize_Agg
+
+TODO
+
 ## ST_Reverse
 
 Return the geometry with vertex order reversed
@@ -1639,7 +1643,7 @@ Since: v0.1.
 SELECT ST_Union(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
 ```
 
-## ST_Union_Aggr
+## ST_Union_Agg
 
 #### Description
 
@@ -1649,7 +1653,7 @@ Since: v0.1.
 
 #### Format
 
-`ST_Union_Aggr (geom: Geometry)`
+`ST_Union_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -1663,7 +1667,7 @@ WITH shapes(geom) AS (
     VALUES (ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')),
            (ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))'))
 )
-SELECT ST_AsText(ST_Union_Aggr(geom)) FROM shapes;
+SELECT ST_AsText(ST_Union_Agg(geom)) FROM shapes;
 -- Returns: MULTIPOLYGON (((2 2, 3 2, 3 3, 2 3, 2 2)), ((0 0, 1 0, 1 1, 0 1, 0 0)))
 ```
 
@@ -1868,7 +1872,7 @@ Since: v0.1.
 
 ```sql
 SELECT ST_ZMax(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
--- Returns: 7
+-- Returns: 7.0
 ```
 
 ## ST_ZMin
