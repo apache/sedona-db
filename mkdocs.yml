@@ -171,4 +171,3 @@ plugins:
                  signature_crossrefs: true
                  preload_modules:
                    - sedonadb
-                 search_paths: [python]
