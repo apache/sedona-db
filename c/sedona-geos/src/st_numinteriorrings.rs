@@ -57,7 +57,6 @@ impl SedonaScalarKernel for STNumInteriorRings {
                     let res = invoke_scalar(&geom)?;
                     match res {
                         Some(n) => builder.append_value(n),
-                        // non-polygon / unsupported -> NULL (matches PostGIS + py tests)
                         None => builder.append_null(),
                     }
                 }
@@ -77,7 +76,6 @@ fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
             })?;
 
             if is_empty {
-                // empty polygon has no interior rings
                 Ok(Some(0))
             } else {
                 let count = geom.get_num_interior_rings().map_err(|e| {
@@ -86,7 +84,6 @@ fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
                 Ok(Some(count as i32))
             }
         }
-        // non-polygon -> NULL
         _ => Ok(None),
     }
 }
@@ -123,7 +120,6 @@ mod tests {
             .unwrap();
         tester.assert_scalar_result_equals(result, 2_i32);
 
-        // NULL -> NULL
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
@@ -154,8 +150,6 @@ mod tests {
                 )",
             ),
         ];
-
-        // Build expected as ArrayRef (Arc<dyn Array>)
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
             None,

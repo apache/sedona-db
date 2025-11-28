@@ -2705,20 +2705,25 @@ def test_st_zmflag(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
+        ("POINT EMPTY", None),
+        ("LINESTRING EMPTY", None),
+        ("POLYGON EMPTY", 0),
+        ("MULTIPOINT EMPTY", None),
+        ("MULTILINESTRING EMPTY", None),
+        ("MULTIPOLYGON EMPTY", None),
+        ("GEOMETRYCOLLECTION EMPTY", None),
         ("POINT (1 2)", None),
         ("LINESTRING (0 0, 1 1, 2 2)", None),
-        ("POLYGON EMPTY", 0),
         ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),
+        ("MULTIPOINT ((0 0), (1 1))", None),
+        ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", None),
+        ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", None),
         (
             "POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))",
             1,
         ),
         (
-            "POLYGON ("
-            "(0 0,10 0,10 6,0 6,0 0),"
-            "(1 1,2 1,2 5,1 5,1 1),"
-            "(8 5,8 4,9 4,9 5,8 5)"
-            ")",
+            "POLYGON ((0 0,10 0,10 6,0 6,0 0), (1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
             2,
         ),
         (
