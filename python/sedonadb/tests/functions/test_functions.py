@@ -1180,6 +1180,87 @@ def test_st_hasz(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "index", "expected"),
+    [
+        # I. Null/Empty/Non-Polygon Inputs
+        # NULL input
+        (None, 1, None),
+        # POINT
+        ("POINT (0 0)", 1, None),
+        # POINT EMPTY
+        ("POINT EMPTY", 1, None),
+        # LINESTRING
+        ("LINESTRING (0 0, 0 1, 1 2)", 1, None),
+        # LINESTRING EMPTY
+        ("LINESTRING EMPTY", 1, None),
+        # MULTIPOINT
+        ("MULTIPOINT ((0 0), (1 1))", 1, None),
+        # MULTIPOLYGON (Interior rings are within constituent Polygons, not the MultiPolygon itself)
+        ("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))", 1, None),
+        # GEOMETRYCOLLECTION
+        ("GEOMETRYCOLLECTION (POINT(1 1))", 1, None),
+        # II. Polygon Edge Cases
+        # POLYGON EMPTY
+        ("POLYGON EMPTY", 1, None),
+        # Polygon with NO interior rings, index=1
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, None),
+        # Invalid index n=0 (Assuming 1-based indexing means n=0 is invalid/out of range)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0, None),
+        # Index n too high (index=2, but 0 holes)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 2, None),
+        # III. Valid Polygon with Interior Ring(s)
+        # Polygon: ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))
+        # Single hole, index=1
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            1,
+            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+        ),
+        # Single hole, index=2 (index too high)
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2, None),
+        # Polygon: ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))
+        # Two holes, index=1 (first hole)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            1,
+            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+        ),
+        # Two holes, index=2 (second hole)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            2,
+            "LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)",
+        ),
+        # Two holes, index=3 (index too high)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            3,
+            None,
+        ),
+        # IV. Invalid/Malformed Polygon Input
+        #  External hole (WKT is syntactically valid, second ring is usually treated as a hole by parsers regardless of validity)
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))",
+            1,
+            "LINESTRING (5 5, 5 6, 6 6, 6 5, 5 5)",
+        ),
+        # Intersecting holes (WKT is syntactically valid)
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))",
+            2,
+            "LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)",
+        ),
+    ],
+)
+def test_st_interiorringn(eng, geom, index, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_InteriorRingN({geom_or_null(geom)}, {val_or_null(index)})", expected
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),

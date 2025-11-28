@@ -139,13 +139,12 @@ mod tests {
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::testers::ScalarUdfTester;
+    use sedona_testing::{compare::assert_array_equal, create::create_array};
 
     use super::*;
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        use sedona_testing::{compare::assert_array_equal, create::create_array};
-
         let tester = ScalarUdfTester::new(
             st_geometryn_udf().into(),
             vec![

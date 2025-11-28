@@ -16,7 +16,7 @@
 // under the License.
 use std::{fmt::Debug, sync::Arc, vec};
 
-use arrow_array::{ArrayRef, Float64Array};
+use arrow_array::{ArrayRef, Float64Array, Int64Array};
 use arrow_schema::DataType;
 
 use datafusion_common::{Result, ScalarValue};
@@ -277,6 +277,8 @@ pub enum BenchmarkArgSpec {
     /// Randomly generated linestring input with a specified number of vertices
     MultiPoint(usize),
     /// Randomly generated floating point input with a given range of values
+    Int64(i64, i64),
+    /// Randomly generated floating point input with a given range of values
     Float64(f64, f64),
     /// A transformation of any of the above based on a [ScalarUDF] accepting
     /// a single argument
@@ -296,6 +298,7 @@ impl Debug for BenchmarkArgSpec {
             Self::LineString(arg0) => f.debug_tuple("LineString").field(arg0).finish(),
             Self::Polygon(arg0) => f.debug_tuple("Polygon").field(arg0).finish(),
             Self::MultiPoint(arg0) => f.debug_tuple("MultiPoint").field(arg0).finish(),
+            Self::Int64(arg0, arg1) => f.debug_tuple("Int64").field(arg0).field(arg1).finish(),
             Self::Float64(arg0, arg1) => f.debug_tuple("Float64").field(arg0).field(arg1).finish(),
             Self::Transformed(inner, t) => write!(f, "{}({:?})", t.name(), inner),
             Self::String(s) => write!(f, "String({s})"),
@@ -312,6 +315,7 @@ impl BenchmarkArgSpec {
             | BenchmarkArgSpec::Polygon(_)
             | BenchmarkArgSpec::LineString(_)
             | BenchmarkArgSpec::MultiPoint(_) => WKB_GEOMETRY,
+            BenchmarkArgSpec::Int64(_, _) => SedonaType::Arrow(DataType::Int64),
             BenchmarkArgSpec::Float64(_, _) => SedonaType::Arrow(DataType::Float64),
             BenchmarkArgSpec::Transformed(inner, t) => {
                 let tester = ScalarUdfTester::new(t.clone(), vec![inner.sedona_type()]);
@@ -369,6 +373,17 @@ impl BenchmarkArgSpec {
                 *part_count,
                 rows_per_batch,
             ),
+            BenchmarkArgSpec::Int64(lo, hi) => {
+                let mut rng = self.rng(i);
+                let dist = Uniform::new(lo, hi);
+                (0..num_batches)
+                    .map(|_| -> Result<ArrayRef> {
+                        let int64_array: Int64Array =
+                            (0..rows_per_batch).map(|_| rng.sample(dist)).collect();
+                        Ok(Arc::new(int64_array))
+                    })
+                    .collect()
+            }
             BenchmarkArgSpec::Float64(lo, hi) => {
                 let mut rng = self.rng(i);
                 let dist = Uniform::new(lo, hi);
