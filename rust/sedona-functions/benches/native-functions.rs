@@ -87,13 +87,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native",
         "st_interiorringn",
-        BenchmarkArgs::ArrayArray(Polygon(10), Int64(1, 10)),
-    );
-    benchmark::scalar(
-        c,
-        &f,
-        "native",
-        "st_interiorringn",
         BenchmarkArgs::ArrayArray(Polygon(500), Int64(1, 10)),
     );
 

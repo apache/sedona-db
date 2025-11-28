@@ -21,10 +21,11 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::cast::as_int64_array;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation};
-use geo_traits::to_geo::ToGeoLineString;
-use geo_traits::{GeometryTrait, PolygonTrait};
+use geo_traits::{GeometryTrait, LineStringTrait, PolygonTrait};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::wkb_factory::{write_wkb_linestring, WKB_MIN_PROBABLE_BYTES};
+use sedona_geometry::wkb_factory::{
+    write_wkb_coord_trait, write_wkb_linestring_header, WKB_MIN_PROBABLE_BYTES,
+};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 use wkb::reader::Wkb;
@@ -110,16 +111,13 @@ fn invoke_scalar(geom: &Wkb, index: usize, writer: &mut impl std::io::Write) -> 
         _ => None,
     };
 
-    if let Some(buf) = geometry {
-        write_wkb_linestring(
-            writer,
-            buf.to_line_string()
-                .coords()
-                .map(|c| c.x_y())
-                .collect::<Vec<(f64, f64)>>()
-                .into_iter(),
-        )
-        .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
+    if let Some(wkb) = geometry {
+        write_wkb_linestring_header(writer, wkb.dim(), wkb.num_coords())
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        wkb.coords().try_for_each(|coord| {
+            write_wkb_coord_trait(writer, &coord)
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        })?;
         Ok(true)
     } else {
         Ok(false)
@@ -136,21 +134,28 @@ mod tests {
 
     use super::*;
 
-    #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn setup_tester(sedona_type: SedonaType) -> ScalarUdfTester {
         let tester = ScalarUdfTester::new(
             st_interiorringn_udf().into(),
             vec![
-                sedona_type.clone(),
+                sedona_type,
                 SedonaType::Arrow(arrow_schema::DataType::Int64),
             ],
         );
         tester.assert_return_type(WKB_GEOMETRY);
+        tester
+    }
+
+    // 1. Tests for Non-Polygon Geometries (Should return NULL)
+    #[rstest]
+    fn test_st_interiorringn_non_polygons(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
 
         let input_wkt = create_array(
             &[
-                // I. Null/Empty/Non-Polygon Inputs
-                None,                                               // NULL
+                None,                                               // NULL input
                 Some("POINT (0 0)"),                                // POINT
                 Some("POINT EMPTY"),                                // POINT EMPTY
                 Some("LINESTRING (0 0, 0 1, 1 2)"),                 // LINESTRING
@@ -158,26 +163,9 @@ mod tests {
                 Some("MULTIPOINT ((0 0), (1 1))"),                  // MULTIPOINT
                 Some("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))"), // MULTIPOLYGON
                 Some("GEOMETRYCOLLECTION (POINT(1 1))"),            // GEOMETRYCOLLECTION
-                // II. Polygon Edge Cases
-                Some("POLYGON EMPTY"),                       // POLYGON EMPTY
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), //  Polygon with NO interior rings
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Invalid index n=0
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Index n too high
-                // III. Valid Polygon with Interior Ring(s)
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=2
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"), // Two holes, n=1
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"), // Two holes, n=2
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"), // Two holes, n=3
-
-                // // IV. Invalid/Malformed Polygon Input
-                Some("POLYGON ((0 0, 1 0, 1 1))"), // Unclosed/Malformed WKT (invalid polygon geometry)
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))"), // External hole
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))"), //  Intersecting holes
             ],
             &WKB_GEOMETRY,
         );
-
         let integers = arrow_array::create_array!(
             Int64,
             [
@@ -188,49 +176,209 @@ mod tests {
                 Some(1),
                 Some(1),
                 Some(1),
-                Some(1), // I.
-                Some(1),
-                Some(1),
-                Some(0),
-                Some(2), // II.
-                Some(1),
-                Some(2),
-                Some(1),
-                Some(2),
-                Some(3),
-                // III.
-                Some(1),
-                Some(1),
-                Some(2) // IV.
+                Some(1)
             ]
         );
+        let expected = create_array(
+            &[None, None, None, None, None, None, None, None],
+            &WKB_GEOMETRY,
+        );
 
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    // 2. Tests for Polygon Edge Cases (No holes, Invalid index)
+    #[rstest]
+    fn test_st_interiorringn_polygon_edge_cases(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                Some("POLYGON EMPTY"),                       // POLYGON EMPTY
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Polygon with NO interior rings (n=1)
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Invalid index n=0
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Index n too high (n=2)
+            ],
+            &WKB_GEOMETRY,
+        );
+        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(0), Some(2)]);
         let expected = create_array(
             &[
-                // I. Null/Empty/Non-Polygon Inputs
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                // II. Polygon Edge Cases
                 None, // POLYGON EMPTY
                 None, // Polygon with NO interior rings
                 None, // Invalid index n=0 (Assuming NULL/None on invalid index)
                 None, // Index n too high
-                // III. Valid Polygon with Interior Ring(s)
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    // 3. Tests for Valid Polygons (Correct Extraction)
+    #[rstest]
+    fn test_st_interiorringn_valid_polygons(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=1
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=2 (too high)
+                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=1
+                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=2
+                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=3 (too high)
+            ],
+            &WKB_GEOMETRY,
+        );
+        let integers =
+            arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1), Some(2), Some(3)]);
+        let expected = create_array(
+            &[
                 Some("LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)"),
                 None,
                 Some("LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)"),
                 Some("LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)"),
                 None,
-                // IV. Invalid/Malformed Polygon Input
-                None, // WKT parsing/validation returns None/NULL for invalid geometry
-                Some("LINESTRING(5 5,5 6,6 6,6 5,5 5)"),
-                Some("LINESTRING(2 2,2 2.5,2.5 2.5,2.5 2,2 2)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    // 4. Tests for Invalid/Malformed Polygons (Checking for error/extraction)
+    #[rstest]
+    fn test_st_interiorringn_invalid_polygons(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                Some("POLYGON ((0 0, 1 0, 1 1))"),                                                            // Unclosed/Malformed WKT
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))"),                       // External hole
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))"), // Intersecting holes
+            ],
+            &WKB_GEOMETRY,
+        );
+        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(2)]);
+        let expected = create_array(
+            &[
+                None, // parsing/validation returns None/NULL for invalid geometry (Unclosed)
+                Some("LINESTRING (5 5, 5 6, 6 6, 6 5, 5 5)"), // Extraction works even if topologically invalid (external)
+                Some("LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)"), // Extraction works even if topologically invalid (intersecting)
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn test_st_interiorringn_z_dimensions(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                // Valid Polygon Z extraction
+                Some("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))"),
+                // Non-Polygon Z (Should be NULL)
+                Some("POINT Z (1 1 5)"),
+                // Polygon Z with no hole (Should be NULL)
+                Some("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))"),
+            ],
+            &WKB_GEOMETRY
+        );
+        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
+        let expected = create_array(
+            &[
+                Some("LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)"),
+                None,
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn test_st_interiorringn_m_dimensions(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                // Valid Polygon M extraction
+                Some("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))"),
+                // Non-Polygon M (Should be NULL)
+                Some("LINESTRING M (0 0 1, 1 1 2)"),
+                // Polygon M with no hole (Should be NULL)
+                Some("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))"),
+            ],
+            &WKB_GEOMETRY
+        );
+        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
+        let expected = create_array(
+            &[
+                Some("LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)"),
+                None,
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn test_st_interiorringn_zm_dimensions(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = setup_tester(sedona_type);
+
+        let input_wkt = create_array(
+            &[
+                // Valid Polygon ZM extraction (n=1)
+                Some("POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))"),
+                // Index too high (n=2)
+                Some("POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))"),
+                // POLYGON ZM EMPTY (Should be NULL)
+                Some("POLYGON ZM EMPTY"),
+            ],
+            &WKB_GEOMETRY
+        );
+        let integers = arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1)]);
+        let expected = create_array(
+            &[
+                Some("LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)"),
+                None,
+                None,
             ],
             &WKB_GEOMETRY,
         );

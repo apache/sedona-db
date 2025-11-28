@@ -276,7 +276,7 @@ pub enum BenchmarkArgSpec {
     Polygon(usize),
     /// Randomly generated linestring input with a specified number of vertices
     MultiPoint(usize),
-    /// Randomly generated floating point input with a given range of values
+    /// Randomly generated integer input with a given range of values
     Int64(i64, i64),
     /// Randomly generated floating point input with a given range of values
     Float64(f64, f64),
