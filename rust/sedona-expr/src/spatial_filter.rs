@@ -73,24 +73,24 @@ impl SpatialFilter {
     /// Note that this always succeeds; however, for a non-spatial expression or
     /// a non-spatial expression that is unsupported, the full bounding box is
     /// returned.
-    pub fn filter_bbox(&self, column_index: usize) -> BoundingBox {
+    pub fn filter_bbox(&self, column_name: &str) -> BoundingBox {
         match self {
             SpatialFilter::Intersects(column, bounding_box)
             | SpatialFilter::Covers(column, bounding_box) => {
-                if column.index() == column_index {
+                if column.name() == column_name {
                     return bounding_box.clone();
                 }
             }
             SpatialFilter::And(lhs, rhs) => {
-                let lhs_box = lhs.filter_bbox(column_index);
-                let rhs_box = rhs.filter_bbox(column_index);
+                let lhs_box = lhs.filter_bbox(column_name);
+                let rhs_box = rhs.filter_bbox(column_name);
                 if let Ok(bounds) = lhs_box.intersection(&rhs_box) {
                     return bounds;
                 }
             }
             SpatialFilter::Or(lhs, rhs) => {
-                let mut bounds = lhs.filter_bbox(column_index);
-                bounds.update_box(&rhs.filter_bbox(column_index));
+                let mut bounds = lhs.filter_bbox(column_name);
+                bounds.update_box(&rhs.filter_bbox(column_name));
                 return bounds;
             }
             SpatialFilter::LiteralFalse => {
@@ -1153,25 +1153,25 @@ mod test {
         let bbox_13 = BoundingBox::xy((1, 3), (1, 3));
 
         assert_eq!(
-            SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone()).filter_bbox(0),
+            SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone()).filter_bbox("foofy"),
             bbox_02
         );
 
         assert_eq!(
-            SpatialFilter::Covers(col_zero.clone(), bbox_02.clone()).filter_bbox(0),
+            SpatialFilter::Covers(col_zero.clone(), bbox_02.clone()).filter_bbox("foofy"),
             bbox_02
         );
 
         assert_eq!(
-            SpatialFilter::LiteralFalse.filter_bbox(0),
+            SpatialFilter::LiteralFalse.filter_bbox("foofy"),
             BoundingBox::xy(Interval::empty(), Interval::empty())
         );
         assert_eq!(
-            SpatialFilter::HasZ(col_zero.clone()).filter_bbox(0),
+            SpatialFilter::HasZ(col_zero.clone()).filter_bbox("foofy"),
             BoundingBox::xy(Interval::full(), Interval::full())
         );
         assert_eq!(
-            SpatialFilter::Unknown.filter_bbox(0),
+            SpatialFilter::Unknown.filter_bbox("foofy"),
             BoundingBox::xy(Interval::full(), Interval::full())
         );
 
@@ -1182,7 +1182,7 @@ mod test {
                 Box::new(intersects_02.clone()),
                 Box::new(intersects_13.clone())
             )
-            .filter_bbox(0),
+            .filter_bbox("foofy"),
             BoundingBox::xy((1, 2), (1, 2))
         );
 
@@ -1191,7 +1191,7 @@ mod test {
                 Box::new(intersects_02.clone()),
                 Box::new(intersects_13.clone())
             )
-            .filter_bbox(0),
+            .filter_bbox("foofy"),
             BoundingBox::xy((0, 3), (0, 3))
         );
     }

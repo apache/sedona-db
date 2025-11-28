@@ -282,10 +282,10 @@ pub struct PyFilter {
 impl PyFilter {
     fn bounding_box(
         &self,
-        column_index: usize,
+        column_name: &str,
     ) -> Result<Option<(f64, f64, f64, f64)>, PySedonaError> {
         let filter = SpatialFilter::try_from_expr(&self.inner)?;
-        let filter_bbox = filter.filter_bbox(column_index);
+        let filter_bbox = filter.filter_bbox(column_name);
         if filter_bbox.x().is_full() || filter_bbox.y().is_full() {
             Ok(None)
         } else {
