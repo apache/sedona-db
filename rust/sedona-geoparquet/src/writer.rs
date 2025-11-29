@@ -419,7 +419,7 @@ mod test {
     };
     use datafusion_common::cast::{as_float32_array, as_struct_array};
     use datafusion_common::ScalarValue;
-    use datafusion_expr::{Expr, LogicalPlanBuilder};
+    use datafusion_expr::{Cast, Expr, LogicalPlanBuilder};
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
     use sedona_testing::data::test_geoparquet;
@@ -749,8 +749,10 @@ mod test {
     async fn geoparquet_1_1_with_sort_by_expr() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
+        let fns = sedona_functions::register::default_function_set();
 
-        use datafusion::functions::string::lower;
+        let geometry_udf: ScalarUDF = fns.scalar_udf("sd_format").unwrap().clone().into();
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
         let df = ctx
             .table(&example)
@@ -760,21 +762,24 @@ mod test {
             // and without this line the test fails.
             .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
-            .sort_by(vec![lower().call(vec![col("wkt")])])
+            .sort_by(vec![geometry_udf.call(vec![col("geometry")])])
             .unwrap()
-            .select(vec![col("geometry")])
+            .select(vec![
+                Expr::Cast(Cast::new(
+                    geometry_udf.call(vec![col("geometry")]).alias("txt").into(),
+                    DataType::Utf8View,
+                )),
+                col("geometry"),
+            ])
             .unwrap();
 
         let mut options = TableGeoParquetOptions::new();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
-        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
-
         let df_batches_with_bbox = df
             .clone()
-            .sort_by(vec![lower().call(vec![col("wkt")])])
-            .unwrap()
             .select(vec![
+                col("txt"),
                 bbox_udf.call(vec![col("geometry")]).alias("bbox"),
                 col("geometry"),
             ])
