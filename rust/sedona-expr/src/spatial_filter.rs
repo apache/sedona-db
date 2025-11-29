@@ -400,7 +400,7 @@ impl SpatialFilter {
 /// such that attemmpts to access out-of-bounds values results in an readable
 /// error.
 pub enum TableGeoStatistics {
-    /// Provide statistics for every Column in the table. These may be
+    /// Provide statistics for every Column in the table. These must be
     /// [GeoStatistics::unspecified] for non-spatial columns.
     ///
     /// These are resolved using [Column::index].
@@ -409,7 +409,11 @@ pub enum TableGeoStatistics {
     /// Provide statistics for specific named columns. Columns not included
     /// are treated as [GeoStatistics::unspecified].
     ///
-    /// These are resolved using [Column::name].
+    /// These are resolved using [Column::name]. While the column name is
+    /// typically intended for debugging, at least some DataFusion versions
+    /// pass a filter to the data source with an incorrect index but a correct
+    /// name <https://github.com/apache/sedona-db/pull/385>. This option may
+    /// be removed if the incorrect index can be resolved upstream.
     ByName(HashMap<String, GeoStatistics>),
 }
 
@@ -1236,6 +1240,49 @@ mod test {
         } else {
             panic!("Parse incorrect!")
         }
+    }
+
+    #[test]
+    fn table_geo_stats_position() {
+        let column_stats =
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5))));
+        let table_stats = TableGeoStatistics::from(column_stats.clone());
+
+        assert_eq!(
+            table_stats.get(&Column::new("col0", 0)).unwrap(),
+            &column_stats
+        );
+        assert!(table_stats.get(&Column::new("col1", 1)).is_err());
+    }
+
+    #[test]
+    fn table_geo_stats_name() {
+        let geo_stats =
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5))));
+        let schema = Schema::new(vec![
+            Field::new("col0", DataType::Binary, true),
+            WKB_GEOMETRY.to_storage_field("col1", true).unwrap(),
+        ]);
+        let table_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &[GeoStatistics::UNSPECIFIED, geo_stats.clone()],
+            &schema,
+        )
+        .unwrap();
+
+        assert_eq!(
+            table_stats.get(&Column::new("col0", usize::MAX)).unwrap(),
+            &GeoStatistics::UNSPECIFIED
+        );
+        assert_eq!(
+            table_stats.get(&Column::new("col1", usize::MAX)).unwrap(),
+            &geo_stats
+        );
+        assert_eq!(
+            table_stats
+                .get(&Column::new("col_not_in_schema", usize::MAX))
+                .unwrap(),
+            &GeoStatistics::UNSPECIFIED
+        );
     }
 
     #[test]
