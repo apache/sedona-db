@@ -2766,7 +2766,7 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
         ("CIRCULARSTRING(0 0, 1 1, 1 0)", 3),
     ],
 )
-def test_st_numpoints_strict(eng, geom, expected):
+def test_st_numpoints(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_NumPoints({geom_or_null(geom)})",

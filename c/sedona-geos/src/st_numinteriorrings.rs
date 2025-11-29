@@ -22,12 +22,7 @@ use arrow_array::builder::Int32Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-<<<<<<< HEAD
 use geos::{Geom, Geometry, GeometryTypes};
-=======
-use geos::Geom;
-use geos::GeometryTypes;
->>>>>>> d797f12 (modified num of rings file)
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -73,7 +68,6 @@ impl SedonaScalarKernel for STNumInteriorRings {
     }
 }
 
-<<<<<<< HEAD
 fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
     match geom.geometry_type() {
         GeometryTypes::Polygon => {
@@ -91,24 +85,10 @@ fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
             }
         }
         _ => Ok(None),
-=======
-fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<i32> {
-    // Only polygons have interior rings; for everything else, return 0.
-    if matches!(geos_geom.geometry_type(), GeometryTypes::Polygon) {
-        let count = geos_geom.get_num_interior_rings().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
-        })?;
-
-        Ok(count as i32)
-    } else {
-        // POINT, LINESTRING, MULTIPOINT, etc. -> 0 holes
-        Ok(0)
->>>>>>> d797f12 (modified num of rings file)
     }
 }
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
     use std::sync::Arc;
 
     use arrow_array::{ArrayRef, Int32Array};
@@ -118,13 +98,6 @@ mod tests {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
-=======
-    use arrow_array::{create_array, ArrayRef};
-    use datafusion_common::ScalarValue;
-    use rstest::rstest;
-    use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
->>>>>>> d797f12 (modified num of rings file)
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -135,26 +108,14 @@ mod tests {
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
 
-<<<<<<< HEAD
         // Polygon with 2 interior rings -> 2
         let result = tester
             .invoke_scalar(
                 "POLYGON((0 0,10 0,10 6,0 6,0 0),(1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
-=======
-        // Polygon with two interior rings -> 2
-        let result = tester
-            .invoke_scalar(
-                "POLYGON(
-                    (0 0,10 0,10 6,0 6,0 0),
-                    (1 1,2 1,2 5,1 5,1 1),
-                    (8 5,8 4,9 4,9 5,8 5)
-                )",
->>>>>>> d797f12 (modified num of rings file)
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, 2_i32);
 
-<<<<<<< HEAD
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
@@ -189,17 +150,5 @@ mod tests {
 
         let result = tester.invoke_wkb_array(input_wkt).unwrap();
         assert_array_equal(&result, &expected);
-=======
-        // NULL -> NULL
-        let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
-        assert!(result.is_null());
-
-        let input_wkt = vec![
-            None,
-        ];
-
-        let expected: ArrayRef = create_array!(Int32, [Some(1), Some(0), None]);
-        assert_eq!(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
->>>>>>> d797f12 (modified num of rings file)
     }
 }
