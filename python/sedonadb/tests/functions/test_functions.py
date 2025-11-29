@@ -2774,3 +2774,38 @@ def test_st_numpoints(eng, geom, expected):
         f"SELECT ST_NumPoints({geom_or_null(geom)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT (1 2)", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("POLYGON EMPTY", 0),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1),
+        ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (5 5, 5 6, 6 6, 6 5, 5 5))",
+            3,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 20 10, 20 20, 10 20, 10 10), (12 12, 12 14, 14 14, 14 12, 12 12)))",
+            3,
+        ),
+        ("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))", 1),
+        ("CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0))", 1),
+        (
+            "CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0), CIRCULARSTRING(1 1, 1 2, 2 2, 2 1, 1 1))",
+            2,
+        ),
+        ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", None),
+    ],
+)
+def test_st_NRings(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_NRings({geom_or_null(geom)})",
+        expected,
+    )
