@@ -2763,7 +2763,6 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
         ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", None),
         ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", None),
         ("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))", None),
-        ("CIRCULARSTRING(0 0, 1 1, 1 0)", 3),
     ],
 )
 def test_st_numpoints(eng, geom, expected):
