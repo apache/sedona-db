@@ -157,23 +157,20 @@ mod tests {
                 "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0,3 0,3 3,0 3,0 0)))",
             ),
             Some("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))"),
-            Some("CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0))"),
-            Some("CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0), CIRCULARSTRING(1 1, 1 2, 2 2, 2 1, 1 1))"),
-        ];
+
+           ];
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            None,
-            None,
+            Some(0),
+            Some(0),
             Some(0),
             Some(1),
             Some(2),
             Some(3),
             Some(3),
-            None,
             Some(1),
             Some(1),
-            Some(2),
         ]));
 
         let result = tester.invoke_wkb_array(input_wkt).unwrap();

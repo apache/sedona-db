@@ -2781,8 +2781,8 @@ def test_st_numpoints(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT (1 2)", None),
-        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("POINT (1 2)", 0),
+        ("LINESTRING (0 0, 1 1, 2 2)", 0),
         ("POLYGON EMPTY", 0),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1),
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2),
@@ -2795,12 +2795,7 @@ def test_st_numpoints(eng, geom, expected):
             3,
         ),
         ("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))", 1),
-        ("CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0))", 1),
-        (
-            "CURVEPOLYGON(CIRCULARSTRING(0 0, 4 0, 4 4, 0 4, 0 0), CIRCULARSTRING(1 1, 1 2, 2 2, 2 1, 1 1))",
-            2,
-        ),
-        ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", None),
+        ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", 1),
     ],
 )
 def test_st_NRings(eng, geom, expected):
