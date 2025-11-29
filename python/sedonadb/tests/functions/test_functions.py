@@ -2742,3 +2742,33 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
         f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", None),
+        ("LINESTRING EMPTY", 0),
+        ("POLYGON EMPTY", None),
+        ("MULTIPOINT EMPTY", None),
+        ("MULTILINESTRING EMPTY", None),
+        ("MULTIPOLYGON EMPTY", None),
+        ("GEOMETRYCOLLECTION EMPTY", None),
+        ("POINT (1 2)", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", 3),
+        ("LINESTRING (0 0, 1 1, 0 0)", 3),
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", None),
+        ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", None),
+        ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", None),
+        ("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))", None),
+        ("CIRCULARSTRING(0 0, 1 1, 1 0)", 3),
+    ],
+)
+def test_st_numpoints_strict(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_NumPoints({geom_or_null(geom)})",
+        expected,
+    )
