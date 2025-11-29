@@ -745,6 +745,49 @@ mod test {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn geoparquet_1_1_with_sort_by_expr() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+
+        use datafusion::functions::string::lower;
+
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            // DataFusion internals loose the nullability we assigned to the bbox
+            // and without this line the test fails.
+            .filter(Expr::IsNotNull(col("geometry").into()))
+            .unwrap()
+            .sort_by(vec![lower().call(vec![col("wkt")])])
+            .unwrap()
+            .select(vec![col("geometry")])
+            .unwrap();
+
+        let mut options = TableGeoParquetOptions::new();
+        options.geoparquet_version = GeoParquetVersion::V1_1;
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+
+        let df_batches_with_bbox = df
+            .clone()
+            .sort_by(vec![lower().call(vec![col("wkt")])])
+            .unwrap()
+            .select(vec![
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+            .await
+            .unwrap();
+    }
+
     #[test]
     fn float_bbox() {
         let tester = ScalarUdfTester::new(geoparquet_bbox_udf().into(), vec![WKB_GEOMETRY]);
