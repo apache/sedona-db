@@ -70,7 +70,7 @@ impl SedonaScalarKernel for STNumPoints {
 
 fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
     match geom.geometry_type() {
-        GeometryTypes::LineString | GeometryTypes::LinearRing => {
+        GeometryTypes::LineString => {
             let count = geom.get_num_points().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to get num points: {e}"))
             })?;
@@ -101,15 +101,9 @@ mod tests {
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
         let result = tester
-            .invoke_scalar(
-                "POLYGON(
-                    (0 0,10 0,10 6,0 6,0 0),
-                    (1 1,2 1,2 5,1 5,1 1),
-                    (8 5,8 4,9 4,9 5,8 5)
-                )",
-            )
+            .invoke_scalar("LINESTRING (1 2, 3 4)")
             .unwrap();
-        assert!(result.is_null());
+        tester.assert_scalar_result_equals(result, 2_i32);
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
