@@ -100,9 +100,7 @@ mod tests {
         let udf = SedonaScalarUDF::from_kernel("st_numpoints", st_num_points_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
-        let result = tester
-            .invoke_scalar("LINESTRING (1 2, 3 4)")
-            .unwrap();
+        let result = tester.invoke_scalar("LINESTRING (1 2, 3 4)").unwrap();
         tester.assert_scalar_result_equals(result, 2_i32);
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
