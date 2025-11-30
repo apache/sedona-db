@@ -16,7 +16,7 @@
 // under the License.
 use std::{fmt::Debug, sync::Arc, vec};
 
-use arrow_array::{ArrayRef, Float64Array};
+use arrow_array::{ArrayRef, Float64Array, Int64Array};
 use arrow_schema::DataType;
 
 use datafusion_common::{Result, ScalarValue};
@@ -274,8 +274,12 @@ pub enum BenchmarkArgSpec {
     LineString(usize),
     /// Randomly generated polygon input with a specified number of vertices
     Polygon(usize),
+    /// Randomly generated polygon with hole input with a specified number of vertices
+    PolygonWithHole(usize),
     /// Randomly generated linestring input with a specified number of vertices
     MultiPoint(usize),
+    /// Randomly generated integer input with a given range of values
+    Int64(i64, i64),
     /// Randomly generated floating point input with a given range of values
     Float64(f64, f64),
     /// A transformation of any of the above based on a [ScalarUDF] accepting
@@ -295,7 +299,9 @@ impl Debug for BenchmarkArgSpec {
             Self::Point => write!(f, "Point"),
             Self::LineString(arg0) => f.debug_tuple("LineString").field(arg0).finish(),
             Self::Polygon(arg0) => f.debug_tuple("Polygon").field(arg0).finish(),
+            Self::PolygonWithHole(arg0) => f.debug_tuple("PolygonWithHole").field(arg0).finish(),
             Self::MultiPoint(arg0) => f.debug_tuple("MultiPoint").field(arg0).finish(),
+            Self::Int64(arg0, arg1) => f.debug_tuple("Int64").field(arg0).field(arg1).finish(),
             Self::Float64(arg0, arg1) => f.debug_tuple("Float64").field(arg0).field(arg1).finish(),
             Self::Transformed(inner, t) => write!(f, "{}({:?})", t.name(), inner),
             Self::String(s) => write!(f, "String({s})"),
@@ -310,8 +316,10 @@ impl BenchmarkArgSpec {
         match self {
             BenchmarkArgSpec::Point
             | BenchmarkArgSpec::Polygon(_)
+            | BenchmarkArgSpec::PolygonWithHole(_)
             | BenchmarkArgSpec::LineString(_)
             | BenchmarkArgSpec::MultiPoint(_) => WKB_GEOMETRY,
+            BenchmarkArgSpec::Int64(_, _) => SedonaType::Arrow(DataType::Int64),
             BenchmarkArgSpec::Float64(_, _) => SedonaType::Arrow(DataType::Float64),
             BenchmarkArgSpec::Transformed(inner, t) => {
                 let tester = ScalarUdfTester::new(t.clone(), vec![inner.sedona_type()]);
@@ -342,9 +350,15 @@ impl BenchmarkArgSpec {
         rows_per_batch: usize,
     ) -> Result<Vec<ArrayRef>> {
         match self {
-            BenchmarkArgSpec::Point => {
-                self.build_geometry(i, GeometryTypeId::Point, num_batches, 1, 1, rows_per_batch)
-            }
+            BenchmarkArgSpec::Point => self.build_geometry(
+                i,
+                GeometryTypeId::Point,
+                num_batches,
+                1,
+                1,
+                rows_per_batch,
+                None,
+            ),
             BenchmarkArgSpec::LineString(vertex_count) => self.build_geometry(
                 i,
                 GeometryTypeId::LineString,
@@ -352,6 +366,7 @@ impl BenchmarkArgSpec {
                 *vertex_count,
                 1,
                 rows_per_batch,
+                None,
             ),
             BenchmarkArgSpec::Polygon(vertex_count) => self.build_geometry(
                 i,
@@ -360,6 +375,17 @@ impl BenchmarkArgSpec {
                 *vertex_count,
                 1,
                 rows_per_batch,
+                None,
+            ),
+            BenchmarkArgSpec::PolygonWithHole(vertex_count) => self.build_geometry(
+                i,
+                GeometryTypeId::Polygon,
+                num_batches,
+                *vertex_count,
+                1,
+                rows_per_batch,
+                // Currently only a single interior ring is possible.
+                Some(1.0),
             ),
             BenchmarkArgSpec::MultiPoint(part_count) => self.build_geometry(
                 i,
@@ -368,7 +394,19 @@ impl BenchmarkArgSpec {
                 1,
                 *part_count,
                 rows_per_batch,
+                None,
             ),
+            BenchmarkArgSpec::Int64(lo, hi) => {
+                let mut rng = self.rng(i);
+                let dist = Uniform::new(lo, hi);
+                (0..num_batches)
+                    .map(|_| -> Result<ArrayRef> {
+                        let int64_array: Int64Array =
+                            (0..rows_per_batch).map(|_| rng.sample(dist)).collect();
+                        Ok(Arc::new(int64_array))
+                    })
+                    .collect()
+            }
             BenchmarkArgSpec::Float64(lo, hi) => {
                 let mut rng = self.rng(i);
                 let dist = Uniform::new(lo, hi);
@@ -418,6 +456,7 @@ impl BenchmarkArgSpec {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_geometry(
         &self,
         i: usize,
@@ -426,6 +465,7 @@ impl BenchmarkArgSpec {
         vertex_count: usize,
         num_parts_count: usize,
         rows_per_batch: usize,
+        polygon_hole_rate: Option<f64>,
     ) -> Result<Vec<ArrayRef>> {
         let builder = RandomPartitionedDataBuilder::new()
             .num_partitions(1)
@@ -437,6 +477,7 @@ impl BenchmarkArgSpec {
             .vertices_per_linestring_range((vertex_count, vertex_count))
             .num_parts_range((num_parts_count, num_parts_count))
             .geometry_type(geom_type)
+            .polygon_hole_rate(polygon_hole_rate.unwrap_or_default())
             // Currently just use WKB_GEOMETRY (we can generate a view type with
             // Transformed)
             .sedona_type(WKB_GEOMETRY);
