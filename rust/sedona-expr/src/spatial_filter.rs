@@ -409,11 +409,10 @@ pub enum TableGeoStatistics {
     /// Provide statistics for specific named columns. Columns not included
     /// are treated as [GeoStatistics::unspecified].
     ///
-    /// These are resolved using [Column::name]. While the column name is
-    /// typically intended for debugging, at least some DataFusion versions
-    /// pass a filter to the data source with an incorrect index but a correct
-    /// name <https://github.com/apache/sedona-db/pull/385>. This option may
-    /// be removed if the incorrect index can be resolved upstream.
+    /// These are resolved using [Column::name]. This may be used for logical
+    /// expressions (where columns are resolved by name) or as a workaround
+    /// for physical expressions where the index is relative to a projected
+    /// schema <https://github.com/apache/sedona-db/issues/389>.
     ByName(HashMap<String, GeoStatistics>),
 }
 
