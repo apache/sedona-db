@@ -28,7 +28,7 @@ repos:
     -   id: codespell
         # types_or: [markdown, c, c++, rust, python]
         additional_dependencies: [tomli]
-        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-tg/src/tg)/.*|^docs/image/sedonadb-architecture\\.svg$"
+        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-libgpuspatial/libgpuspatial|sedona-tg/src/tg)/.*|^docs/image/sedonadb-architecture\\.svg$"
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.8
