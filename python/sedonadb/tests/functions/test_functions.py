@@ -1216,6 +1216,12 @@ def test_st_hasz(eng, geom, expected):
             1,
             "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
         ),
+        # Single hole, negative index=-1
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            -1,
+            None,
+        ),
         # Single hole, index=2 (index too high)
         ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2, None),
         # Polygon: ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))

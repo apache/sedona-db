@@ -233,6 +233,7 @@ mod tests {
         let input_wkt = create_array(
             &[
                 Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=1
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=1
                 Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=2 (too high)
                 Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=1
                 Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=2
@@ -240,11 +241,14 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
-        let integers =
-            arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1), Some(2), Some(3)]);
+        let integers = arrow_array::create_array!(
+            Int64,
+            [Some(1), Some(-1), Some(2), Some(1), Some(2), Some(3)]
+        );
         let expected = create_array(
             &[
                 Some("LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)"),
+                None,
                 None,
                 Some("LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)"),
                 Some("LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)"),

@@ -456,6 +456,7 @@ impl BenchmarkArgSpec {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_geometry(
         &self,
         i: usize,
