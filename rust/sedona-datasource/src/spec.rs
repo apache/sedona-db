@@ -141,7 +141,15 @@ pub struct OpenReaderArgs {
     /// Filter expressions
     ///
     /// Expressions that may be used for pruning. Implementations need not
-    /// apply these filters.
+    /// apply these filters to produce a correct result (i.e., DataFusion will
+    /// evaluate the filters at a later step regardless of how this implementation
+    /// uses the provided filters).
+    ///
+    /// Note that `Column`s in this [PhysicalExpr] are relative to `file_projection`.
+    /// For example, in a scan with  file_projection `[5, 6]` (i.e., DataFusion is only
+    /// requesting the 6th and 7th columns from the `file_schema` inferred for this object),
+    /// a `Column { index: 1, ... }` refers to the column at index 6 (i.e.,
+    /// `file_schema.field(file_projection[1])`).
     pub filters: Vec<Arc<dyn PhysicalExpr>>,
 }
 
