@@ -465,7 +465,7 @@ impl TableGeoStatistics {
 // Useful for testing (create from a single GeoStatistics)
 impl From<GeoStatistics> for TableGeoStatistics {
     fn from(value: GeoStatistics) -> Self {
-        TableGeoStatistics::ByPosition(vec![value.clone()])
+        TableGeoStatistics::ByPosition(vec![value])
     }
 }
 
