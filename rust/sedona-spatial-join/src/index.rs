@@ -23,8 +23,8 @@ pub(crate) mod spatial_index_builder;
 pub(crate) use build_side_collector::{
     BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
 };
-pub(crate) use spatial_index::SpatialIndex;
-pub(crate) use spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+pub use spatial_index::SpatialIndex;
+pub use spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query

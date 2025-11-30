@@ -48,7 +48,7 @@ use crate::{
 use arrow::array::BooleanBufferBuilder;
 use sedona_common::{option::SpatialJoinOptions, ExecutionMode};
 
-pub(crate) struct SpatialIndex {
+pub struct SpatialIndex {
     pub(crate) schema: SchemaRef,
 
     /// The spatial predicate evaluator for the spatial predicate.
