@@ -4107,9 +4107,9 @@ dependencies = [
 
 [[package]]
 name = "proj-sys"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a208129995443a4c475464c33308274be1578993b0ad266c9139188ed0dc7e91"
+checksum = "48ffa255a853264169516c9fc21f524446aca5b091daab6052f2a9b3e5e90359"
 dependencies = [
  "cmake",
  "flate2",
