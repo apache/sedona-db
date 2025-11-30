@@ -397,7 +397,7 @@ impl SpatialFilter {
 /// Table GeoStatistics
 ///
 /// Enables providing a collection of GeoStatistics to [SpatialFilter::evaluate]
-/// such that attemmpts to access out-of-bounds values results in an readable
+/// such that attempts to access out-of-bounds values results in a readable
 /// error.
 pub enum TableGeoStatistics {
     /// Provide statistics for every Column in the table. These must be
