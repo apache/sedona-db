@@ -82,30 +82,54 @@ fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
             Ok(Some((num_interior + 1) as i32))
         }
-        GeometryTypes::MultiPolygon => {
+        GeometryTypes::MultiPolygon | GeometryTypes::GeometryCollection => {
             if geom
                 .is_empty()
                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?
             {
                 return Ok(Some(0));
             }
+            let total = count_rings_recursive(geom)?;
+            Ok(Some(total))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn count_rings_recursive<G: Geom>(geom: &G) -> Result<i32> {
+    match geom.geometry_type() {
+        GeometryTypes::Polygon => {
+            if geom
+                .is_empty()
+                .map_err(|e| DataFusionError::Execution(format!("{e}")))?
+            {
+                return Ok(0);
+            }
+            let num_interior = geom
+                .get_num_interior_rings()
+                .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
+            Ok((num_interior + 1) as i32)
+        }
+        GeometryTypes::MultiPolygon | GeometryTypes::GeometryCollection => {
+            if geom
+                .is_empty()
+                .map_err(|e| DataFusionError::Execution(format!("{e}")))?
+            {
+                return Ok(0);
+            }
             let num_geoms = geom
                 .get_num_geometries()
                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-
             let mut total_rings = 0;
             for i in 0..num_geoms {
                 let sub_geom = geom
                     .get_geometry_n(i)
                     .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                let num_interior = sub_geom
-                    .get_num_interior_rings()
-                    .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                total_rings += num_interior + 1;
+                total_rings += count_rings_recursive(&sub_geom)?;
             }
-            Ok(Some(total_rings as i32))
+            Ok(total_rings)
         }
-        _ => Ok(None),
+        _ => Ok(0),
     }
 }
 
@@ -157,13 +181,13 @@ mod tests {
                 "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0,3 0,3 3,0 3,0 0)))",
             ),
             Some("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))"),
-
-           ];
+            Some("GEOMETRYCOLLECTION(POINT(2 3), LINESTRING(0 0, 1 1, 2 2), POLYGON((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)), MULTIPOLYGON(((5 5, 6 5, 6 6, 5 6, 5 5)), ((10 10, 12 10, 12 12, 10 12, 10 10), (10.5 10.5, 11 10.5, 11 11, 10.5 11, 10.5 10.5))), GEOMETRYCOLLECTION(POLYGON((20 20, 22 20, 22 22, 20 22, 20 20)), POINT(30 30)))"),
+        ];
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0),
-            Some(0),
+            None,
+            None,
             Some(0),
             Some(1),
             Some(2),
@@ -171,6 +195,7 @@ mod tests {
             Some(3),
             Some(1),
             Some(1),
+            Some(6),
         ]));
 
         let result = tester.invoke_wkb_array(input_wkt).unwrap();
