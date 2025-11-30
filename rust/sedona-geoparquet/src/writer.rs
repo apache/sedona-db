@@ -747,7 +747,17 @@ mod test {
 
     #[tokio::test]
     async fn geoparquet_1_1_with_sort_by_expr() {
-        let example = test_geoparquet("example", "geometry").unwrap();
+        let example = test_geoparquet("ns-water", "water-point");
+
+        // Requires submodules/download-assets.py which not all contributors need
+        let example = match example {
+            Ok(path) => path,
+            Err(err) => {
+                println!("ns-water/water-point is not available: {err}");
+                return;
+            }
+        };
+
         let ctx = setup_context();
         let fns = sedona_functions::register::default_function_set();
 
@@ -757,10 +767,6 @@ mod test {
         let df = ctx
             .table(&example)
             .await
-            .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .sort_by(vec![geometry_udf.call(vec![col("geometry")])])
             .unwrap()
