@@ -84,7 +84,7 @@ pub fn create_geoparquet_writer_physical_plan(
     let mut metadata = GeoParquetMetadata::default();
     let mut bbox_columns = HashMap::new();
     let mut bbox_projection = None;
-    let mut output_schema = conf.output_schema().clone();
+    let mut parquet_output_schema = conf.output_schema().clone();
 
     // Check the version
     match options.geoparquet_version {
@@ -95,7 +95,7 @@ pub fn create_geoparquet_writer_physical_plan(
             metadata.version = "1.1.0".to_string();
             (bbox_projection, bbox_columns) =
                 project_bboxes(&input, options.overwrite_bbox_columns)?;
-            output_schema = compute_final_schema(&bbox_projection, &input.schema())?;
+            parquet_output_schema = compute_final_schema(&bbox_projection, &input.schema())?;
             output_geometry_column_indices = conf.output_schema.geometry_column_indices()?;
         }
         _ => {
@@ -179,28 +179,20 @@ pub fn create_geoparquet_writer_physical_plan(
 
     // Create the sink
     let sink_input_schema = conf.output_schema;
-    conf.output_schema = output_schema.clone();
+    conf.output_schema = parquet_output_schema.clone();
     let sink = Arc::new(GeoParquetSink {
         inner: ParquetSink::new(conf, parquet_options),
         projection: bbox_projection,
         sink_input_schema,
-        parquet_output_schema: output_schema,
+        parquet_output_schema,
     });
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
-/// Create a regular Parquet writer like DataFusion would otherwise do.
-fn create_inner_writer(
-    input: Arc<dyn ExecutionPlan>,
-    conf: FileSinkConfig,
-    order_requirements: Option<LexRequirement>,
-    options: TableParquetOptions,
-) -> Result<Arc<dyn ExecutionPlan>> {
-    // Create the sink
-    let sink = Arc::new(ParquetSink::new(conf, options));
-    Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
-}
-
+/// Implementation of [DataSink] that computes GeoParquet 1.1 bbox columns
+/// if needed. This is used instead of a ProjectionExec because DataFusion's
+/// optimizer rules seem to rearrange the projection in ways that cause
+/// the plan to fail <https://github.com/apache/sedona-db/issues/379>.
 #[derive(Debug)]
 struct GeoParquetSink {
     inner: ParquetSink,
@@ -231,6 +223,7 @@ impl DataSink for GeoParquetSink {
         context: &Arc<TaskContext>,
     ) -> Result<u64> {
         if let Some(projection) = &self.projection {
+            // If we have a projection, apply it here
             let schema = self.parquet_output_schema.clone();
             let projection = projection.clone();
 
@@ -255,6 +248,18 @@ impl DataSink for GeoParquetSink {
             self.inner.write_all(data, context).await
         }
     }
+}
+
+/// Create a regular Parquet writer like DataFusion would otherwise do.
+fn create_inner_writer(
+    input: Arc<dyn ExecutionPlan>,
+    conf: FileSinkConfig,
+    order_requirements: Option<LexRequirement>,
+    options: TableParquetOptions,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    // Create the sink
+    let sink = Arc::new(ParquetSink::new(conf, options));
+    Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
 type ProjectBboxesResult = (
