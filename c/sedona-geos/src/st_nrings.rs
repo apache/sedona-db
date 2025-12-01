@@ -39,7 +39,6 @@ impl SedonaScalarKernel for STNRings {
             vec![ArgMatcher::is_geometry()],
             SedonaType::Arrow(DataType::Int32),
         );
-
         matcher.match_args(args)
     }
 
@@ -63,7 +62,6 @@ impl SedonaScalarKernel for STNRings {
             }
             Ok(())
         })?;
-
         executor.finish(Arc::new(builder.finish()))
     }
 }
@@ -92,7 +90,7 @@ fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
             let total = count_rings_recursive(geom)?;
             Ok(Some(total))
         }
-        _ => Ok(None),
+        _ => Ok(Some(0)),
     }
 }
 
@@ -186,8 +184,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            None,
-            None,
+            Some(0),
+            Some(0),
             Some(0),
             Some(1),
             Some(2),

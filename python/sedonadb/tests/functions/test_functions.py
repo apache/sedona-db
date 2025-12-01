@@ -2781,10 +2781,10 @@ def test_st_numpoints(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT (1 2)", None),
-        ("LINESTRING (0 0, 1 1, 2 2)", None),
-        ("MULTIPOINT ((0 0), (1 1))", None),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", None),
+        ("POINT (1 2)", 0),
+        ("LINESTRING (0 0, 1 1, 2 2)", 0),
+        ("MULTIPOINT ((0 0), (1 1))", 0),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 0),
         ("POLYGON EMPTY", 0),
         ("MULTIPOLYGON EMPTY", 0),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1),
@@ -2800,13 +2800,7 @@ def test_st_numpoints(eng, geom, expected):
         ("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))", 1),
         ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", 1),
         (
-            "GEOMETRYCOLLECTION("
-            "POINT(2 3), "
-            "LINESTRING(0 0, 1 1, 2 2), "
-            "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)), "
-            "MULTIPOLYGON(((5 5, 6 5, 6 6, 5 6, 5 5)), ((10 10, 12 10, 12 12, 10 12, 10 10), (10.5 10.5, 11 10.5, 11 11, 10.5 11, 10.5 10.5))), "
-            "GEOMETRYCOLLECTION(POLYGON((20 20, 22 20, 22 22, 20 22, 20 20)), POINT(30 30))"
-            ")",
+            "GEOMETRYCOLLECTION(POINT(2 3), LINESTRING(0 0, 1 1, 2 2), POLYGON((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)), MULTIPOLYGON(((5 5, 6 5, 6 6, 5 6, 5 5)), ((10 10, 12 10, 12 12, 10 12, 10 10), (10.5 10.5, 11 10.5, 11 11, 10.5 11, 10.5 10.5))), GEOMETRYCOLLECTION(POLYGON((20 20, 22 20, 22 22, 20 22, 20 20)), POINT(30 30)))",
             6,
         ),
     ],
