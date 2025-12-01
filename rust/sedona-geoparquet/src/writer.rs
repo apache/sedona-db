@@ -54,6 +54,7 @@ use sedona_schema::{
 
 use crate::{
     metadata::{GeoParquetColumnMetadata, GeoParquetCovering, GeoParquetMetadata},
+    opaque_project::OpaqueProjectExec,
     options::{GeoParquetVersion, TableGeoParquetOptions},
 };
 
@@ -278,10 +279,14 @@ Use overwrite_bbox_columns = True if this is what was intended.",
     // Create the projection
     let exec = ProjectionExec::try_new(exprs, input)?;
 
+    // Wrap in an opaque box to prevent optimizer rules from updating it
+    // https://github.com/apache/sedona-db/issues/379
+    let opaque_exec = OpaqueProjectExec { inner: exec };
+
     // Flip the bbox_column_names into the form our caller needs it
     let bbox_column_names_by_field = bbox_column_names.drain().map(|(k, v)| (v, k)).collect();
 
-    Ok((Arc::new(exec), bbox_column_names_by_field))
+    Ok((Arc::new(opaque_exec), bbox_column_names_by_field))
 }
 
 fn geoparquet_bbox_udf() -> SedonaScalarUDF {
@@ -411,6 +416,7 @@ mod test {
     use std::iter::zip;
 
     use arrow_array::{create_array, Array, RecordBatch};
+    use datafusion::arrow::util::pretty::pretty_format_batches;
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
@@ -474,6 +480,18 @@ mod test {
         )
         .unwrap()
         .build()
+        .unwrap();
+
+        let explained = DataFrame::new(ctx.state(), plan.clone())
+            .explain(true, false)
+            .unwrap()
+            .collect()
+            .await?;
+        let formatted = pretty_format_batches(&explained).unwrap();
+        std::fs::write(
+            "/Users/dewey/gh/sedona-db/explain.txt",
+            formatted.to_string(),
+        )
         .unwrap();
 
         DataFrame::new(ctx.state(), plan).collect().await?;
