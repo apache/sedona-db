@@ -55,21 +55,24 @@ pub struct GeoStatistics {
 }
 
 impl GeoStatistics {
+    /// Statistics representing unspecified information
+    pub const UNSPECIFIED: GeoStatistics = Self {
+        bbox: None,
+        geometry_types: None,
+        total_geometries: None,
+        total_size_bytes: None,
+        total_points: None,
+        puntal_count: None,
+        lineal_count: None,
+        polygonal_count: None,
+        collection_count: None,
+        total_envelope_width: None,
+        total_envelope_height: None,
+    };
+
     /// Create statistics representing unspecified information
     pub fn unspecified() -> Self {
-        Self {
-            bbox: None,
-            geometry_types: None,
-            total_geometries: None,
-            total_size_bytes: None,
-            total_points: None,
-            puntal_count: None,
-            lineal_count: None,
-            polygonal_count: None,
-            collection_count: None,
-            total_envelope_width: None,
-            total_envelope_height: None,
-        }
+        Self::UNSPECIFIED.clone()
     }
 
     /// Create statistics representing empty information (with zero values instead of None)
