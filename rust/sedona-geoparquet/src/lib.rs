@@ -18,6 +18,5 @@ mod file_opener;
 pub mod format;
 mod metadata;
 pub mod options;
-mod opaque_project;
 pub mod provider;
 mod writer;
