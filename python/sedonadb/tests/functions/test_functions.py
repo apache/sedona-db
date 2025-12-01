@@ -1180,6 +1180,121 @@ def test_st_hasz(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "index", "expected"),
+    [
+        # I. Null/Empty/Non-Polygon Inputs
+        # NULL input
+        (None, 1, None),
+        # POINT
+        ("POINT (0 0)", 1, None),
+        # POINT EMPTY
+        ("POINT EMPTY", 1, None),
+        # LINESTRING
+        ("LINESTRING (0 0, 0 1, 1 2)", 1, None),
+        # LINESTRING EMPTY
+        ("LINESTRING EMPTY", 1, None),
+        # MULTIPOINT
+        ("MULTIPOINT ((0 0), (1 1))", 1, None),
+        # MULTIPOLYGON (Interior rings are within constituent Polygons, not the MultiPolygon itself)
+        ("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))", 1, None),
+        # GEOMETRYCOLLECTION
+        ("GEOMETRYCOLLECTION (POINT(1 1))", 1, None),
+        # II. Polygon Edge Cases
+        # POLYGON EMPTY
+        ("POLYGON EMPTY", 1, None),
+        # Polygon with NO interior rings, index=1
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, None),
+        # Invalid index n=0 (Assuming 1-based indexing means n=0 is invalid/out of range)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0, None),
+        # Index n too high (index=2, but 0 holes)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 2, None),
+        # III. Valid Polygon with Interior Ring(s)
+        # Polygon: ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))
+        # Single hole, index=1
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            1,
+            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+        ),
+        # Single hole, negative index=-1
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            -1,
+            None,
+        ),
+        # Single hole, index=2 (index too high)
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2, None),
+        # Polygon: ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))
+        # Two holes, index=1 (first hole)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            1,
+            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+        ),
+        # Two holes, index=2 (second hole)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            2,
+            "LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)",
+        ),
+        # Two holes, index=3 (index too high)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            3,
+            None,
+        ),
+        # IV. Invalid/Malformed Polygon Input
+        #  External hole (WKT is syntactically valid, second ring is usually treated as a hole by parsers regardless of validity)
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))",
+            1,
+            "LINESTRING (5 5, 5 6, 6 6, 6 5, 5 5)",
+        ),
+        # Intersecting holes (WKT is syntactically valid)
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))",
+            2,
+            "LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)",
+        ),
+        # Z Dimensions
+        ("POINT Z (1 1 5)", 1, None),
+        (
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
+            1,
+            "LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)",
+        ),
+        ("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))", 1, None),
+        # M Dimensions
+        ("LINESTRING M (0 0 1, 1 1 2)", 1, None),
+        ("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))", 1, None),
+        (
+            "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))",
+            1,
+            "LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)",
+        ),
+        # ZM Dimensions
+        ("POLYGON ZM EMPTY", 1, None),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+            2,
+            None,
+        ),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+            1,
+            "LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)",
+        ),
+    ],
+)
+def test_st_interiorringn(eng, geom, index, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_InteriorRingN({geom_or_null(geom)}, {val_or_null(index)})", expected
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
