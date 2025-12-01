@@ -15,28 +15,35 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 
 use arrow_array::{
     builder::{Float32Builder, NullBufferBuilder},
-    ArrayRef, StructArray,
+    ArrayRef, RecordBatch, StructArray,
 };
-use arrow_schema::{DataType, Field, Fields};
+use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
+use async_trait::async_trait;
 use datafusion::{
     config::TableParquetOptions,
     datasource::{
-        file_format::parquet::ParquetSink, physical_plan::FileSinkConfig, sink::DataSinkExec,
+        file_format::parquet::ParquetSink,
+        physical_plan::FileSinkConfig,
+        sink::{DataSink, DataSinkExec},
     },
 };
 use datafusion_common::{
     config::ConfigOptions, exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result,
 };
+use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{dml::InsertOp, ColumnarValue, ScalarUDF, Volatility};
 use datafusion_physical_expr::{
     expressions::Column, LexRequirement, PhysicalExpr, ScalarFunctionExpr,
 };
-use datafusion_physical_plan::{projection::ProjectionExec, ExecutionPlan};
+use datafusion_physical_plan::{
+    stream::RecordBatchStreamAdapter, DisplayAs, DisplayFormatType, ExecutionPlan,
+};
 use float_next_after::NextAfter;
+use futures::StreamExt;
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -54,12 +61,11 @@ use sedona_schema::{
 
 use crate::{
     metadata::{GeoParquetColumnMetadata, GeoParquetCovering, GeoParquetMetadata},
-    opaque_project::OpaqueProjectExec,
     options::{GeoParquetVersion, TableGeoParquetOptions},
 };
 
 pub fn create_geoparquet_writer_physical_plan(
-    mut input: Arc<dyn ExecutionPlan>,
+    input: Arc<dyn ExecutionPlan>,
     mut conf: FileSinkConfig,
     order_requirements: Option<LexRequirement>,
     options: &TableGeoParquetOptions,
@@ -77,6 +83,8 @@ pub fn create_geoparquet_writer_physical_plan(
     // We have geometry and/or geography! Collect the GeoParquetMetadata we'll need to write
     let mut metadata = GeoParquetMetadata::default();
     let mut bbox_columns = HashMap::new();
+    let mut bbox_projection = None;
+    let mut output_schema = conf.output_schema().clone();
 
     // Check the version
     match options.geoparquet_version {
@@ -85,9 +93,10 @@ pub fn create_geoparquet_writer_physical_plan(
         }
         GeoParquetVersion::V1_1 => {
             metadata.version = "1.1.0".to_string();
-            (input, bbox_columns) = project_bboxes(input, options.overwrite_bbox_columns)?;
-            conf.output_schema = input.schema();
-            output_geometry_column_indices = input.schema().geometry_column_indices()?;
+            (bbox_projection, bbox_columns) =
+                project_bboxes(&input, options.overwrite_bbox_columns)?;
+            output_schema = compute_final_schema(&bbox_projection, &input.schema())?;
+            output_geometry_column_indices = conf.output_schema.geometry_column_indices()?;
         }
         _ => {
             return not_impl_err!(
@@ -169,7 +178,14 @@ pub fn create_geoparquet_writer_physical_plan(
     );
 
     // Create the sink
-    let sink = Arc::new(ParquetSink::new(conf, parquet_options));
+    let sink_input_schema = conf.output_schema;
+    conf.output_schema = output_schema.clone();
+    let sink = Arc::new(GeoParquetSink {
+        inner: ParquetSink::new(conf, parquet_options),
+        projection: bbox_projection,
+        sink_input_schema,
+        parquet_output_schema: output_schema,
+    });
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
@@ -184,6 +200,67 @@ fn create_inner_writer(
     let sink = Arc::new(ParquetSink::new(conf, options));
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
+
+#[derive(Debug)]
+struct GeoParquetSink {
+    inner: ParquetSink,
+    projection: Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    sink_input_schema: SchemaRef,
+    parquet_output_schema: SchemaRef,
+}
+
+impl DisplayAs for GeoParquetSink {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt_as(t, f)
+    }
+}
+
+#[async_trait]
+impl DataSink for GeoParquetSink {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> &SchemaRef {
+        &self.sink_input_schema
+    }
+
+    async fn write_all(
+        &self,
+        data: SendableRecordBatchStream,
+        context: &Arc<TaskContext>,
+    ) -> Result<u64> {
+        if let Some(projection) = &self.projection {
+            let schema = self.parquet_output_schema.clone();
+            let projection = projection.clone();
+
+            let data = Box::pin(RecordBatchStreamAdapter::new(
+                schema.clone(),
+                data.map(move |batch_result| {
+                    let schema = schema.clone();
+
+                    batch_result.and_then(|batch| {
+                        let mut columns = Vec::with_capacity(projection.len());
+                        for (expr, _) in &projection {
+                            let col = expr.evaluate(&batch)?;
+                            columns.push(col.into_array(batch.num_rows())?);
+                        }
+                        Ok(RecordBatch::try_new(schema.clone(), columns)?)
+                    })
+                }),
+            ));
+
+            self.inner.write_all(data, context).await
+        } else {
+            self.inner.write_all(data, context).await
+        }
+    }
+}
+
+type ProjectBboxesResult = (
+    Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    HashMap<String, String>,
+);
 
 /// Create a projection that inserts a bbox column for every geometry column
 ///
@@ -207,9 +284,9 @@ fn create_inner_writer(
 /// "some_col_bbox", it is unlikely that replacing it would have unintended
 /// consequences.
 fn project_bboxes(
-    input: Arc<dyn ExecutionPlan>,
+    input: &Arc<dyn ExecutionPlan>,
     overwrite_bbox_columns: bool,
-) -> Result<(Arc<dyn ExecutionPlan>, HashMap<String, String>)> {
+) -> Result<ProjectBboxesResult> {
     let input_schema = input.schema();
     let matcher = ArgMatcher::is_geometry();
     let bbox_udf: Arc<ScalarUDF> = Arc::new(geoparquet_bbox_udf().into());
@@ -246,7 +323,7 @@ fn project_bboxes(
     // If we don't need to create any bbox columns, don't add an additional
     // projection at the end of the input plan
     if bbox_exprs.is_empty() {
-        return Ok((input, HashMap::new()));
+        return Ok((None, HashMap::new()));
     }
 
     // Create the projection expressions
@@ -276,17 +353,34 @@ Use overwrite_bbox_columns = True if this is what was intended.",
         exprs.push((column, f.name().clone()));
     }
 
-    // Create the projection
-    let exec = ProjectionExec::try_new(exprs, input)?;
-
-    // Wrap in an opaque box to prevent optimizer rules from updating it
-    // https://github.com/apache/sedona-db/issues/379
-    let opaque_exec = OpaqueProjectExec { inner: exec };
-
     // Flip the bbox_column_names into the form our caller needs it
     let bbox_column_names_by_field = bbox_column_names.drain().map(|(k, v)| (v, k)).collect();
 
-    Ok((Arc::new(opaque_exec), bbox_column_names_by_field))
+    Ok((Some(exprs), bbox_column_names_by_field))
+}
+
+fn compute_final_schema(
+    bbox_projection: &Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    initial_schema: &SchemaRef,
+) -> Result<SchemaRef> {
+    if let Some(bbox_projection) = bbox_projection {
+        let new_fields = bbox_projection
+            .iter()
+            .map(|(expr, name)| -> Result<Field> {
+                let return_field_ref = expr.return_field(initial_schema)?;
+                Ok(Field::new(
+                    name,
+                    return_field_ref.data_type().clone(),
+                    return_field_ref.is_nullable(),
+                )
+                .with_metadata(return_field_ref.metadata().clone()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Arc::new(Schema::new(new_fields)))
+    } else {
+        Ok(initial_schema.clone())
+    }
 }
 
 fn geoparquet_bbox_udf() -> SedonaScalarUDF {
@@ -416,7 +510,6 @@ mod test {
     use std::iter::zip;
 
     use arrow_array::{create_array, Array, RecordBatch};
-    use datafusion::arrow::util::pretty::pretty_format_batches;
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
@@ -480,18 +573,6 @@ mod test {
         )
         .unwrap()
         .build()
-        .unwrap();
-
-        let explained = DataFrame::new(ctx.state(), plan.clone())
-            .explain(true, false)
-            .unwrap()
-            .collect()
-            .await?;
-        let formatted = pretty_format_batches(&explained).unwrap();
-        std::fs::write(
-            "/Users/dewey/gh/sedona-db/explain.txt",
-            formatted.to_string(),
-        )
         .unwrap();
 
         DataFrame::new(ctx.state(), plan).collect().await?;
