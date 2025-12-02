@@ -193,28 +193,6 @@ SELECT ST_AsText(
 ) As ptwkt;
 ```
 
-## ST_Collect
-
-#### Description
-
-Aggregates a set of geometries into a single `GeometryCollection`, `MultiPoint`, `MultiLineString`, or `MultiPolygon`. If all input geometries are of the same type (e.g., all points), it creates a multi-geometry of that type. If the geometries are of mixed types, it returns a `GeometryCollection`.
-
-Since: v0.1.
-
-#### Format
-
-`ST_Collect (geom: Geometry)`
-
-#### Arguments
-
-  * **geom**: The input geometry or geography to be collected.
-
-#### SQL Example
-
-```sql
-SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'));
-```
-
 ## ST_Collect_Agg
 
 ST_Collect_Agg is an aggregate function that combines multiple geometries from a set of rows into a single collection.
@@ -407,85 +385,6 @@ Since: v0.1.
 SELECT ST_Disjoint(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
-## ST_Distance
-
-#### Description
-
-Calculates the distance between geomA and geomB.
-
-Since: v0.1.
-
-#### Format
-
-`ST_Distance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_Distance(
-  ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), 
-  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
-) AS val;
-```
-
-## ST_DistanceSphere
-
-#### Description
-
-Calculates the spherical distance between geomA and geomB.
-
-Since: v0.1.
-
-#### Format
-
-`ST_DistanceSphere (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-TODO: fix sql
-
-```sql
-SELECT ST_DistanceSphere(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
-```
-
-## ST_DistanceSpheroid
-
-#### Description
-
-Calculates the spheroidal (ellipsoidal) distance between geomA and geomB.
-
-Since: v0.1.
-
-#### Format
-
-`ST_DistanceSpheroid (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-TODO: fix sql
-
-```sql
-SELECT ST_DistanceSpheroid(
-  ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), 
-  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
-) AS val
-```
-
 ## ST_Dump
 
 It expands the geometries. If the geometry is simple (Point, Polygon Linestring etc.) it returns the geometry itself, if the geometry is collection or multi it returns record for each of collection components.
@@ -640,34 +539,13 @@ SELECT ST_FlipCoordinates(
 );
 ```
 
-## ST_FrechetDistance
-
-#### Description
-
-Calculates the Frechet distance between geomA and geomB.
-
-Since: v0.1.
-
-#### Format
-
-`ST_FrechetDistance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-TODO: fix sql
-
-```sql
-SELECT ST_FrechetDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
-```
-
 ## ST_GeogPoint
 
-TODO
+ST_GeogPoint creates a geography POINT from given longitude and latitude coordinates.
+
+```sql
+SELECT ST_GeogPoint(10, 10), ST_GeogPoint(0, 0);
+```
 
 ## ST_GeogFromWKB
 
@@ -822,31 +700,6 @@ Since: v0.1.
 
 ```sql
 SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
-```
-
-## ST_HausdorffDistance
-
-#### Description
-
-Calculates the Hausdorff distance between geomA and geomB.
-
-Since: v0.1.
-
-#### Format
-
-`ST_HausdorffDistance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-TODO: fix sql
-
-```sql
-SELECT ST_HausdorffDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
 ## ST_Intersection
@@ -1092,10 +945,11 @@ Format: `ST_LineLocatePoint(linestring: Geometry, point: Geometry)`
 
 Since: v0.2.
 
-TODO: fix sql
-
 ```sql
-SELECT ST_LineLocatePoint(ST_GeomFromWKT('LINESTRING(0 0, 1 1, 2 2)'), ST_GeomFromWKT('POINT(0 2)'));
+SELECT ST_LineLocatePoint(
+    ST_GeogFromText('LINESTRING(0 0, 1 1, 2 2)'),
+    ST_GeogFromText('POINT(0 2)')
+);
 ```
 
 ## ST_M
