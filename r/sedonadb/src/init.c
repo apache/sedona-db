@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include <R_ext/Parse.h>
-#include <Rinternals.h>
 #include <stdint.h>
+
+#include <Rinternals.h>
+
+#include <R_ext/Parse.h>
 
 #include "rust/api.h"
 
