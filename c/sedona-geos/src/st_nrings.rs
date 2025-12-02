@@ -53,8 +53,6 @@ impl SedonaScalarKernel for STNRings {
             match maybe_geom {
                 None => builder.append_null(),
                 Some(geom) => {
-                    // Fixed: Removed the unused 'res' variable assignment
-                    // and directly appended the result.
                     let val = invoke_scalar(&geom)?;
                     builder.append_value(val);
                 }
@@ -65,8 +63,6 @@ impl SedonaScalarKernel for STNRings {
     }
 }
 
-// Generic implementation using the Geom trait handles both
-// top-level Geometry and nested ConstGeometry automatically.
 fn invoke_scalar<G: Geom>(geom: &G) -> Result<i32> {
     match geom.geometry_type() {
         GeometryTypes::Polygon => {
@@ -96,12 +92,10 @@ fn invoke_scalar<G: Geom>(geom: &G) -> Result<i32> {
                 let sub_geom = geom
                     .get_geometry_n(i)
                     .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                // Recursively call invoke_scalar for nested items
                 total_rings += invoke_scalar(&sub_geom)?;
             }
             Ok(total_rings)
         }
-        // Returns 0 for non-polygons (Point, LineString) to match PostGIS
         _ => Ok(0),
     }
 }
@@ -159,8 +153,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0), // Non-polygon -> 0
-            Some(0), // Non-polygon -> 0
+            Some(0), 
+            Some(0), 
             Some(0),
             Some(1),
             Some(2),
