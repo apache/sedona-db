@@ -77,13 +77,13 @@ comfy-table = { version = "7.1.4" }
 criterion = { version = "0.5", features = ["html_reports"] }
 datafusion = { version = "50.2.0", default-features = false }
 datafusion-catalog = { version = "50.2.0" }
-datafusion-common = { version = "50.2.0", default-features = false }
-datafusion-common-runtime = { version = "50.2.0", default-features = false }
+datafusion-common = { version = "50.3.0", default-features = false }
+datafusion-common-runtime = { version = "51.0.0", default-features = false }
 datafusion-datasource-parquet = { version = "50.2.0" }
 datafusion-execution = { version = "50.2.0", default-features = false }
-datafusion-expr = { version = "50.2.0" }
+datafusion-expr = { version = "50.3.0" }
 datafusion-ffi = {  version = "50.2.0" }
-datafusion-physical-expr = { version = "50.2.0" }
+datafusion-physical-expr = { version = "50.3.0" }
 datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
