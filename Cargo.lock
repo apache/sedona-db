@@ -4939,6 +4939,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-extension"
+version = "0.2.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "sedona-expr",
+]
+
+[[package]]
 name = "sedona-functions"
 version = "0.2.0"
 dependencies = [
