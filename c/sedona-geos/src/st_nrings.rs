@@ -22,7 +22,7 @@ use arrow_array::builder::Int32Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::{Geom, Geometry, GeometryTypes};
+use geos::{Geom, GeometryTypes}; // Removed unused 'Geometry'
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -53,11 +53,10 @@ impl SedonaScalarKernel for STNRings {
             match maybe_geom {
                 None => builder.append_null(),
                 Some(geom) => {
-                    let res = invoke_scalar(&geom)?;
-                    match res {
-                        Some(n) => builder.append_value(n),
-                        None => builder.append_null(),
-                    }
+                    // Fixed: Removed the unused 'res' variable assignment
+                    // and directly appended the result.
+                    let val = invoke_scalar(&geom)?;
+                    builder.append_value(val);
                 }
             }
             Ok(())
@@ -66,35 +65,9 @@ impl SedonaScalarKernel for STNRings {
     }
 }
 
-fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
-    match geom.geometry_type() {
-        GeometryTypes::Polygon => {
-            if geom
-                .is_empty()
-                .map_err(|e| DataFusionError::Execution(format!("{e}")))?
-            {
-                return Ok(Some(0));
-            }
-            let num_interior = geom
-                .get_num_interior_rings()
-                .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-            Ok(Some((num_interior + 1) as i32))
-        }
-        GeometryTypes::MultiPolygon | GeometryTypes::GeometryCollection => {
-            if geom
-                .is_empty()
-                .map_err(|e| DataFusionError::Execution(format!("{e}")))?
-            {
-                return Ok(Some(0));
-            }
-            let total = count_rings_recursive(geom)?;
-            Ok(Some(total))
-        }
-        _ => Ok(Some(0)),
-    }
-}
-
-fn count_rings_recursive<G: Geom>(geom: &G) -> Result<i32> {
+// Generic implementation using the Geom trait handles both
+// top-level Geometry and nested ConstGeometry automatically.
+fn invoke_scalar<G: Geom>(geom: &G) -> Result<i32> {
     match geom.geometry_type() {
         GeometryTypes::Polygon => {
             if geom
@@ -123,10 +96,12 @@ fn count_rings_recursive<G: Geom>(geom: &G) -> Result<i32> {
                 let sub_geom = geom
                     .get_geometry_n(i)
                     .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                total_rings += count_rings_recursive(&sub_geom)?;
+                // Recursively call invoke_scalar for nested items
+                total_rings += invoke_scalar(&sub_geom)?;
             }
             Ok(total_rings)
         }
+        // Returns 0 for non-polygons (Point, LineString) to match PostGIS
         _ => Ok(0),
     }
 }
@@ -184,8 +159,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0),
-            Some(0),
+            Some(0), // Non-polygon -> 0
+            Some(0), // Non-polygon -> 0
             Some(0),
             Some(1),
             Some(2),
