@@ -34,6 +34,7 @@ mod st_length;
 mod st_makevalid;
 mod st_minimumclearance;
 mod st_minimumclearance_line;
+mod st_nrings;
 mod st_numinteriorrings;
 mod st_numpoints;
 mod st_perimeter;
