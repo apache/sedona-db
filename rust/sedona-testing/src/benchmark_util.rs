@@ -282,6 +282,8 @@ pub enum BenchmarkArgSpec {
     Int64(i64, i64),
     /// Randomly generated floating point input with a given range of values
     Float64(f64, f64),
+    /// Randomly generated integer input with a given range of values
+    Int32(i32, i32),
     /// A transformation of any of the above based on a [ScalarUDF] accepting
     /// a single argument
     Transformed(Box<BenchmarkArgSpec>, ScalarUDF),
@@ -303,6 +305,7 @@ impl Debug for BenchmarkArgSpec {
             Self::MultiPoint(arg0) => f.debug_tuple("MultiPoint").field(arg0).finish(),
             Self::Int64(arg0, arg1) => f.debug_tuple("Int64").field(arg0).field(arg1).finish(),
             Self::Float64(arg0, arg1) => f.debug_tuple("Float64").field(arg0).field(arg1).finish(),
+            Self::Int32(arg0, arg1) => f.debug_tuple("Int32").field(arg0).field(arg1).finish(),
             Self::Transformed(inner, t) => write!(f, "{}({:?})", t.name(), inner),
             Self::String(s) => write!(f, "String({s})"),
             Self::Raster(w, h) => f.debug_tuple("Raster").field(w).field(h).finish(),
@@ -321,6 +324,7 @@ impl BenchmarkArgSpec {
             | BenchmarkArgSpec::MultiPoint(_) => WKB_GEOMETRY,
             BenchmarkArgSpec::Int64(_, _) => SedonaType::Arrow(DataType::Int64),
             BenchmarkArgSpec::Float64(_, _) => SedonaType::Arrow(DataType::Float64),
+            BenchmarkArgSpec::Int32(_, _) => SedonaType::Arrow(DataType::Int32),
             BenchmarkArgSpec::Transformed(inner, t) => {
                 let tester = ScalarUdfTester::new(t.clone(), vec![inner.sedona_type()]);
                 tester.return_type().unwrap()
@@ -415,6 +419,17 @@ impl BenchmarkArgSpec {
                         let float64_array: Float64Array =
                             (0..rows_per_batch).map(|_| rng.sample(dist)).collect();
                         Ok(Arc::new(float64_array))
+                    })
+                    .collect()
+            }
+            BenchmarkArgSpec::Int32(lo, hi) => {
+                let mut rng = self.rng(i);
+                let dist = Uniform::new(lo, hi);
+                (0..num_batches)
+                    .map(|_| -> Result<ArrayRef> {
+                        let int32_array: arrow_array::Int32Array =
+                            (0..rows_per_batch).map(|_| rng.sample(dist)).collect();
+                        Ok(Arc::new(int32_array))
                     })
                     .collect()
             }
@@ -691,6 +706,23 @@ mod test {
 
         for array in arrays {
             assert_eq!(array.data_type(), &DataType::Float64);
+            assert_eq!(array.len(), ROWS_PER_BATCH);
+            assert_eq!(array.null_count(), 0);
+        }
+    }
+
+    #[test]
+    fn arg_spec_int() {
+        let spec = BenchmarkArgSpec::Int32(1, 10);
+        assert_eq!(spec.sedona_type(), SedonaType::Arrow(DataType::Int32));
+        let arrays = spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap();
+        assert_eq!(arrays.len(), 2);
+        // Make sure this is deterministic
+        assert_eq!(spec.build_arrays(0, 2, ROWS_PER_BATCH).unwrap(), arrays);
+        // Make sure we generate different arrays for different argument numbers
+        assert_ne!(spec.build_arrays(1, 2, ROWS_PER_BATCH).unwrap(), arrays);
+        for array in arrays {
+            assert_eq!(array.data_type(), &DataType::Int32);
             assert_eq!(array.len(), ROWS_PER_BATCH);
             assert_eq!(array.null_count(), 0);
         }
