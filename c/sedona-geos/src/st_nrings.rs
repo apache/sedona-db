@@ -22,7 +22,7 @@ use arrow_array::builder::Int32Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::{Geom, GeometryTypes}; // Removed unused 'Geometry'
+use geos::{Geom, GeometryTypes};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -153,8 +153,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0), 
-            Some(0), 
+            Some(0),
+            Some(0),
             Some(0),
             Some(1),
             Some(2),
