@@ -4944,7 +4944,11 @@ version = "0.2.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "sedona-common",
  "sedona-expr",
+ "sedona-schema",
 ]
 
 [[package]]

@@ -15,10 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::os::raw::{c_char, c_void};
+use std::{ffi::c_int, os::raw::{c_char, c_void}};
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCScalarUdfFactory {
+    pub new_scalar_udf_impl: Option<
+        unsafe extern "C" fn(self_: *const SedonaCScalarUdfFactory, out: *mut SedonaCScalarUdf),
+    >,
+
+    release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdfFactory)>,
+    private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCScalarUdfFactory {}
+unsafe impl Sync for SedonaCScalarUdfFactory {}
+
+impl Drop for SedonaCScalarUdfFactory {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+        }
+    }
+}
+
+#[derive(Default)]
 #[repr(C)]
 pub struct SedonaCScalarUdf {
     pub init: Option<
@@ -28,7 +51,7 @@ pub struct SedonaCScalarUdf {
             scalar_args: *mut *mut FFI_ArrowArray,
             n_args: i64,
             out: *mut FFI_ArrowSchema,
-        ) -> i32,
+        ) -> c_int,
     >,
 
     pub execute: Option<
@@ -38,12 +61,20 @@ pub struct SedonaCScalarUdf {
             n_args: i64,
             n_rows: i64,
             out: *mut FFI_ArrowArray,
-        ) -> i32,
+        ) -> c_int,
     >,
 
     pub get_last_error: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf) -> *const c_char>,
 
-    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf)>,
+    release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf)>,
 
-    pub private_data: *mut c_void,
+    private_data: *mut c_void,
+}
+
+impl Drop for SedonaCScalarUdf {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+        }
+    }
 }
