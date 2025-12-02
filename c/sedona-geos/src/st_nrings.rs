@@ -153,8 +153,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0), 
-            Some(0), 
+            Some(0),
+            Some(0),
             Some(0),
             Some(1),
             Some(2),
