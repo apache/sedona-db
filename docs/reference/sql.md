@@ -19,26 +19,17 @@
 
 # SQL API Reference
 
-The following SQL functions are available for SedonaDB.
-
-You can query data directly from files and URLs by treating them like database tables. This feature supports formats like **Parquet**, **CSV**, and **JSON**.
-
-To query a file, place its path or URL in single quotes within the `FROM` clause.
-
-```python
-# Query a remote Parquet file directly
-"SELECT * FROM 'https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet'").show()
-```
-
-## ST_Analyze_Aggr
+## ST_Analyze_Agg
 
 #### Description
 
 Return the statistics of geometries for the input geometry.
 
+Since: v0.1.
+
 #### Format
 
-`ST_Analyze_Aggr (A: Geometry)`
+`ST_Analyze_Agg (A: Geometry)`
 
 #### Arguments
 
@@ -47,7 +38,7 @@ Return the statistics of geometries for the input geometry.
 #### SQL Example
 
 ```sql
-SELECT ST_Analyze_Aggr(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'))
+SELECT ST_Analyze_Agg(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'));
 ```
 
 ## ST_Area
@@ -55,6 +46,8 @@ SELECT ST_Analyze_Aggr(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1
 #### Description
 
 Return the area of a geometry.
+
+Since: v0.1.
 
 #### Format
 
@@ -76,6 +69,8 @@ SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
 
 Return the Well-Known Binary representation of a geometry or geography. This function also has the alias **ST_AsWKB**.
 
+Since: v0.1.
+
 #### Format
 
 `ST_AsBinary (A: Geometry)`
@@ -96,6 +91,8 @@ SELECT ST_AsBinary(ST_Point(1.0, 2.0));
 
 Return the Well-Known Text string representation of a geometry or geography.
 
+Since: v0.1.
+
 #### Format
 
 `ST_AsText (A: Geometry)`
@@ -107,7 +104,31 @@ Return the Well-Known Text string representation of a geometry or geography.
 #### SQL Example
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0))
+SELECT ST_AsText(ST_Point(1.0, 2.0));
+```
+
+## ST_Azimuth
+
+Introduction: Returns Azimuth for two given points in radians null otherwise.
+
+Format: ST_Azimuth(pointA: Point, pointB: Point)
+
+Since: v0.2.
+
+```sql
+SELECT ST_Azimuth(ST_POINT(0.0, 25.0), ST_POINT(0.0, 0.0));
+```
+
+## ST_Boundary
+
+Returns the closure of the combinatorial boundary of this Geometry.
+
+Format: `ST_Boundary(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Boundary(ST_GeomFromWKT('POLYGON((1 1,0 0, -1 1, 1 1))'));
 ```
 
 ## ST_Buffer
@@ -115,6 +136,10 @@ SELECT ST_AsText(ST_Point(1.0, 2.0))
 #### Description
 
 Returns a geometry that represents all points whose distance from the input geometry is less than or equal to a specified distance.
+
+Since: v0.1.
+
+Changed in version v0.2: Support buffer parameters argument
 
 #### Format
 
@@ -137,6 +162,8 @@ SELECT ST_Buffer(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), 1.0)
 
 Returns the centroid of geom.
 
+Since: v0.1.
+
 #### Format
 
 `ST_Centroid (A: Geometry)`
@@ -151,24 +178,36 @@ Returns the centroid of geom.
 SELECT ST_AsText(ST_Centroid(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')));
 ```
 
-## ST_Collect
+## ST_ClosestPoint
 
-#### Description
+Returns the 2-dimensional point on geom1 that is closest to geom2. This is the first point of the shortest line between the geometries. If using 3D geometries, the Z coordinates will be ignored. If you have a 3D Geometry, you may prefer to use ST_3DClosestPoint. It will throw an exception indicates illegal argument if one of the params is an empty geometry.
 
-Aggregates a set of geometries into a single `GeometryCollection`, `MultiPoint`, `MultiLineString`, or `MultiPolygon`. If all input geometries are of the same type (e.g., all points), it creates a multi-geometry of that type. If the geometries are of mixed types, it returns a `GeometryCollection`.
+Format: `ST_ClosestPoint(g1: Geometry, g2: Geometry)`
 
-#### Format
-
-`ST_Collect (geom: Geometry)`
-
-#### Arguments
-
-  * **geom**: The input geometry or geography to be collected.
-
-#### SQL Example
+Since: v0.2.
 
 ```sql
-SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))
+SELECT ST_AsText(
+  ST_ClosestPoint(
+    ST_GeogFromText('POINT(-118.4 34.0)'),  -- Santa Monica
+    ST_GeogFromText('LINESTRING(-118.5 34.1, -118.3 33.9, -118.2 33.8)')  -- LA coastline
+  )
+) As ptwkt;
+```
+
+## ST_Collect_Agg
+
+ST_Collect_Agg is an aggregate function that combines multiple geometries from a set of rows into a single collection.
+
+```sql
+SELECT ST_Collect_Agg(geom) as collected_points
+FROM (
+    SELECT ST_Point(-122.4194, 37.7749) as geom  -- San Francisco
+    UNION ALL
+    SELECT ST_Point(-118.2437, 34.0522)           -- Los Angeles
+    UNION ALL
+    SELECT ST_Point(-122.6765, 45.5231)           -- Portland
+) as cities;
 ```
 
 ## ST_Contains
@@ -176,6 +215,8 @@ SELECT ST_Collect(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))
 #### Description
 
 Return true if geomA contains geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -189,7 +230,22 @@ Return true if geomA contains geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Contains(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Contains(
+    ST_Point(0.25, 0.25),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
+```
+
+## ST_ConvexHull
+
+Return the Convex Hull of polygon A
+
+Format: `ST_ConvexHull (A: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_ConvexHull(ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))'));
 ```
 
 ## ST_CoveredBy
@@ -197,6 +253,8 @@ SELECT ST_Contains(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1
 #### Description
 
 Return true if geomA is covered by geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -210,7 +268,7 @@ Return true if geomA is covered by geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_CoveredBy(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_CoveredBy(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_Covers
@@ -218,6 +276,8 @@ SELECT ST_CoveredBy(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 
 #### Description
 
 Return true if geomA covers geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -231,7 +291,27 @@ Return true if geomA covers geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Covers(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Covers(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+```
+
+## ST_Crosses
+
+Introduction: Return true if A crosses B
+
+Format: `ST_Crosses (A: Geometry, B: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Crosses(ST_GeomFromWKT('POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))'),ST_GeomFromWKT('POLYGON((2 2, 5 2, 5 5, 2 5, 2 2))'));
+```
+
+## ST_CRS
+
+ST_CRS returns the Coordinate Reference System (CRS) metadata associated with a geometry or geography object.
+
+```sql
+SELECT ST_CRS(ST_Point(0.25, 0.25, 4326)) as crs_info;
 ```
 
 ## ST_Difference
@@ -239,6 +319,8 @@ SELECT ST_Covers(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 
 #### Description
 
 Computes the difference between geomA and geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -252,7 +334,12 @@ Computes the difference between geomA and geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Difference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+sd.sql("""
+SELECT ST_Difference(
+    ST_GeomFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
+    ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+) AS val;
+""").show()
 ```
 
 ## ST_Dimension
@@ -260,6 +347,8 @@ SELECT ST_Difference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_Geo
 #### Description
 
 Return the dimension of the geometry.
+
+Since: v0.1.
 
 #### Format
 
@@ -281,6 +370,8 @@ SELECT ST_Dimension(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 
 Return true if geomA is disjoint from geomB.
 
+Since: v0.1.
+
 #### Format
 
 `ST_Disjoint (A: Geometry, B: Geometry)`
@@ -293,70 +384,19 @@ Return true if geomA is disjoint from geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Disjoint(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Disjoint(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
-## ST_Distance
+## ST_Dump
 
-#### Description
+It expands the geometries. If the geometry is simple (Point, Polygon Linestring etc.) it returns the geometry itself, if the geometry is collection or multi it returns record for each of collection components.
 
-Calculates the distance between geomA and geomB.
+Format: ST_Dump(geom: Geometry)
 
-#### Format
-
-`ST_Distance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
+Since: v0.2.
 
 ```sql
-SELECT ST_Distance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
-```
-
-## ST_DistanceSphere
-
-#### Description
-
-Calculates the spherical distance between geomA and geomB.
-
-#### Format
-
-`ST_DistanceSphere (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_DistanceSphere(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
-```
-
-## ST_DistanceSpheroid
-
-#### Description
-
-Calculates the spheroidal (ellipsoidal) distance between geomA and geomB.
-
-#### Format
-
-`ST_DistanceSpheroid (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_DistanceSpheroid(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Dump(ST_GeomFromText('MULTIPOINT ((10 40), (40 30), (20 20), (30 10))'));
 ```
 
 ## ST_DWithin
@@ -364,6 +404,8 @@ SELECT ST_DistanceSpheroid(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10
 #### Description
 
 Returns true if two geometries are within a specified distance of each other.
+
+Since: v0.1.
 
 #### Format
 
@@ -378,7 +420,23 @@ Returns true if two geometries are within a specified distance of each other.
 #### SQL Example
 
 ```sql
-SELECT ST_DWithin(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'), 0.5);
+SELECT ST_DWithin(
+  ST_Point(0.25, 0.25),
+  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+  0.5
+);
+```
+
+## ST_EndPoint
+
+Returns last point of given linestring.
+
+Format: `ST_EndPoint(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_EndPoint(ST_GeomFromText('LINESTRING(100 150,50 60, 70 80, 160 170)'));
 ```
 
 ## ST_Envelope
@@ -386,6 +444,8 @@ SELECT ST_DWithin(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1
 #### Description
 
 Returns the bounding box (envelope) of a geometry as a new geometry. The resulting geometry represents the minimum bounding rectangle that encloses the input geometry. Depending on the input, the output can be a `Point`, `LineString`, or `Polygon`.
+
+Since: v0.1.
 
 #### Format
 
@@ -398,18 +458,20 @@ Returns the bounding box (envelope) of a geometry as a new geometry. The resulti
 #### SQL Example
 
 ```sql
-SELECT ST_Envelope(ST_Point(1.0, 2.0))
+SELECT ST_Envelope(ST_Point(1.0, 2.0));
 ```
 
-## ST_Envelope_Aggr
+## ST_Envelope_Agg
 
 #### Description
 
 An aggregate function that returns the collective bounding box (envelope) of a set of geometries.
 
+Since: v0.1.
+
 #### Format
 
-`ST_Envelope_Aggr (geom: Geometry)`
+`ST_Envelope_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -418,13 +480,7 @@ An aggregate function that returns the collective bounding box (envelope) of a s
 #### SQL Example
 
 ```sql
--- Create a table with geometries and calculate the aggregate envelope
-WITH shapes(geom) AS (
-    VALUES (ST_GeomFromWKT('POINT (0 1)')),
-           (ST_GeomFromWKT('POINT (10 11)'))
-)
-SELECT ST_AsText(ST_Envelope_Aggr(geom)) FROM shapes;
--- Returns: POLYGON ((0 1, 0 11, 10 11, 10 1, 0 1))
+SELECT ST_Envelope_Agg(ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 ```
 
 ## ST_Equals
@@ -432,6 +488,8 @@ SELECT ST_AsText(ST_Envelope_Aggr(geom)) FROM shapes;
 #### Description
 
 Return true if geomA equals geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -445,7 +503,10 @@ Return true if geomA equals geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Equals(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Equals(
+  ST_Point(0.25, 0.25),
+  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+);
 ```
 
 ## ST_FlipCoordinates
@@ -453,6 +514,8 @@ SELECT ST_Equals(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 
 #### Description
 
 Returns a new geometry with the X and Y coordinates of each vertex swapped. This is useful for correcting geometries that have been created with longitude and latitude in the wrong order.
+
+Since: v0.1.
 
 #### Format
 
@@ -465,28 +528,57 @@ Returns a new geometry with the X and Y coordinates of each vertex swapped. This
 #### SQL Example
 
 ```sql
-SELECT ST_FlipCoordinates(df.geometry)
+SELECT ST_FlipCoordinates(
+  ST_Point(1, 2)
+);
 ```
 
-## ST_FrechetDistance
+## ST_GeogPoint
 
-#### Description
-
-Calculates the Frechet distance between geomA and geomB.
-
-#### Format
-
-`ST_FrechetDistance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
+ST_GeogPoint creates a geography POINT from given longitude and latitude coordinates.
 
 ```sql
-SELECT ST_FrechetDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_GeogPoint(10, 10), ST_GeogPoint(0, 0);
+```
+
+## ST_GeogFromWKB
+
+Construct a Geography from WKB Binary.
+
+Format: `ST_GeogFromWKB (Wkb: Binary)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_GeogFromWKB(decode('010200000002000000000000000084d600c0000000000080b5d6bf00000060e1eff7bf00000080075de5bf', 'hex'));
+```
+
+## ST_GeogFromWKT
+
+Construct a Geography from WKT. If SRID is not set, it defaults to 0 (unknown).
+
+Format: `ST_GeogFromWKT (Wkt: String)`
+
+or
+
+`ST_GeogFromWKT (Wkt: String, srid: Integer)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_GeogFromWKT('LINESTRING (1 2, 3 4, 5 6)');
+```
+
+## ST_GeometryN
+
+Return the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON. Otherwise, return null
+
+Format: ST_GeometryN(geom: Geometry, n: Integer)
+
+Since: v0.2.
+
+```sql
+SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1);
 ```
 
 ## ST_GeomFromWKB
@@ -494,6 +586,8 @@ SELECT ST_FrechetDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10)
 #### Description
 
 Construct a Geometry from WKB.
+
+Since: v0.1.
 
 #### Format
 
@@ -507,14 +601,18 @@ Construct a Geometry from WKB.
 
 ```sql
 -- Creates a POINT(1 2) geometry from its WKB representation
-SELECT ST_AsText(ST_GeomFromWKB(FROM_HEX('0101000000000000000000F03F0000000000000040')));
+SELECT ST_AsText(
+    ST_GeomFromWKB(decode('0101000000000000000000F03F0000000000000040', 'hex'))
+);
 ```
 
 ## ST_GeomFromWKT
 
 #### Description
 
-Construct a Geometry from WKT. This function also has the alias **ST_GeomFromText**.
+Construct a Geometry from WKT. This function also has the aliases **ST_GeomFromText** and ** ST_GeometryFromText**
+
+Since: v0.1.
 
 #### Format
 
@@ -536,6 +634,8 @@ SELECT ST_AsText(ST_GeomFromWKT('POINT (30 10)'));
 
 Return the type of a geometry.
 
+Since: v0.1.
+
 #### Format
 
 `ST_GeometryType (A: Geometry)`
@@ -547,7 +647,7 @@ Return the type of a geometry.
 #### SQL Example
 
 ```sql
-SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_HasM
@@ -555,6 +655,8 @@ SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 #### Description
 
 Return true if the geometry has a M dimension.
+
+Since: v0.1.
 
 #### Format
 
@@ -567,7 +669,7 @@ Return true if the geometry has a M dimension.
 #### SQL Example
 
 ```sql
-SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_HasZ
@@ -575,6 +677,8 @@ SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 #### Description
 
 Return true if the geometry has a Z dimension.
+
+Since: v0.1.
 
 #### Format
 
@@ -587,28 +691,7 @@ Return true if the geometry has a Z dimension.
 #### SQL Example
 
 ```sql
-SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
-```
-
-## ST_HausdorffDistance
-
-#### Description
-
-Calculates the Hausdorff distance between geomA and geomB.
-
-#### Format
-
-`ST_HausdorffDistance (A: Geometry, B: Geometry)`
-
-#### Arguments
-
-  * **geomA**: Input geometry or geography.
-  * **geomB**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_HausdorffDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_Intersection
@@ -616,6 +699,8 @@ SELECT ST_HausdorffDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 1
 #### Description
 
 Computes the intersection between geomA and geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -629,18 +714,23 @@ Computes the intersection between geomA and geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Intersection(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+SELECT ST_Intersection(
+    ST_GeomFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
+    ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+) AS val;
 ```
 
-## ST_Intersection_Aggr
+## ST_Intersection_Agg
 
 #### Description
 
 An aggregate function that returns the geometric intersection of all geometries in a set.
 
+Since: v0.1.
+
 #### Format
 
-`ST_Intersection_Aggr (geom: Geometry)`
+`ST_Intersection_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -654,7 +744,7 @@ WITH shapes(geom) AS (
     VALUES (ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
            (ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'))
 )
-SELECT ST_AsText(ST_Intersection_Aggr(geom)) FROM shapes;
+SELECT ST_AsText(ST_Intersection_Agg(geom)) FROM shapes;
 -- Returns: POLYGON ((1 1, 1 2, 2 2, 2 1, 1 1))
 ```
 
@@ -663,6 +753,8 @@ SELECT ST_AsText(ST_Intersection_Aggr(geom)) FROM shapes;
 #### Description
 
 Return true if geomA intersects geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -676,7 +768,40 @@ Return true if geomA intersects geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Intersects(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Intersects(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+```
+
+## ST_IsClosed
+
+RETURNS true if the LINESTRING start and end point are the same.
+
+Format: `ST_IsClosed(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_IsClosed(ST_GeomFromText('LINESTRING(0 0, 1 1, 1 0)'));
+```
+
+## ST_IsCollection
+
+Returns TRUE if the geometry type of the input is a geometry collection type. Collection types are the following:
+
+```
+GEOMETRYCOLLECTION
+MULTI{POINT, POLYGON, LINESTRING}
+```
+
+Format: `ST_IsCollection(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT(0 0), (6 6)'));
+```
+
+```sql
+SELECT ST_IsCollection(ST_GeomFromText('POINT(5 5)'));
 ```
 
 ## ST_IsEmpty
@@ -684,6 +809,8 @@ SELECT ST_Intersects(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0
 #### Description
 
 Return true if the geometry is empty.
+
+Since: v0.1.
 
 #### Format
 
@@ -699,11 +826,57 @@ Return true if the geometry is empty.
 SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'));
 ```
 
+## ST_IsRing
+
+RETURN true if LINESTRING is ST_IsClosed and ST_IsSimple.
+
+Format: `ST_IsRing(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_IsRing(ST_GeomFromText('LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)'));
+```
+
+## ST_IsSimple
+
+Test if geometry's only self-intersections are at boundary points.
+
+Format: `ST_IsSimple (A: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_IsSimple(ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'));
+```
+
+## ST_IsValid
+
+ST_IsValid checks whether a geometry meets the rules of a valid spatial object according to the OGC standard.
+
+```sql
+SELECT ST_IsValid(
+    ST_GeomFromText('POLYGON ((0 0, 2 0, 2 2, 1 1, 0 2, 0 0))')
+) AS is_valid;
+```
+
+## ST_IsValidReason
+
+ST_IsValidReason returns a text explanation describing why a geometry is invalid.
+
+```sql
+SELECT ST_IsValidReason(
+    ST_GeomFromText('POLYGON((0 0, 2 0, 2 2, 1 1, 0 2, 0 0))')
+) AS reason;
+```
+
 ## ST_KNN
 
 #### Description
 
 Return true if geomA finds k nearest neighbors from geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -719,7 +892,7 @@ Return true if geomA finds k nearest neighbors from geomB.
 #### SQL Example
 
 ```sql
-SELECT * FROM table1 a JOIN table2 b ON ST_KNN(a.geom, b.geom, 5, false)
+SELECT * FROM table1 a JOIN table2 b ON ST_KNN(a.geom, b.geom, 5, false);
 ```
 
 ## ST_Length
@@ -727,6 +900,8 @@ SELECT * FROM table1 a JOIN table2 b ON ST_KNN(a.geom, b.geom, 5, false)
 #### Description
 
 Returns the length of geom. This function only supports LineString, MultiLineString, and GeometryCollections containing linear geometries. Use ST_Perimeter for polygons.
+
+Since: v0.1.
 
 #### Format
 
@@ -742,11 +917,40 @@ Returns the length of geom. This function only supports LineString, MultiLineStr
 SELECT ST_Length(ST_GeomFromWKT('LINESTRING(0 0, 10 0)'));
 ```
 
+## ST_LineInterpolatePoint
+
+Returns a point interpolated along a line. First argument must be a LINESTRING. Second argument is a Double between 0 and 1 representing fraction of total linestring length the point has to be located.
+
+Format: `ST_LineInterpolatePoint (geom: Geometry, fraction: Double)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_LineInterpolatePoint(ST_GeomFromWKT('LINESTRING(25 50, 100 125, 150 190)'), 0.2);
+```
+
+## ST_LineLocatePoint
+
+Returns a double between 0 and 1, representing the location of the closest point on the LineString as a fraction of its total length. The first argument must be a LINESTRING, and the second argument is a POINT geometry.
+
+Format: `ST_LineLocatePoint(linestring: Geometry, point: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_LineLocatePoint(
+    ST_GeogFromText('LINESTRING(0 0, 1 1, 2 2)'),
+    ST_GeogFromText('POINT(0 2)')
+);
+```
+
 ## ST_M
 
 #### Description
 
 Returns the M (measure) coordinate of a `Point` geometry. If the geometry does not have an M value, it returns `NULL`.
+
+Since: v0.1.
 
 #### Format
 
@@ -759,7 +963,7 @@ Returns the M (measure) coordinate of a `Point` geometry. If the geometry does n
 #### SQL Example
 
 ```sql
-SELECT ST_M(ST_Point(1.0, 2.0))
+SELECT ST_M(ST_Point(1.0, 2.0));
 ```
 
 ## ST_MakeLine
@@ -767,6 +971,8 @@ SELECT ST_M(ST_Point(1.0, 2.0))
 #### Description
 
 Creates a `LineString` from two or more input `Point`, `MultiPoint`, or `LineString` geometries. The function connects the input geometries in the order they are provided to form a single continuous line.
+
+Since: v0.1.
 
 #### Format
 
@@ -780,7 +986,26 @@ Creates a `LineString` from two or more input `Point`, `MultiPoint`, or `LineStr
 #### SQL Example
 
 ```sql
-SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom
+SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom;
+```
+
+## ST_MakeValid
+
+Given an invalid geometry, create a valid representation of the geometry.
+
+Collapsed geometries are either converted to empty (keepCollapsed=false) or a valid geometry of lower dimension (keepCollapsed=true). Default is keepCollapsed=false.
+
+Format:
+
+```
+ST_MakeValid (A: Geometry)
+ST_MakeValid (A: Geometry, keepCollapsed: Boolean)
+```
+
+Since: v0.2.
+
+```sql
+SELECT ST_MakeValid(ST_GeomFromWKT('LINESTRING(1 1, 1 1)'));
 ```
 
 ## ST_MaxDistance
@@ -788,6 +1013,8 @@ SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom
 #### Description
 
 Calculates the maximum distance between geomA and geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -801,7 +1028,46 @@ Calculates the maximum distance between geomA and geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_MaxDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_MaxDistance(
+    ST_GeogFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
+```
+
+## ST_MinimumClearance
+
+The minimum clearance is a metric that quantifies a geometry's tolerance to changes in coordinate precision or vertex positions. It represents the maximum distance by which vertices can be adjusted without introducing invalidity to the geometry's structure. A larger minimum clearance value indicates greater robustness against such perturbations.
+
+For a geometry with a minimum clearance of x, the following conditions hold:
+
+No two distinct vertices are separated by a distance less than x.
+
+No vertex lies within a distance x from any line segment it is not an endpoint of.
+
+For geometries with no definable minimum clearance, such as single Point geometries or MultiPoint geometries where all points occupy the same location, the function returns Double.MAX_VALUE.
+
+Format: `ST_MinimumClearance(geometry: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_MinimumClearance(
+  ST_GeomFromWKT('POLYGON ((65 18, 62 16, 64.5 16, 62 14, 65 14, 65 18))')
+);
+```
+
+## ST_MinimumClearanceLine
+
+This function returns a two-point LineString geometry representing the minimum clearance distance of the input geometry. If the input geometry does not have a defined minimum clearance, such as for single Points or coincident MultiPoints, an empty LineString geometry is returned instead.
+
+Format: `ST_MinimumClearanceLine(geometry: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_MinimumClearanceLine(
+  ST_GeomFromWKT('POLYGON ((65 18, 62 16, 64.5 16, 62 14, 65 14, 65 18))')
+);
 ```
 
 ## ST_MMax
@@ -809,6 +1075,8 @@ SELECT ST_MaxDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
 #### Description
 
 Returns the maximum M (measure) value from a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -821,7 +1089,7 @@ Returns the maximum M (measure) value from a geometry's bounding box.
 #### SQL Example
 
 ```sql
-SELECT ST_MMax(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_MMax(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ## ST_MMin
@@ -829,6 +1097,8 @@ SELECT ST_MMax(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 #### Description
 
 Returns the minimum **M-coordinate** (measure) of a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -845,6 +1115,42 @@ SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
 -- Returns: 4
 ```
 
+## ST_NPoints
+
+Return points of the geometry
+
+Format: `ST_NPoints (A: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_NPoints(ST_GeomFromText('LINESTRING(77.29 29.07,77.42 29.26,77.27 29.31,77.29 29.07)'));
+```
+
+## ST_NumGeometries
+
+Returns the number of Geometries. If geometry is a GEOMETRYCOLLECTION (or MULTI*) return the number of geometries, for single geometries will return 1.
+
+Format: `ST_NumGeometries (A: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_NumGeometries(ST_GeomFromWKT('LINESTRING (-29 -27, -30 -29.7, -45 -33)'));
+```
+
+## ST_Overlaps
+
+Return true if A overlaps B
+
+Format: `ST_Overlaps (A: Geometry, B: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Overlaps(ST_GeomFromWKT('POLYGON((2.5 2.5, 2.5 4.5, 4.5 4.5, 4.5 2.5, 2.5 2.5))'), ST_GeomFromWKT('POLYGON((4 4, 4 6, 6 6, 6 4, 4 4))'));
+```
+
 ## ST_Perimeter
 
 #### Description
@@ -852,6 +1158,8 @@ SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
 This function calculates the 2D perimeter of a given geometry. It supports Polygon, MultiPolygon, and GeometryCollection geometries (as long as the GeometryCollection contains polygonal geometries). For other types, it returns 0. To measure lines, use ST_Length.
 
 To get the perimeter in meters, set **use_spheroid** to true. This calculates the geodesic perimeter using the WGS84 spheroid. When using use_spheroid, the **lenient** parameter defaults to true, assuming the geometry uses EPSG:4326. To throw an exception instead, set lenient to false.
+
+Since: v0.1.
 
 #### Format
 
@@ -877,6 +1185,8 @@ SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
 
 Construct a Point Geometry from X and Y.
 
+Since: v0.1.
+
 #### Format
 
 `ST_Point (x: Double, y: Double)`
@@ -898,6 +1208,8 @@ SELECT ST_AsText(ST_Point(-74.0060, 40.7128));
 
 Constructs a `Point` with an M (measure) coordinate from X, Y, and M values.
 
+Since: v0.1.
+
 #### Format
 
 `ST_PointM (x: Double, y: Double, m: Double)`
@@ -911,7 +1223,31 @@ Constructs a `Point` with an M (measure) coordinate from X, Y, and M values.
 #### SQL Example
 
 ```sql
-SELECT ST_PointM(-64.36, 45.09, 50.0)
+SELECT ST_PointM(-64.36, 45.09, 50.0);
+```
+
+## ST_PointN
+
+Return the Nth point in a single linestring or circular linestring in the geometry. Negative values are counted backwards from the end of the LineString, so that -1 is the last point. Returns NULL if there is no linestring in the geometry.
+
+Format: `ST_PointN(geom: Geometry, n: Integer)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_PointN(ST_GeomFromText('LINESTRING(0 0, 1 2, 2 4, 3 6)'), 2);
+```
+
+## ST_Points
+
+Returns a MultiPoint geometry consisting of all the coordinates of the input geometry. It preserves duplicate points as well as M and Z coordinates.
+
+Format: `ST_Points(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_AsText(ST_Points(ST_GeomFromText('LINESTRING (2 4, 3 3, 4 2, 7 3)')));
 ```
 
 ## ST_PointZ
@@ -919,6 +1255,8 @@ SELECT ST_PointM(-64.36, 45.09, 50.0)
 #### Description
 
 Constructs a `Point` with a Z (elevation) coordinate from X, Y, and Z values.
+
+Since: v0.1.
 
 #### Format
 
@@ -933,7 +1271,7 @@ Constructs a `Point` with a Z (elevation) coordinate from X, Y, and Z values.
 #### SQL Example
 
 ```sql
-SELECT ST_PointZ(-64.36, 45.09, 100.0)
+SELECT ST_PointZ(-64.36, 45.09, 100.0);
 ```
 
 ## ST_PointZM
@@ -941,6 +1279,8 @@ SELECT ST_PointZ(-64.36, 45.09, 100.0)
 #### Description
 
 Constructs a `Point` with both Z (elevation) and M (measure) coordinates from X, Y, Z, and M values.
+
+Since: v0.1.
 
 #### Format
 
@@ -956,7 +1296,107 @@ Constructs a `Point` with both Z (elevation) and M (measure) coordinates from X,
 #### SQL Example
 
 ```sql
-SELECT ST_PointZM(-64.36, 45.09, 100.0, 50.0)
+SELECT ST_PointZM(-64.36, 45.09, 100.0, 50.0);
+```
+
+## ST_Polygonize
+
+Generates a GeometryCollection composed of polygons that are formed from the linework of an input GeometryCollection. When the input does not contain any linework that forms a polygon, the function will return an empty GeometryCollection.
+
+Note that ST_Polygonize function assumes that the input geometries form a valid and simple closed linestring that can be turned into a polygon. If the input geometries are not noded or do not form such linestrings, the resulting GeometryCollection may be empty or may not contain the expected polygons.
+
+Format: `ST_Polygonize(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_AsText(ST_Polygonize(ST_GeomFromText('GEOMETRYCOLLECTION (LINESTRING (2 0, 2 1, 2 2), LINESTRING (2 2, 2 3, 2 4), LINESTRING (0 2, 1 2, 2 2), LINESTRING (2 2, 3 2, 4 2), LINESTRING (0 2, 1 3, 2 4), LINESTRING (2 4, 3 3, 4 2))')));
+```
+
+## ST_Polygonize_Agg
+
+ST_Polygonize_Agg is an aggregate function that combines a set of linestrings into polygons by finding closed rings formed by the input geometries.
+
+```sql
+SELECT ST_Polygonize_Agg(geom) AS polygons
+FROM (
+    SELECT ST_GeomFromText('LINESTRING(0 0, 0 1)') AS geom
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(0 1, 1 1)')
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(1 1, 1 0)')
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(1 0, 0 0)')
+) AS edges;
+```
+
+## ST_Reverse
+
+Return the geometry with vertex order reversed
+
+Format: `ST_Reverse (A: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Reverse(ST_GeomFromWKT('LINESTRING(0 0, 1 2, 2 4, 3 6)'));
+```
+
+## ST_SetCRS
+
+ST_SetCRS sets or changes the Coordinate Reference System (CRS) identifier of a geometry without transforming its coordinates.
+
+```python
+import pyproj
+crs = pyproj.CRS("EPSG:3857")
+
+sd.sql(f"""
+SELECT ST_SetCRS(ST_GeomFromText('LINESTRING(0 1, 2 3)'), '{crs.to_json()}') as geom;
+""").show()
+```
+
+## ST_Simplify
+
+This function simplifies the input geometry by applying the Douglas-Peucker algorithm.
+
+Note: The simplification may not preserve topology, potentially producing invalid geometries. Use ST_SimplifyPreserveTopology to retain valid topology after simplification.
+
+Format: `ST_Simplify(geom: Geometry, tolerance: Double)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Simplify(ST_Buffer(ST_GeomFromWKT('POINT (0 2)'), 10), 1);
+```
+
+## ST_SimplifyPreserveTopology
+
+Simplifies a geometry and ensures that the result is a valid geometry having the same dimension and number of components as the input, and with the components having the same topological relationship.
+
+Since: v0.2.
+
+Format: `ST_SimplifyPreserveTopology (A: Geometry, distanceTolerance: Double)`
+
+```sql
+SELECT ST_SimplifyPreserveTopology(ST_GeomFromText('POLYGON((8 25, 28 22, 28 20, 15 11, 33 3, 56 30, 46 33,46 34, 47 44, 35 36, 45 33, 43 19, 29 21, 29 22,35 26, 24 39, 8 25))'), 10);
+```
+
+## ST_Snap
+
+Snaps the vertices and segments of the input geometry to reference geometry within the specified tolerance distance. The tolerance parameter controls the maximum snap distance.
+
+If the minimum distance between the geometries exceeds the tolerance, the input geometry is returned unmodified. Adjusting the tolerance value allows tuning which vertices should snap to the reference and which remain untouched.
+
+Since: v0.2.
+
+Format: `ST_Snap(input: Geometry, reference: Geometry, tolerance: double)`
+
+```sql
+SELECT
+    ST_Snap(poly, line, ST_Distance(poly, line) * 1.01) AS polySnapped FROM (
+        SELECT ST_GeomFromWKT('POLYGON ((236877.58 -6.61, 236878.29 -8.35, 236879.98 -8.33, 236879.72 -7.63, 236880.35 -6.62, 236877.58 -6.61), (236878.45 -7.01, 236878.43 -7.52, 236879.29 -7.50, 236878.63 -7.22, 236878.76 -6.89, 236878.45 -7.01))') as poly,
+            ST_GeomFromWKT('LINESTRING (236880.53 -8.22, 236881.15 -7.68, 236880.69 -6.81)') as line
+);
 ```
 
 ## ST_SetSRID
@@ -964,6 +1404,8 @@ SELECT ST_PointZM(-64.36, 45.09, 100.0, 50.0)
 #### Description
 
 Sets the spatial reference system identifier (SRID) of a geometry. This only changes the metadata; it does not transform the coordinates.
+
+Since: v0.1.
 
 #### Format
 
@@ -986,6 +1428,8 @@ SELECT ST_SetSRID(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 4326);
 
 Returns the Spatial Reference System Identifier (SRID) of a geometry. If the geometry does not have an SRID, it returns 0.
 
+Since: v0.1.
+
 #### Format
 
 `ST_SRID (geom: Geometry)`
@@ -1000,11 +1444,25 @@ Returns the Spatial Reference System Identifier (SRID) of a geometry. If the geo
 SELECT ST_SRID(polygon)
 ```
 
+## ST_StartPoint
+
+Returns first point of given linestring.
+
+Format: `ST_StartPoint(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_StartPoint(ST_GeomFromText('LINESTRING(100 150,50 60, 70 80, 160 170)'));
+```
+
 ## ST_SymDifference
 
 #### Description
 
 Computes the symmetric difference between geomA and geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -1018,7 +1476,10 @@ Computes the symmetric difference between geomA and geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_SymDifference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+SELECT ST_SymDifference(
+    ST_GeomFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
+    ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+) AS val;
 ```
 
 ## ST_Touches
@@ -1026,6 +1487,8 @@ SELECT ST_SymDifference(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_
 #### Description
 
 Return true if geomA touches geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -1039,7 +1502,7 @@ Return true if geomA touches geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Touches(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Touches(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
 ## ST_Transform
@@ -1049,6 +1512,8 @@ SELECT ST_Touches(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1,
 Transforms the coordinates of a geometry from a source Coordinate Reference System (CRS) to a target CRS.
 
 If the source CRS is not specified, it will be read from the geometry's metadata. Sedona ensures that coordinates are handled in longitude/latitude order for geographic CRS transformations.
+
+Since: v0.1.
 
 #### Format
 
@@ -1069,11 +1534,41 @@ If the source CRS is not specified, it will be read from the geometry's metadata
 SELECT ST_Transform(ST_SetSRID(ST_GeomFromWkt('POLYGON((170 50,170 72,-130 72,-130 50,170 50))'), 4326), 'EPSG:32649');
 ```
 
+## ST_Translate
+
+Returns the input geometry with its X, Y and Z coordinates (if present in the geometry) translated by deltaX, deltaY and deltaZ (if specified)
+
+If the geometry is 2D, and a deltaZ parameter is specified, no change is done to the Z coordinate of the geometry and the resultant geometry is also 2D.
+
+If the geometry is empty, no change is done to it. If the given geometry contains sub-geometries (GEOMETRY COLLECTION, MULTI POLYGON/LINE/POINT), all underlying geometries are individually translated.
+
+Format: `ST_Translate(geometry: Geometry, deltaX: Double, deltaY: Double, deltaZ: Double)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Translate(ST_GeomFromText('POINT(-71.01 42.37)'), 1, 2);
+```
+
+## vST_UnaryUnion
+
+This variant of ST_Union operates on a single geometry input. The input geometry can be a simple Geometry type, a MultiGeometry, or a GeometryCollection. The function calculates the geometric union across all components and elements within the provided geometry object.
+
+Format: `ST_UnaryUnion(geometry: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_UnaryUnion(ST_GeomFromWKT('MULTIPOLYGON(((0 10,0 30,20 30,20 10,0 10)),((10 0,10 20,30 20,30 0,10 0)))'));
+```
+
 ## ST_Union
 
 #### Description
 
 Computes the union between geomA and geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -1087,18 +1582,23 @@ Computes the union between geomA and geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Union(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val
+SELECT ST_Union(
+    ST_GeomFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
+    ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+) AS val;
 ```
 
-## ST_Union_Aggr
+## ST_Union_Agg
 
 #### Description
 
 An aggregate function that returns the geometric union of all geometries in a set.
 
+Since: v0.1.
+
 #### Format
 
-`ST_Union_Aggr (geom: Geometry)`
+`ST_Union_Agg (geom: Geometry)`
 
 #### Arguments
 
@@ -1107,13 +1607,12 @@ An aggregate function that returns the geometric union of all geometries in a se
 #### SQL Example
 
 ```sql
--- Create a table with two separate polygons and unite them into a single multipolygon
-WITH shapes(geom) AS (
-    VALUES (ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')),
-           (ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))'))
-)
-SELECT ST_AsText(ST_Union_Aggr(geom)) FROM shapes;
--- Returns: MULTIPOLYGON (((2 2, 3 2, 3 3, 2 3, 2 2)), ((0 0, 1 0, 1 1, 0 1, 0 0)))
+SELECT ST_AsText(ST_Union_Agg(geom))
+FROM (
+    SELECT ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))') AS geom
+    UNION ALL
+    SELECT ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))')
+) AS shapes;
 ```
 
 ## ST_Within
@@ -1121,6 +1620,8 @@ SELECT ST_AsText(ST_Union_Aggr(geom)) FROM shapes;
 #### Description
 
 Return true if geomA is fully contained by geomB.
+
+Since: v0.1.
 
 #### Format
 
@@ -1134,7 +1635,7 @@ Return true if geomA is fully contained by geomB.
 #### SQL Example
 
 ```sql
-SELECT ST_Within(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val
+SELECT ST_Within(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
 ```
 
 ## ST_X
@@ -1142,6 +1643,8 @@ SELECT ST_Within(ST_Point(0.25 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 
 #### Description
 
 Return the X component of a point geometry or geography.
+
+Since: v0.1.
 
 #### Format
 
@@ -1154,7 +1657,7 @@ Return the X component of a point geometry or geography.
 #### SQL Example
 
 ```sql
-SELECT ST_X(ST_Point(1.0, 2.0))
+SELECT ST_X(ST_Point(1.0, 2.0));
 ```
 
 ## ST_XMax
@@ -1162,6 +1665,8 @@ SELECT ST_X(ST_Point(1.0, 2.0))
 #### Description
 
 Returns the maximum **X-coordinate** of a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -1184,6 +1689,8 @@ SELECT ST_XMax(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
 
 Returns the minimum **X-coordinate** of a geometry's bounding box.
 
+Since: v0.1.
+
 #### Format
 
 `ST_XMin (A: Geometry)`
@@ -1205,6 +1712,8 @@ SELECT ST_XMin(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
 
 Return the Y component of a point geometry or geography.
 
+Since: v0.1.
+
 #### Format
 
 `ST_Y(A: Point)`
@@ -1216,7 +1725,7 @@ Return the Y component of a point geometry or geography.
 #### SQL Example
 
 ```sql
-SELECT ST_Y(ST_Point(1.0, 2.0))
+SELECT ST_Y(ST_Point(1.0, 2.0));
 ```
 
 ## ST_YMax
@@ -1224,6 +1733,8 @@ SELECT ST_Y(ST_Point(1.0, 2.0))
 #### Description
 
 Returns the maximum **Y-coordinate** of a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -1246,6 +1757,8 @@ SELECT ST_YMax(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
 
 Returns the minimum **Y-coordinate** of a geometry's bounding box.
 
+Since: v0.1.
+
 #### Format
 
 `ST_YMin (A: Geometry)`
@@ -1267,6 +1780,8 @@ SELECT ST_YMin(ST_GeomFromWKT('LINESTRING(1 5, 10 15)'));
 
 Return the Z component of a point geometry or geography.
 
+Since: v0.1.
+
 #### Format
 
 `ST_Z(A: Point)`
@@ -1278,7 +1793,7 @@ Return the Z component of a point geometry or geography.
 #### SQL Example
 
 ```sql
-SELECT ST_Z(ST_Point(1.0, 2.0))
+SELECT ST_Z(ST_Point(1.0, 2.0));
 ```
 
 ## ST_ZMax
@@ -1286,6 +1801,8 @@ SELECT ST_Z(ST_Point(1.0, 2.0))
 #### Description
 
 Returns the maximum **Z-coordinate** of a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -1299,7 +1816,7 @@ Returns the maximum **Z-coordinate** of a geometry's bounding box.
 
 ```sql
 SELECT ST_ZMax(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
--- Returns: 7
+-- Returns: 7.0
 ```
 
 ## ST_ZMin
@@ -1307,6 +1824,8 @@ SELECT ST_ZMax(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
 #### Description
 
 Returns the minimum **Z-coordinate** of a geometry's bounding box.
+
+Since: v0.1.
 
 #### Format
 
@@ -1321,4 +1840,20 @@ Returns the minimum **Z-coordinate** of a geometry's bounding box.
 ```sql
 SELECT ST_ZMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
 -- Returns: 3
+```
+
+## ST_Zmflag
+
+Returns a code indicating the Z and M coordinate dimensions present in the input geometry.
+
+Values are: 0 = 2D, 1 = 3D-M, 2 = 3D-Z, 3 = 4D.
+
+Format: `ST_Zmflag(geom: Geometry)`
+
+Since: v0.2.
+
+```sql
+SELECT ST_Zmflag(
+  ST_GeomFromWKT('LINESTRING Z(1 2 3, 4 5 6)')
+);
 ```
