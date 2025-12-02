@@ -96,6 +96,7 @@ fn invoke_scalar<G: Geom>(geom: &G) -> Result<i32> {
             }
             Ok(total_rings)
         }
+        // Returns 0 for non-polygons (Point, LineString) to match PostGIS
         _ => Ok(0),
     }
 }
@@ -153,8 +154,8 @@ mod tests {
 
         let expected: ArrayRef = Arc::new(Int32Array::from(vec![
             None,
-            Some(0),
-            Some(0),
+            Some(0), // Non-polygon -> 0
+            Some(0), // Non-polygon -> 0
             Some(0),
             Some(1),
             Some(2),
