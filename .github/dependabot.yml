@@ -31,7 +31,7 @@ updates:
       day: "sunday"
     open-pull-requests-limit: 50
     ignore:
-       # For all packages, ignore all patch updates
+      # For all packages, ignore all patch updates
       - dependency-name: "*"
         update-types: ["version-update:semver-patch"]
     groups:
@@ -40,3 +40,16 @@ updates:
         patterns:
           - "arrow*"
           - "parquet"
+      datafusion:
+        applies-to: version-updates
+        patterns:
+          - "datafusion*"
+      wasm-bindgen:
+        applies-to: version-updates
+        patterns:
+          - "wasm-bindgen*"
+          - "web-sys"
+      savvy:
+        applies-to: version-updates
+        patterns:
+          - "savvy*"
