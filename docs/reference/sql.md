@@ -229,7 +229,7 @@ Since: v0.1.
 
 ```sql
 SELECT ST_Contains(
-    ST_Point(0.25, 0.25), 
+    ST_Point(0.25, 0.25),
     ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
 ) AS val;
 ```
@@ -419,8 +419,8 @@ Since: v0.1.
 
 ```sql
 SELECT ST_DWithin(
-  ST_Point(0.25, 0.25), 
-  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'), 
+  ST_Point(0.25, 0.25),
+  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
   0.5
 );
 ```
@@ -477,16 +477,8 @@ Since: v0.1.
 
 #### SQL Example
 
-TODO: fix sql
-
 ```sql
--- Create a table with geometries and calculate the aggregate envelope
-WITH shapes(geom) AS (
-    VALUES (ST_GeomFromWKT('POINT (0 1)')),
-           (ST_GeomFromWKT('POINT (10 11)'))
-)
-SELECT ST_AsText(ST_Envelope_Agg(geom)) FROM shapes;
--- Returns: POLYGON ((0 1, 0 11, 10 11, 10 1, 0 1))
+SELECT ST_Envelope_Agg(ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 ```
 
 ## ST_Equals
@@ -510,7 +502,7 @@ Since: v0.1.
 
 ```sql
 SELECT ST_Equals(
-  ST_Point(0.25, 0.25), 
+  ST_Point(0.25, 0.25),
   ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
 );
 ```
@@ -555,10 +547,8 @@ Format: `ST_GeogFromWKB (Wkb: Binary)`
 
 Since: v0.2.
 
-TODO: fix sql
-
 ```sql
-SELECT ST_GeogFromWKB([01 02 00 00 00 02 00 00 00 00 00 00 00 84 d6 00 c0 00 00 00 00 80 b5 d6 bf 00 00 00 60 e1 ef f7 bf 00 00 00 80 07 5d e5 bf]);
+SELECT ST_GeogFromWKB(decode('010200000002000000000000000084d600c0000000000080b5d6bf00000060e1eff7bf00000080075de5bf', 'hex'));
 ```
 
 ## ST_GeogFromWKT
@@ -1012,12 +1002,8 @@ ST_MakeValid (A: Geometry, keepCollapsed: Boolean)
 
 Since: v0.2.
 
-TODO: fix sql
-
 ```sql
-WITH linestring AS (
-    SELECT ST_GeomFromWKT('LINESTRING(1 1, 1 1)') AS geom
-) SELECT ST_MakeValid(geom), ST_MakeValid(geom, true) FROM linestring;
+SELECT ST_MakeValid(ST_GeomFromWKT('LINESTRING(1 1, 1 1)'));
 ```
 
 ## ST_MaxDistance
@@ -1039,10 +1025,11 @@ Since: v0.1.
 
 #### SQL Example
 
-TODO: fix sql
-
 ```sql
-SELECT ST_MaxDistance(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+SELECT ST_MaxDistance(
+    ST_GeogFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
 ```
 
 ## ST_MinimumClearance
@@ -1326,7 +1313,20 @@ SELECT ST_AsText(ST_Polygonize(ST_GeomFromText('GEOMETRYCOLLECTION (LINESTRING (
 
 ## ST_Polygonize_Agg
 
-TODO
+ST_Polygonize_Agg is an aggregate function that combines a set of linestrings into polygons by finding closed rings formed by the input geometries.
+
+```sql
+SELECT ST_Polygonize_Agg(geom) AS polygons
+FROM (
+    SELECT ST_GeomFromText('LINESTRING(0 0, 0 1)') AS geom
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(0 1, 1 1)')
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(1 1, 1 0)')
+    UNION ALL
+    SELECT ST_GeomFromText('LINESTRING(1 0, 0 0)')
+) AS edges;
+```
 
 ## ST_Reverse
 
@@ -1342,17 +1342,16 @@ SELECT ST_Reverse(ST_GeomFromWKT('LINESTRING(0 0, 1 2, 2 4, 3 6)'));
 
 ## ST_SetCRS
 
-TODO: fix sql
+ST_SetCRS sets or changes the Coordinate Reference System (CRS) identifier of a geometry without transforming its coordinates.
 
-```sql
-SELECT ST_AsText(
-    ST_SetCRS(ST_Point(10, 20), 4326)
-) AS geom_with_crs;
+```python
+import pyproj
+crs = pyproj.CRS("EPSG:3857")
+
+sd.sql(f"""
+SELECT ST_SetCRS(ST_GeomFromText('LINESTRING(0 1, 2 3)'), '{crs.to_json()}') as geom;
+""").show()
 ```
-
-## ST_ShortestLine
-
-TODO
 
 ## ST_Simplify
 
@@ -1605,16 +1604,13 @@ Since: v0.1.
 
 #### SQL Example
 
-TODO: fix sql
-
 ```sql
--- Create a table with two separate polygons and unite them into a single multipolygon
-WITH shapes(geom) AS (
-    VALUES (ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')),
-           (ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))'))
-)
-SELECT ST_AsText(ST_Union_Agg(geom)) FROM shapes;
--- Returns: MULTIPOLYGON (((2 2, 3 2, 3 3, 2 3, 2 2)), ((0 0, 1 0, 1 1, 0 1, 0 0)))
+SELECT ST_AsText(ST_Union_Agg(geom))
+FROM (
+    SELECT ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))') AS geom
+    UNION ALL
+    SELECT ST_GeomFromWKT('POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))')
+) AS shapes;
 ```
 
 ## ST_Within
