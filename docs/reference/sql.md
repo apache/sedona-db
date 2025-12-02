@@ -139,6 +139,8 @@ Returns a geometry that represents all points whose distance from the input geom
 
 Since: v0.1.
 
+Changed in version v0.2: Support buffer parameters argument
+
 #### Format
 
 `ST_Buffer (A: Geometry, distance: Double)`
@@ -608,7 +610,7 @@ SELECT ST_AsText(
 
 #### Description
 
-Construct a Geometry from WKT. This function also has the alias **ST_GeomFromText**.
+Construct a Geometry from WKT. This function also has the aliases **ST_GeomFromText** and ** ST_GeometryFromText**
 
 Since: v0.1.
 
@@ -785,7 +787,7 @@ SELECT ST_IsClosed(ST_GeomFromText('LINESTRING(0 0, 1 1, 1 0)'));
 
 Returns TRUE if the geometry type of the input is a geometry collection type. Collection types are the following:
 
-```sql
+```
 GEOMETRYCOLLECTION
 MULTI{POINT, POLYGON, LINESTRING}
 ```
