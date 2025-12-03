@@ -558,6 +558,7 @@ unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarUdf) {
 mod test {
     use std::sync::Arc;
 
+    use datafusion_common::exec_err;
     use datafusion_expr::Volatility;
     use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
@@ -620,6 +621,34 @@ mod test {
         assert_eq!(
             err.message(),
             "simple_udf_from_ffi([]): No kernel matching arguments"
+        );
+    }
+
+    #[test]
+    fn erroring_invoke_batch() {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            Arc::new(|_, _args| exec_err!("this invoke_batch() always errors")),
+        );
+
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarUdfFactory::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+
+        let udf_from_ffi = SedonaScalarUDF::new(
+            "simple_udf_from_ffi",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+            None,
+        );
+
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);
+        ffi_tester.assert_return_type(WKB_GEOMETRY);
+
+        let err = ffi_tester.invoke_scalar("POINT (0 1)").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "SedonaCScalarUdf::init failed: this invoke_batch() always errors"
         );
     }
 }
