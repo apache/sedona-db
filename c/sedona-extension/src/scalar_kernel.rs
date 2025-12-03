@@ -35,6 +35,10 @@ use std::{
 
 use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCScalarKernelImpl};
 
+/// Wrapper around a [SedonaCScalarKernel] that implements [SedonaScalarKernel]
+///
+/// This is the means by which a kernel implementation may be imported from a
+/// C implementation.
 pub struct ImportedScalarKernel {
     inner: SedonaCScalarKernel,
     function_name: Option<String>,
@@ -151,6 +155,8 @@ impl SedonaScalarKernel for ImportedScalarKernel {
     }
 }
 
+/// Wrapper class handling the verbose details of preparing and executing FFI calls
+/// for the [SedonaCScalarKernelImpl]
 struct CScalarKernelImplWrapper {
     inner: SedonaCScalarKernelImpl,
 }
@@ -175,22 +181,28 @@ impl CScalarKernelImplWrapper {
             return sedona_internal_err!("field/scalar lengths must be identical");
         }
 
+        // Convert arg_types to Vec<Field>
         let arg_fields = arg_types
             .iter()
             .map(|sedona_type| sedona_type.to_storage_field("", true))
             .collect::<Result<Vec<_>>>()?;
+
+        // Convert arg types to Vec<FFI_ArrowSchema>
         let ffi_fields = arg_fields
             .iter()
             .map(FFI_ArrowSchema::try_from)
             .collect::<Result<Vec<_>, ArrowError>>()?;
+
+        // Convert arg types to Vec<*const FFI_ArrowSchema>
         let ffi_field_ptrs = ffi_fields
             .iter()
             .map(|ffi_field| ffi_field as *const FFI_ArrowSchema)
             .collect::<Vec<_>>();
 
+        // Convert arg_scalars to Vec<Option<FFI_ArrowArray>>
         let mut ffi_scalars = arg_scalars
             .iter()
-            .map(|maybe_scalar| -> Result<Option<FFI_ArrowArray>> {
+            .map(|maybe_scalar| {
                 if let Some(scalar) = maybe_scalar {
                     let array = scalar.to_array()?;
                     Ok(Some(FFI_ArrowArray::new(&array.to_data())))
@@ -200,6 +212,7 @@ impl CScalarKernelImplWrapper {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        // Convert arg_scalars to Vec<*mut FFI_ArrowArray>
         let mut ffi_scalar_ptrs = ffi_scalars
             .iter_mut()
             .map(|maybe_ffi_scalar| match maybe_ffi_scalar {
@@ -208,6 +221,7 @@ impl CScalarKernelImplWrapper {
             })
             .collect::<Vec<_>>();
 
+        // Call the FFI implementation of init
         if let Some(init) = self.inner.init {
             let mut ffi_out = FFI_ArrowSchema::empty();
             let code = unsafe {
@@ -220,6 +234,10 @@ impl CScalarKernelImplWrapper {
                 )
             };
 
+            // On success, convert the output to SedonaType. If the implementation
+            // returned a "released" schema, this is the equivalent to our return_type()
+            // returning None (for "this kernel doesn't apply").
+            // On error, query the FFI implementation for the last error string.
             if code == 0 {
                 if ffi_arrow_schema_is_valid(&ffi_out) {
                     let field = Field::try_from(&ffi_out)?;
@@ -244,6 +262,7 @@ impl CScalarKernelImplWrapper {
         return_type: &SedonaType,
         num_rows: usize,
     ) -> Result<ArrayRef> {
+        // Convert args to Vec<ArrayRef>
         let arg_arrays = args
             .iter()
             .map(|arg| match arg {
@@ -251,11 +270,14 @@ impl CScalarKernelImplWrapper {
                 ColumnarValue::Scalar(scalar_value) => scalar_value.to_array(),
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Convert args to Vec<FFI_ArrowArray>
         let mut ffi_args = arg_arrays
             .iter()
             .map(|arg| FFI_ArrowArray::new(&arg.to_data()))
             .collect::<Vec<_>>();
 
+        // Call the FFI implementation of execute()
         if let Some(execute) = self.inner.execute {
             let mut ffi_out = FFI_ArrowArray::empty();
             let code = unsafe {
@@ -268,6 +290,8 @@ impl CScalarKernelImplWrapper {
                 )
             };
 
+            // On success, convert the result to an ArrayRef.
+            // On error, query the FFI implementation for the last error string.
             if code == 0 {
                 let data = unsafe {
                     arrow_array::ffi::from_ffi_and_data_type(
@@ -287,6 +311,7 @@ impl CScalarKernelImplWrapper {
         }
     }
 
+    /// Helper to get the last error from the FFI implementation as a Rust String
     fn last_error(&mut self, code: c_int) -> String {
         if let Some(get_last_error) = self.inner.get_last_error {
             let c_err = unsafe { get_last_error(&mut self.inner) };
@@ -303,6 +328,8 @@ impl CScalarKernelImplWrapper {
     }
 }
 
+/// Wrapper around a [ScalarKernelRef] that may be used to export an existing
+/// kernel across an FFI boundary using the [SedonaCScalarKernel]
 pub struct ExportedScalarKernel {
     inner: ScalarKernelRef,
     function_name: Option<CString>,
@@ -330,6 +357,10 @@ impl From<ExportedScalarKernel> for SedonaCScalarKernel {
 }
 
 impl ExportedScalarKernel {
+    /// Add a function name to this exported kernel
+    ///
+    /// This ensures the kernel will be registered with the appropriate function
+    /// when passed across a boundary.
     pub fn with_function_name(self, function_name: impl AsRef<str>) -> Self {
         Self {
             inner: self.inner,
@@ -342,6 +373,7 @@ impl ExportedScalarKernel {
     }
 }
 
+/// C callable wrapper to expose [ExportedScalarKernel::function_name]
 unsafe extern "C" fn c_factory_function_name(self_: *const SedonaCScalarKernel) -> *const c_char {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
@@ -357,6 +389,7 @@ unsafe extern "C" fn c_factory_function_name(self_: *const SedonaCScalarKernel) 
     }
 }
 
+/// C callable wrapper around [ExportedScalarKernel::new_impl]
 unsafe extern "C" fn c_factory_new_impl(
     self_: *const SedonaCScalarKernel,
     out: *mut SedonaCScalarKernelImpl,
@@ -371,15 +404,20 @@ unsafe extern "C" fn c_factory_new_impl(
     *out = SedonaCScalarKernelImpl::from(private_data.new_impl())
 }
 
+/// C Callable wrapper called when this value is dropped via FFI
 unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarKernel) {
     assert!(!self_.is_null());
-    let self_ref = self_.as_ref().unwrap();
+    let self_ref = self_.as_mut().unwrap();
 
     assert!(!self_ref.private_data.is_null());
     let boxed = Box::from_raw(self_ref.private_data as *mut ExportedScalarKernel);
     drop(boxed);
+
+    self_ref.private_data = null_mut();
+    self_ref.release = None;
 }
 
+/// Rust-backed implementation of [SedonaCScalarKernelImpl]
 struct ExportedScalarKernelImpl {
     inner: ScalarKernelRef,
     last_arg_types: Option<Vec<SedonaType>>,
@@ -401,7 +439,7 @@ impl From<ExportedScalarKernelImpl> for SedonaCScalarKernelImpl {
 }
 
 impl ExportedScalarKernelImpl {
-    pub fn new(kernel: ScalarKernelRef) -> Self {
+    fn new(kernel: ScalarKernelRef) -> Self {
         Self {
             inner: kernel,
             last_arg_types: None,
@@ -415,6 +453,7 @@ impl ExportedScalarKernelImpl {
         ffi_types: &[*const FFI_ArrowSchema],
         ffi_scalar_args: &[*mut FFI_ArrowArray],
     ) -> Result<Option<FFI_ArrowSchema>> {
+        // Convert the input types to Vec<Field>
         let arg_fields = ffi_types
             .iter()
             .map(|ptr| {
@@ -427,11 +466,14 @@ impl ExportedScalarKernelImpl {
                 }
             })
             .collect::<Result<Vec<_>, ArrowError>>()?;
+
+        // Convert the input types to Vec<SedonaType>
         let args = arg_fields
             .iter()
             .map(SedonaType::from_storage_field)
             .collect::<Result<Vec<_>>>()?;
 
+        // Convert the scalar arguments to Vec<Option<ArrayRef>>
         let arg_arrays = zip(ffi_scalar_args, &args)
             .map(|(ptr, arg)| {
                 if ptr.is_null() {
@@ -446,6 +488,7 @@ impl ExportedScalarKernelImpl {
             })
             .collect::<Result<Vec<_>, ArrowError>>()?;
 
+        // Convert the scalar arguments to Vec<Option<ScalarValue>>
         let scalar_args = arg_arrays
             .iter()
             .map(|maybe_array| {
@@ -456,14 +499,19 @@ impl ExportedScalarKernelImpl {
                 }
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Convert the scalar arguments to Vec<Option<&ScalarValue>>
         let scalar_arg_refs = scalar_args
             .iter()
             .map(|arg| arg.as_ref())
             .collect::<Vec<_>>();
 
+        // Call the implementation
         let maybe_return_type = self
             .inner
             .return_type_from_args_and_scalars(&args, &scalar_arg_refs)?;
+
+        // Convert the result to FFI_ArrowSchema (if not None)
         let return_ffi_schema = if let Some(return_type) = &maybe_return_type {
             let return_field = return_type.to_storage_field("", true)?;
             let return_ffi_schema = FFI_ArrowSchema::try_from(&return_field)?;
@@ -472,6 +520,7 @@ impl ExportedScalarKernelImpl {
             None
         };
 
+        // Save the argument types and return type for following calls to execute()
         self.last_arg_types.replace(args);
         self.last_return_type = maybe_return_type;
 
@@ -481,6 +530,7 @@ impl ExportedScalarKernelImpl {
     fn execute(&self, ffi_args: &[*mut FFI_ArrowArray], num_rows: i64) -> Result<FFI_ArrowArray> {
         match (&self.last_arg_types, &self.last_return_type) {
             (Some(arg_types), Some(return_type)) => {
+                // Resolve args as Vec<ArrayRef>
                 let arg_arrays = zip(ffi_args, arg_types)
                     .map(|(ptr, arg)| {
                         let owned_ffi_array = unsafe { FFI_ArrowArray::from_raw(*ptr) };
@@ -491,6 +541,7 @@ impl ExportedScalarKernelImpl {
                     })
                     .collect::<Result<Vec<_>, ArrowError>>()?;
 
+                // Resolve args as Vec<ColumnarValue>
                 let args = arg_arrays
                     .into_iter()
                     .map(|array| {
@@ -504,17 +555,21 @@ impl ExportedScalarKernelImpl {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
+                // Call the implementation
                 let result_value = self.inner.invoke_batch_from_args(
                     arg_types,
                     &args,
                     return_type,
                     num_rows as usize,
                 )?;
+
+                // Convert the result to an ArrayRef
                 let result_array = match result_value {
                     ColumnarValue::Array(array) => array,
                     ColumnarValue::Scalar(scalar_value) => scalar_value.to_array()?,
                 };
 
+                // Convert the result to a FFI_ArrowArray
                 let result_ffi_array = FFI_ArrowArray::new(&result_array.to_data());
                 Ok(result_ffi_array)
             }
@@ -525,6 +580,7 @@ impl ExportedScalarKernelImpl {
     }
 }
 
+/// C callable wrapper around [ExportedScalarKernelImpl::init]
 unsafe extern "C" fn c_kernel_init(
     self_: *mut SedonaCScalarKernelImpl,
     arg_types: *const *const FFI_ArrowSchema,
@@ -560,6 +616,7 @@ unsafe extern "C" fn c_kernel_init(
     }
 }
 
+/// C callable wrapper around [ExportedScalarKernelImpl::execute]
 unsafe extern "C" fn c_kernel_execute(
     self_: *mut SedonaCScalarKernelImpl,
     args: *mut *mut FFI_ArrowArray,
@@ -589,6 +646,7 @@ unsafe extern "C" fn c_kernel_execute(
     }
 }
 
+/// C Callable wrapper to retrieve the last error string
 unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarKernelImpl) -> *const c_char {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
@@ -600,13 +658,17 @@ unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarKernelImpl) ->
     private_data.last_error.as_ptr()
 }
 
+/// C Callable wrapper called when this value is dropped via FFI
 unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarKernelImpl) {
     assert!(!self_.is_null());
-    let self_ref = self_.as_ref().unwrap();
+    let self_ref = self_.as_mut().unwrap();
 
     assert!(!self_ref.private_data.is_null());
     let boxed = Box::from_raw(self_ref.private_data as *mut ExportedScalarKernelImpl);
     drop(boxed);
+
+    self_ref.private_data = null_mut();
+    self_ref.release = None;
 }
 
 #[cfg(test)]

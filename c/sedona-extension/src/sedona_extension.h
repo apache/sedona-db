@@ -120,7 +120,8 @@ struct ArrowArrayStream {
 ///
 /// Briefly, the SedonaCScalarKernelImpl is typically the stack-allocated
 /// structure that is not thread safe and the SedonaCScalarKernel is the
-/// value that lives in a registry (whose job it is to initialize implementations).
+/// value that lives in a registry (whose job it is to initialize implementations
+/// on each stack that needs one).
 struct SedonaCScalarKernelImpl {
   /// \brief Initialize the state of this instance and calculate a return type
   ///
@@ -173,7 +174,7 @@ struct SedonaCScalarKernelImpl {
 
 /// \brief Scalar function/kernel initializer
 ///
-/// Usually a GeoArrowScalarUdf will be used to execute a single batch
+/// Usually a SedonaCScalarKernelImpl will be used to execute a single batch
 /// (although it may be reused if a caller can serialize callback use). This
 /// structure is a factory object that initializes such objects. The
 /// SedonaCScalarKernel is designed to be thread-safe and live in a registry.
