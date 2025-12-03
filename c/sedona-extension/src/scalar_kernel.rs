@@ -42,7 +42,7 @@ pub struct ImportedScalarKernel {
 impl Debug for ImportedScalarKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExtensionSedonaScalarKernel")
-            .field("inner", &"<SedonaCScalarUdfFactory>")
+            .field("inner", &"<SedonaCScalarKernel>")
             .finish()
     }
 }
@@ -57,9 +57,7 @@ impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
             value.private_data.is_null(),
         ) {
             (Some(_), Some(_), false) => Ok(Self { inner: value }),
-            _ => sedona_internal_err!(
-                "Can't import released or uninitialized SedonaCScalarUdfFactory"
-            ),
+            _ => sedona_internal_err!("Can't import released or uninitialized SedonaCScalarKernel"),
         }
     }
 }
@@ -70,7 +68,7 @@ impl SedonaScalarKernel for ImportedScalarKernel {
         args: &[SedonaType],
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
-        let mut inner_impl = CScalarUdfWrapper::try_new(&self.inner)?;
+        let mut inner_impl = CScalarKernelImplWrapper::try_new(&self.inner)?;
         inner_impl.init(args, scalar_args)
     }
 
@@ -92,7 +90,7 @@ impl SedonaScalarKernel for ImportedScalarKernel {
             })
             .collect::<Vec<_>>();
 
-        let mut inner_impl = CScalarUdfWrapper::try_new(&self.inner)?;
+        let mut inner_impl = CScalarKernelImplWrapper::try_new(&self.inner)?;
         inner_impl.init(arg_types, &arg_scalars)?;
         let result_array = inner_impl.execute(args, return_type, num_rows)?;
         for arg in args {
@@ -129,18 +127,18 @@ impl SedonaScalarKernel for ImportedScalarKernel {
     }
 }
 
-struct CScalarUdfWrapper {
+struct CScalarKernelImplWrapper {
     inner: SedonaCScalarKernelImpl,
 }
 
-impl CScalarUdfWrapper {
+impl CScalarKernelImplWrapper {
     fn try_new(factory: &SedonaCScalarKernel) -> Result<Self> {
         if let Some(init) = factory.new_impl {
             let mut inner = SedonaCScalarKernelImpl::default();
             unsafe { init(factory, &mut inner) };
             Ok(Self { inner })
         } else {
-            sedona_internal_err!("SedonaCScalarUdfFactory is not valid")
+            sedona_internal_err!("SedonaCScalarKernel is not valid")
         }
     }
 
@@ -206,10 +204,13 @@ impl CScalarUdfWrapper {
                     Ok(None)
                 }
             } else {
-                plan_err!("SedonaCScalarUdf::init failed: {}", self.last_error(code))
+                plan_err!(
+                    "SedonaCScalarKernelImpl::init failed: {}",
+                    self.last_error(code)
+                )
             }
         } else {
-            sedona_internal_err!("Invalid SedonaCScalarUdf")
+            sedona_internal_err!("Invalid SedonaCScalarKernelImpl")
         }
     }
 
@@ -252,10 +253,13 @@ impl CScalarUdfWrapper {
                 };
                 Ok(arrow_array::make_array(data))
             } else {
-                plan_err!("SedonaCScalarUdf::init failed: {}", self.last_error(code))
+                plan_err!(
+                    "SedonaCScalarKernelImpl::init failed: {}",
+                    self.last_error(code)
+                )
             }
         } else {
-            sedona_internal_err!("Invalid SedonaCScalarUdf")
+            sedona_internal_err!("Invalid SedonaCScalarKernelImpl")
         }
     }
 
@@ -270,7 +274,7 @@ impl CScalarUdfWrapper {
                     .into_owned()
             }
         } else {
-            "Invalid SedonaCScalarUdf".to_string()
+            "Invalid SedonaCScalarKernelImpl".to_string()
         }
     }
 }
@@ -648,7 +652,46 @@ mod test {
         let err = ffi_tester.invoke_scalar("POINT (0 1)").unwrap_err();
         assert_eq!(
             err.message(),
-            "SedonaCScalarUdf::init failed: this invoke_batch() always errors"
+            "SedonaCScalarKernelImpl::init failed: this invoke_batch() always errors"
         );
+    }
+
+    #[test]
+    fn erroring_return_type() {
+        let kernel = Arc::new(ErroringReturnType {}) as ScalarKernelRef;
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+
+        let udf_from_ffi = SedonaScalarUDF::new(
+            "simple_udf_from_ffi",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+            None,
+        );
+
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);
+        let err = ffi_tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "SedonaCScalarKernelImpl::init failed: this implementation of return_type always errors"
+        );
+    }
+
+    #[derive(Debug)]
+    struct ErroringReturnType {}
+
+    impl SedonaScalarKernel for ErroringReturnType {
+        fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+            plan_err!("this implementation of return_type always errors")
+        }
+
+        fn invoke_batch(
+            &self,
+            _arg_types: &[SedonaType],
+            _args: &[ColumnarValue],
+        ) -> Result<ColumnarValue> {
+            unreachable!()
+        }
     }
 }
