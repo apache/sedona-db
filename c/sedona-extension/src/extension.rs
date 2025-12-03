@@ -26,6 +26,8 @@ use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCScalarKernel {
+    pub function_name:
+        Option<unsafe extern "C" fn(self_: *const SedonaCScalarKernel) -> *const c_char>,
     pub new_impl: Option<
         unsafe extern "C" fn(self_: *const SedonaCScalarKernel, out: *mut SedonaCScalarKernelImpl),
     >,

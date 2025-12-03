@@ -174,11 +174,17 @@ struct SedonaCScalarKernelImpl {
 /// (although it may be reused if a caller can serialize callback use). This
 /// structure is a factory object that initializes such objects.
 struct SedonaCScalarKernel {
+  /// \brief Function name
+  ///
+  /// Optional function name. This is used to register the kernal with the
+  /// appropriate function when passing this kernel across a boundary.
+  const char* (*function_name)(const struct SedonaCScalarKernel* self);
+
   /// \brief Initialize a new implementation struct
   ///
   /// This callback is thread safe and may be called concurrently from any
   /// thread at any time (as long as this object is valid).
-  void (*new_impl)(struct SedonaCScalarKernel* self, struct SedonaCScalarKernelImpl* out);
+  void (*new_impl)(const struct SedonaCScalarKernel* self, struct SedonaCScalarKernelImpl* out);
 
   /// \brief Release this instance
   ///

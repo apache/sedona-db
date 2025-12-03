@@ -29,7 +29,7 @@ use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
     fmt::Debug,
     iter::zip,
-    ptr::{null_mut, swap_nonoverlapping},
+    ptr::{null, null_mut, swap_nonoverlapping},
     str::FromStr,
 };
 
@@ -37,11 +37,12 @@ use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCSc
 
 pub struct ImportedScalarKernel {
     inner: SedonaCScalarKernel,
+    function_name: Option<String>,
 }
 
 impl Debug for ImportedScalarKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExtensionSedonaScalarKernel")
+        f.debug_struct("ImportedScalarKernel")
             .field("inner", &"<SedonaCScalarKernel>")
             .finish()
     }
@@ -52,13 +53,36 @@ impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
 
     fn try_from(value: SedonaCScalarKernel) -> Result<Self> {
         match (
+            &value.function_name,
             &value.new_impl,
             &value.release,
             value.private_data.is_null(),
         ) {
-            (Some(_), Some(_), false) => Ok(Self { inner: value }),
+            (Some(function_name), Some(_), Some(_), false) => {
+                let name_ptr = unsafe { function_name(&value) };
+                let name = if name_ptr.is_null() {
+                    None
+                } else {
+                    Some(
+                        unsafe { CStr::from_ptr(name_ptr) }
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                };
+
+                Ok(Self {
+                    inner: value,
+                    function_name: name,
+                })
+            }
             _ => sedona_internal_err!("Can't import released or uninitialized SedonaCScalarKernel"),
         }
+    }
+}
+
+impl ImportedScalarKernel {
+    pub fn function_name(&self) -> Option<&str> {
+        self.function_name.as_deref()
     }
 }
 
@@ -281,11 +305,15 @@ impl CScalarKernelImplWrapper {
 
 pub struct ExportedScalarKernel {
     inner: ScalarKernelRef,
+    function_name: Option<CString>,
 }
 
 impl From<ScalarKernelRef> for ExportedScalarKernel {
     fn from(value: ScalarKernelRef) -> Self {
-        ExportedScalarKernel { inner: value }
+        ExportedScalarKernel {
+            inner: value,
+            function_name: None,
+        }
     }
 }
 
@@ -293,6 +321,7 @@ impl From<ExportedScalarKernel> for SedonaCScalarKernel {
     fn from(value: ExportedScalarKernel) -> Self {
         let box_value = Box::new(value);
         Self {
+            function_name: Some(c_factory_function_name),
             new_impl: Some(c_factory_new_impl),
             release: Some(c_factory_release),
             private_data: Box::leak(box_value) as *mut ExportedScalarKernel as *mut c_void,
@@ -301,8 +330,30 @@ impl From<ExportedScalarKernel> for SedonaCScalarKernel {
 }
 
 impl ExportedScalarKernel {
+    pub fn with_function_name(self, function_name: String) -> Self {
+        Self {
+            inner: self.inner,
+            function_name: Some(CString::from_str(&function_name).unwrap()),
+        }
+    }
+
     fn new_impl(&self) -> ExportedScalarKernelImpl {
         ExportedScalarKernelImpl::new(self.inner.clone())
+    }
+}
+
+unsafe extern "C" fn c_factory_function_name(self_: *const SedonaCScalarKernel) -> *const c_char {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+        .as_ref()
+        .unwrap();
+    if let Some(function_name) = &private_data.function_name {
+        function_name.as_ptr()
+    } else {
+        null()
     }
 }
 
