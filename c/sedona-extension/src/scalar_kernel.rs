@@ -318,7 +318,8 @@ unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarUdfFactory) {
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    (self_ref.private_data as *mut ExportedScalarKernel).drop_in_place();
+    let boxed = Box::from_raw(self_ref.private_data as *mut ExportedScalarKernel);
+    drop(boxed);
 }
 
 struct ExportedScalarKernelImpl {
@@ -546,7 +547,8 @@ unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarUdf) {
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    (self_ref.private_data as *mut ExportedScalarKernelImpl).drop_in_place();
+    let boxed = Box::from_raw(self_ref.private_data as *mut ExportedScalarKernelImpl);
+    drop(boxed);
 }
 
 #[cfg(test)]
