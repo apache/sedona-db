@@ -613,6 +613,7 @@ unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarKernelImpl) {
 mod test {
     use std::sync::Arc;
 
+    use arrow_schema::DataType;
     use datafusion_common::exec_err;
     use datafusion_expr::Volatility;
     use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
@@ -698,6 +699,57 @@ mod test {
         let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
         let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
         assert_eq!(imported_kernel.function_name(), Some("foofy"));
+    }
+
+    #[test]
+    fn invoke_batch_from_scalar() {
+        let kernel = Arc::new(ReturnTypeFromScalars {}) as ScalarKernelRef;
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+
+        let udf_from_ffi = SedonaScalarUDF::new(
+            "simple_udf_from_ffi",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+            None,
+        );
+
+        let ffi_tester = ScalarUdfTester::new(
+            udf_from_ffi.clone().into(),
+            vec![SedonaType::Arrow(DataType::Utf8)],
+        );
+        let return_type = ffi_tester.return_type_with_scalar(Some("foofy")).unwrap();
+        assert_eq!(return_type, SedonaType::Arrow(DataType::Utf8));
+    }
+
+    #[derive(Debug)]
+    struct ReturnTypeFromScalars {}
+
+    impl SedonaScalarKernel for ReturnTypeFromScalars {
+        fn return_type_from_args_and_scalars(
+            &self,
+            _args: &[SedonaType],
+            scalar_args: &[Option<&ScalarValue>],
+        ) -> Result<Option<SedonaType>> {
+            if let Some(arg0) = scalar_args[0] {
+                Ok(Some(SedonaType::Arrow(arg0.data_type())))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+            unreachable!()
+        }
+
+        fn invoke_batch(
+            &self,
+            _arg_types: &[SedonaType],
+            _args: &[ColumnarValue],
+        ) -> Result<ColumnarValue> {
+            unreachable!()
+        }
     }
 
     #[test]
