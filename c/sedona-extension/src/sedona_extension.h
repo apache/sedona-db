@@ -117,9 +117,12 @@ struct ArrowArrayStream {
 /// access to methods if an instance is shared across threads. In general,
 /// constructing and initializing this structure should be sufficiently
 /// cheap that it shouldn't need to be shared in this way.
+///
+/// Briefly, the SedonaCScalarKernelImpl is typically the stack-allocated
+/// structure that is not thread safe and the SedonaCScalarKernel is the
+/// value that lives in a registry (whose job it is to initialize implementations).
 struct SedonaCScalarKernelImpl {
-  /// \brief Initialize the state of this UDF instance and calculate a return
-  /// type
+  /// \brief Initialize the state of this instance and calculate a return type
   ///
   /// The init callback either computes a return ArrowSchema or initializes the
   /// return ArrowSchema to an explicitly released value to indicate that this
@@ -168,11 +171,12 @@ struct SedonaCScalarKernelImpl {
   void* private_data;
 };
 
-/// \brief Scalar function initializer
+/// \brief Scalar function/kernel initializer
 ///
 /// Usually a GeoArrowScalarUdf will be used to execute a single batch
 /// (although it may be reused if a caller can serialize callback use). This
-/// structure is a factory object that initializes such objects.
+/// structure is a factory object that initializes such objects. The
+/// SedonaCScalarKernel is designed to be thread-safe and live in a registry.
 struct SedonaCScalarKernel {
   /// \brief Function name
   ///
