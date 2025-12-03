@@ -33,7 +33,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::extension::{SedonaCScalarUdf, SedonaCScalarUdfFactory};
+use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarUdf, SedonaCScalarUdfFactory};
 
 pub struct ImportedScalarKernel {
     inner: SedonaCScalarUdfFactory,
@@ -197,10 +197,13 @@ impl CScalarUdfWrapper {
                     &mut ffi_out,
                 )
             };
+
             if code == 0 {
-                match Field::try_from(&ffi_out) {
-                    Ok(field) => Ok(Some(SedonaType::from_storage_field(&field)?)),
-                    Err(_) => Ok(None),
+                if ffi_arrow_schema_is_valid(&ffi_out) {
+                    let field = Field::try_from(&ffi_out)?;
+                    Ok(Some(SedonaType::from_storage_field(&field)?))
+                } else {
+                    Ok(None)
                 }
             } else {
                 plan_err!("SedonaCScalarUdf::init failed: {}", self.last_error(code))
@@ -600,7 +603,7 @@ mod test {
             None,
         );
 
-        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.into(), vec![WKB_GEOMETRY]);
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);
         ffi_tester.assert_return_type(WKB_GEOMETRY);
 
         let result = ffi_tester.invoke_scalar("POINT (0 1)").unwrap();
@@ -609,6 +612,14 @@ mod test {
         assert_eq!(
             &ffi_tester.invoke_array(array_value.clone()).unwrap(),
             &array_value
+        );
+
+        // Check the case of a kernel that does not apply to input arguments
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![]);
+        let err = ffi_tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "simple_udf_from_ffi([]): No kernel matching arguments"
         );
     }
 }

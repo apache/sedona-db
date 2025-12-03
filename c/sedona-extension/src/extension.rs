@@ -86,3 +86,29 @@ impl Drop for SedonaCScalarUdf {
         }
     }
 }
+
+/// Check if a schema is valid
+///
+/// The [FFI_ArrowSchema] doesn't have the ability to check for a NULL release callback,
+/// so we provide a mechanism to do so here.
+pub fn ffi_arrow_schema_is_valid(ffi_schema: *const FFI_ArrowSchema) -> bool {
+    let ffi_schema_internal = ffi_schema as *const c_void as *const ArrowSchemaInternal;
+    if let Some(schema_ref) = unsafe { ffi_schema_internal.as_ref() } {
+        schema_ref.release.is_some()
+    } else {
+        false
+    }
+}
+
+#[repr(C)]
+struct ArrowSchemaInternal {
+    format: *const c_char,
+    name: *const c_char,
+    metadata: *const c_char,
+    flags: i64,
+    n_children: i64,
+    children: *mut *mut ArrowSchemaInternal,
+    dictionary: *mut ArrowSchemaInternal,
+    release: Option<unsafe extern "C" fn(*mut ArrowSchemaInternal)>,
+    private_data: *mut c_void,
+}
