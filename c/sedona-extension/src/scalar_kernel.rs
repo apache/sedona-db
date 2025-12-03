@@ -16,19 +16,21 @@
 // under the License.
 
 use arrow_array::{
-    ffi::{FFI_ArrowArray, FFI_ArrowSchema},
-    ArrayRef,
+    ffi::{from_ffi_and_data_type, FFI_ArrowArray, FFI_ArrowSchema},
+    make_array, ArrayRef,
 };
 use arrow_schema::{ArrowError, Field};
 use datafusion_common::{plan_err, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::SedonaScalarKernel;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::datatypes::SedonaType;
 use std::{
-    ffi::{c_int, CStr},
+    ffi::{c_char, c_int, CStr, CString},
     fmt::Debug,
-    ptr::null_mut,
+    iter::zip,
+    ptr::{null_mut, swap_nonoverlapping},
+    str::FromStr,
 };
 
 use crate::extension::{SedonaCScalarUdf, SedonaCScalarUdfFactory};
@@ -251,4 +253,154 @@ impl CScalarUdfWrapper {
             "Invalid SedonaCScalarUdf".to_string()
         }
     }
+}
+
+struct ExportedScalarKernel {
+    inner: ScalarKernelRef,
+    last_arg_types: Option<Vec<SedonaType>>,
+    last_return_type: Option<SedonaType>,
+    last_error: CString,
+}
+
+impl ExportedScalarKernel {
+    fn init(
+        &mut self,
+        ffi_types: &[*const FFI_ArrowSchema],
+        ffi_scalar_args: &[*mut FFI_ArrowArray],
+    ) -> Result<Option<FFI_ArrowSchema>> {
+        let arg_fields = ffi_types
+            .iter()
+            .map(|ptr| {
+                if let Some(ffi_schema) = unsafe { ptr.as_ref() } {
+                    Field::try_from(ffi_schema)
+                } else {
+                    Err(ArrowError::CDataInterface(
+                        "FFI_ArrowSchema is NULL".to_string(),
+                    ))
+                }
+            })
+            .collect::<Result<Vec<_>, ArrowError>>()?;
+        let args = arg_fields
+            .iter()
+            .map(SedonaType::from_storage_field)
+            .collect::<Result<Vec<_>>>()?;
+
+        let arg_arrays = zip(ffi_scalar_args, &args)
+            .map(|(ptr, arg)| {
+                if ptr.is_null() {
+                    Ok(None)
+                } else {
+                    let owned_ffi_array = unsafe { FFI_ArrowArray::from_raw(*ptr) };
+                    let data = unsafe {
+                        from_ffi_and_data_type(owned_ffi_array, arg.storage_type().clone())?
+                    };
+                    Ok(Some(make_array(data)))
+                }
+            })
+            .collect::<Result<Vec<_>, ArrowError>>()?;
+
+        let scalar_args = arg_arrays
+            .iter()
+            .map(|maybe_array| {
+                if let Some(array) = maybe_array {
+                    Ok(Some(ScalarValue::try_from_array(array, 0)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let scalar_arg_refs = scalar_args
+            .iter()
+            .map(|arg| arg.as_ref())
+            .collect::<Vec<_>>();
+
+        let maybe_return_type = self
+            .inner
+            .return_type_from_args_and_scalars(&args, &scalar_arg_refs)?;
+        let return_ffi_schema = if let Some(return_type) = &maybe_return_type {
+            let return_field = return_type.to_storage_field("", true)?;
+            let return_ffi_schema = FFI_ArrowSchema::try_from(&return_field)?;
+            Some(return_ffi_schema)
+        } else {
+            None
+        };
+
+        self.last_arg_types.replace(args);
+        self.last_return_type = maybe_return_type;
+
+        Ok(return_ffi_schema)
+    }
+
+    fn execute(
+        &self,
+        ffi_scalar_args: &[*mut FFI_ArrowArray],
+        num_rows: i64,
+    ) -> Result<FFI_ArrowArray> {
+        todo!()
+    }
+}
+
+unsafe fn c_init(
+    self_: *mut SedonaCScalarUdf,
+    arg_types: *const *const FFI_ArrowSchema,
+    scalar_args: *mut *mut FFI_ArrowArray,
+    n_args: i64,
+    out: *mut FFI_ArrowSchema,
+) -> c_int {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+        .as_mut()
+        .unwrap();
+
+    let ffi_types = std::slice::from_raw_parts(arg_types, n_args as usize);
+    let ffi_scalar_args = std::slice::from_raw_parts(scalar_args, n_args as usize);
+
+    match private_data.init(ffi_types, ffi_scalar_args) {
+        Ok(Some(mut return_ffi_schema)) => {
+            swap_nonoverlapping(&mut return_ffi_schema as *mut _, out, 1);
+            0
+        }
+        Ok(None) => {
+            *out = FFI_ArrowSchema::empty();
+            0
+        }
+        Err(err) => {
+            private_data.last_error =
+                CString::from_str(&err.message()).unwrap_or(CString::default());
+            libc::EINVAL
+        }
+    }
+}
+
+fn c_execute(
+    self_: *mut SedonaCScalarUdf,
+    args: *mut *mut FFI_ArrowArray,
+    n_args: i64,
+    n_rows: i64,
+    out: *mut FFI_ArrowArray,
+) -> c_int {
+    todo!()
+}
+
+unsafe fn c_last_error(self_: *mut SedonaCScalarUdf) -> *const c_char {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+        .as_ref()
+        .unwrap();
+    private_data.last_error.as_ptr()
+}
+
+unsafe fn c_release(self_: *mut SedonaCScalarUdf) {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    (self_ref.private_data as *mut ExportedScalarKernel).drop_in_place();
+    *self_ = SedonaCScalarUdf::default();
 }

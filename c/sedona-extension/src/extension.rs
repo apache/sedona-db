@@ -66,9 +66,9 @@ pub struct SedonaCScalarUdf {
 
     pub get_last_error: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf) -> *const c_char>,
 
-    release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf)>,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf)>,
 
-    private_data: *mut c_void,
+    pub private_data: *mut c_void,
 }
 
 impl Drop for SedonaCScalarUdf {

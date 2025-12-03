@@ -32,6 +32,7 @@ arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+libc = "0.2.178"
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
