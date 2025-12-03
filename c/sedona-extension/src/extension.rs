@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{ffi::c_int, os::raw::{c_char, c_void}};
+use std::{
+    ffi::c_int,
+    os::raw::{c_char, c_void},
+    ptr::null_mut,
+};
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 
@@ -26,8 +30,8 @@ pub struct SedonaCScalarUdfFactory {
         unsafe extern "C" fn(self_: *const SedonaCScalarUdfFactory, out: *mut SedonaCScalarUdf),
     >,
 
-    release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdfFactory)>,
-    private_data: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdfFactory)>,
+    pub private_data: *mut c_void,
 }
 
 unsafe impl Send for SedonaCScalarUdfFactory {}
@@ -37,6 +41,8 @@ impl Drop for SedonaCScalarUdfFactory {
     fn drop(&mut self) {
         if let Some(releaser) = self.release {
             unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
         }
     }
 }
@@ -75,6 +81,8 @@ impl Drop for SedonaCScalarUdf {
     fn drop(&mut self) {
         if let Some(releaser) = self.release {
             unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
         }
     }
 }

@@ -20,7 +20,7 @@ use arrow_array::{
     make_array, ArrayRef,
 };
 use arrow_schema::{ArrowError, Field};
-use datafusion_common::{plan_err, Result, ScalarValue};
+use datafusion_common::{plan_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -35,11 +35,11 @@ use std::{
 
 use crate::extension::{SedonaCScalarUdf, SedonaCScalarUdfFactory};
 
-pub struct ExtensionSedonaScalarKernel {
+pub struct ImportedScalarKernel {
     inner: SedonaCScalarUdfFactory,
 }
 
-impl Debug for ExtensionSedonaScalarKernel {
+impl Debug for ImportedScalarKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExtensionSedonaScalarKernel")
             .field("inner", &"<SedonaCScalarUdfFactory>")
@@ -47,7 +47,24 @@ impl Debug for ExtensionSedonaScalarKernel {
     }
 }
 
-impl SedonaScalarKernel for ExtensionSedonaScalarKernel {
+impl TryFrom<SedonaCScalarUdfFactory> for ImportedScalarKernel {
+    type Error = DataFusionError;
+
+    fn try_from(value: SedonaCScalarUdfFactory) -> Result<Self> {
+        match (
+            &value.new_scalar_udf_impl,
+            &value.release,
+            value.private_data.is_null(),
+        ) {
+            (Some(_), Some(_), false) => Ok(Self { inner: value }),
+            _ => sedona_internal_err!(
+                "Can't import released or uninitialized SedonaCScalarUdfFactory"
+            ),
+        }
+    }
+}
+
+impl SedonaScalarKernel for ImportedScalarKernel {
     fn return_type_from_args_and_scalars(
         &self,
         args: &[SedonaType],
@@ -257,25 +274,74 @@ impl CScalarUdfWrapper {
 
 pub struct ExportedScalarKernel {
     inner: ScalarKernelRef,
-    last_arg_types: Option<Vec<SedonaType>>,
-    last_return_type: Option<SedonaType>,
-    last_error: CString,
 }
 
-impl From<ExportedScalarKernel> for SedonaCScalarUdf {
+impl From<ScalarKernelRef> for ExportedScalarKernel {
+    fn from(value: ScalarKernelRef) -> Self {
+        ExportedScalarKernel { inner: value }
+    }
+}
+
+impl From<ExportedScalarKernel> for SedonaCScalarUdfFactory {
     fn from(value: ExportedScalarKernel) -> Self {
         let box_value = Box::new(value);
         Self {
-            init: Some(c_init),
-            execute: Some(c_execute),
-            get_last_error: Some(c_last_error),
-            release: Some(c_release),
+            new_scalar_udf_impl: Some(c_factory_new_impl),
+            release: Some(c_factory_release),
             private_data: Box::leak(box_value) as *mut ExportedScalarKernel as *mut c_void,
         }
     }
 }
 
 impl ExportedScalarKernel {
+    fn new_impl(&self) -> ExportedScalarKernelImpl {
+        ExportedScalarKernelImpl::new(self.inner.clone())
+    }
+}
+
+unsafe extern "C" fn c_factory_new_impl(
+    self_: *const SedonaCScalarUdfFactory,
+    out: *mut SedonaCScalarUdf,
+) {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+        .as_ref()
+        .unwrap();
+    *out = SedonaCScalarUdf::from(private_data.new_impl())
+}
+
+unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarUdfFactory) {
+    assert!(!self_.is_null());
+    let self_ref = self_.as_ref().unwrap();
+
+    assert!(!self_ref.private_data.is_null());
+    (self_ref.private_data as *mut ExportedScalarKernel).drop_in_place();
+}
+
+struct ExportedScalarKernelImpl {
+    inner: ScalarKernelRef,
+    last_arg_types: Option<Vec<SedonaType>>,
+    last_return_type: Option<SedonaType>,
+    last_error: CString,
+}
+
+impl From<ExportedScalarKernelImpl> for SedonaCScalarUdf {
+    fn from(value: ExportedScalarKernelImpl) -> Self {
+        let box_value = Box::new(value);
+        Self {
+            init: Some(c_kernel_init),
+            execute: Some(c_kernel_execute),
+            get_last_error: Some(c_kernel_last_error),
+            release: Some(c_kernel_release),
+            private_data: Box::leak(box_value) as *mut ExportedScalarKernelImpl as *mut c_void,
+        }
+    }
+}
+
+impl ExportedScalarKernelImpl {
     pub fn new(kernel: ScalarKernelRef) -> Self {
         Self {
             inner: kernel,
@@ -400,7 +466,7 @@ impl ExportedScalarKernel {
     }
 }
 
-unsafe extern "C" fn c_init(
+unsafe extern "C" fn c_kernel_init(
     self_: *mut SedonaCScalarUdf,
     arg_types: *const *const FFI_ArrowSchema,
     scalar_args: *mut *mut FFI_ArrowArray,
@@ -411,7 +477,7 @@ unsafe extern "C" fn c_init(
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernelImpl)
         .as_mut()
         .unwrap();
 
@@ -435,7 +501,7 @@ unsafe extern "C" fn c_init(
     }
 }
 
-unsafe extern "C" fn c_execute(
+unsafe extern "C" fn c_kernel_execute(
     self_: *mut SedonaCScalarUdf,
     args: *mut *mut FFI_ArrowArray,
     n_args: i64,
@@ -446,7 +512,7 @@ unsafe extern "C" fn c_execute(
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernelImpl)
         .as_mut()
         .unwrap();
 
@@ -464,22 +530,83 @@ unsafe extern "C" fn c_execute(
     }
 }
 
-unsafe extern "C" fn c_last_error(self_: *mut SedonaCScalarUdf) -> *const c_char {
+unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarUdf) -> *const c_char {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
+    let private_data = (self_ref.private_data as *mut ExportedScalarKernelImpl)
         .as_ref()
         .unwrap();
     private_data.last_error.as_ptr()
 }
 
-unsafe extern "C" fn c_release(self_: *mut SedonaCScalarUdf) {
+unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarUdf) {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
 
     assert!(!self_ref.private_data.is_null());
-    (self_ref.private_data as *mut ExportedScalarKernel).drop_in_place();
-    *self_ = SedonaCScalarUdf::default();
+    (self_ref.private_data as *mut ExportedScalarKernelImpl).drop_in_place();
+}
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use datafusion_expr::Volatility;
+    use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
+    use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
+    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+
+    use super::*;
+
+    #[test]
+    fn ffi_roundtrip() {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            Arc::new(|_, args| Ok(args[0].clone())),
+        );
+
+        let array_value = create_array(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
+
+        let udf_native = SedonaScalarUDF::new(
+            "simple_udf",
+            vec![kernel.clone()],
+            Volatility::Immutable,
+            None,
+        );
+
+        let tester = ScalarUdfTester::new(udf_native.into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (0 1)");
+
+        assert_eq!(
+            &tester.invoke_array(array_value.clone()).unwrap(),
+            &array_value
+        );
+
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarUdfFactory::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+
+        let udf_from_ffi = SedonaScalarUDF::new(
+            "simple_udf_from_ffi",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+            None,
+        );
+
+        let ffi_tester = ScalarUdfTester::new(udf_from_ffi.into(), vec![WKB_GEOMETRY]);
+        ffi_tester.assert_return_type(WKB_GEOMETRY);
+
+        let result = ffi_tester.invoke_scalar("POINT (0 1)").unwrap();
+        ffi_tester.assert_scalar_result_equals(result, "POINT (0 1)");
+
+        assert_eq!(
+            &ffi_tester.invoke_array(array_value.clone()).unwrap(),
+            &array_value
+        );
+    }
 }

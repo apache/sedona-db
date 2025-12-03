@@ -4950,6 +4950,7 @@ dependencies = [
  "sedona-common",
  "sedona-expr",
  "sedona-schema",
+ "sedona-testing",
 ]
 
 [[package]]
