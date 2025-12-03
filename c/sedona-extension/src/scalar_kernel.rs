@@ -33,10 +33,10 @@ use std::{
     str::FromStr,
 };
 
-use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarUdf, SedonaCScalarUdfFactory};
+use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCScalarKernelImpl};
 
 pub struct ImportedScalarKernel {
-    inner: SedonaCScalarUdfFactory,
+    inner: SedonaCScalarKernel,
 }
 
 impl Debug for ImportedScalarKernel {
@@ -47,12 +47,12 @@ impl Debug for ImportedScalarKernel {
     }
 }
 
-impl TryFrom<SedonaCScalarUdfFactory> for ImportedScalarKernel {
+impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
     type Error = DataFusionError;
 
-    fn try_from(value: SedonaCScalarUdfFactory) -> Result<Self> {
+    fn try_from(value: SedonaCScalarKernel) -> Result<Self> {
         match (
-            &value.new_scalar_udf_impl,
+            &value.new_impl,
             &value.release,
             value.private_data.is_null(),
         ) {
@@ -130,13 +130,13 @@ impl SedonaScalarKernel for ImportedScalarKernel {
 }
 
 struct CScalarUdfWrapper {
-    inner: SedonaCScalarUdf,
+    inner: SedonaCScalarKernelImpl,
 }
 
 impl CScalarUdfWrapper {
-    fn try_new(factory: &SedonaCScalarUdfFactory) -> Result<Self> {
-        if let Some(init) = factory.new_scalar_udf_impl {
-            let mut inner = SedonaCScalarUdf::default();
+    fn try_new(factory: &SedonaCScalarKernel) -> Result<Self> {
+        if let Some(init) = factory.new_impl {
+            let mut inner = SedonaCScalarKernelImpl::default();
             unsafe { init(factory, &mut inner) };
             Ok(Self { inner })
         } else {
@@ -285,11 +285,11 @@ impl From<ScalarKernelRef> for ExportedScalarKernel {
     }
 }
 
-impl From<ExportedScalarKernel> for SedonaCScalarUdfFactory {
+impl From<ExportedScalarKernel> for SedonaCScalarKernel {
     fn from(value: ExportedScalarKernel) -> Self {
         let box_value = Box::new(value);
         Self {
-            new_scalar_udf_impl: Some(c_factory_new_impl),
+            new_impl: Some(c_factory_new_impl),
             release: Some(c_factory_release),
             private_data: Box::leak(box_value) as *mut ExportedScalarKernel as *mut c_void,
         }
@@ -303,8 +303,8 @@ impl ExportedScalarKernel {
 }
 
 unsafe extern "C" fn c_factory_new_impl(
-    self_: *const SedonaCScalarUdfFactory,
-    out: *mut SedonaCScalarUdf,
+    self_: *const SedonaCScalarKernel,
+    out: *mut SedonaCScalarKernelImpl,
 ) {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
@@ -313,10 +313,10 @@ unsafe extern "C" fn c_factory_new_impl(
     let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
         .as_ref()
         .unwrap();
-    *out = SedonaCScalarUdf::from(private_data.new_impl())
+    *out = SedonaCScalarKernelImpl::from(private_data.new_impl())
 }
 
-unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarUdfFactory) {
+unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarKernel) {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
 
@@ -332,7 +332,7 @@ struct ExportedScalarKernelImpl {
     last_error: CString,
 }
 
-impl From<ExportedScalarKernelImpl> for SedonaCScalarUdf {
+impl From<ExportedScalarKernelImpl> for SedonaCScalarKernelImpl {
     fn from(value: ExportedScalarKernelImpl) -> Self {
         let box_value = Box::new(value);
         Self {
@@ -471,7 +471,7 @@ impl ExportedScalarKernelImpl {
 }
 
 unsafe extern "C" fn c_kernel_init(
-    self_: *mut SedonaCScalarUdf,
+    self_: *mut SedonaCScalarKernelImpl,
     arg_types: *const *const FFI_ArrowSchema,
     scalar_args: *mut *mut FFI_ArrowArray,
     n_args: i64,
@@ -506,7 +506,7 @@ unsafe extern "C" fn c_kernel_init(
 }
 
 unsafe extern "C" fn c_kernel_execute(
-    self_: *mut SedonaCScalarUdf,
+    self_: *mut SedonaCScalarKernelImpl,
     args: *mut *mut FFI_ArrowArray,
     n_args: i64,
     n_rows: i64,
@@ -534,7 +534,7 @@ unsafe extern "C" fn c_kernel_execute(
     }
 }
 
-unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarUdf) -> *const c_char {
+unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarKernelImpl) -> *const c_char {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
 
@@ -545,7 +545,7 @@ unsafe extern "C" fn c_kernel_last_error(self_: *mut SedonaCScalarUdf) -> *const
     private_data.last_error.as_ptr()
 }
 
-unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarUdf) {
+unsafe extern "C" fn c_kernel_release(self_: *mut SedonaCScalarKernelImpl) {
     assert!(!self_.is_null());
     let self_ref = self_.as_ref().unwrap();
 
@@ -594,7 +594,7 @@ mod test {
         );
 
         let exported_kernel = ExportedScalarKernel::from(kernel.clone());
-        let ffi_kernel = SedonaCScalarUdfFactory::from(exported_kernel);
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
         let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
 
         let udf_from_ffi = SedonaScalarUDF::new(
@@ -632,7 +632,7 @@ mod test {
         );
 
         let exported_kernel = ExportedScalarKernel::from(kernel.clone());
-        let ffi_kernel = SedonaCScalarUdfFactory::from(exported_kernel);
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
         let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
 
         let udf_from_ffi = SedonaScalarUDF::new(

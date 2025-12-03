@@ -25,19 +25,19 @@ use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 
 #[derive(Default)]
 #[repr(C)]
-pub struct SedonaCScalarUdfFactory {
-    pub new_scalar_udf_impl: Option<
-        unsafe extern "C" fn(self_: *const SedonaCScalarUdfFactory, out: *mut SedonaCScalarUdf),
+pub struct SedonaCScalarKernel {
+    pub new_impl: Option<
+        unsafe extern "C" fn(self_: *const SedonaCScalarKernel, out: *mut SedonaCScalarKernelImpl),
     >,
 
-    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdfFactory)>,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarKernel)>,
     pub private_data: *mut c_void,
 }
 
-unsafe impl Send for SedonaCScalarUdfFactory {}
-unsafe impl Sync for SedonaCScalarUdfFactory {}
+unsafe impl Send for SedonaCScalarKernel {}
+unsafe impl Sync for SedonaCScalarKernel {}
 
-impl Drop for SedonaCScalarUdfFactory {
+impl Drop for SedonaCScalarKernel {
     fn drop(&mut self) {
         if let Some(releaser) = self.release {
             unsafe { releaser(self) }
@@ -49,10 +49,10 @@ impl Drop for SedonaCScalarUdfFactory {
 
 #[derive(Default)]
 #[repr(C)]
-pub struct SedonaCScalarUdf {
+pub struct SedonaCScalarKernelImpl {
     pub init: Option<
         unsafe extern "C" fn(
-            self_: *mut SedonaCScalarUdf,
+            self_: *mut SedonaCScalarKernelImpl,
             arg_types: *const *const FFI_ArrowSchema,
             scalar_args: *mut *mut FFI_ArrowArray,
             n_args: i64,
@@ -62,7 +62,7 @@ pub struct SedonaCScalarUdf {
 
     pub execute: Option<
         unsafe extern "C" fn(
-            self_: *mut SedonaCScalarUdf,
+            self_: *mut SedonaCScalarKernelImpl,
             args: *mut *mut FFI_ArrowArray,
             n_args: i64,
             n_rows: i64,
@@ -70,14 +70,15 @@ pub struct SedonaCScalarUdf {
         ) -> c_int,
     >,
 
-    pub get_last_error: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf) -> *const c_char>,
+    pub get_last_error:
+        Option<unsafe extern "C" fn(self_: *mut SedonaCScalarKernelImpl) -> *const c_char>,
 
-    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarUdf)>,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCScalarKernelImpl)>,
 
     pub private_data: *mut c_void,
 }
 
-impl Drop for SedonaCScalarUdf {
+impl Drop for SedonaCScalarKernelImpl {
     fn drop(&mut self) {
         if let Some(releaser) = self.release {
             unsafe { releaser(self) }

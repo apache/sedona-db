@@ -117,7 +117,7 @@ struct ArrowArrayStream {
 /// access to methods if an instance is shared across threads. In general,
 /// constructing and initializing this structure should be sufficiently
 /// cheap that it shouldn't need to be shared in this way.
-struct SedonaCScalarUdf {
+struct SedonaCScalarKernelImpl {
   /// \brief Initialize the state of this UDF instance and calculate a return
   /// type
   ///
@@ -141,7 +141,7 @@ struct SedonaCScalarUdf {
   /// passed.
   ///
   /// \return An errno-compatible error code, or zero on success.
-  int (*init)(struct SedonaCScalarUdf* self, const struct ArrowSchema** arg_types,
+  int (*init)(struct SedonaCScalarKernelImpl* self, const struct ArrowSchema** arg_types,
               struct ArrowArray** scalar_args, int64_t n_args, struct ArrowSchema* out);
 
   /// \brief Execute a single batch
@@ -151,18 +151,18 @@ struct SedonaCScalarUdf {
   /// inputs.
   /// \param n_args The number of pointers in args
   /// \param out Will be populated with the result on success.
-  int (*execute)(struct SedonaCScalarUdf* self, struct ArrowArray** args, int64_t n_args,
-                 int64_t n_rows, struct ArrowArray* out);
+  int (*execute)(struct SedonaCScalarKernelImpl* self, struct ArrowArray** args,
+                 int64_t n_args, int64_t n_rows, struct ArrowArray* out);
 
   /// \brief Get the last error message
   ///
   /// The result is valid until the next call to a UDF method.
-  const char* (*get_last_error)(struct SedonaCScalarUdf* self);
+  const char* (*get_last_error)(struct SedonaCScalarKernelImpl* self);
 
   /// \brief Release this instance
   ///
   /// Implementations of this callback must set self->release to NULL.
-  void (*release)(struct SedonaCScalarUdf* self);
+  void (*release)(struct SedonaCScalarKernelImpl* self);
 
   /// \brief Opaque implementation-specific data
   void* private_data;
@@ -173,18 +173,17 @@ struct SedonaCScalarUdf {
 /// Usually a GeoArrowScalarUdf will be used to execute a single batch
 /// (although it may be reused if a caller can serialize callback use). This
 /// structure is a factory object that initializes such objects.
-struct SedonaCScalarUdfFactory {
+struct SedonaCScalarKernel {
   /// \brief Initialize a new implementation struct
   ///
   /// This callback is thread safe and may be called concurrently from any
   /// thread at any time (as long as this object is valid).
-  void (*new_scalar_udf_impl)(struct SedonaCScalarUdfFactory* self,
-                              struct SedonaCScalarUdf* out);
+  void (*new_impl)(struct SedonaCScalarKernel* self, struct SedonaCScalarKernelImpl* out);
 
   /// \brief Release this instance
   ///
   /// Implementations of this callback must set self->release to NULL.
-  void (*release)(struct SedonaCScalarUdfFactory* self);
+  void (*release)(struct SedonaCScalarKernel* self);
 
   /// \brief Opaque implementation-specific data
   void* private_data;
