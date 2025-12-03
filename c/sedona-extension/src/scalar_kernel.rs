@@ -330,10 +330,10 @@ impl From<ExportedScalarKernel> for SedonaCScalarKernel {
 }
 
 impl ExportedScalarKernel {
-    pub fn with_function_name(self, function_name: String) -> Self {
+    pub fn with_function_name(self, function_name: impl AsRef<str>) -> Self {
         Self {
             inner: self.inner,
-            function_name: Some(CString::from_str(&function_name).unwrap()),
+            function_name: Some(CString::from_str(function_name.as_ref()).unwrap()),
         }
     }
 
@@ -677,6 +677,27 @@ mod test {
             err.message(),
             "simple_udf_from_ffi([]): No kernel matching arguments"
         );
+    }
+
+    #[test]
+    fn named_kernel() {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            Arc::new(|_, args| Ok(args[0].clone())),
+        );
+
+        // Without intervening, we have a None name
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+        assert!(imported_kernel.function_name().is_none());
+
+        // If we set a function name, it should be roundtripped
+        let exported_kernel =
+            ExportedScalarKernel::from(kernel.clone()).with_function_name("foofy");
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+        assert_eq!(imported_kernel.function_name(), Some("foofy"));
     }
 
     #[test]

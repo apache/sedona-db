@@ -176,7 +176,7 @@ struct SedonaCScalarKernelImpl {
 struct SedonaCScalarKernel {
   /// \brief Function name
   ///
-  /// Optional function name. This is used to register the kernal with the
+  /// Optional function name. This is used to register the kernel with the
   /// appropriate function when passing this kernel across a boundary.
   const char* (*function_name)(const struct SedonaCScalarKernel* self);
 
@@ -184,7 +184,8 @@ struct SedonaCScalarKernel {
   ///
   /// This callback is thread safe and may be called concurrently from any
   /// thread at any time (as long as this object is valid).
-  void (*new_impl)(const struct SedonaCScalarKernel* self, struct SedonaCScalarKernelImpl* out);
+  void (*new_impl)(const struct SedonaCScalarKernel* self,
+                   struct SedonaCScalarKernelImpl* out);
 
   /// \brief Release this instance
   ///
