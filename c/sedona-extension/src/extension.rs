@@ -23,6 +23,10 @@ use std::{
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 
+/// Raw FFI representation of the SedonaCScalarKernel
+///
+/// See the ImportedScalarKernel and ExportedScalarKernel for high-level
+/// APIs to import and export implementations using this struct.
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCScalarKernel {
@@ -49,6 +53,7 @@ impl Drop for SedonaCScalarKernel {
     }
 }
 
+/// Raw FFI representation of the SedonaCScalarKernelImpl
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCScalarKernelImpl {
