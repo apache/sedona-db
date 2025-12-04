@@ -15,17 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
-
-use arrow_array::builder::GenericBinaryBuilder;
-use arrow_schema::DataType;
+use crate::executor::GeosExecutor;
+use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::{GResult, Geom, GeometryTypes::Polygon};
+use geos::{Geom, GeometryTypes::Polygon};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-
-use crate::executor::GeosExecutor;
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
+use std::sync::Arc;
 
 pub fn st_exterior_ring_impl() -> ScalarKernelRef {
     Arc::new(STExteriorRing {})
@@ -36,10 +36,7 @@ struct STExteriorRing {}
 
 impl SedonaScalarKernel for STExteriorRing {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry()],
-            SedonaType::Arrow(DataType::Binary),
-        );
+        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
     }
 
@@ -49,25 +46,19 @@ impl SedonaScalarKernel for STExteriorRing {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = GeosExecutor::new(arg_types, args);
-        let mut builder = GenericBinaryBuilder::<i32>::with_capacity(
+        let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            executor.num_iterations() * 100,
+            100 * executor.num_iterations(),
         );
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    let result_wkb = invoke_scalar(&wkb).map_err(|e| {
-                        DataFusionError::Execution(format!("Failed to get exterior ring: {e}"))
-                    })?;
-
-                    match result_wkb {
-                        Some(val) => builder.append_value(val),
-                        None => builder.append_null(),
-                    }
+                    invoke_scalar(&wkb, &mut builder)?;
                 }
                 _ => builder.append_null(),
             }
+
             Ok(())
         })?;
 
@@ -75,67 +66,46 @@ impl SedonaScalarKernel for STExteriorRing {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry) -> GResult<Option<Vec<u8>>> {
+fn invoke_scalar(geos_geom: &geos::Geometry, builder: &mut BinaryBuilder) -> Result<()> {
     match geos_geom.geometry_type() {
         Polygon => {
-            let ring = geos_geom.get_exterior_ring()?;
-            Ok(Some(ring.to_wkb()?.into()))
+            let ring = geos_geom.get_exterior_ring().map_err(|e| {
+                DataFusionError::Execution(format!("Failed to get exterior ring: {e}"))
+            })?;
+
+            let wkb = ring.to_wkb().map_err(|e| {
+                DataFusionError::Execution(format!("Failed to convert to wkb: {e}"))
+            })?;
+
+            builder.append_value(wkb);
         }
-        _ => Ok(None),
+        _ => builder.append_null(),
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{builder::GenericBinaryBuilder, ArrayRef};
+    use super::*;
     use datafusion_common::ScalarValue;
-    use geos::Geom;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
-
-    use super::*;
-
-    fn wkt_to_wkb(wkt: &str) -> Vec<u8> {
-        geos::Geometry::new_from_wkt(wkt)
-            .expect("Invalid WKT in test expectation")
-            .to_wkb()
-            .expect("Failed to convert to WKB")
-            .into()
-    }
-
-    fn build_expected_geometry_array(wkts: Vec<Option<&str>>) -> ArrayRef {
-        let mut builder = GenericBinaryBuilder::<i32>::new();
-        for wkt in wkts {
-            if let Some(w) = wkt {
-                builder.append_value(wkt_to_wkb(w));
-            } else {
-                builder.append_null();
-            }
-        }
-        Arc::new(builder.finish())
-    }
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_kernel("st_exterior_ring", st_exterior_ring_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
-        tester.assert_return_type(DataType::Binary);
+        tester.assert_return_type(WKB_GEOMETRY);
 
         let result = tester
             .invoke_scalar("POLYGON((0 0, 1 0, 1 1, 0 0))")
             .unwrap();
-        match result {
-            ScalarValue::Binary(Some(val)) => {
-                assert_eq!(val, wkt_to_wkb("LINESTRING(0 0, 1 0, 1 1, 0 0)"));
-            }
-            _ => panic!("Expected Binary ScalarValue with value, got {:?}", result),
-        }
-
-        let result = tester.invoke_scalar("LINESTRING(0 0, 1 0, 1 1)").unwrap();
-        assert!(result.is_null());
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 1 0, 1 1, 0 0)");
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
@@ -147,16 +117,16 @@ mod tests {
             Some("LINESTRING (0 0, 1 0, 0 1)"),
         ];
 
-        let expected_wkt = vec![
-            None,
-            None,
-            Some("LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)"),
-            None,
-        ];
+        let expected = create_array(
+            &[
+                None,
+                None,
+                Some("LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
 
-        let expected_array = build_expected_geometry_array(expected_wkt);
-        let result_array = tester.invoke_wkb_array(input_wkt).unwrap();
-
-        assert_eq!(&result_array, &expected_array);
+        assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
     }
 }
