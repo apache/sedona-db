@@ -2963,13 +2963,4 @@ def test_st_NRings(eng, geom, expected):
 )
 def test_st_exteriorRing(eng, geom, expected):
     eng = eng.create_or_skip()
-
-    def normalize(val):
-        if val:
-            return val.replace(", ", ",").replace(" (", "(")
-        return None
-
-    df = eng.get_dataframe(f"SELECT ST_AsText(ST_ExteriorRing({geom_or_null(geom)}))")
-    result = df.collect()[0][0]
-
-    assert normalize(result) == normalize(expected)
+    eng.assert_query_result(f"SELECT ST_ExteriorRing({geom_or_null(geom)})", expected)
