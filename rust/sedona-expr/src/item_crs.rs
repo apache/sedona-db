@@ -7,6 +7,7 @@ use datafusion_common::{
     internal_err, unwrap_or_internal_err, DataFusionError, Result, ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
+use sedona_common::sedona_internal_err;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -27,36 +28,61 @@ impl SedonaScalarKernel for ItemCrsKernel {
         return_type_handle_item_crs(self.inner.as_ref(), args)
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        num_rows: usize,
     ) -> Result<ColumnarValue> {
-        invoke_handle_item_crs(self.inner.as_ref(), arg_types, args)
+        invoke_handle_item_crs(self.inner.as_ref(), arg_types, args, return_type, num_rows)
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
     }
 }
 
 /// Propagate item crs types where appropriate
 ///
 /// Most kernels that operate on
-pub fn return_type_handle_item_crs(
+fn return_type_handle_item_crs(
     kernel: &dyn SedonaScalarKernel,
     arg_types: &[SedonaType],
 ) -> Result<Option<SedonaType>> {
     let item_crs_matcher = ArgMatcher::is_item_crs();
+
+    // If there are no item_crs arguments, this kernel never applies.
     if !arg_types
         .iter()
         .any(|arg_type| item_crs_matcher.match_type(arg_type))
     {
-        return kernel.return_type(arg_types);
+        return Ok(None);
     }
 
+    // Extract the item types. This also strips the type-level CRS for any non item-crs
+    // type, because any resulting geometry type should be CRS free.
     let item_arg_types = arg_types
         .iter()
         .map(|arg_type| parse_item_crs_arg_type(arg_type).map(|(item_type, _)| item_type))
         .collect::<Result<Vec<_>>>()?;
 
-    if let Some(item_type) = kernel.return_type(&item_arg_types)? {
+    // Any kernel that uses scalars to determine the output type is spurious here, so we
+    // pretend that there aren't any for the purposes of computing the type.
+    let scalar_args_none = (0..arg_types.len())
+        .map(|_| None)
+        .collect::<Vec<Option<&ScalarValue>>>();
+
+    // If the wrapped kernel matches and returns a geometry type, that geometry type will be an
+    // item/crs type. The new_item_crs() function handles stripping any CRS that might be present
+    // in the output type.
+    if let Some(item_type) =
+        kernel.return_type_from_args_and_scalars(&item_arg_types, &scalar_args_none)?
+    {
         let geo_matcher = ArgMatcher::is_geometry_or_geography();
         if geo_matcher.match_type(&item_type) {
             Ok(Some(SedonaType::new_item_crs(&item_type)?))
@@ -72,6 +98,8 @@ pub fn invoke_handle_item_crs(
     kernel: &dyn SedonaScalarKernel,
     arg_types: &[SedonaType],
     args: &[ColumnarValue],
+    return_type: &SedonaType,
+    num_rows: usize,
 ) -> Result<ColumnarValue> {
     let arg_types_unwrapped = arg_types
         .iter()
@@ -104,7 +132,8 @@ pub fn invoke_handle_item_crs(
     let out_item_type = kernel.return_type(&item_types)?;
     let out_item_type = unwrap_or_internal_err!(out_item_type);
 
-    let item_result = kernel.invoke_batch(&item_types, &item_args)?;
+    let item_result =
+        kernel.invoke_batch_from_args(&item_types, &item_args, return_type, num_rows)?;
 
     if ArgMatcher::is_geometry_or_geography().match_type(&out_item_type) {
         make_item_crs(&out_item_type, item_result, crs_result)
