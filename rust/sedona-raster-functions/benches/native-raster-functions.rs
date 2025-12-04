@@ -25,6 +25,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "native-raster",
+        "rs_rastertoworldcoord",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(0, 63), Int32(0, 63)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
         "rs_rastertoworldcoordx",
         BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(0, 63), Int32(0, 63)),
     );

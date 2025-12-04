@@ -47,6 +47,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_geotransform::rs_upperlefty_udf,
         crate::rs_size::rs_height_udf,
         crate::rs_size::rs_width_udf,
+        crate::rs_worldcoordinate::rs_rastertoworldcoord_udf,
         crate::rs_worldcoordinate::rs_rastertoworldcoordx_udf,
         crate::rs_worldcoordinate::rs_rastertoworldcoordy_udf,
     );
