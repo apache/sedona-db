@@ -86,6 +86,26 @@ static RASTER_DATATYPE: LazyLock<DataType> =
 // Implementation details
 
 impl SedonaType {
+    pub fn new_item_crs(item: &SedonaType) -> Result<SedonaType> {
+        let item_sedona_type = match item {
+            SedonaType::Wkb(edges, _) => SedonaType::Wkb(*edges, None),
+            SedonaType::WkbView(edges, _) => SedonaType::WkbView(*edges, None),
+            _ => {
+                return sedona_internal_err!("Can't create item_crs from non-geo type");
+            }
+        };
+
+        let arrow_type = DataType::Struct(
+            vec![
+                item_sedona_type.to_storage_field("item", true)?,
+                Field::new("crs", DataType::Utf8View, true),
+            ]
+            .into(),
+        );
+
+        Ok(SedonaType::Arrow(arrow_type))
+    }
+
     /// Given a field as it would appear in an external Schema return the appropriate SedonaType
     pub fn from_storage_field(field: &Field) -> Result<SedonaType> {
         match ExtensionType::from_field(field) {
