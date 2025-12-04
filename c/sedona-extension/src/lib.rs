@@ -14,11 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-mod catalog;
-pub mod context;
-mod exec;
-mod object_storage;
-pub mod random_geometry_provider;
-pub mod reader;
-pub mod record_batch_reader_provider;
-pub mod show;
+
+pub(crate) mod extension;
+pub mod scalar_kernel;

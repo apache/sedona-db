@@ -16,6 +16,7 @@
 # under the License.
 [workspace]
 members = [
+    "c/sedona-extension",
     "c/sedona-geoarrow-c",
     "c/sedona-geos",
     "c/sedona-proj",
