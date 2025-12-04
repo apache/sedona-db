@@ -16,6 +16,7 @@
 // under the License.
 pub mod aggregate_udf;
 pub mod function_set;
+pub mod item_crs;
 pub mod scalar_udf;
 pub mod spatial_filter;
 pub mod statistics;

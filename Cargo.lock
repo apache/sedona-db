@@ -4871,6 +4871,7 @@ dependencies = [
 name = "sedona-expr"
 version = "0.3.0"
 dependencies = [
+ "arrow-array",
  "arrow-schema",
  "datafusion-common",
  "datafusion-expr",
@@ -5256,6 +5257,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-raster",
  "sedona-schema",
+ "serde_json",
  "wkb",
  "wkt 0.14.0",
 ]
