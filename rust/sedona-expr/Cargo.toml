@@ -32,6 +32,7 @@ rstest = { workspace = true }
 sedona-testing = { path = "../sedona-testing" }
 
 [dependencies]
+arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
