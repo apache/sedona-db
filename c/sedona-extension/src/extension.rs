@@ -99,9 +99,9 @@ impl Drop for SedonaCScalarKernelImpl {
 ///
 /// The [FFI_ArrowSchema] doesn't have the ability to check for a NULL release callback,
 /// so we provide a mechanism to do so here.
-pub fn ffi_arrow_schema_is_valid(ffi_schema: *const FFI_ArrowSchema) -> bool {
-    let ffi_schema_internal = ffi_schema as *const c_void as *const ArrowSchemaInternal;
-    if let Some(schema_ref) = unsafe { ffi_schema_internal.as_ref() } {
+pub fn ffi_arrow_schema_is_valid(schema: *const FFI_ArrowSchema) -> bool {
+    let schema_internal = schema as *const c_void as *const ArrowSchemaInternal;
+    if let Some(schema_ref) = unsafe { schema_internal.as_ref() } {
         schema_ref.release.is_some()
     } else {
         false

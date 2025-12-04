@@ -302,7 +302,7 @@ impl CScalarKernelImplWrapper {
                 Ok(arrow_array::make_array(data))
             } else {
                 plan_err!(
-                    "SedonaCScalarKernelImpl::init failed: {}",
+                    "SedonaCScalarKernelImpl::execute failed: {}",
                     self.last_error(code)
                 )
             }
@@ -838,7 +838,7 @@ mod test {
         let err = ffi_tester.invoke_scalar("POINT (0 1)").unwrap_err();
         assert_eq!(
             err.message(),
-            "SedonaCScalarKernelImpl::init failed: this invoke_batch() always errors"
+            "SedonaCScalarKernelImpl::execute failed: this invoke_batch() always errors"
         );
     }
 
