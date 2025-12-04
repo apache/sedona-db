@@ -35,7 +35,7 @@ use datafusion_physical_plan::{
 use parking_lot::Mutex;
 
 use crate::{
-    build_index::build_index,
+    build_index::{build_index, build_index_seq},
     index::SpatialIndex,
     spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
@@ -107,7 +107,7 @@ fn determine_knn_build_probe_plans<'a>(
 /// 2. **Probe Phase**: Each geometry from the right table is used to query the spatial index
 /// 3. **Refinement**: Candidate pairs from the index are refined using exact spatial predicates
 /// 4. **Output**: Matching pairs are combined according to the specified join type
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpatialJoinExec {
     /// left (build) side which gets hashed
     pub left: Arc<dyn ExecutionPlan>,
@@ -123,17 +123,16 @@ pub struct SpatialJoinExec {
     /// The schema after join. Please be careful when using this schema,
     /// if there is a projection, the schema isn't the same as the output schema.
     join_schema: SchemaRef,
-    metrics: ExecutionPlanMetricsSet,
+    /// Metrics for tracking execution statistics (public for wrapper implementations)
+    pub metrics: ExecutionPlanMetricsSet,
     /// The projection indices of the columns in the output schema of join
     projection: Option<Vec<usize>>,
     /// Information of index and left / right placement of columns
     column_indices: Vec<ColumnIndex>,
     /// Cache holding plan properties like equivalences, output partitioning etc.
     cache: PlanProperties,
-    /// Once future for building the spatial index.
-    /// This futures run only once before the spatial index probing phase. It can also be disposed
-    /// by the last finished stream so that the spatial index does not have to live as long as
-    /// `SpatialJoinExec`.
+    /// Spatial index built asynchronously on first execute() call and shared across all partitions.
+    /// Uses OnceAsync for lazy initialization coordinated via async runtime.
     once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
     /// Indicates if this SpatialJoin was converted from a HashJoin
     /// When true, we preserve HashJoin's equivalence properties and partitioning
@@ -439,9 +438,14 @@ impl ExecutionPlan for SpatialJoinExec {
                 // Regular join semantics: left is build, right is probe
                 let (build_plan, probe_plan) = (&self.left, &self.right);
 
-                // Build the spatial index
-                let once_fut_spatial_index = {
-                    let mut once_async = self.once_async_spatial_index.lock();
+                // Build the spatial index using shared OnceAsync
+                // Choose between parallel and sequential index building based on configuration
+                let mut once_async = self.once_async_spatial_index.lock();
+                let once_fut_spatial_index = if sedona_options
+                    .spatial_join
+                    .use_sequential_index_build
+                {
+                    // Use build_index_seq for JNI/embedded contexts (sequential, no task spawning)
                     once_async
                         .get_or_insert(OnceAsync::default())
                         .try_once(|| {
@@ -456,7 +460,32 @@ impl ExecutionPlan for SpatialJoinExec {
 
                             let probe_thread_count =
                                 self.right.output_partitioning().partition_count();
+                            Ok(build_index_seq(
+                                Arc::clone(&context),
+                                build_side.schema(),
+                                build_streams,
+                                self.on.clone(),
+                                self.join_type,
+                                probe_thread_count,
+                                self.metrics.clone(),
+                            ))
+                        })?
+                } else {
+                    // Use build_index for normal contexts (parallel, faster)
+                    once_async
+                        .get_or_insert(OnceAsync::default())
+                        .try_once(|| {
+                            let build_side = build_plan;
 
+                            let num_partitions = build_side.output_partitioning().partition_count();
+                            let mut build_streams = Vec::with_capacity(num_partitions);
+                            for k in 0..num_partitions {
+                                let stream = build_side.execute(k, Arc::clone(&context))?;
+                                build_streams.push(stream);
+                            }
+
+                            let probe_thread_count =
+                                self.right.output_partitioning().partition_count();
                             Ok(build_index(
                                 Arc::clone(&context),
                                 build_side.schema(),
@@ -534,8 +563,10 @@ impl SpatialJoinExec {
         let actual_probe_plan_is_left = std::ptr::eq(probe_plan.as_ref(), self.left.as_ref());
 
         // Build the spatial index
-        let once_fut_spatial_index = {
-            let mut once_async = self.once_async_spatial_index.lock();
+        // Choose between parallel and sequential index building based on configuration
+        let mut once_async = self.once_async_spatial_index.lock();
+        let once_fut_spatial_index = if sedona_options.spatial_join.use_sequential_index_build {
+            // Use build_index_seq for JNI/embedded contexts (sequential, no task spawning)
             once_async
                 .get_or_insert(OnceAsync::default())
                 .try_once(|| {
@@ -549,7 +580,31 @@ impl SpatialJoinExec {
                     }
 
                     let probe_thread_count = probe_plan.output_partitioning().partition_count();
+                    Ok(build_index_seq(
+                        Arc::clone(&context),
+                        build_side.schema(),
+                        build_streams,
+                        self.on.clone(),
+                        self.join_type,
+                        probe_thread_count,
+                        self.metrics.clone(),
+                    ))
+                })?
+        } else {
+            // Use build_index for normal contexts (parallel, faster)
+            once_async
+                .get_or_insert(OnceAsync::default())
+                .try_once(|| {
+                    let build_side = build_plan;
 
+                    let num_partitions = build_side.output_partitioning().partition_count();
+                    let mut build_streams = Vec::with_capacity(num_partitions);
+                    for k in 0..num_partitions {
+                        let stream = build_side.execute(k, Arc::clone(&context))?;
+                        build_streams.push(stream);
+                    }
+
+                    let probe_thread_count = probe_plan.output_partitioning().partition_count();
                     Ok(build_index(
                         Arc::clone(&context),
                         build_side.schema(),

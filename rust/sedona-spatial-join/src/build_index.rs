@@ -33,7 +33,9 @@ use crate::{
     spatial_predicate::SpatialPredicate,
 };
 
-pub(crate) async fn build_index(
+/// Sequential version of build_index that doesn't spawn tasks.
+/// Used in execution contexts without async runtime support (e.g., Spark/Comet JNI)
+pub async fn build_index_seq(
     context: Arc<TaskContext>,
     build_schema: SchemaRef,
     build_streams: Vec<SendableRecordBatchStream>,
@@ -41,6 +43,58 @@ pub(crate) async fn build_index(
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
+) -> Result<SpatialIndex> {
+    build_index_impl(
+        context,
+        build_schema,
+        build_streams,
+        spatial_predicate,
+        join_type,
+        probe_threads_count,
+        metrics,
+        false, // concurrent = false
+    )
+    .await
+}
+
+/// Concurrent version of build_index that spawns tasks for parallel collection.
+pub async fn build_index(
+    context: Arc<TaskContext>,
+    build_schema: SchemaRef,
+    build_streams: Vec<SendableRecordBatchStream>,
+    spatial_predicate: SpatialPredicate,
+    join_type: JoinType,
+    probe_threads_count: usize,
+    metrics: ExecutionPlanMetricsSet,
+) -> Result<SpatialIndex> {
+    build_index_impl(
+        context,
+        build_schema,
+        build_streams,
+        spatial_predicate,
+        join_type,
+        probe_threads_count,
+        metrics,
+        true, // concurrent = true
+    )
+    .await
+}
+
+/// Internal implementation of build_index with configurable concurrency.
+///
+/// # Arguments
+/// * `concurrent` - If true, uses `collect_all` which spawns tasks for parallel collection.
+///   If false, collects partitions sequentially (for JNI/embedded contexts).
+#[allow(clippy::too_many_arguments)]
+async fn build_index_impl(
+    context: Arc<TaskContext>,
+    build_schema: SchemaRef,
+    build_streams: Vec<SendableRecordBatchStream>,
+    spatial_predicate: SpatialPredicate,
+    join_type: JoinType,
+    probe_threads_count: usize,
+    metrics: ExecutionPlanMetricsSet,
+    concurrent: bool,
 ) -> Result<SpatialIndex> {
     let session_config = context.session_config();
     let sedona_options = session_config
@@ -64,9 +118,24 @@ pub(crate) async fn build_index(
         collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &metrics));
     }
 
-    let build_partitions = collector
-        .collect_all(build_streams, reservations, collect_metrics_vec)
-        .await?;
+    let build_partitions = if concurrent {
+        // Collect partitions concurrently using collect_all which spawns tasks
+        collector
+            .collect_all(build_streams, reservations, collect_metrics_vec)
+            .await?
+    } else {
+        // Collect partitions sequentially (for JNI/embedded contexts)
+        let mut partitions = Vec::with_capacity(num_partitions);
+        for ((stream, reservation), metrics) in build_streams
+            .into_iter()
+            .zip(reservations)
+            .zip(&collect_metrics_vec)
+        {
+            let partition = collector.collect(stream, reservation, metrics).await?;
+            partitions.push(partition);
+        }
+        partitions
+    };
 
     let contains_external_stream = build_partitions
         .iter()
