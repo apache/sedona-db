@@ -16,12 +16,9 @@
 // under the License.
 
 use std::env;
-use std::path::PathBuf;
-
-use std::env;
 use std::path::{Path, PathBuf};
 
-fn find_libcuda_path() -> Option<PathBuf> {
+fn find_cuda_driver_path() -> Option<PathBuf> {
     // 1. Check hardcoded default driver locations (runtime library)
     let default_paths = [
         "/usr/lib/x86_64-linux-gnu",
@@ -147,14 +144,11 @@ fn main() {
 
         println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA runtime
 
-        if let Some(cuda_lib_path) = find_libcuda_path() {
-            println!("cargo:rustc-link-search=native={}", cuda_lib_path.display());
-        // CUDA runtime/driver path
+        if let Some(driver_lib_path) = find_cuda_driver_path() {
+            println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA driver
         } else {
             panic!("CUDA libcuda.so is not found. Please ensure NVIDIA drivers are installed and in a standard location, or set LD_LIBRARY_PATH or CUDA_HOME.");
         }
-
-        println!("cargo:rustc-link-search=native={}", cuda_driver_lib_path); // CUDA driver
 
         println!("cargo:rustc-link-lib=static=gpuspatial_c");
         println!("cargo:rustc-link-lib=static=gpuspatial");
