@@ -23,33 +23,29 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-/// ST_Intersection_Aggr() aggregate UDF implementation
+/// ST_Union_Agg() aggregate UDF implementation
 ///
-/// An implementation of intersection calculation.
-pub fn st_intersection_aggr_udf() -> SedonaAggregateUDF {
+/// An implementation of union calculation.
+pub fn st_union_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new_stub(
-        "st_intersection_aggr",
+        "st_union_agg",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Wkb(Edges::Planar, None),
         ),
         Volatility::Immutable,
-        Some(st_intersection_aggr_doc()),
+        Some(st_union_agg_doc()),
     )
 }
 
-fn st_intersection_aggr_doc() -> Documentation {
+fn st_union_agg_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Return the polygon intersection of all polygons in geom.",
-        "ST_Intersection_Aggr (A: Geometry, B: Geometry)",
+        "Return the geometric union of all geometries in the input column.",
+        "ST_Union_Agg (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example(
-        "
-            SELECT ST_Intersection_Aggr(ST_GeomFromText('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
-                   ST_GeomFromText('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))')",
-    )
+    .with_sql_example("SELECT ST_Union_Agg(ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'))")
     .build()
 }
 
@@ -61,8 +57,8 @@ mod test {
 
     #[test]
     fn udf_metadata() {
-        let udf: AggregateUDF = st_intersection_aggr_udf().into();
-        assert_eq!(udf.name(), "st_intersection_aggr");
+        let udf: AggregateUDF = st_union_agg_udf().into();
+        assert_eq!(udf.name(), "st_union_agg");
         assert!(udf.documentation().is_some());
     }
 }

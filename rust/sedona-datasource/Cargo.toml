@@ -29,6 +29,7 @@ rust-version.workspace = true
 default = []
 
 [dev-dependencies]
+object_store = { workspace = true, features = ["http"] }
 url = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
@@ -45,6 +46,7 @@ datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-schema = { path = "../sedona-schema" }
+regex = { workspace = true }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-schema = { workspace = true }

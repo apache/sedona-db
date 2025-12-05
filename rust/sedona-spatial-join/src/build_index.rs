@@ -58,7 +58,7 @@ pub(crate) async fn build_index(
     let mut reservations = Vec::with_capacity(num_partitions);
     for k in 0..num_partitions {
         let consumer =
-            MemoryConsumer::new(format!("SpatialJoinCollectBuildSide[{}]", k)).with_can_spill(true);
+            MemoryConsumer::new(format!("SpatialJoinCollectBuildSide[{k}]")).with_can_spill(true);
         let reservation = consumer.register(memory_pool);
         reservations.push(reservation);
         collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &metrics));

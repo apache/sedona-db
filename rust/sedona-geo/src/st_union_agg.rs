@@ -35,15 +35,15 @@ use wkb::writer::write_geometry;
 use wkb::Endianness;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
-/// ST_Union_Aggr() implementation
-pub fn st_union_aggr_impl() -> SedonaAccumulatorRef {
-    Arc::new(STUnionAggr {})
+/// ST_Union_Agg() implementation
+pub fn st_union_agg_impl() -> SedonaAccumulatorRef {
+    Arc::new(STUnionAgg {})
 }
 
 #[derive(Debug)]
-struct STUnionAggr {}
+struct STUnionAgg {}
 
-impl SedonaAccumulator for STUnionAggr {
+impl SedonaAccumulator for STUnionAgg {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
@@ -221,7 +221,7 @@ impl Accumulator for UnionAccumulator {
 mod test {
     use super::*;
     use rstest::rstest;
-    use sedona_functions::st_union_aggr::st_union_aggr_udf;
+    use sedona_functions::st_union_agg::st_union_agg_udf;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
         compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
@@ -229,8 +229,8 @@ mod test {
 
     #[rstest]
     fn polygon_polygon_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_union_aggr_udf();
-        udaf.add_kernel(st_union_aggr_impl());
+        let mut udaf = st_union_agg_udf();
+        udaf.add_kernel(st_union_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
@@ -292,8 +292,8 @@ mod test {
     fn polygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_union_aggr_udf();
-        udaf.add_kernel(st_union_aggr_impl());
+        let mut udaf = st_union_agg_udf();
+        udaf.add_kernel(st_union_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -340,8 +340,8 @@ mod test {
     fn multipolygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_union_aggr_udf();
-        udaf.add_kernel(st_union_aggr_impl());
+        let mut udaf = st_union_agg_udf();
+        udaf.add_kernel(st_union_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 

@@ -82,6 +82,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_hasm", Point);
     benchmark::scalar(c, &f, "native", "st_hasm", LineString(10));
 
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_interiorringn",
+        BenchmarkArgs::ArrayArray(PolygonWithHole(10), Int64(1, 10)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_interiorringn",
+        BenchmarkArgs::ArrayArray(PolygonWithHole(500), Int64(1, 10)),
+    );
+
     benchmark::scalar(c, &f, "native", "st_isempty", Point);
     benchmark::scalar(c, &f, "native", "st_isempty", LineString(10));
 
@@ -147,6 +162,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    benchmark::scalar(c, &f, "native", "st_reverse", Polygon(10));
+    benchmark::scalar(c, &f, "native", "st_reverse", MultiPoint(10));
+
     benchmark::scalar(
         c,
         &f,
@@ -189,14 +207,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayArray(Point, Point),
     );
 
-    benchmark::aggregate(c, &f, "native", "st_envelope_aggr", Point);
-    benchmark::aggregate(c, &f, "native", "st_envelope_aggr", LineString(10));
+    benchmark::aggregate(c, &f, "native", "st_envelope_agg", Point);
+    benchmark::aggregate(c, &f, "native", "st_envelope_agg", LineString(10));
 
-    benchmark::aggregate(c, &f, "native", "st_analyze_aggr", Point);
-    benchmark::aggregate(c, &f, "native", "st_analyze_aggr", LineString(10));
+    benchmark::aggregate(c, &f, "native", "st_analyze_agg", Point);
+    benchmark::aggregate(c, &f, "native", "st_analyze_agg", LineString(10));
 
-    benchmark::aggregate(c, &f, "native", "st_collect", Point);
-    benchmark::aggregate(c, &f, "native", "st_collect", LineString(10));
+    benchmark::aggregate(c, &f, "native", "st_collect_agg", Point);
+    benchmark::aggregate(c, &f, "native", "st_collect_agg", LineString(10));
 }
 
 criterion_group!(benches, criterion_benchmark);

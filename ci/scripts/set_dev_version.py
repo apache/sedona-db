@@ -79,9 +79,18 @@ def main():
     _, last_dev_tag = find_last_dev_tag()
     dev_distance = len(find_commits_since(last_dev_tag))
 
+    # Update workspace package version
     file_regex_replace(
         r'\nversion = "([0-9]+\.[0-9]+\.[0-9]+)"',
         f'\nversion = "\\1-alpha{dev_distance}"',
+        src_path("Cargo.toml"),
+    )
+
+    # Update workspace dependencies versions to match the prerelease version
+    # Matches both 'sedona' and 'sedona-*' packages (including digits like sedona-s2geography)
+    file_regex_replace(
+        r'(sedona(?:-[a-z0-9\-]+)?) = \{ version = "([0-9]+\.[0-9]+\.[0-9]+)", path',
+        f'\\1 = {{ version = "\\2-alpha{dev_distance}", path',
         src_path("Cargo.toml"),
     )
 

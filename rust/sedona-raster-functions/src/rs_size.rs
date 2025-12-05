@@ -62,7 +62,7 @@ fn rs_width_doc() -> Documentation {
         "RS_Width(raster: Raster)".to_string(),
     )
     .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Width(raster)".to_string())
+    .with_sql_example("SELECT RS_Width(RS_Example())".to_string())
     .build()
 }
 
@@ -73,7 +73,7 @@ fn rs_height_doc() -> Documentation {
         "RS_Height(raster: Raster)".to_string(),
     )
     .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Height(raster)".to_string())
+    .with_sql_example("SELECT RS_Height(RS_Example())".to_string())
     .build()
 }
 
@@ -130,11 +130,13 @@ impl SedonaScalarKernel for RsSize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, UInt64Array};
+    use arrow_array::UInt64Array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::RASTER;
+    use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
     fn udf_size() {
@@ -149,35 +151,21 @@ mod tests {
 
     #[rstest]
     fn udf_invoke(#[values(SizeType::Width, SizeType::Height)] st: SizeType) {
-        let kernel = RsSize {
-            size_type: st.clone(),
+        let udf = match st {
+            SizeType::Height => rs_height_udf(),
+            SizeType::Width => rs_width_udf(),
         };
-        // 3 rasters, second one is null
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let expected_values = match st {
+            SizeType::Height => vec![Some(2), None, Some(4)],
+            SizeType::Width => vec![Some(1), None, Some(3)],
+        };
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt64Array::from(expected_values));
 
-        // Create the UDF and invoke it
-        let args = [ColumnarValue::Array(Arc::new(rasters))];
-        let arg_types = vec![RASTER];
-
-        let result = kernel.invoke_batch(&arg_types, &args).unwrap();
-
-        // Check the result
-        if let ColumnarValue::Array(result_array) = result {
-            let size_array = result_array.as_any().downcast_ref::<UInt64Array>().unwrap();
-
-            assert_eq!(size_array.len(), 3);
-
-            match st.clone() {
-                SizeType::Width => assert_eq!(size_array.value(0), 1), // First raster width
-                SizeType::Height => assert_eq!(size_array.value(0), 2), // First raster height
-            }
-            assert!(size_array.is_null(1)); // Second raster is null
-            match st.clone() {
-                SizeType::Width => assert_eq!(size_array.value(2), 3), // Third raster width
-                SizeType::Height => assert_eq!(size_array.value(2), 4), // Third raster height
-            }
-        } else {
-            panic!("Expected array result");
-        }
+        // Check scalars
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        assert_array_equal(&result, &expected);
     }
 }

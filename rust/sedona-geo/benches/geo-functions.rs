@@ -76,9 +76,9 @@ fn criterion_benchmark_aggr(c: &mut Criterion) {
         f.add_aggregate_udf_kernel(name, kernel).unwrap();
     }
 
-    // st_intersection_aggr would need its own configuration because most of the generated
+    // st_intersection_agg would need its own configuration because most of the generated
     // polygons would not intersect and result in empty output almost immediately
-    benchmark::aggregate(c, &f, "geo", "st_union_aggr", Polygon(10));
+    benchmark::aggregate(c, &f, "geo", "st_union_agg", Polygon(10));
 }
 
 criterion_group!(benches, criterion_benchmark);

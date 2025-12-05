@@ -40,13 +40,15 @@ datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }
 pyo3 = { version = "0.25.1" }
-sedona = { path = "../../rust/sedona" }
-sedona-adbc = { path = "../../rust/sedona-adbc" }
-sedona-expr = { path = "../../rust/sedona-expr" }
-sedona-geoparquet = { path = "../../rust/sedona-geoparquet" }
-sedona-schema = { path = "../../rust/sedona-schema" }
-sedona-proj = { path = "../../c/sedona-proj", default-features = false }
-sedona-tg = { path = "../../c/sedona-tg" }
+sedona = { workspace = true }
+sedona-adbc = { workspace = true }
+sedona-datasource = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-geoparquet = { workspace = true }
+sedona-schema = { workspace = true }
+sedona-proj = { workspace = true }
+sedona-tg = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 mimalloc = { workspace = true, optional = true }

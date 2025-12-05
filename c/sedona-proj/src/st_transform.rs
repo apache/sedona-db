@@ -65,7 +65,7 @@ pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()>
 
 /// Do something with the global thread-local PROJ engine, creating it if it has not
 /// already been created.
-fn with_global_proj_engine(
+pub(crate) fn with_global_proj_engine(
     mut func: impl FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<()>,
 ) -> Result<()> {
     PROJ_ENGINE.with(|engine_cell| {
@@ -293,7 +293,7 @@ fn invoke_scalar(wkb: &Wkb, trans: &dyn CrsTransform, builder: &mut BinaryBuilde
 fn parse_source_crs(source_type: &SedonaType) -> Result<Option<String>> {
     match source_type {
         SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-            crs.to_authority_code()
+            Ok(Some(crs.to_crs_string()))
         }
         _ => Ok(None),
     }

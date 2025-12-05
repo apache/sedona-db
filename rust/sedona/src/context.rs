@@ -14,7 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
@@ -40,6 +43,8 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
+use sedona_datasource::provider::external_listing_table;
+use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::{function_set::FunctionSet, scalar_udf::ScalarKernelRef};
 use sedona_geoparquet::options::TableGeoParquetOptions;
@@ -146,7 +151,7 @@ impl SedonaContext {
 
         // Register s2geography scalar kernels if built with s2geography support
         #[cfg(feature = "s2geography")]
-        out.register_scalar_kernels(sedona_s2geography::register::scalar_kernels().into_iter())?;
+        out.register_s2geography()?;
 
         // Always register proj scalar kernels (although actually calling them will error
         // without this feature unless sedona_proj::register::configure_global_proj_engine()
@@ -157,6 +162,22 @@ impl SedonaContext {
         out.register_function_set(sedona_raster_functions::register::default_function_set());
 
         Ok(out)
+    }
+
+    #[cfg(feature = "s2geography")]
+    fn register_s2geography(&mut self) -> Result<()> {
+        use sedona_proj::sd_order_lnglat;
+
+        self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels().into_iter())?;
+
+        let sd_order_kernel = sd_order_lnglat::OrderLngLat::new(
+            sedona_s2geography::s2geography::s2_cell_id_from_lnglat,
+        );
+        self.register_scalar_kernels(
+            [("sd_order", Arc::new(sd_order_kernel) as ScalarKernelRef)].into_iter(),
+        )?;
+
+        Ok(())
     }
 
     /// Register all functions in a [FunctionSet] with this context
@@ -255,6 +276,43 @@ impl SedonaContext {
         }
 
         let provider = geoparquet_listing_table(&self.ctx, urls, options).await?;
+
+        self.ctx.read_table(Arc::new(provider))
+    }
+
+    /// Creates a [`DataFrame`] for reading a [ExternalFormatSpec]
+    pub async fn read_external_format<P: DataFilePaths>(
+        &self,
+        spec: Arc<dyn ExternalFormatSpec>,
+        table_paths: P,
+        options: Option<&HashMap<String, String>>,
+        check_extension: bool,
+    ) -> Result<DataFrame> {
+        let urls = table_paths.to_urls()?;
+
+        // Pre-register object store with our custom options before creating GeoParquetReadOptions
+        if !urls.is_empty() {
+            // Extract the table options from GeoParquetReadOptions for object store registration
+            ensure_object_store_registered_with_options(
+                &mut self.ctx.state(),
+                urls[0].as_str(),
+                options,
+            )
+            .await?;
+        }
+
+        let provider = if let Some(options) = options {
+            // Strip the filesystem-based options
+            let options_without_filesystems = options
+                .iter()
+                .filter(|(k, _)| !k.starts_with("gcs.") && !k.starts_with("aws."))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<HashMap<String, String>>();
+            let spec = spec.with_options(&options_without_filesystems)?;
+            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+        } else {
+            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+        };
 
         self.ctx.read_table(Arc::new(provider))
     }
@@ -468,11 +526,14 @@ impl ThreadSafeDialect {
 #[cfg(test)]
 mod tests {
 
-    use arrow_schema::DataType;
+    use arrow_array::{create_array, ArrayRef, RecordBatchIterator, RecordBatchReader};
+    use arrow_schema::{DataType, Field, Schema};
     use datafusion::assert_batches_eq;
+    use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_schema::{
         crs::lnglat,
         datatypes::{Edges, SedonaType},
+        schema::SedonaSchema,
     };
     use sedona_testing::data::test_geoparquet;
     use tempfile::tempdir;
@@ -579,20 +640,122 @@ mod tests {
         // GeoParquet files
         let ctx = SedonaContext::new_local_interactive().await.unwrap();
         let example = test_geoparquet("example", "geometry").unwrap();
-        let df = ctx.ctx.table(example).await.unwrap();
-        let sedona_types: Result<Vec<_>> = df
+        let df = ctx.ctx.table(example.clone()).await.unwrap();
+        let sedona_types = df
             .schema()
-            .as_arrow()
-            .fields()
-            .iter()
-            .map(|f| SedonaType::from_storage_field(f))
-            .collect();
-        let sedona_types = sedona_types.unwrap();
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
         assert_eq!(
             sedona_types[1],
             SedonaType::WkbView(Edges::Planar, lnglat())
         );
+
+        // Ensure read_parquet() works
+        let df = ctx
+            .read_parquet(example.clone(), GeoParquetReadOptions::default())
+            .await
+            .unwrap();
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+    }
+
+    #[derive(Debug)]
+    struct ExampleSpec {}
+
+    #[async_trait]
+    impl ExternalFormatSpec for ExampleSpec {
+        async fn infer_schema(&self, _location: &Object) -> Result<Schema> {
+            Ok(Schema::new(vec![Field::new("x", DataType::Utf8, true)]))
+        }
+
+        async fn open_reader(
+            &self,
+            _args: &OpenReaderArgs,
+        ) -> Result<Box<dyn RecordBatchReader + Send>> {
+            let batch = RecordBatch::try_from_iter([(
+                "x",
+                create_array!(Utf8, ["one", "two", "three", "four"]) as ArrayRef,
+            )])
+            .unwrap();
+            let schema = batch.schema();
+            Ok(Box::new(RecordBatchIterator::new([Ok(batch)], schema)))
+        }
+
+        fn with_options(
+            &self,
+            options: &HashMap<String, String>,
+        ) -> Result<Arc<dyn ExternalFormatSpec>> {
+            // Ensure we fail if we see any key/value options to ensure aws/gcs options
+            // are stripped.
+            if !options.is_empty() {
+                return not_impl_err!("key/value options not implemented");
+            }
+
+            Ok(Arc::new(Self {}))
+        }
+    }
+
+    #[tokio::test]
+    async fn external_format() {
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let spec = Arc::new(ExampleSpec {});
+        let file_that_exists = test_geoparquet("example", "geometry").unwrap();
+
+        // Ensure read_external_format() works
+        let df = ctx
+            .read_external_format(spec.clone(), file_that_exists.clone(), None, false)
+            .await
+            .unwrap();
+        let batches = df.collect().await.unwrap();
+
+        assert_batches_eq!(
+            [
+                "+-------+",
+                "| x     |",
+                "+-------+",
+                "| one   |",
+                "| two   |",
+                "| three |",
+                "| four  |",
+                "+-------+",
+            ],
+            &batches
+        );
+
+        // Ensure that key/value options used by aws/gcs are stripped
+        let kv_options = HashMap::from([("key".to_string(), "value".to_string())]);
+        ctx.read_external_format(
+            spec.clone(),
+            file_that_exists.clone(),
+            Some(&kv_options),
+            false,
+        )
+        .await
+        .expect_err("should error for unsupported key/value options");
+
+        let kv_options = HashMap::from([
+            ("gcs.something".to_string(), "value".to_string()),
+            ("aws.something".to_string(), "value".to_string()),
+        ]);
+        ctx.read_external_format(
+            spec.clone(),
+            file_that_exists.clone(),
+            Some(&kv_options),
+            false,
+        )
+        .await
+        .expect("should succeed because aws and gcs options were stripped");
     }
 }

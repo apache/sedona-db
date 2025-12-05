@@ -30,7 +30,10 @@ use parquet::file::{
     metadata::{ParquetMetaData, RowGroupMetaData},
     statistics::Statistics,
 };
-use sedona_expr::{spatial_filter::SpatialFilter, statistics::GeoStatistics};
+use sedona_expr::{
+    spatial_filter::{SpatialFilter, TableGeoStatistics},
+    statistics::GeoStatistics,
+};
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -175,8 +178,10 @@ fn filter_access_plan_using_geoparquet_file_metadata(
     metadata: &GeoParquetMetadata,
     metrics: &GeoParquetFileOpenerMetrics,
 ) -> Result<()> {
-    let table_geo_stats = geoparquet_file_geo_stats(file_schema, metadata)?;
-    if !spatial_filter.evaluate(&table_geo_stats) {
+    let column_geo_stats = geoparquet_file_geo_stats(file_schema, metadata)?;
+    let table_geo_stats =
+        TableGeoStatistics::try_from_stats_and_schema(&column_geo_stats, file_schema)?;
+    if !spatial_filter.evaluate(&table_geo_stats)? {
         metrics.files_ranges_spatial_pruned.add(1);
         for i in access_plan.row_group_indexes() {
             access_plan.skip(i);
@@ -214,11 +219,15 @@ fn filter_access_plan_using_geoparquet_covering(
     // Iterate through the row groups
     for i in row_group_indices_to_scan {
         // Generate row group statistics based on the covering statistics
-        let row_group_geo_stats =
+        let row_group_column_geo_stats =
             row_group_covering_geo_stats(parquet_metadata.row_group(i), &covering_specs);
+        let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &row_group_column_geo_stats,
+            file_schema,
+        )?;
 
         // Evaluate predicate!
-        if !spatial_filter.evaluate(&row_group_geo_stats) {
+        if !spatial_filter.evaluate(&row_group_geo_stats)? {
             metrics.row_groups_spatial_pruned.add(1);
             access_plan.skip(i);
         } else {

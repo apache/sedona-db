@@ -28,18 +28,17 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [dev-dependencies]
-sedona-testing = { path = "../sedona-testing" }
 rstest = { workspace = true }
+sedona-testing = { path = "../sedona-testing" }
 
 [dependencies]
-arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 geo-traits = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -45,12 +45,12 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -63,7 +63,7 @@ jobs:
           prefix-key: "python-wheel-windows-latest-v2"
 
       - name: Clone vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -93,7 +93,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: release-wheels-windows-x86_64
           path: python/sedonadb/dist/*.whl
@@ -102,12 +102,12 @@ jobs:
     runs-on: macOS-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -120,7 +120,7 @@ jobs:
           prefix-key: "python-wheel-macOS-latest-v2"
 
       - name: Clone vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -147,7 +147,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: release-wheels-macOS-arm64
           path: python/sedonadb/dist/*.whl
@@ -162,12 +162,12 @@ jobs:
           - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -195,7 +195,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: release-wheels-${{ matrix.config.label }}
           path: python/sedonadb/dist/*.whl
@@ -205,7 +205,7 @@ jobs:
     name: Upload nightly packages
     runs-on: "macos-latest"
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           pattern: release-*
           merge-multiple: true

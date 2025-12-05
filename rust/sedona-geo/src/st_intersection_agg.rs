@@ -35,15 +35,15 @@ use wkb::writer::write_geometry;
 use wkb::Endianness;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
-/// ST_Intersection_Aggr() implementation
-pub fn st_intersection_aggr_impl() -> SedonaAccumulatorRef {
-    Arc::new(STIntersectionAggr {})
+/// ST_Intersection_Agg() implementation
+pub fn st_intersection_agg_impl() -> SedonaAccumulatorRef {
+    Arc::new(STIntersectionAgg {})
 }
 
 #[derive(Debug)]
-struct STIntersectionAggr {}
+struct STIntersectionAgg {}
 
-impl SedonaAccumulator for STIntersectionAggr {
+impl SedonaAccumulator for STIntersectionAgg {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
@@ -227,7 +227,7 @@ impl Accumulator for IntersectionAccumulator {
 mod test {
     use super::*;
     use rstest::rstest;
-    use sedona_functions::st_intersection_aggr::st_intersection_aggr_udf;
+    use sedona_functions::st_intersection_agg::st_intersection_agg_udf;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
         compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
@@ -235,8 +235,8 @@ mod test {
 
     #[rstest]
     fn polygon_polygon_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_intersection_aggr_udf();
-        udaf.add_kernel(st_intersection_aggr_impl());
+        let mut udaf = st_intersection_agg_udf();
+        udaf.add_kernel(st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
@@ -300,8 +300,8 @@ mod test {
     fn polygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_intersection_aggr_udf();
-        udaf.add_kernel(st_intersection_aggr_impl());
+        let mut udaf = st_intersection_agg_udf();
+        udaf.add_kernel(st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -348,8 +348,8 @@ mod test {
     fn multipolygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_intersection_aggr_udf();
-        udaf.add_kernel(st_intersection_aggr_impl());
+        let mut udaf = st_intersection_agg_udf();
+        udaf.add_kernel(st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 

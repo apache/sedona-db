@@ -61,6 +61,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::referencing::st_line_interpolate_point_udf,
         crate::referencing::st_line_locate_point_udf,
         crate::sd_format::sd_format_udf,
+        crate::sd_order::sd_order_udf,
         crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_astext::st_astext_udf,
@@ -72,6 +73,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_dwithin::st_dwithin_udf,
         crate::st_envelope::st_envelope_udf,
         crate::st_flipcoordinates::st_flipcoordinates_udf,
+        crate::st_geometryn::st_geometryn_udf,
         crate::st_geometrytype::st_geometry_type_udf,
         crate::st_geomfromwkb::st_geogfromwkb_udf,
         crate::st_geomfromwkb::st_geomfromwkb_udf,
@@ -79,6 +81,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geomfromwkt::st_geomfromwkt_udf,
         crate::st_haszm::st_hasm_udf,
         crate::st_haszm::st_hasz_udf,
+        crate::st_interiorringn::st_interiorringn_udf,
         crate::st_isclosed::st_isclosed_udf,
         crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
@@ -94,6 +97,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_pointzm::st_pointm_udf,
         crate::st_pointzm::st_pointz_udf,
         crate::st_pointzm::st_pointzm_udf,
+        crate::st_reverse::st_reverse_udf,
         crate::st_setsrid::st_set_crs_udf,
         crate::st_setsrid::st_set_srid_udf,
         crate::st_srid::st_crs_udf,
@@ -119,12 +123,12 @@ pub fn default_function_set() -> FunctionSet {
 
     register_aggregate_udfs!(
         function_set,
-        crate::st_analyze_aggr::st_analyze_aggr_udf,
-        crate::st_collect::st_collect_udf,
-        crate::st_envelope_aggr::st_envelope_aggr_udf,
-        crate::st_intersection_aggr::st_intersection_aggr_udf,
+        crate::st_analyze_agg::st_analyze_agg_udf,
+        crate::st_collect_agg::st_collect_agg_udf,
+        crate::st_envelope_agg::st_envelope_agg_udf,
+        crate::st_intersection_agg::st_intersection_agg_udf,
         crate::st_polygonize_agg::st_polygonize_agg_udf,
-        crate::st_union_aggr::st_union_aggr_udf,
+        crate::st_union_agg::st_union_agg_udf,
     );
 
     function_set

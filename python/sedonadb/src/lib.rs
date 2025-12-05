@@ -22,6 +22,7 @@ use std::ffi::c_void;
 
 mod context;
 mod dataframe;
+mod datasource;
 mod error;
 mod import_from;
 mod reader;
@@ -50,6 +51,18 @@ fn configure_tg_allocator() {
 #[pyfunction]
 fn sedona_python_version() -> PyResult<String> {
     Ok(VERSION.to_string())
+}
+
+#[cfg(feature = "s2geography")]
+#[pyfunction]
+fn sedona_python_features() -> PyResult<Vec<String>> {
+    Ok(vec!["s2geography".to_string()])
+}
+
+#[cfg(not(feature = "s2geography"))]
+#[pyfunction]
+fn sedona_python_features() -> PyResult<Vec<String>> {
+    Ok(vec![])
 }
 
 #[pyfunction]
@@ -90,10 +103,13 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
+    m.add_class::<datasource::PyExternalFormat>()?;
+    m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
     m.add("SedonaError", py.get_type::<error::SedonaError>())?;
     m.add_class::<schema::PySedonaSchema>()?;
     m.add_class::<schema::PySedonaField>()?;

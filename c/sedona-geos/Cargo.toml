@@ -28,7 +28,7 @@ rust-version.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true }
-sedona = { path = "../../rust/sedona" }
+sedona = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
 rstest = { workspace = true }
 geo-types = { workspace = true }
@@ -39,11 +39,11 @@ arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geos = { workspace = true }
-sedona-common = { path = "../../rust/sedona-common" }
-sedona-expr = { path = "../../rust/sedona-expr" }
-sedona-functions = { path = "../../rust/sedona-functions" }
-sedona-geometry = { path = "../../rust/sedona-geometry" }
-sedona-schema = { path = "../../rust/sedona-schema" }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
 geo-traits = { workspace = true }
 wkb = { workspace = true }
 byteorder = { workspace = true }

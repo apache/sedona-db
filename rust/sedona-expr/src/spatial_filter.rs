@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::{DataType, Schema};
 use datafusion_common::{DataFusionError, Result, ScalarValue};
@@ -25,8 +25,12 @@ use datafusion_physical_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_geometry::{bounding_box::BoundingBox, bounds::wkb_bounds_xy, interval::IntervalTrait};
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    bounds::wkb_bounds_xy,
+    interval::{Interval, IntervalTrait},
+};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher, schema::SedonaSchema};
 
 use crate::{
     statistics::GeoStatistics,
@@ -41,7 +45,7 @@ use crate::{
 /// to attempt pruning unnecessary files or parts of files specifically with respect
 /// to a spatial filter (i.e., non-spatial filters we leave to an underlying
 /// implementation).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SpatialFilter {
     /// ST_Intersects(\<column\>, \<literal\>) or ST_Intersects(\<literal\>, \<column\>)
     Intersects(Column, BoundingBox),
@@ -60,23 +64,66 @@ pub enum SpatialFilter {
 }
 
 impl SpatialFilter {
+    /// Compute the maximum extent of a filter for a specific column index
+    ///
+    /// Some spatial file formats have the ability to push down a bounding box
+    /// into an index. This function allows deriving that bounding box based
+    /// on what DataFusion provides, which is a physical expression.
+    ///
+    /// Note that this always succeeds; however, for a non-spatial expression or
+    /// a non-spatial expression that is unsupported, the full bounding box is
+    /// returned.
+    pub fn filter_bbox(&self, column_name: &str) -> BoundingBox {
+        match self {
+            SpatialFilter::Intersects(column, bounding_box)
+            | SpatialFilter::Covers(column, bounding_box) => {
+                if column.name() == column_name {
+                    return bounding_box.clone();
+                }
+            }
+            SpatialFilter::And(lhs, rhs) => {
+                let lhs_box = lhs.filter_bbox(column_name);
+                let rhs_box = rhs.filter_bbox(column_name);
+                if let Ok(bounds) = lhs_box.intersection(&rhs_box) {
+                    return bounds;
+                }
+            }
+            SpatialFilter::Or(lhs, rhs) => {
+                let mut bounds = lhs.filter_bbox(column_name);
+                bounds.update_box(&rhs.filter_bbox(column_name));
+                return bounds;
+            }
+            SpatialFilter::LiteralFalse => {
+                return BoundingBox::xy(Interval::empty(), Interval::empty())
+            }
+            SpatialFilter::HasZ(_) | SpatialFilter::Unknown => {}
+        }
+
+        BoundingBox::xy(Interval::full(), Interval::full())
+    }
+
     /// Returns true if there is any chance the expression might be true
     ///
     /// In other words, returns false if and only if the expression is guaranteed
     /// to be false.
-    pub fn evaluate(&self, table_stats: &[GeoStatistics]) -> bool {
+    pub fn evaluate(&self, table_stats: &TableGeoStatistics) -> Result<bool> {
+        self.evaluate_internal(table_stats)
+    }
+
+    fn evaluate_internal(&self, table_stats: &TableGeoStatistics) -> Result<bool> {
         match self {
-            SpatialFilter::Intersects(column, bounds) => {
-                Self::evaluate_intersects_bbox(&table_stats[column.index()], bounds)
-            }
+            SpatialFilter::Intersects(column, bounds) => Ok(Self::evaluate_intersects_bbox(
+                table_stats.get(column)?,
+                bounds,
+            )),
             SpatialFilter::Covers(column, bounds) => {
-                Self::evaluate_covers_bbox(&table_stats[column.index()], bounds)
+                Ok(Self::evaluate_covers_bbox(table_stats.get(column)?, bounds))
             }
-            SpatialFilter::HasZ(column) => Self::evaluate_has_z(&table_stats[column.index()]),
+            SpatialFilter::HasZ(column) => Ok(Self::evaluate_has_z(table_stats.get(column)?)),
             SpatialFilter::And(lhs, rhs) => Self::evaluate_and(lhs, rhs, table_stats),
             SpatialFilter::Or(lhs, rhs) => Self::evaluate_or(lhs, rhs, table_stats),
-            SpatialFilter::LiteralFalse => false,
-            SpatialFilter::Unknown => true,
+            SpatialFilter::LiteralFalse => Ok(false),
+            SpatialFilter::Unknown => Ok(true),
         }
     }
 
@@ -119,16 +166,16 @@ impl SpatialFilter {
         true
     }
 
-    fn evaluate_and(lhs: &Self, rhs: &Self, table_stats: &[GeoStatistics]) -> bool {
-        let maybe_lhs = lhs.evaluate(table_stats);
-        let maybe_rhs = rhs.evaluate(table_stats);
-        maybe_lhs && maybe_rhs
+    fn evaluate_and(lhs: &Self, rhs: &Self, table_stats: &TableGeoStatistics) -> Result<bool> {
+        let maybe_lhs = lhs.evaluate_internal(table_stats)?;
+        let maybe_rhs = rhs.evaluate_internal(table_stats)?;
+        Ok(maybe_lhs && maybe_rhs)
     }
 
-    fn evaluate_or(lhs: &Self, rhs: &Self, table_stats: &[GeoStatistics]) -> bool {
-        let maybe_lhs = lhs.evaluate(table_stats);
-        let maybe_rhs = rhs.evaluate(table_stats);
-        maybe_lhs || maybe_rhs
+    fn evaluate_or(lhs: &Self, rhs: &Self, table_stats: &TableGeoStatistics) -> Result<bool> {
+        let maybe_lhs = lhs.evaluate_internal(table_stats)?;
+        let maybe_rhs = rhs.evaluate_internal(table_stats)?;
+        Ok(maybe_lhs || maybe_rhs)
     }
 
     /// Construct a SpatialPredicate from a [PhysicalExpr]
@@ -347,6 +394,81 @@ impl SpatialFilter {
     }
 }
 
+/// Table GeoStatistics
+///
+/// Enables providing a collection of GeoStatistics to [SpatialFilter::evaluate]
+/// such that attempts to access out-of-bounds values results in a readable
+/// error.
+pub enum TableGeoStatistics {
+    /// Provide statistics for every Column in the table. These must be
+    /// [GeoStatistics::unspecified] for non-spatial columns.
+    ///
+    /// These are resolved using [Column::index].
+    ByPosition(Vec<GeoStatistics>),
+
+    /// Provide statistics for specific named columns. Columns not included
+    /// are treated as [GeoStatistics::unspecified].
+    ///
+    /// These are resolved using [Column::name]. This may be used for logical
+    /// expressions (where columns are resolved by name) or as a workaround
+    /// for physical expressions where the index is relative to a projected
+    /// schema <https://github.com/apache/sedona-db/issues/389>.
+    ByName(HashMap<String, GeoStatistics>),
+}
+
+impl TableGeoStatistics {
+    /// Construct TableGeoStatistics with no columns
+    pub fn empty() -> Self {
+        TableGeoStatistics::ByPosition(vec![])
+    }
+
+    /// Construct TableGeoStatistics from a slice of all column statistics and a schema
+    pub fn try_from_stats_and_schema(
+        column_stats: &[GeoStatistics],
+        schema: &Schema,
+    ) -> Result<Self> {
+        let mut stats_map = HashMap::new();
+        for i in schema.geometry_column_indices()? {
+            stats_map.insert(schema.field(i).name().to_string(), column_stats[i].clone());
+        }
+        Ok(Self::ByName(stats_map))
+    }
+
+    /// For a given [Column], obtain [GeoStatistics]
+    ///
+    /// This will error if the provided statistics have an index out of bounds.
+    /// Names that cannot be resolved will be treated as unspecified.
+    fn get(&self, column: &Column) -> Result<&GeoStatistics> {
+        match self {
+            Self::ByPosition(items) => {
+                if column.index() >= items.len() {
+                    sedona_internal_err!(
+                        "Can't obtain GeoStatistics for column at index {} from schema with {} columns",
+                        column.index(),
+                        items.len()
+                    )
+                } else {
+                    Ok(&items[column.index()])
+                }
+            }
+            Self::ByName(items) => {
+                if let Some(item) = items.get(column.name()) {
+                    Ok(item)
+                } else {
+                    Ok(&GeoStatistics::UNSPECIFIED)
+                }
+            }
+        }
+    }
+}
+
+// Useful for testing (create from a single GeoStatistics)
+impl From<GeoStatistics> for TableGeoStatistics {
+    fn from(value: GeoStatistics) -> Self {
+        TableGeoStatistics::ByPosition(vec![value])
+    }
+}
+
 /// Internal utility to help match physical expression types
 enum ArgRef<'a> {
     Col(Column),
@@ -450,23 +572,27 @@ mod test {
         );
         let bounds = literal_bounds(&literal).unwrap();
 
-        let stats_no_info = [GeoStatistics::unspecified()];
-        let stats_intersecting = [
-            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5))))
-        ];
+        let stats_no_info = TableGeoStatistics::from(GeoStatistics::unspecified());
+        let stats_intersecting = TableGeoStatistics::from(
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5)))),
+        );
         let col0 = Column::new("col0", 0);
 
-        assert!(SpatialFilter::Intersects(col0.clone(), bounds.clone()).evaluate(&stats_no_info));
-        assert!(
-            SpatialFilter::Intersects(col0.clone(), bounds.clone()).evaluate(&stats_intersecting)
+        assert!(SpatialFilter::Intersects(col0.clone(), bounds.clone())
+            .evaluate(&stats_no_info)
+            .unwrap());
+        assert!(SpatialFilter::Intersects(col0.clone(), bounds.clone())
+            .evaluate(&stats_intersecting)
+            .unwrap());
+
+        let stats_empty_bbox = TableGeoStatistics::from(
+            GeoStatistics::unspecified()
+                .with_bbox(Some(BoundingBox::xy(Interval::empty(), Interval::empty()))),
         );
 
-        let stats_empty_bbox = [GeoStatistics::unspecified()
-            .with_bbox(Some(BoundingBox::xy(Interval::empty(), Interval::empty())))];
-
-        assert!(
-            !SpatialFilter::Intersects(col0.clone(), bounds.clone()).evaluate(&stats_empty_bbox)
-        );
+        assert!(!SpatialFilter::Intersects(col0.clone(), bounds.clone())
+            .evaluate(&stats_empty_bbox)
+            .unwrap());
 
         let unrelated_literal = Literal::new(ScalarValue::Null);
 
@@ -485,18 +611,25 @@ mod test {
         );
         let bounds = literal_bounds(&literal).unwrap();
 
-        let stats_no_info = [GeoStatistics::unspecified()];
-        let stats_covered =
-            [GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0, 4), (0, 4))))];
-        let stats_not_covered = [
-            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((3.0, 3.0), (5.0, 5.0))))
-        ];
+        let stats_no_info = TableGeoStatistics::from(GeoStatistics::unspecified());
+        let stats_covered = TableGeoStatistics::from(
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0, 4), (0, 4)))),
+        );
+        let stats_not_covered = TableGeoStatistics::from(
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((3.0, 3.0), (5.0, 5.0)))),
+        );
         let col0 = Column::new("col0", 0);
 
         // Covers should return true when column bbox is fully contained in literal bounds
-        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_no_info));
-        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_covered));
-        assert!(!SpatialFilter::Covers(col0.clone(), bounds.clone()).evaluate(&stats_not_covered));
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone())
+            .evaluate(&stats_no_info)
+            .unwrap());
+        assert!(SpatialFilter::Covers(col0.clone(), bounds.clone())
+            .evaluate(&stats_covered)
+            .unwrap());
+        assert!(!SpatialFilter::Covers(col0.clone(), bounds.clone())
+            .evaluate(&stats_not_covered)
+            .unwrap());
     }
 
     #[test]
@@ -504,73 +637,77 @@ mod test {
         let col0 = Column::new("col0", 0);
         let has_z = SpatialFilter::HasZ(col0.clone());
 
-        let stats_z_geometry_types = [GeoStatistics::unspecified()
-            .try_with_str_geometry_types(Some(&["POINT Z"]))
-            .unwrap()];
-        let stats_z_bbox = [
-            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xyzm(
-                (0, 1),
-                (2, 3),
-                Some((4, 5).into()),
-                None,
-            ))),
-        ];
-        let stats_no_info = [GeoStatistics::unspecified()];
+        let stats_z_geometry_types = TableGeoStatistics::from(
+            GeoStatistics::unspecified()
+                .try_with_str_geometry_types(Some(&["POINT Z"]))
+                .unwrap(),
+        );
+        let stats_z_bbox = TableGeoStatistics::from(GeoStatistics::unspecified().with_bbox(Some(
+            BoundingBox::xyzm((0, 1), (2, 3), Some((4, 5).into()), None),
+        )));
+        let stats_no_info = TableGeoStatistics::from(GeoStatistics::unspecified());
 
-        assert!(has_z.evaluate(&stats_z_geometry_types));
-        assert!(has_z.evaluate(&stats_z_bbox));
-        assert!(has_z.evaluate(&stats_no_info));
+        assert!(has_z.evaluate(&stats_z_geometry_types).unwrap());
+        assert!(has_z.evaluate(&stats_z_bbox).unwrap());
+        assert!(has_z.evaluate(&stats_no_info).unwrap());
 
-        let stats_no_z_geometry_types = [GeoStatistics::unspecified()
-            .try_with_str_geometry_types(Some(&["POINT"]))
-            .unwrap()];
-        let stats_no_z_bbox = [
-            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xyzm(
-                (0, 1),
-                (2, 3),
-                Some(Interval::empty()),
-                None,
-            ))),
-        ];
+        let stats_no_z_geometry_types = TableGeoStatistics::from(
+            GeoStatistics::unspecified()
+                .try_with_str_geometry_types(Some(&["POINT"]))
+                .unwrap(),
+        );
+        let stats_no_z_bbox =
+            TableGeoStatistics::from(GeoStatistics::unspecified().with_bbox(Some(
+                BoundingBox::xyzm((0, 1), (2, 3), Some(Interval::empty()), None),
+            )));
 
-        assert!(!has_z.evaluate(&stats_no_z_geometry_types));
-        assert!(!has_z.evaluate(&stats_no_z_bbox));
+        assert!(!has_z.evaluate(&stats_no_z_geometry_types).unwrap());
+        assert!(!has_z.evaluate(&stats_no_z_bbox).unwrap());
     }
 
     #[test]
     fn predicate_other() {
-        assert!(!SpatialFilter::LiteralFalse.evaluate(&[]));
-        assert!(SpatialFilter::Unknown.evaluate(&[]));
+        assert!(!SpatialFilter::LiteralFalse
+            .evaluate(&TableGeoStatistics::empty())
+            .unwrap());
+        assert!(SpatialFilter::Unknown
+            .evaluate(&TableGeoStatistics::empty())
+            .unwrap());
 
         assert!(SpatialFilter::And(
             Box::new(SpatialFilter::Unknown),
             Box::new(SpatialFilter::Unknown)
         )
-        .evaluate(&[]));
+        .evaluate(&TableGeoStatistics::empty())
+        .unwrap());
 
         assert!(!SpatialFilter::And(
             Box::new(SpatialFilter::Unknown),
             Box::new(SpatialFilter::LiteralFalse)
         )
-        .evaluate(&[]));
+        .evaluate(&TableGeoStatistics::empty())
+        .unwrap());
 
         assert!(SpatialFilter::Or(
             Box::new(SpatialFilter::Unknown),
             Box::new(SpatialFilter::Unknown)
         )
-        .evaluate(&[]));
+        .evaluate(&TableGeoStatistics::empty())
+        .unwrap());
 
         assert!(SpatialFilter::Or(
             Box::new(SpatialFilter::Unknown),
             Box::new(SpatialFilter::LiteralFalse)
         )
-        .evaluate(&[]));
+        .evaluate(&TableGeoStatistics::empty())
+        .unwrap());
 
         assert!(!SpatialFilter::Or(
             Box::new(SpatialFilter::LiteralFalse),
             Box::new(SpatialFilter::LiteralFalse)
         )
-        .evaluate(&[]));
+        .evaluate(&TableGeoStatistics::empty())
+        .unwrap());
     }
 
     #[test]
@@ -1102,5 +1239,98 @@ mod test {
         } else {
             panic!("Parse incorrect!")
         }
+    }
+
+    #[test]
+    fn table_geo_stats_position() {
+        let column_stats =
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5))));
+        let table_stats = TableGeoStatistics::from(column_stats.clone());
+
+        assert_eq!(
+            table_stats.get(&Column::new("col0", 0)).unwrap(),
+            &column_stats
+        );
+        assert!(table_stats.get(&Column::new("col1", 1)).is_err());
+    }
+
+    #[test]
+    fn table_geo_stats_name() {
+        let geo_stats =
+            GeoStatistics::unspecified().with_bbox(Some(BoundingBox::xy((0.5, 1.5), (1.5, 2.5))));
+        let schema = Schema::new(vec![
+            Field::new("col0", DataType::Binary, true),
+            WKB_GEOMETRY.to_storage_field("col1", true).unwrap(),
+        ]);
+        let table_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &[GeoStatistics::UNSPECIFIED, geo_stats.clone()],
+            &schema,
+        )
+        .unwrap();
+
+        assert_eq!(
+            table_stats.get(&Column::new("col0", usize::MAX)).unwrap(),
+            &GeoStatistics::UNSPECIFIED
+        );
+        assert_eq!(
+            table_stats.get(&Column::new("col1", usize::MAX)).unwrap(),
+            &geo_stats
+        );
+        assert_eq!(
+            table_stats
+                .get(&Column::new("col_not_in_schema", usize::MAX))
+                .unwrap(),
+            &GeoStatistics::UNSPECIFIED
+        );
+    }
+
+    #[test]
+    fn bounding_box() {
+        let col_zero = Column::new("foofy", 0);
+        let bbox_02 = BoundingBox::xy((0, 2), (0, 2));
+        let bbox_13 = BoundingBox::xy((1, 3), (1, 3));
+
+        assert_eq!(
+            SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone()).filter_bbox("foofy"),
+            bbox_02
+        );
+
+        assert_eq!(
+            SpatialFilter::Covers(col_zero.clone(), bbox_02.clone()).filter_bbox("foofy"),
+            bbox_02
+        );
+
+        assert_eq!(
+            SpatialFilter::LiteralFalse.filter_bbox("foofy"),
+            BoundingBox::xy(Interval::empty(), Interval::empty())
+        );
+        assert_eq!(
+            SpatialFilter::HasZ(col_zero.clone()).filter_bbox("foofy"),
+            BoundingBox::xy(Interval::full(), Interval::full())
+        );
+        assert_eq!(
+            SpatialFilter::Unknown.filter_bbox("foofy"),
+            BoundingBox::xy(Interval::full(), Interval::full())
+        );
+
+        let intersects_02 = SpatialFilter::Intersects(col_zero.clone(), bbox_02.clone());
+        let intersects_13 = SpatialFilter::Intersects(col_zero.clone(), bbox_13.clone());
+        assert_eq!(
+            SpatialFilter::And(
+                Box::new(intersects_02.clone()),
+                Box::new(intersects_13.clone())
+            )
+            .filter_bbox("foofy"),
+            BoundingBox::xy((1, 2), (1, 2))
+        );
+
+        assert_eq!(
+            SpatialFilter::Or(
+                Box::new(intersects_02.clone()),
+                Box::new(intersects_13.clone())
+            )
+            .filter_bbox("foofy"),
+            BoundingBox::xy((0, 3), (0, 3))
+        );
     }
 }

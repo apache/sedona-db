@@ -18,4 +18,6 @@
 mod executor;
 pub mod register;
 pub mod rs_example;
+pub mod rs_geotransform;
 pub mod rs_size;
+pub mod rs_worldcoordinate;

@@ -73,6 +73,8 @@ $env:PATH += ";$scriptDirectory\windows"
 $env:GEOS_LIB_DIR = "$vcpkgLibDirectory"
 $env:GEOS_VERSION = "3.13.0"
 
+$env:MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'
+
 # Some CMake configurations needs this separately from the toolchain file
 $env:CMAKE_PREFIX_PATH="$vcpkgInstalledDirectory"
 $env:OPENSSL_ROOT_DIR="$vcpkgInstalledDirectory"

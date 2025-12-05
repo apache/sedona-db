@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: ["clippy", "docs", "test", "build"]
+        name: ["clippy", "docs", "test", "build", "fmt"]
 
     name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
@@ -62,12 +62,12 @@ jobs:
       # Limit parallel compilation to reduce memory pressure
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
 
       - name: Clone vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -173,3 +173,7 @@ jobs:
         run: |
           # Generate docs with reduced parallelism to avoid memory issues
           cargo doc --workspace --all-features -j 2
+
+      - name: Format
+        if: matrix.name == 'fmt'
+        run: cargo fmt --all -- --check
