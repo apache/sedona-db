@@ -55,6 +55,8 @@ edition = "2021"
 # Same rust-version, arrow, and datafusion dependencies as datafusion-comet
 # https://github.com/apache/datafusion-comet/blob/main/native/Cargo.toml
 rust-version = "1.86"
+keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
+categories = ["science::geo", "database"]
 
 [workspace.dependencies]
 approx = "0.5"
@@ -140,7 +142,7 @@ sedona-raster = { version = "0.2.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.2.0", path = "rust/sedona-raster-functions" }
 sedona-schema = { version = "0.2.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.2.0", path = "rust/sedona-spatial-join" }
-# sedona-testing is not published to crates.io, so it uses path-only in individual crates
+sedona-testing = { version = "0.2.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
 sedona-geoarrow-c = { version = "0.2.0", path = "c/sedona-geoarrow-c" }

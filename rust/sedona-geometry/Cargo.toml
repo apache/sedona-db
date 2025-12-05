@@ -17,6 +17,9 @@
 [package]
 name = "sedona-geometry"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -30,7 +33,7 @@ result_large_err = "allow"
 [dev-dependencies]
 geo-types = { workspace = true }
 rstest = { workspace = true }
-sedona-testing = { path = "../sedona-testing" }
+sedona-testing = { workspace = true }
 serde_json = { workspace = true }
 wkt = { workspace = true }
 

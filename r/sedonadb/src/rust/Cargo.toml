@@ -18,6 +18,7 @@
 [package]
 name = "sedonadbr"
 version = { workspace = true }
+publish = false
 edition = "2021"
 
 [lib]

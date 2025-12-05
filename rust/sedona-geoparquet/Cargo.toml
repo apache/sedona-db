@@ -17,6 +17,9 @@
 [package]
 name = "sedona-geoparquet"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -31,7 +34,7 @@ result_large_err = "allow"
 default = []
 
 [dev-dependencies]
-sedona-testing = { path = "../sedona-testing" }
+sedona-testing = { workspace = true }
 url = { workspace = true }
 rstest = { workspace = true }
 tempfile = { workspace = true }

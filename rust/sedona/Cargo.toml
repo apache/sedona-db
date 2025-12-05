@@ -17,6 +17,9 @@
 [package]
 name = "sedona"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -75,7 +78,7 @@ sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-spatial-join = { workspace = true, optional = true }
 sedona-s2geography = { workspace = true, optional = true }
-sedona-testing = { path = "../sedona-testing" }
+sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

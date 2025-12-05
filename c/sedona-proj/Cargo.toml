@@ -17,8 +17,10 @@
 [package]
 name = "sedona-proj"
 version.workspace = true
-authors.workspace = true
 license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -34,7 +36,7 @@ approx = { workspace = true }
 geo-types = { workspace = true }
 rstest = { workspace = true }
 wkb = { workspace = true }
-sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
+sedona-testing = { workspace = true, features = ["criterion"] }
 criterion = { workspace = true}
 
 [features]

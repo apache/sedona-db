@@ -17,6 +17,9 @@
 [package]
 name = "sedona-common"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true

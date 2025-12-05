@@ -17,6 +17,9 @@
 [package]
 name = "sedona-functions"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -31,7 +34,7 @@ result_large_err = "allow"
 arrow-json = { workspace = true }
 criterion = { workspace = true }
 rstest = { workspace = true }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
+sedona-testing = { workspace = true, features = ["criterion"] }
 datafusion = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
