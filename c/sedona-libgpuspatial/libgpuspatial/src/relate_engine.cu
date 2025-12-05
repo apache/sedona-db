@@ -101,24 +101,24 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                predicate, ids);
       break;
     }
-    // case GeometryType::kMultiPoint: {
-    //   using geom2_array_view_t = MultiPointArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
-    //            predicate, ids);
-    //   break;
-    // }
-    // case GeometryType::kLineString: {
-    //   using geom2_array_view_t = LineStringArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
-    //            predicate, ids);
-    //   break;
-    // }
-    // case GeometryType::kMultiLineString: {
-    //   using geom2_array_view_t = MultiLineStringArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
-    //            predicate, ids);
-    //   break;
-    // }
+    case GeometryType::kMultiPoint: {
+      using geom2_array_view_t = MultiPointArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
+               predicate, ids);
+      break;
+    }
+    case GeometryType::kLineString: {
+      using geom2_array_view_t = LineStringArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
+               predicate, ids);
+      break;
+    }
+    case GeometryType::kMultiLineString: {
+      using geom2_array_view_t = MultiLineStringArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
+               predicate, ids);
+      break;
+    }
     case GeometryType::kPolygon: {
       using geom2_array_view_t = PolygonArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
@@ -148,24 +148,24 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                geom_array2, predicate, ids);
       break;
     }
-    // case GeometryType::kMultiPoint: {
-    //   using geom1_array_view_t = MultiPointArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
-    //            geom_array2, predicate, ids);
-    //   break;
-    // }
-    // case GeometryType::kLineString: {
-    //   using geom1_array_view_t = LineStringArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
-    //            geom_array2, predicate, ids);
-    //   break;
-    // }
-    // case GeometryType::kMultiLineString: {
-    //   using geom1_array_view_t = MultiLineStringArrayView<POINT_T, INDEX_T>;
-    //   Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
-    //            geom_array2, predicate, ids);
-    //   break;
-    // }
+    case GeometryType::kMultiPoint: {
+      using geom1_array_view_t = MultiPointArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
+               geom_array2, predicate, ids);
+      break;
+    }
+    case GeometryType::kLineString: {
+      using geom1_array_view_t = LineStringArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
+               geom_array2, predicate, ids);
+      break;
+    }
+    case GeometryType::kMultiLineString: {
+      using geom1_array_view_t = MultiLineStringArrayView<POINT_T, INDEX_T>;
+      Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
+               geom_array2, predicate, ids);
+      break;
+    }
     case GeometryType::kPolygon: {
       using geom1_array_view_t = PolygonArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),

@@ -47,6 +47,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 gpuspatial
                                 GEOS::geos
                                 GEOS::geos_c
+                                Arrow::arrow_static
+                                Parquet::parquet_static
                                 nanoarrow::nanoarrow_ipc)
   target_include_directories(loader_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_options(loader_test

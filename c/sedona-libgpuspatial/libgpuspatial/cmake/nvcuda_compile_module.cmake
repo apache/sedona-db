@@ -15,11 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Generate a custom build rule to translate *.cu files to *.ptx or *.optixir files.
+# Example: Generate a custom build rule to translate *.cu files to *.ptx or *.optixir files.
 # NVCUDA_COMPILE_MODULE(
 #   SOURCES file1.cu file2.cu
 #   DEPENDENCIES header1.h header2.h
 #   TARGET_PATH <path where output files should be stored>
+#   PREFIX "a prefix will be prepend to the generated target files"
 #   EXTENSION ".ptx" | ".optixir"
 #   GENERATED_FILES program_modules
 #   NVCC_OPTIONS -arch=sm_50
@@ -62,10 +63,6 @@ function(NVCUDA_COMPILE_MODULE)
     # message("output = ${output}")
 
     list(APPEND OUTPUT_FILES "${output}")
-
-    # This prints the standalone NVCC command line for each CUDA file.
-    # CUDAToolkit_NVCC_EXECUTABLE has been set with FindCUDAToolkit.cmake in CMake 3.17 and newer.
-    # message("${CUDAToolkit_NVCC_EXECUTABLE} " "${NVCUDA_COMPILE_MODULE_NVCC_OPTIONS} " "${input} " "-o " "${output}")
 
     add_custom_command(OUTPUT "${output}"
                        DEPENDS "${input}" ${NVCUDA_COMPILE_MODULE_DEPENDENCIES}

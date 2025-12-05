@@ -61,7 +61,7 @@ TYPED_TEST(WKBLoaderTest, Point) {
   while (1) {
     nanoarrow::UniqueArray array;
     ArrowError error;
-    ArrowErrorSet(&error, "Failed to get next array from stream");
+    ArrowErrorSet(&error, "");
     EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
     if (array->length == 0) {
       break;
@@ -104,7 +104,7 @@ TYPED_TEST(WKBLoaderTest, MultiPoint) {
   while (1) {
     nanoarrow::UniqueArray array;
     ArrowError error;
-    ArrowErrorSet(&error, "Failed to get next array from stream");
+    ArrowErrorSet(&error, "");
     EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
     if (array->length == 0) {
       break;
@@ -157,7 +157,7 @@ TYPED_TEST(WKBLoaderTest, PointMultiPoint) {
   while (1) {
     nanoarrow::UniqueArray array;
     ArrowError error;
-    ArrowErrorSet(&error, "Failed to get next array from stream");
+    ArrowErrorSet(&error, "");
     EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
     if (array->length == 0) {
       break;
@@ -208,7 +208,7 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderWithHoles) {
 
   nanoarrow::UniqueArray array;
   ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
+  ArrowErrorSet(&error, "");
 
   ParallelWkbLoader<point_t, index_t> loader;
   rmm::cuda_stream cuda_stream;
@@ -328,7 +328,7 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygon) {
 
   nanoarrow::UniqueArray array;
   ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
+  ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
 
@@ -432,7 +432,7 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
 
   nanoarrow::UniqueArray array;
   ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
+  ArrowErrorSet(&error, "");
 
   ParallelWkbLoader<point_t, index_t> loader;
   rmm::cuda_stream cuda_stream;
@@ -499,7 +499,7 @@ TYPED_TEST(WKBLoaderTest, MixTypes) {
       GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
   ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
+  ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
 
@@ -599,7 +599,7 @@ TYPED_TEST(WKBLoaderTest, GeomCollection) {
       GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
   ArrowError error;
-  ArrowErrorSet(&error, "Failed to get next array from stream");
+  ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
 

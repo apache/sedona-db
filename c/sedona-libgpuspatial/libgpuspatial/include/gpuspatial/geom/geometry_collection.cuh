@@ -48,15 +48,6 @@ class GeometryCollection {
         vertices_(vertices),
         mbr_(mbr) {}
 
-  // DEV_HOST_INLINE bool empty() const {
-  //   for (size_t i = 0; i < num_polygons(); i++) {
-  //     if (!get_polygon(i).empty()) {
-  //       return false;
-  //     }
-  //   }
-  //   return true;
-  // }
-
   DEV_HOST_INLINE INDEX_T num_geometries() const { return feature_types_.size(); }
 
   DEV_HOST_INLINE GeometryType get_type(INDEX_T geometry_idx) const {

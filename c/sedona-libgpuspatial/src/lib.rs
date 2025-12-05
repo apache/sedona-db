@@ -182,17 +182,8 @@ impl GpuSpatialContext {
                 }
             }
 
-            //             println!("[GPU Join] Phase 1: Transferring {} left geometries to GPU memory", left_geom.len());
-            // let transfer_start = std::time::Instant::now();
             joiner.push_build(&left_geom, 0, left_geom.len() as i64)?;
-            // let transfer_elapsed = transfer_start.elapsed();
-            //             println!("[GPU Join] Phase 1 complete: Data transfer in {:.3}s", transfer_elapsed.as_secs_f64());
-
-            //             println!("[GPU Join] Phase 2: Building BVH spatial index on GPU");
-            // let bvh_start = std::time::Instant::now();
             joiner.finish_building()?;
-            // let bvh_elapsed = bvh_start.elapsed();
-            //             println!("[GPU Join] Phase 2 complete: BVH index built in {:.3}s", bvh_elapsed.as_secs_f64());
 
             // Recreate context after building (required by libgpuspatial)
             let mut new_context = libgpuspatial_glue_bindgen::GpuSpatialJoinerContext {
@@ -205,23 +196,6 @@ impl GpuSpatialContext {
             self.context = Some(new_context);
             let context = self.context.as_mut().unwrap();
             // Push stream data (right side) and perform join
-            //             log::info!("DEBUG: Pushing {} geometries to GPU (stream side)", right_geom.len());
-            //             log::info!("DEBUG: Right array data type: {:?}", right_geom.data_type());
-            /*
-            if let Some(binary_arr) = right_geom
-                .as_any()
-                .downcast_ref::<arrow_array::BinaryArray>()
-            {
-                //                 log::info!("DEBUG: Right binary array has {} values", binary_arr.len());
-                if binary_arr.len() > 0 {
-                     let first_wkb = binary_arr.value(0);
-                                         log::info!("DEBUG: First right WKB length: {}, first bytes: {:?}",
-                                             first_wkb.len(), &first_wkb[..8.min(first_wkb.len())]);
-                }
-            }
-            */
-            //             println!("[GPU Join] Phase 3: Executing spatial join kernel on GPU ({} right geometries)", right_geom.len());
-            // let kernel_start = std::time::Instant::now();
             let gpu_predicate = predicate.into();
             joiner.push_stream(
                 context,
@@ -235,28 +209,7 @@ impl GpuSpatialContext {
             // Get results
             let build_indices = joiner.get_build_indices_buffer(context).to_vec();
             let stream_indices = joiner.get_stream_indices_buffer(context).to_vec();
-            // let kernel_elapsed = kernel_start.elapsed();
 
-            //             println!("[GPU Join] Phase 3 complete: Join kernel executed in {:.3}s, {} result pairs",
-            //                 kernel_elapsed.as_secs_f64(), build_indices.len());
-            //             log::info!("DEBUG: Retrieved {} build indices, {} stream indices",
-            //                 build_indices.len(), stream_indices.len());
-
-            // Debug: Print first few and max indices
-            /*
-            if !build_indices.is_empty() {
-                let max_build = *build_indices.iter().max().unwrap();
-                let min_build = *build_indices.iter().min().unwrap();
-                                 println!("DEBUG Rust: build_indices len={}, min={}, max={}, first 5={:?}",
-                                     build_indices.len(), min_build, max_build, &build_indices[..5.min(build_indices.len())]);
-            }
-            if !stream_indices.is_empty() {
-                let max_stream = *stream_indices.iter().max().unwrap();
-                let min_stream = *stream_indices.iter().min().unwrap();
-                                 println!("DEBUG Rust: stream_indices len={}, min={}, max={}, first 5={:?}",
-                                     stream_indices.len(), min_stream, max_stream, &stream_indices[..5.min(stream_indices.len())]);
-            }
-            */
             Ok((build_indices, stream_indices))
         }
     }

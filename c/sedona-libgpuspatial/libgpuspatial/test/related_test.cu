@@ -436,20 +436,6 @@ TEST(RelateTest, LinesDisjoint) {
   TestRelate(wkt1.c_str(), wkt2.c_str(), ls1, ls2);
 }
 
-// FIXME: wkt1 is a closed polyline, which has no boundary according to JTS's
-// Mod2BoundaryNodeRule We have to implement a similar rule in gpuspatial to handle this
-// case correctly TEST(RelateTest, LinesClosedEmpty) {
-//   MultiLineString<point_t, index_t> m_ls1;
-//   LineString<point_t> ls2;
-//   std::string wkt1 = "MULTILINESTRING ((0 0, 0 1), (0 1, 1 1, 1 0, 0 0))";
-//   std::string wkt2 = "LINESTRING EMPTY";
-//   Context<point_t, index_t> ctx1, ctx2;
-//
-//   ParseWKTMultiLineString(ctx1, wkt1.c_str(), m_ls1);
-//   ParseWKTLineString(ctx2, wkt2.c_str(), ls2);
-//   TestRelate(wkt1.c_str(), wkt2.c_str(), m_ls1, ls2);
-// }
-
 TEST(RelateTest, LinesRingTouchAtNode) {
   LineString<point_t> ls1;
   LineString<point_t> ls2;
@@ -497,28 +483,6 @@ TEST(RelateTest, LinesDisjointOverlappingEnvelopes) {
   ParseWKTLineString(ctx2, wkt2.c_str(), ls2);
   TestRelate(wkt1.c_str(), wkt2.c_str(), ls1, ls2);
 }
-
-/**
- * FIXME:
- * Case from https://github.com/locationtech/jts/issues/270
- * Strictly, the lines cross, since their interiors intersect
- * according to the Orientation predicate.
- * However, the computation of the intersection point is
- * non-robust, and reports it as being equal to the endpoint
- * POINT (-10 0.0000000000000012)
- * For consistency the relate algorithm uses the intersection node topology.
- */
-// TEST(RelateTest, LineStringLineString10) {
-//   LineString<point_t> ls1;
-//   LineString<point_t> ls2;
-//   std::string wkt1 = "LINESTRING (0 0, -10 0.0000000000000012)";
-//   std::string wkt2 = "LINESTRING (-9.999143275740073 -0.1308959557133398, -10
-//   0.0000000000001054)"; Context<point_t, index_t> ctx1, ctx2;
-//
-//   ParseWKTLineString(ctx1, wkt1.c_str(), ls1);
-//   ParseWKTLineString(ctx2, wkt2.c_str(), ls2);
-//   TestRelate(wkt1.c_str(), wkt2.c_str(), ls1, ls2);
-// }
 
 TEST(RelateTest, LinesContained_JTS396) {
   LineString<point_t> ls1;
@@ -828,22 +792,6 @@ TEST(RelateTest, PolygonsContainedAtNodes) {
   ParseWKTPolygon(ctx2, wkt2.c_str(), poly2);
   TestRelate(wkt1.c_str(), wkt2.c_str(), poly1, poly2);
 }
-
-/*
-// FIXME: IM__EXTER_BOUND_1D should not be set
-TEST(RelateTest, PolygonsNestedWithHole) {
-  Polygon<point_t, index_t> poly1;
-  Polygon<point_t, index_t> poly2;
-  std::string wkt1 =
-      "POLYGON ((40 60, 420 60, 420 320, 40 320, 40 60), (200 140, 160 220, 260 200, 200
-140))"; std::string wkt2 = "POLYGON ((80 100, 360 100, 360 280, 80 280, 80 100))";
-  Context<point_t, index_t> ctx1, ctx2;
-
-  ParseWKTPolygon(ctx1, wkt1.c_str(), poly1);
-  ParseWKTPolygon(ctx2, wkt2.c_str(), poly2);
-  TestRelate(wkt1.c_str(), wkt2.c_str(), poly1, poly2);
-}
-*/
 
 TEST(RelateTest, PolygonsOverlappingWithBoundaryInside) {
   Polygon<point_t, index_t> poly1;

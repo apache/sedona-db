@@ -18,6 +18,62 @@
 use std::env;
 use std::path::PathBuf;
 
+use std::env;
+use std::path::{Path, PathBuf};
+
+fn find_libcuda_path() -> Option<PathBuf> {
+    // 1. Check hardcoded default driver locations (runtime library)
+    let default_paths = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib64/nvidia",
+        "/usr/local/cuda/lib64",
+    ];
+    for path_str in default_paths {
+        let path = Path::new(path_str);
+        if path.join("libcuda.so").exists() || path.join("libcuda.so.1").exists() {
+            println!(
+                "Found libcuda.so directory via default driver path: {}",
+                path.display()
+            );
+            return Some(path.to_path_buf());
+        }
+    }
+
+    // 2. Check LD_LIBRARY_PATH (for the driver-provided runtime library)
+    if let Ok(ld_library_path) = env::var("LD_LIBRARY_PATH") {
+        for path_str in ld_library_path.split(':') {
+            let path = Path::new(path_str);
+            if path.join("libcuda.so").exists() || path.join("libcuda.so.1").exists() {
+                // Return the directory path
+                println!(
+                    "Found libcuda.so directory via LD_LIBRARY_PATH: {}",
+                    path.display()
+                );
+                return Some(path.to_path_buf());
+            }
+        }
+    }
+
+    // 3. Check for the specific stub path relative to CUDA_HOME (compilation library)
+    if let Ok(cuda_home) = env::var("CUDA_HOME") {
+        let stub_path = PathBuf::from(&cuda_home)
+            .join("targets")
+            .join("x86_64-linux")
+            .join("lib")
+            .join("stubs");
+
+        if stub_path.join("libcuda.so").exists() {
+            println!(
+                "Found libcuda.so directory via CUDA_HOME stub path: {}",
+                stub_path.display()
+            );
+            return Some(stub_path);
+        }
+    }
+
+    None
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=libgpuspatial");
@@ -59,14 +115,16 @@ fn main() {
         || which::which("nvcc").is_ok();
 
     if cuda_available {
-        // Compile the library for A10 (86), L4, L40 (89) GPUs
-        // You should adjust this based on your target GPUs
-        // Otherwise, it calls JIT compilation which has a startup overhead
-
+        // Determine the CMAKE_CUDA_ARCHITECTURES value.
+        // It uses the environment variable if set, otherwise defaults to "86;89".
+        let cuda_architectures = env::var("CMAKE_CUDA_ARCHITECTURES")
+            .unwrap_or_else(|_| {
+                println!("cargo:warning=CMAKE_CUDA_ARCHITECTURES environment variable not set. Defaulting to '86;89'.");
+                "86;89".to_string()
+            });
         let dst = cmake::Config::new("./libgpuspatial")
-            .define("CMAKE_CUDA_ARCHITECTURES", "86")
+            .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures)
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
-            .define("CMAKE_BUILD_TYPE", "Release") // Set build type to Debug or Release
             .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
             .build();
         let include_path = dst.join("include");
@@ -88,7 +146,15 @@ fn main() {
         };
 
         println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA runtime
-        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu"); // CUDA Driver (alternative location)
+
+        if let Some(cuda_lib_path) = find_libcuda_path() {
+            println!("cargo:rustc-link-search=native={}", cuda_lib_path.display());
+        // CUDA runtime/driver path
+        } else {
+            panic!("CUDA libcuda.so is not found. Please ensure NVIDIA drivers are installed and in a standard location, or set LD_LIBRARY_PATH or CUDA_HOME.");
+        }
+
+        println!("cargo:rustc-link-search=native={}", cuda_driver_lib_path); // CUDA driver
 
         println!("cargo:rustc-link-lib=static=gpuspatial_c");
         println!("cargo:rustc-link-lib=static=gpuspatial");

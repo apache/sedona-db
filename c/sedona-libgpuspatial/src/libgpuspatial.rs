@@ -389,14 +389,13 @@ impl Drop for GpuSpatialJoinerWrapper {
 mod test {
     use super::*;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use std::env;
-    use std::path::PathBuf;
-    // use arrow_array::{create_array as arrow_array, ArrayRef};
     use sedona_geos::register::scalar_kernels;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_testing::create::create_array_storage;
     use sedona_testing::testers::ScalarUdfTester;
+    use std::env;
+    use std::path::PathBuf;
 
     #[test]
     fn test_gpu_joiner_end2end() {

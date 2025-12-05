@@ -33,7 +33,7 @@ project(gpuspatial
 
 message(STATUS "Building gpuspatial version: ${PROJECT_VERSION}")
 message(STATUS "Building using CMake version: ${CMAKE_VERSION}")
-
+message(STATUS "Building for compute capabilities: ${CMAKE_CUDA_ARCHITECTURES}")
 # =============================================================================
 # Project-wide Settings
 # =============================================================================
@@ -48,6 +48,7 @@ include(rapids-cpm)
 include(rapids-export)
 include(rapids-find)
 
+# This ensures to use Release mode if CMAKE_BUILD_TYPE is not set, otherwise, it will respect the value of CMAKE_BUILD_TYPE being passed to cmake command.
 rapids_cmake_build_type(Release)
 
 # =============================================================================
