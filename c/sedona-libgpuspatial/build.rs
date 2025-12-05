@@ -145,7 +145,10 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA runtime
 
         if let Some(driver_lib_path) = find_cuda_driver_path() {
-            println!("cargo:rustc-link-search=native={}", driver_lib_path); // CUDA driver
+            println!(
+                "cargo:rustc-link-search=native={}",
+                driver_lib_path.display()
+            ); // CUDA driver
         } else {
             panic!("CUDA libcuda.so is not found. Please ensure NVIDIA drivers are installed and in a standard location, or set LD_LIBRARY_PATH or CUDA_HOME.");
         }
@@ -154,7 +157,6 @@ fn main() {
         println!("cargo:rustc-link-lib=static=gpuspatial");
         println!("cargo:rustc-link-lib=static=rmm");
         println!("cargo:rustc-link-lib=static=rapids_logger");
-        println!("cargo:rustc-link-lib=static=spdlog");
         println!("cargo:rustc-link-lib=static=geoarrow");
         println!("cargo:rustc-link-lib=static=nanoarrow");
         println!("cargo:rustc-link-lib=stdc++");
