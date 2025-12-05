@@ -5,10 +5,12 @@
 #include <string.h>
 
 #define GEOS_USE_ONLY_R_API
-#include <geoarrow.h>
 #include <geos_c.h>
+#include "geoarrow/geoarrow.h"
 
 #include "geoarrow_geos.h"
+#include <assert.h>
+#include <math.h>
 
 const char* GeoArrowGEOSVersionGEOS(void) { return GEOSversion(); }
 
@@ -50,10 +52,7 @@ GeoArrowGEOSErrorCode GeoArrowGEOSArrayBuilderCreate(
       GeoArrowWKBWriterInitVisitor(&builder->wkb_writer, &builder->v);
       break;
     default:
-      GEOARROW_RETURN_NOT_OK(
-          GeoArrowBuilderInitFromSchema(&builder->builder, schema, &builder->error));
-      GEOARROW_RETURN_NOT_OK(GeoArrowBuilderInitVisitor(&builder->builder, &builder->v));
-      break;
+      assert(0);
   }
 
   builder->handle = handle;
@@ -469,8 +468,8 @@ static GeoArrowErrorCode MakeGeomFromWKB(struct GeoArrowGEOSArrayReader* reader,
       continue;
     }
 
-    int64_t data_offset = reader->array_view.offsets[0][i];
-    int64_t data_size = reader->array_view.offsets[0][i + 1] - data_offset;
+    int64_t data_offset = reader->array_view.offsets[0][i + offset];
+    int64_t data_size = reader->array_view.offsets[0][i + offset + 1] - data_offset;
 
     out[i] = GEOSWKBReader_read_r(reader->handle, reader->wkb_reader,
                                   reader->array_view.data + data_offset, data_size);

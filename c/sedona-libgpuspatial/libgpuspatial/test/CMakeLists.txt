@@ -16,9 +16,7 @@
 # under the License.
 if(GPUSPATIAL_BUILD_TESTS)
   add_library(geoarrow_geos geoarrow_geos/geoarrow_geos.c)
-  target_link_libraries(geoarrow_geos
-                        PUBLIC GEOS::geos_c
-                        PRIVATE geoarrow)
+  target_link_libraries(geoarrow_geos PUBLIC GEOS::geos_c geoarrow)
 endif()
 
 if(GPUSPATIAL_BUILD_TESTS)
