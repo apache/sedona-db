@@ -8,9 +8,9 @@
 #include <geos_c.h>
 #include "geoarrow/geoarrow.h"
 
-#include "geoarrow_geos.h"
 #include <assert.h>
 #include <math.h>
+#include "geoarrow_geos.h"
 
 const char* GeoArrowGEOSVersionGEOS(void) { return GEOSversion(); }
 
