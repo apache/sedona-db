@@ -128,7 +128,11 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          sudo apt-get update && sudo apt-get install -y libgeos-dev
+          sudo apt-get update && sudo apt-get install -y \
+            libgeos-dev \
+            libgdal-dev \
+            gdal-bin \
+            pkg-config
 
       - name: Build
         if: matrix.name == 'build'

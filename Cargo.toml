@@ -27,6 +27,7 @@ members = [
     "rust/sedona-datasource",
     "rust/sedona-expr",
     "rust/sedona-functions",
+    "rust/sedona-gdal",
     "rust/sedona-geo-generic-alg",
     "rust/sedona-geo-traits-ext",
     "rust/sedona-geo",
@@ -87,7 +88,7 @@ datafusion-physical-expr = { version = "50.2.0" }
 datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
-fastrand = "2.0"
+fastrand = "2.3"
 futures = { version = "0.3" }
 object_store = { version = "0.12.0", default-features = false }
 float_next_after = "1"
@@ -95,6 +96,9 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 mimalloc = { version = "0.1", default-features = false }
 libmimalloc-sys = { version = "0.1", default-features = false }
 once_cell = "1.20"
+
+gdal = { version = "0.17", features = ["bindgen"] }
+gdal-sys = { version = "0.10", features = ["bindgen"] }
 
 geos = { version = "10.0.0", features = ["geo", "v3_10_0"] }
 
