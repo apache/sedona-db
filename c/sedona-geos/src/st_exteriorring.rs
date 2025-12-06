@@ -19,7 +19,7 @@ use crate::executor::GeosExecutor;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::{Geom, GeometryTypes::Polygon};
+use geos::{Geom, GeometryTypes::Polygon, OutputDimension, WKBWriter};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -73,7 +73,15 @@ fn invoke_scalar(geos_geom: &geos::Geometry, builder: &mut BinaryBuilder) -> Res
                 DataFusionError::Execution(format!("Failed to get exterior ring: {e}"))
             })?;
 
-            let wkb = ring.to_wkb().map_err(|e| {
+            let mut writer = WKBWriter::new().map_err(|e| {
+                DataFusionError::Execution(format!("Failed to create WKB writer: {e}"))
+            })?;
+
+            if geos_geom.has_z().unwrap_or(false) {
+                writer.set_output_dimension(OutputDimension::ThreeD);
+            }
+
+            let wkb = writer.write(&ring).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to convert to wkb: {e}"))
             })?;
 
@@ -107,6 +115,14 @@ mod tests {
             .unwrap();
         tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 1 0, 1 1, 0 0)");
 
+        let result_z = tester
+            .invoke_scalar("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))")
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result_z,
+            "LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)",
+        );
+
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
 
@@ -115,6 +131,7 @@ mod tests {
             None,
             Some("POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"),
             Some("LINESTRING (0 0, 1 0, 0 1)"),
+            Some("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))"),
         ];
 
         let expected = create_array(
@@ -123,6 +140,7 @@ mod tests {
                 None,
                 Some("LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)"),
                 None,
+                Some("LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)"),
             ],
             &WKB_GEOMETRY,
         );
