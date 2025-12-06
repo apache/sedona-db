@@ -299,9 +299,9 @@ impl InternalDataFrame {
         let df_schema = self.inner.schema();
         let exprs = zip(names_strsxp.iter(), indices_intsxp.iter())
             .map(|(name, index)| {
-                let (table_ref, _) = df_schema.qualified_field(usize::try_from(*index)?);
-                let column = Column::new(table_ref.cloned(), name);
-                Ok(SelectExpr::Expression(Expr::Column(column)))
+                let (table_ref, field) = df_schema.qualified_field(usize::try_from(*index)?);
+                let column = Column::new(table_ref.cloned(), field.name());
+                Ok(SelectExpr::Expression(Expr::Column(column).alias(name)))
             })
             .collect::<Result<Vec<_>>>()?;
 

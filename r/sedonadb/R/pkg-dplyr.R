@@ -17,9 +17,9 @@
 
 select.sedonadb_dataframe <- function(.data, ...) {
   schema <- nanoarrow::infer_nanoarrow_schema(.data)
-  ptype <- nanoarrow::infer_nanoarrow_ptype()
-  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = .ptype)
+  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
+  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
 
+  df <- .data$df$select_indices(names(loc), loc - 1L)
+  new_sedonadb_dataframe(.data$ctx, df)
 }
-
-

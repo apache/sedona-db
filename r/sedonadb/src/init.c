@@ -156,6 +156,14 @@ SEXP savvy_InternalDataFrame_primary_geometry_column_index__impl(SEXP self__) {
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_select_indices__impl(SEXP self__,
+                                                  SEXP c_arg__names,
+                                                  SEXP c_arg__indices) {
+  SEXP res = savvy_InternalDataFrame_select_indices__ffi(self__, c_arg__names,
+                                                         c_arg__indices);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_show__impl(SEXP self__, SEXP c_arg__ctx,
                                         SEXP c_arg__width_chars,
                                         SEXP c_arg__ascii, SEXP c_arg__limit) {
@@ -236,6 +244,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_limit__impl, 2},
     {"savvy_InternalDataFrame_primary_geometry_column_index__impl",
      (DL_FUNC)&savvy_InternalDataFrame_primary_geometry_column_index__impl, 1},
+    {"savvy_InternalDataFrame_select_indices__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_select_indices__impl, 3},
     {"savvy_InternalDataFrame_show__impl",
      (DL_FUNC)&savvy_InternalDataFrame_show__impl, 5},
     {"savvy_InternalDataFrame_to_arrow_schema__impl",
