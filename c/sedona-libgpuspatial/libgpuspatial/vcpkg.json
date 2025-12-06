@@ -1,0 +1,20 @@
+{
+  "name": "libgpuspatial",
+  "version-string": "1.0.0",
+  "features": {
+    "test": {
+      "description": "Build tests",
+      "dependencies": [
+        "gtest",
+        "geos",
+        {
+          "name": "arrow",
+          "features": [
+            "filesystem",
+            "parquet"
+          ]
+        }
+      ]
+    }
+  }
+}
