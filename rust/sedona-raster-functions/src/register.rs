@@ -39,6 +39,7 @@ pub fn default_function_set() -> FunctionSet {
     register_scalar_udfs!(
         function_set,
         crate::rs_example::rs_example_udf,
+        crate::rs_geotransform::rs_rotation_udf,
         crate::rs_geotransform::rs_scalex_udf,
         crate::rs_geotransform::rs_scaley_udf,
         crate::rs_geotransform::rs_skewx_udf,

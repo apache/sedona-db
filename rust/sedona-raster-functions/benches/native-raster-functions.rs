@@ -42,6 +42,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_rastertoworldcoordy",
         BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(0, 63), Int32(0, 63)),
     );
+    benchmark::scalar(c, &f, "native-raster", "rs_rotation", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_scalex", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_scaley", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_skewx", Raster(64, 64));
