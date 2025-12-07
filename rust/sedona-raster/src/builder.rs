@@ -647,7 +647,7 @@ mod tests {
             let band_metadata = BandMetadata {
                 nodata_value: None,
                 storage_type: StorageType::InDb,
-                datatype: expected_data_type.clone(),
+                datatype: expected_data_type,
                 outdb_url: None,
                 outdb_band_id: None,
             };

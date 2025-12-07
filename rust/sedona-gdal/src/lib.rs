@@ -15,8 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod affine_transformation;
-pub mod array;
-pub mod builder;
-pub mod traits;
-pub mod utils;
+pub mod dataset;
+pub mod raster_io;

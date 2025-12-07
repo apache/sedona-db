@@ -115,7 +115,7 @@ pub fn generate_tiled_rasters(
                 let band_metadata = BandMetadata {
                     nodata_value: nodata_value.clone(),
                     storage_type: StorageType::InDb,
-                    datatype: data_type.clone(),
+                    datatype: data_type,
                     outdb_url: None,
                     outdb_band_id: None,
                 };
