@@ -65,14 +65,12 @@ impl SedonaScalarKernel for STExteriorRing {
         executor.finish(Arc::new(builder.finish()))
     }
 }
-
 fn invoke_scalar(geos_geom: &geos::Geometry, builder: &mut BinaryBuilder) -> Result<()> {
     match geos_geom.geometry_type() {
         Polygon => {
             let ring = geos_geom.get_exterior_ring().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to get exterior ring: {e}"))
             })?;
-
             let mut writer = WKBWriter::new().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to create WKB writer: {e}"))
             })?;
@@ -81,12 +79,14 @@ fn invoke_scalar(geos_geom: &geos::Geometry, builder: &mut BinaryBuilder) -> Res
                 writer.set_output_dimension(OutputDimension::ThreeD);
             }
 
-            let wkb = writer.write(&ring).map_err(|e| {
+            let wkb = writer.write_wkb(&ring).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to convert to wkb: {e}"))
             })?;
 
             builder.append_value(wkb);
         }
+        // ST_ExteriorRing is only valid for Polygons.
+        // For MultiPolygons, Points, LineStrings, etc., it returns NULL.
         _ => builder.append_null(),
     }
     Ok(())
@@ -103,6 +103,15 @@ mod tests {
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
 
+    fn geos_wkt_to_wkb(wkt: &str) -> Vec<u8> {
+        let g = geos::Geometry::new_from_wkt(wkt).unwrap();
+        let mut writer = geos::WKBWriter::new().unwrap();
+        if g.has_z().unwrap_or(false) {
+            writer.set_output_dimension(geos::OutputDimension::ThreeD);
+        }
+        writer.write_wkb(&g).unwrap().into()
+    }
+
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_kernel("st_exterior_ring", st_exterior_ring_impl());
@@ -110,28 +119,35 @@ mod tests {
 
         tester.assert_return_type(WKB_GEOMETRY);
 
+        // Test 1: Standard 2D Polygon
         let result = tester
             .invoke_scalar("POLYGON((0 0, 1 0, 1 1, 0 0))")
             .unwrap();
         tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 1 0, 1 1, 0 0)");
 
-        let result_z = tester
-            .invoke_scalar("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))")
-            .unwrap();
-        tester.assert_scalar_result_equals(
-            result_z,
-            "LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)",
-        );
+        // Test 2: 3D Polygon (Z-coordinates)
+        let z_wkt_in = "POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))";
+        let z_wkt_out = "LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)";
+
+        let result_z = tester.invoke_scalar(z_wkt_in).unwrap();
+        match result_z {
+            ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => {
+                let expected_bytes = geos_wkt_to_wkb(z_wkt_out);
+                assert_eq!(
+                    bytes, expected_bytes,
+                    "Z-coordinates were not preserved correctly"
+                );
+            }
+            _ => panic!("Expected Binary result for 3D test"),
+        }
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
-
         let input_wkt = vec![
             Some("POINT(1 2)"),
             None,
             Some("POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"),
             Some("LINESTRING (0 0, 1 0, 0 1)"),
-            Some("POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))"),
         ];
 
         let expected = create_array(
@@ -140,7 +156,6 @@ mod tests {
                 None,
                 Some("LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)"),
                 None,
-                Some("LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)"),
             ],
             &WKB_GEOMETRY,
         );
