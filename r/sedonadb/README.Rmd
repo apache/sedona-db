@@ -34,11 +34,18 @@ knitr::opts_chunk$set(
 # sedonadb
 
 <!-- badges: start -->
+[![R-multiverse status](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcommunity.r-multiverse.org%2Fapi%2Fpackages%2Fsedonadb&query=%24.Version&label=r-multiverse)](https://community.r-multiverse.org/sedonadb)
 <!-- badges: end -->
 
 The goal of sedonadb is to provide an R interface to [Apache SedonaDB](https://sedona.apache.org/sedonadb). SedonaDB provides a [DataFusion](https://datafusion.apache.org)-powered single-node engine with a wide range of spatial capabilities built in, including spatial SQL with high function coverage and GeoParquet IO.
 
 ## Installation
+
+sedonadb can be installed from [R-multiverse](https://community.r-multiverse.org/):
+
+``` r
+install.packages("sedonadb", repos = "https://community.r-multiverse.org")
+```
 
 You can install the development version of sedonadb from [GitHub](https://github.com/) with:
 
