@@ -19,7 +19,6 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
-
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
     benchmark::scalar(
         c,
@@ -49,6 +48,39 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native-raster", "rs_upperleftx", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_upperlefty", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_width", Raster(64, 64));
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_worldtorastercoord",
+        BenchmarkArgs::ArrayScalarScalar(
+            Raster(64, 64),
+            Float64(-45.0, 45.0),
+            Float64(-45.0, 45.0),
+        ),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_worldtorastercoordx",
+        BenchmarkArgs::ArrayScalarScalar(
+            Raster(64, 64),
+            Float64(-45.0, 45.0),
+            Float64(-45.0, 45.0),
+        ),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_worldtorastercoordy",
+        BenchmarkArgs::ArrayScalarScalar(
+            Raster(64, 64),
+            Float64(-45.0, 45.0),
+            Float64(-45.0, 45.0),
+        ),
+    );
 }
 
 criterion_group!(benches, criterion_benchmark);

@@ -1,6 +1,6 @@
 Package: sedonadb
 Title: Bindings for Apache SedonaDB
-Version: 0.1.0.9000
+Version: 0.2.0.9000
 Authors@R:
     person("Dewey", "Dunnington", , "dewey@dunnington.ca", role = c("aut", "cre"))
 Description: Provides bindings for Apache SedonaDB, a lightweight

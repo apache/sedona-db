@@ -20,6 +20,7 @@ use fastrand::Rng;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_schema::crs::lnglat;
 use sedona_schema::raster::{BandDataType, StorageType};
 
 /// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values
@@ -29,6 +30,7 @@ pub fn generate_test_rasters(
     null_raster_index: Option<usize>,
 ) -> Result<StructArray> {
     let mut builder = RasterBuilder::new(count);
+    let crs = lnglat().unwrap().to_crs_string();
     for i in 0..count {
         // If a null raster index is specified and that matches the current index,
         // append a null raster
@@ -47,7 +49,7 @@ pub fn generate_test_rasters(
             skew_x: i as f64 * 0.3,
             skew_y: i as f64 * 0.4,
         };
-        builder.start_raster(&raster_metadata, None)?;
+        builder.start_raster(&raster_metadata, Some(&crs))?;
         builder.start_band(BandMetadata {
             datatype: BandDataType::UInt16,
             nodata_value: Some(vec![0u8; 2]),

@@ -44,7 +44,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -126,26 +126,26 @@ tokio = { version = "1.44" }
 url = "2.5.4"
 
 # Workspace path dependencies for internal crates
-sedona = { version = "0.2.0", path = "rust/sedona" }
-sedona-adbc = { version = "0.2.0", path = "rust/sedona-adbc" }
-sedona-common = { version = "0.2.0", path = "rust/sedona-common" }
-sedona-datasource = { version = "0.2.0", path = "rust/sedona-datasource" }
-sedona-expr = { version = "0.2.0", path = "rust/sedona-expr" }
-sedona-functions = { version = "0.2.0", path = "rust/sedona-functions" }
-sedona-geo = { version = "0.2.0", path = "rust/sedona-geo" }
-sedona-geo-generic-alg = { version = "0.2.0", path = "rust/sedona-geo-generic-alg" }
-sedona-geo-traits-ext = { version = "0.2.0", path = "rust/sedona-geo-traits-ext" }
-sedona-geometry = { version = "0.2.0", path = "rust/sedona-geometry" }
-sedona-geoparquet = { version = "0.2.0", path = "rust/sedona-geoparquet" }
-sedona-raster = { version = "0.2.0", path = "rust/sedona-raster" }
-sedona-raster-functions = { version = "0.2.0", path = "rust/sedona-raster-functions" }
-sedona-schema = { version = "0.2.0", path = "rust/sedona-schema" }
-sedona-spatial-join = { version = "0.2.0", path = "rust/sedona-spatial-join" }
+sedona = { version = "0.3.0", path = "rust/sedona" }
+sedona-adbc = { version = "0.3.0", path = "rust/sedona-adbc" }
+sedona-common = { version = "0.3.0", path = "rust/sedona-common" }
+sedona-datasource = { version = "0.3.0", path = "rust/sedona-datasource" }
+sedona-expr = { version = "0.3.0", path = "rust/sedona-expr" }
+sedona-functions = { version = "0.3.0", path = "rust/sedona-functions" }
+sedona-geo = { version = "0.3.0", path = "rust/sedona-geo" }
+sedona-geo-generic-alg = { version = "0.3.0", path = "rust/sedona-geo-generic-alg" }
+sedona-geo-traits-ext = { version = "0.3.0", path = "rust/sedona-geo-traits-ext" }
+sedona-geometry = { version = "0.3.0", path = "rust/sedona-geometry" }
+sedona-geoparquet = { version = "0.3.0", path = "rust/sedona-geoparquet" }
+sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
+sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
+sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
+sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
 # sedona-testing is not published to crates.io, so it uses path-only in individual crates
 
 # C wrapper crates
-sedona-geoarrow-c = { version = "0.2.0", path = "c/sedona-geoarrow-c" }
-sedona-geos = { version = "0.2.0", path = "c/sedona-geos" }
-sedona-proj = { version = "0.2.0", path = "c/sedona-proj", default-features = false }
-sedona-s2geography = { version = "0.2.0", path = "c/sedona-s2geography" }
-sedona-tg = { version = "0.2.0", path = "c/sedona-tg" }
+sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }
+sedona-geos = { version = "0.3.0", path = "c/sedona-geos" }
+sedona-proj = { version = "0.3.0", path = "c/sedona-proj", default-features = false }
+sedona-s2geography = { version = "0.3.0", path = "c/sedona-s2geography" }
+sedona-tg = { version = "0.3.0", path = "c/sedona-tg" }
