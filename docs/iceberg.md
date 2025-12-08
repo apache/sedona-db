@@ -76,10 +76,10 @@ Convert all the columns to be plain strings because Iceberg doesn’t support ge
 ```python
 countries.to_view("countries", True)
 df = sd.sql("""
-    select 
-        ARROW_CAST(name, 'Utf8') as name, 
-        ARROW_CAST(continent, 'Utf8') as continent, 
-        ST_AsText(geometry) as geometry_wkt 
+    select
+        ARROW_CAST(name, 'Utf8') as name,
+        ARROW_CAST(continent, 'Utf8') as continent,
+        ST_AsText(geometry) as geometry_wkt
     from countries
 """)
 ```
@@ -182,7 +182,7 @@ Iceberg added support for geometry and geography columns in the v3 spec.
 
 The Iceberg v3 implementation has not been released yet, and it the v3 spec hasn't started in Iceberg Rust.  Here is [the open issue](https://github.com/apache/iceberg-rust/issues/1884) to add geo support to Iceberg Rust.
 
-It’s best to manually persist the bbox information of files in your Iceberg table if you’re storing geometric data as WKT or WKB. 
+It’s best to manually persist the bbox information of files in your Iceberg table if you’re storing geometric data as WKT or WKB.
 
 ## Create an Iceberg table with WKB and bbox
 
@@ -203,8 +203,8 @@ Now write the DataFrame to an Iceberg table with bbox columns:
 
 ```python
 df = sd.sql("""
-select 
-    ARROW_CAST(name, 'Utf8') as name, 
+select
+    ARROW_CAST(name, 'Utf8') as name,
     ARROW_CAST(ST_AsBinary(geometry), 'Binary') as geometry_wkb,
     ST_XMin(geometry) as bbox_xmin,
     ST_YMin(geometry) as bbox_ymin,
@@ -329,4 +329,3 @@ sd.sql("select name, ST_GeomFromWKB(geometry_wkb) as geom from us_east_cities").
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ New York         ┆ POINT(-73.99571754361698 40.72156174972766)  │
     └──────────────────┴──────────────────────────────────────────────┘
-
