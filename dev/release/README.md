@@ -65,6 +65,26 @@ environment variable may be set.
 export MATURIN_PEP517_ARGS="--features s2geography"
 ```
 
+## Pre-release
+
+Approaching the release date, create a draft pull request into Apache Sedona
+that contains a draft of the release post for the
+[Apache Sedona Blog](https://sedona.apache.org/latest/blog). Ensure that each
+release highlight has an example and that the example runs. Blog posts are
+rendered from the [docs/blog/posts](https://github.com/apache/sedona/tree/master/docs/blog/posts)
+subdirectory of the apache/sedona repository.
+
+Before the release branch is created, the GitHub milestone should also be updated.
+Items that should be included in the milestone are:
+
+- Issues that were closed as completed (e.g., a PR closed them or some other task
+  resolved them in a different way).
+- Pull Requests that did not close an issue (i.e., a PR can both represent a discussion
+  of a problem and the code change that solves it).
+
+The milestone issue/pull request count is used in the blog post and the email send to the
+mailing list to start the vote.
+
 ## Creating a release
 
 Create a release branch on the corresponding remote pointing to the official Apache
@@ -132,6 +152,38 @@ APACHE_USERNAME=your_apache_username dev/release/upload-candidate.sh 0.2.0 0
 
 An email must now be sent to `dev@sedona.apache.org` calling on developers to follow
 the release verification instructions and vote appropriately on the source release.
+The following may be used as a template:
+
+```
+[VOTE] Release Apache SedonaDB 0.2.0-rc0
+
+Hello,
+
+I would like to propose the following release candidate (rc0) of Apache SedonaDB [0] version 0.2.0. This is a release consisting of 138 resolved GitHub issues from 17 contributors [1].
+
+This release candidate is based on commit: 69f89a9a0cced55a3792eb6dfe1f76e9dd01033c [2]
+
+The source release rc0 is hosted at [3].
+
+Please download, verify checksums and signatures, run the unit tests, and vote on the release. See [4] for how to validate a release candidate. See [5] for a draft release post with release highlights.
+
+The vote will be open for at least 72 hours.
+
+[ ] +1 Release this as Apache SedonaDB 0.2.0
+[ ] +0
+[ ] -1 Do not release this as Apache SedonaDB 0.2.0 because...
+
+[0] https://github.com/apache/sedona-db
+[1] https://github.com/apache/sedona-db/milestone/1?closed=1
+[2] https://github.com/apache/sedona-db/tree/apache-sedona-db-0.2.0-rc1
+[3] https://dist.apache.org/repos/dist/dev/sedona/apache-sedona-db-0.2.0-rc1
+[4] https://github.com/apache/arrow-nanoarrow/blob/main/dev/release/README.md
+[5] https://github.com/apache/sedona/pull/2540
+```
+
+Ensure the links point to the correct assets/blog post pull request, the issue count has been updated
+from the latest GitHub milestone, and the contributor count has been updated from the
+`git shortlog` command on the release blog post.
 
 ## Publish
 
@@ -193,6 +245,12 @@ A script is provided to upload the crates to <https://crates.io>.
 cargo login
 dev/release/upload-crates-io.sh
 ```
+
+### Publish release blog post
+
+Mark the [pull request into the Apache Sedona Blog](https://github.com/apache/sedona/pulls)
+as ready for review, solicit final reviews, and merge to publish the post to the
+[Apache Sedona Blog](https://sedona.apache.org/latest/blog).
 
 ### Send email to `announce@apache.org` mailing list
 
