@@ -79,7 +79,7 @@ Here's how to install SedonaDB with various build tools:
 
 === "R"
 
-	```bash
+	```r
 	install.packages("sedonadb", repos = "https://community.r-multiverse.org")
 	```
 
