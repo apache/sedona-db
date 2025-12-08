@@ -265,4 +265,3 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
 `print.sedonadb::InternalDataFrame__bundle` <- function(x, ...) {
   cat('sedonadb::InternalDataFrame\n')
 }
-
