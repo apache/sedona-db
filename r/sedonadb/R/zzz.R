@@ -20,6 +20,8 @@
   requireNamespace("geoarrow", quietly = TRUE)
 
   s3_register("sf::st_as_sf", "sedonadb_dataframe")
+
+  s3_register("dplyr::collect", "sedonadb_dataframe")
   s3_register("dplyr::select", "sedonadb_dataframe")
 
   # Inject what we need to reduce the Rust code to a simple Rf_eval()

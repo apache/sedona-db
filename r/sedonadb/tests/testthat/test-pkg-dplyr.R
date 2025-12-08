@@ -15,16 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-collect.sedonadb_dataframe <- function(x, ...) {
-  rlang::check_dots_empty()
-  tibble::as_tibble(sd_collect(x))
-}
+test_that("select() works for sedonadb_dataframe", {
+  skip_if_not_installed("dplyr")
 
-select.sedonadb_dataframe <- function(.data, ...) {
-  schema <- nanoarrow::infer_nanoarrow_schema(.data)
-  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
-  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
+  df <- sd_sql("SELECT 1 as one, 'two' as two, 3.0 as \"THREE\"")
 
-  df <- .data$df$select_indices(names(loc), loc - 1L)
-  new_sedonadb_dataframe(.data$ctx, df)
-}
+  expect_identical(
+    df |> dplyr::select(2:3) |> dplyr::collect(),
+    tibble::tibble(two = "two", THREE = 3.0)
+  )
+
+  expect_identical(
+    df |> dplyr::select(three_renamed = THREE, one) |> dplyr::collect(),
+    tibble::tibble(three_renamed = 3.0, one = 1)
+  )
+
+  expect_identical(
+    df |> dplyr::select(TWO = two) |> dplyr::collect(),
+    tibble::tibble(TWO = "two")
+  )
+})
