@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#![allow(dead_code)]
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
