@@ -145,8 +145,10 @@ struct SedonaCScalarKernelImpl {
   /// passed.
   ///
   /// \return An errno-compatible error code, or zero on success.
-  int (*init)(struct SedonaCScalarKernelImpl* self, const struct ArrowSchema** arg_types,
-              struct ArrowArray** scalar_args, int64_t n_args, struct ArrowSchema* out);
+  int (*init)(struct SedonaCScalarKernelImpl* self,
+              const struct ArrowSchema* const* arg_types,
+              struct ArrowArray* const* scalar_args, int64_t n_args,
+              struct ArrowSchema* out);
 
   /// \brief Execute a single batch
   ///
@@ -155,7 +157,7 @@ struct SedonaCScalarKernelImpl {
   /// inputs.
   /// \param n_args The number of pointers in args
   /// \param out Will be populated with the result on success.
-  int (*execute)(struct SedonaCScalarKernelImpl* self, struct ArrowArray** args,
+  int (*execute)(struct SedonaCScalarKernelImpl* self, struct ArrowArray* const* args,
                  int64_t n_args, int64_t n_rows, struct ArrowArray* out);
 
   /// \brief Get the last error message

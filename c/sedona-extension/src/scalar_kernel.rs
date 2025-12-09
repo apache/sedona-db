@@ -56,13 +56,8 @@ impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
     type Error = DataFusionError;
 
     fn try_from(value: SedonaCScalarKernel) -> Result<Self> {
-        match (
-            &value.function_name,
-            &value.new_impl,
-            &value.release,
-            value.private_data.is_null(),
-        ) {
-            (Some(function_name), Some(_), Some(_), false) => {
+        match (&value.function_name, &value.new_impl, &value.release) {
+            (Some(function_name), Some(_), Some(_)) => {
                 let name_ptr = unsafe { function_name(&value) };
                 let name = if name_ptr.is_null() {
                     None
@@ -213,7 +208,7 @@ impl CScalarKernelImplWrapper {
             .collect::<Result<Vec<_>>>()?;
 
         // Convert arg_scalars to Vec<*mut FFI_ArrowArray>
-        let mut ffi_scalar_ptrs = ffi_scalars
+        let ffi_scalar_ptrs = ffi_scalars
             .iter_mut()
             .map(|maybe_ffi_scalar| match maybe_ffi_scalar {
                 Some(ffi_scalar) => ffi_scalar as *mut FFI_ArrowArray,
@@ -228,7 +223,7 @@ impl CScalarKernelImplWrapper {
                 init(
                     &mut self.inner,
                     ffi_field_ptrs.as_ptr(),
-                    ffi_scalar_ptrs.as_mut_ptr(),
+                    ffi_scalar_ptrs.as_ptr(),
                     arg_types.len() as i64,
                     &mut ffi_out,
                 )
@@ -276,6 +271,10 @@ impl CScalarKernelImplWrapper {
             .iter()
             .map(|arg| FFI_ArrowArray::new(&arg.to_data()))
             .collect::<Vec<_>>();
+        let ffi_arg_ptrs = ffi_args
+            .iter_mut()
+            .map(|arg| arg as *mut FFI_ArrowArray)
+            .collect::<Vec<_>>();
 
         // Call the FFI implementation of execute()
         if let Some(execute) = self.inner.execute {
@@ -283,7 +282,7 @@ impl CScalarKernelImplWrapper {
             let code = unsafe {
                 execute(
                     &mut self.inner,
-                    &mut ffi_args.as_mut_ptr(),
+                    ffi_arg_ptrs.as_ptr(),
                     args.len() as i64,
                     num_rows as i64,
                     &mut ffi_out,
@@ -584,7 +583,7 @@ impl ExportedScalarKernelImpl {
 unsafe extern "C" fn c_kernel_init(
     self_: *mut SedonaCScalarKernelImpl,
     arg_types: *const *const FFI_ArrowSchema,
-    scalar_args: *mut *mut FFI_ArrowArray,
+    scalar_args: *const *mut FFI_ArrowArray,
     n_args: i64,
     out: *mut FFI_ArrowSchema,
 ) -> c_int {
@@ -619,7 +618,7 @@ unsafe extern "C" fn c_kernel_init(
 /// C callable wrapper around [ExportedScalarKernelImpl::execute]
 unsafe extern "C" fn c_kernel_execute(
     self_: *mut SedonaCScalarKernelImpl,
-    args: *mut *mut FFI_ArrowArray,
+    args: *const *mut FFI_ArrowArray,
     n_args: i64,
     n_rows: i64,
     out: *mut FFI_ArrowArray,

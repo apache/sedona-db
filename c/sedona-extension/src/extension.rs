@@ -61,7 +61,7 @@ pub struct SedonaCScalarKernelImpl {
         unsafe extern "C" fn(
             self_: *mut SedonaCScalarKernelImpl,
             arg_types: *const *const FFI_ArrowSchema,
-            scalar_args: *mut *mut FFI_ArrowArray,
+            scalar_args: *const *mut FFI_ArrowArray,
             n_args: i64,
             out: *mut FFI_ArrowSchema,
         ) -> c_int,
@@ -70,7 +70,7 @@ pub struct SedonaCScalarKernelImpl {
     pub execute: Option<
         unsafe extern "C" fn(
             self_: *mut SedonaCScalarKernelImpl,
-            args: *mut *mut FFI_ArrowArray,
+            args: *const *mut FFI_ArrowArray,
             n_args: i64,
             n_rows: i64,
             out: *mut FFI_ArrowArray,
