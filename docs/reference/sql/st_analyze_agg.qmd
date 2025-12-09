@@ -24,10 +24,6 @@ sql_example: |
   ) AS analyze
 ---
 
-## Description
-
-{{< meta description >}}
-
 ## Format
 
 ```sql

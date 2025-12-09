@@ -21,3 +21,5 @@ format: gfm
 engine: jupyter
 execute:
   echo: false
+filters:
+  - _extensions/auto-description.lua
