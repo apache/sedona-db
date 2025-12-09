@@ -74,7 +74,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let p2 = Point::new(100.0, 100.0);
 
         bencher.iter(|| {
-            criterion::black_box(criterion::black_box(&p1).distance_ext(criterion::black_box(&p2)));
+            std::hint::black_box(std::hint::black_box(&p1).distance_ext(std::hint::black_box(&p2)));
         });
     });
 
@@ -87,8 +87,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         ]);
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&ls1).distance_ext(criterion::black_box(&ls2)),
+            std::hint::black_box(
+                std::hint::black_box(&ls1).distance_ext(std::hint::black_box(&ls2)),
             );
         });
     });
@@ -116,8 +116,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&poly1).distance_ext(criterion::black_box(&poly2)),
+            std::hint::black_box(
+                std::hint::black_box(&poly1).distance_ext(std::hint::black_box(&poly2)),
             );
         });
     });
@@ -131,7 +131,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         bencher.iter(|| {
             let wkb_geom1 = wkb::reader::read_wkb(&wkb_bytes1).unwrap();
             let wkb_geom2 = wkb::reader::read_wkb(&wkb_bytes2).unwrap();
-            criterion::black_box(wkb_geom1.distance_ext(&wkb_geom2));
+            std::hint::black_box(wkb_geom1.distance_ext(&wkb_geom2));
         });
     });
 
@@ -148,7 +148,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         bencher.iter(|| {
             let wkb_geom1 = wkb::reader::read_wkb(&wkb_bytes1).unwrap();
             let wkb_geom2 = wkb::reader::read_wkb(&wkb_bytes2).unwrap();
-            criterion::black_box(wkb_geom1.distance_ext(&wkb_geom2));
+            std::hint::black_box(wkb_geom1.distance_ext(&wkb_geom2));
         });
     });
 
@@ -177,8 +177,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mp2 = MultiPolygon::new(vec![poly2.clone(), poly2]);
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&mp1).distance_ext(criterion::black_box(&mp2)),
+            std::hint::black_box(
+                std::hint::black_box(&mp1).distance_ext(std::hint::black_box(&mp2)),
             );
         });
     });
@@ -188,8 +188,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         let p2 = Point::new(100.0, 100.0);
 
         bencher.iter(|| {
-            criterion::black_box(
-                Euclidean.distance(criterion::black_box(p1), criterion::black_box(p2)),
+            std::hint::black_box(
+                Euclidean.distance(std::hint::black_box(p1), std::hint::black_box(p2)),
             );
         });
     });
@@ -203,8 +203,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         ]);
 
         bencher.iter(|| {
-            criterion::black_box(
-                geo::Euclidean.distance(criterion::black_box(&ls1), criterion::black_box(&ls2)),
+            std::hint::black_box(
+                geo::Euclidean.distance(std::hint::black_box(&ls1), std::hint::black_box(&ls2)),
             );
         });
     });
@@ -218,9 +218,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         ]);
 
         bencher.iter(|| {
-            criterion::black_box(Euclidean.distance(
-                criterion::black_box(&point),
-                criterion::black_box(&linestring),
+            std::hint::black_box(Euclidean.distance(
+                std::hint::black_box(&point),
+                std::hint::black_box(&linestring),
             ));
         });
     });
@@ -240,9 +240,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            criterion::black_box(Euclidean.distance(
-                criterion::black_box(&linestring),
-                criterion::black_box(&polygon),
+            std::hint::black_box(Euclidean.distance(
+                std::hint::black_box(&linestring),
+                std::hint::black_box(&polygon),
             ));
         });
     });
@@ -261,8 +261,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            criterion::black_box(
-                Euclidean.distance(criterion::black_box(&point), criterion::black_box(&polygon)),
+            std::hint::black_box(
+                Euclidean.distance(std::hint::black_box(&point), std::hint::black_box(&polygon)),
             );
         });
     });
@@ -298,8 +298,8 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             bencher.iter(|| {
                 // Generic implementation
-                criterion::black_box(
-                    criterion::black_box(&poly1).distance_ext(criterion::black_box(&poly2)),
+                std::hint::black_box(
+                    std::hint::black_box(&poly1).distance_ext(std::hint::black_box(&poly2)),
                 );
             });
         },
@@ -331,8 +331,8 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             bencher.iter(|| {
                 // Concrete implementation
-                criterion::black_box(
-                    Euclidean.distance(criterion::black_box(&poly1), criterion::black_box(&poly2)),
+                std::hint::black_box(
+                    Euclidean.distance(std::hint::black_box(&poly1), std::hint::black_box(&poly2)),
                 );
             });
         },
@@ -369,9 +369,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&poly_with_hole)
-                    .distance_ext(criterion::black_box(&small_poly)),
+            std::hint::black_box(
+                std::hint::black_box(&poly_with_hole)
+                    .distance_ext(std::hint::black_box(&small_poly)),
             );
         });
     });
@@ -404,9 +404,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            criterion::black_box(Euclidean.distance(
-                criterion::black_box(&poly_with_hole),
-                criterion::black_box(&small_poly),
+            std::hint::black_box(Euclidean.distance(
+                std::hint::black_box(&poly_with_hole),
+                std::hint::black_box(&small_poly),
             ));
         });
     });
@@ -417,9 +417,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         let complex_poly2 = create_complex_polygon(100.0, 100.0, 30.0, 15); // 15 vertices
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&complex_poly1)
-                    .distance_ext(criterion::black_box(&complex_poly2)),
+            std::hint::black_box(
+                std::hint::black_box(&complex_poly1)
+                    .distance_ext(std::hint::black_box(&complex_poly2)),
             );
         });
     });
@@ -429,9 +429,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         let complex_poly2 = create_complex_polygon(100.0, 100.0, 30.0, 15);
 
         bencher.iter(|| {
-            criterion::black_box(Euclidean.distance(
-                criterion::black_box(&complex_poly1),
-                criterion::black_box(&complex_poly2),
+            std::hint::black_box(Euclidean.distance(
+                std::hint::black_box(&complex_poly1),
+                std::hint::black_box(&complex_poly2),
             ));
         });
     });
@@ -454,9 +454,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         ]);
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&intersecting_linestring)
-                    .distance_ext(criterion::black_box(&polygon)),
+            std::hint::black_box(
+                std::hint::black_box(&intersecting_linestring)
+                    .distance_ext(std::hint::black_box(&polygon)),
             );
         });
     });
@@ -476,9 +476,9 @@ fn criterion_benchmark(c: &mut Criterion) {
             LineString::from(vec![coord!(x: -50.0, y: 50.0), coord!(x: 150.0, y: 50.0)]);
 
         bencher.iter(|| {
-            criterion::black_box(Euclidean.distance(
-                criterion::black_box(&intersecting_linestring),
-                criterion::black_box(&polygon),
+            std::hint::black_box(Euclidean.distance(
+                std::hint::black_box(&intersecting_linestring),
+                std::hint::black_box(&polygon),
             ));
         });
     });
@@ -489,8 +489,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mp2 = create_multipolygon(3); // 3 polygons
 
         bencher.iter(|| {
-            criterion::black_box(
-                criterion::black_box(&mp1).distance_ext(criterion::black_box(&mp2)),
+            std::hint::black_box(
+                std::hint::black_box(&mp1).distance_ext(std::hint::black_box(&mp2)),
             );
         });
     });
@@ -500,8 +500,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         let mp2 = create_multipolygon(3);
 
         bencher.iter(|| {
-            criterion::black_box(
-                Euclidean.distance(criterion::black_box(&mp1), criterion::black_box(&mp2)),
+            std::hint::black_box(
+                Euclidean.distance(std::hint::black_box(&mp1), std::hint::black_box(&mp2)),
             );
         });
     });

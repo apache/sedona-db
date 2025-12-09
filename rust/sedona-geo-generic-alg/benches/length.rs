@@ -26,7 +26,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let linestring = sedona_testing::fixtures::norway_main::<f32>();
 
         bencher.iter(|| {
-            criterion::black_box(criterion::black_box(&linestring).length_ext(&Euclidean));
+            std::hint::black_box(std::hint::black_box(&linestring).length_ext(&Euclidean));
         });
     });
 
@@ -34,7 +34,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let linestring = sedona_testing::fixtures::norway_main::<f64>();
 
         bencher.iter(|| {
-            criterion::black_box(criterion::black_box(&linestring).length_ext(&Euclidean));
+            std::hint::black_box(std::hint::black_box(&linestring).length_ext(&Euclidean));
         });
     });
 
@@ -44,7 +44,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         bencher.iter(|| {
             let wkb_geom = wkb::reader::read_wkb(&wkb_bytes).unwrap();
-            criterion::black_box(wkb_geom.length_ext(&Euclidean));
+            std::hint::black_box(wkb_geom.length_ext(&Euclidean));
         });
     });
 
@@ -55,7 +55,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         bencher.iter(|| {
             let wkb_geom = wkb::reader::read_wkb(&wkb_bytes).unwrap();
             let geom = wkb_geom.to_geometry();
-            criterion::black_box(geom.length_ext(&Euclidean));
+            std::hint::black_box(geom.length_ext(&Euclidean));
         });
     });
 }

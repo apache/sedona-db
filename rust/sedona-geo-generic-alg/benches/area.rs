@@ -28,7 +28,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
-            criterion::black_box(criterion::black_box(&polygon).signed_area());
+            std::hint::black_box(std::hint::black_box(&polygon).signed_area());
         });
     });
 
@@ -37,7 +37,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
-            criterion::black_box(criterion::black_box(&polygon).signed_area());
+            std::hint::black_box(std::hint::black_box(&polygon).signed_area());
         });
     });
 
@@ -46,7 +46,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
-            criterion::black_box(geo::Area::signed_area(criterion::black_box(&polygon)));
+            std::hint::black_box(geo::Area::signed_area(std::hint::black_box(&polygon)));
         });
     });
 
@@ -55,7 +55,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let polygon = Polygon::new(norway, vec![]);
 
         bencher.iter(|| {
-            criterion::black_box(geo::Area::signed_area(criterion::black_box(&polygon)));
+            std::hint::black_box(geo::Area::signed_area(std::hint::black_box(&polygon)));
         });
     });
 
@@ -66,7 +66,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         bencher.iter(|| {
             let wkb_geom = wkb::reader::read_wkb(&wkb_bytes).unwrap();
-            criterion::black_box(wkb_geom.signed_area());
+            std::hint::black_box(wkb_geom.signed_area());
         });
     });
 
@@ -78,7 +78,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         bencher.iter(|| {
             let wkb_geom = wkb::reader::read_wkb(&wkb_bytes).unwrap();
             let geom = wkb_geom.to_geometry();
-            criterion::black_box(geom.signed_area());
+            std::hint::black_box(geom.signed_area());
         });
     });
 }
