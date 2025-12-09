@@ -68,6 +68,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_azimuth::st_azimuth_udf,
         crate::st_buffer::st_buffer_udf,
         crate::st_centroid::st_centroid_udf,
+        crate::st_concavehull::st_concavehull_udf,
         crate::st_dimension::st_dimension_udf,
         crate::st_dump::st_dump_udf,
         crate::st_dwithin::st_dwithin_udf,

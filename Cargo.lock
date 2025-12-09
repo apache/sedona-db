@@ -4992,6 +4992,7 @@ dependencies = [
  "geo-traits",
  "geo-types",
  "geos",
+ "geos-sys",
  "rstest",
  "sedona",
  "sedona-common",

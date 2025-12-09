@@ -24,6 +24,7 @@ mod st_area;
 mod st_boundary;
 mod st_buffer;
 mod st_centroid;
+mod st_concavehull;
 mod st_convexhull;
 mod st_dwithin;
 mod st_isring;

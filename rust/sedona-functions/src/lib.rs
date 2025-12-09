@@ -31,6 +31,7 @@ mod st_azimuth;
 mod st_buffer;
 mod st_centroid;
 mod st_collect_agg;
+mod st_concavehull;
 mod st_dimension;
 mod st_dump;
 mod st_dwithin;

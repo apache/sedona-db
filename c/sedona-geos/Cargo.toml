@@ -39,6 +39,7 @@ arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geos = { workspace = true }
+geos-sys = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
