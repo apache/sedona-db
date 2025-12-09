@@ -227,6 +227,7 @@ MIT License
 c/sedona-tg/src/tg (vendored from https://github.com/tidwall/tg)
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/doubledouble.h (ported and contains copied code from https://github.com/WarrenWeckesser/doubledouble)
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/morton_code.h (ported and contains copied code from https://github.com/ToruNiina/lbvh)
+c/sedona-libgpuspatial/libgpuspatial/test/geoarrow_geos (vendored from https://github.com/geoarrow/geoarrow-c-geos)
 
 
 Zlib License
