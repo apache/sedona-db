@@ -272,6 +272,9 @@ http://sedona.apache.org/sedonadb
 Release notes:
 https://sedona.apache.org/latest/blog/2025/12/01/sedonadb-020-release/
 
+Download link:
+https://www.apache.org/dyn/closer.cgi/sedona/apache-sedona-db-0.2.0
+
 Additional resources:
 Mailing list: dev@sedona.apache.org
 Discord: https://discord.gg/9A3k5dEBsY
@@ -287,6 +290,7 @@ Ensure that:
   via the official Apache outgoing mail server.
 - The email is plain text and contains no HTML formatting (or it will be rejected
   from the announce list).
+- The email contains a download link (or it will be rejected from the announce list)
 
 ## Bump versions
 
