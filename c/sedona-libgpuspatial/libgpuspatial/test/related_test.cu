@@ -241,7 +241,7 @@ void TestRelate(const char* wkt1, const char* wkt2, const GEOMETRY1_T& g1,
 
   int val = relate(g1, g2);
   char res[10];
-  IM__ToString(val, res);
+  IntersectionMatrix::ToString(val, res);
   ASSERT_STREQ(actualVal.c_str(), res);
 }
 

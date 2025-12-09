@@ -238,7 +238,6 @@ c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.h (por
 POSTGRESQL LICENSE
 --------------------------------------
 
-c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/im.cuh (contains copied code from https://github.com/heterodb/pg-strom)
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/relate.cuh (contains copied code from https://github.com/heterodb/pg-strom)
 
 

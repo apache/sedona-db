@@ -38,40 +38,55 @@ namespace detail {
 DEV_HOST_INLINE bool EvaluatePredicate(Predicate p, int32_t im) {
   switch (p) {
     case Predicate::kEquals: {
-      return (im & IM__INTER_INTER_2D) != 0 && (im & IM__INTER_EXTER_2D) == 0 &&
-             (im & IM__BOUND_EXTER_2D) == 0 && (im & IM__EXTER_INTER_2D) == 0 &&
-             (im & IM__EXTER_BOUND_2D) == 0;
+      return (im & IntersectionMatrix::INTER_INTER_2D) != 0 &&
+             (im & IntersectionMatrix::INTER_EXTER_2D) == 0 &&
+             (im & IntersectionMatrix::BOUND_EXTER_2D) == 0 &&
+             (im & IntersectionMatrix::EXTER_INTER_2D) == 0 &&
+             (im & IntersectionMatrix::EXTER_BOUND_2D) == 0;
     }
     case Predicate::kDisjoint: {
-      return (im & IM__INTER_INTER_2D) == 0 && (im & IM__INTER_BOUND_2D) == 0 &&
-             (im & IM__BOUND_INTER_2D) == 0 && (im & IM__BOUND_BOUND_2D) == 0;
+      return (im & IntersectionMatrix::INTER_INTER_2D) == 0 &&
+             (im & IntersectionMatrix::INTER_BOUND_2D) == 0 &&
+             (im & IntersectionMatrix::BOUND_INTER_2D) == 0 &&
+             (im & IntersectionMatrix::BOUND_BOUND_2D) == 0;
     }
     case Predicate::kTouches: {
-      return (im & IM__INTER_INTER_2D) == 0 &&
-             ((im & IM__INTER_BOUND_2D) != 0 || (im & IM__BOUND_INTER_2D) != 0 ||
-              (im & IM__BOUND_BOUND_2D) != 0);
+      return (im & IntersectionMatrix::INTER_INTER_2D) == 0 &&
+             ((im & IntersectionMatrix::INTER_BOUND_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_INTER_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_BOUND_2D) != 0);
     }
     case Predicate::kContains: {
-      return (im & IM__INTER_INTER_2D) != 0 && (im & IM__EXTER_INTER_2D) == 0 &&
-             (im & IM__EXTER_BOUND_2D) == 0;
+      return (im & IntersectionMatrix::INTER_INTER_2D) != 0 &&
+             (im & IntersectionMatrix::EXTER_INTER_2D) == 0 &&
+             (im & IntersectionMatrix::EXTER_BOUND_2D) == 0;
     }
     case Predicate::kCovers: {
-      return (im & IM__EXTER_INTER_2D) == 0 && (im & IM__EXTER_BOUND_2D) == 0 &&
-             ((im & IM__INTER_INTER_2D) != 0 || (im & IM__INTER_BOUND_2D) != 0 ||
-              (im & IM__BOUND_INTER_2D) != 0 || (im & IM__BOUND_BOUND_2D) != 0);
+      return (im & IntersectionMatrix::EXTER_INTER_2D) == 0 &&
+             (im & IntersectionMatrix::EXTER_BOUND_2D) == 0 &&
+             ((im & IntersectionMatrix::INTER_INTER_2D) != 0 ||
+              (im & IntersectionMatrix::INTER_BOUND_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_INTER_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_BOUND_2D) != 0);
     }
     case Predicate::kIntersects: {
-      return (im & IM__INTER_INTER_2D) != 0 || (im & IM__INTER_BOUND_2D) != 0 ||
-             (im & IM__BOUND_INTER_2D) != 0 || (im & IM__BOUND_BOUND_2D) != 0;
+      return (im & IntersectionMatrix::INTER_INTER_2D) != 0 ||
+             (im & IntersectionMatrix::INTER_BOUND_2D) != 0 ||
+             (im & IntersectionMatrix::BOUND_INTER_2D) != 0 ||
+             (im & IntersectionMatrix::BOUND_BOUND_2D) != 0;
     }
     case Predicate::kWithin: {
-      return (im & IM__INTER_INTER_2D) != 0 && (im & IM__INTER_EXTER_2D) == 0 &&
-             (im & IM__BOUND_EXTER_2D) == 0;
+      return (im & IntersectionMatrix::INTER_INTER_2D) != 0 &&
+             (im & IntersectionMatrix::INTER_EXTER_2D) == 0 &&
+             (im & IntersectionMatrix::BOUND_EXTER_2D) == 0;
     }
     case Predicate::kCoveredBy: {
-      return (im & IM__INTER_EXTER_2D) == 0 && (im & IM__BOUND_EXTER_2D) == 0 &&
-             ((im & IM__INTER_INTER_2D) != 0 || (im & IM__INTER_BOUND_2D) != 0 ||
-              (im & IM__BOUND_INTER_2D) != 0 || (im & IM__BOUND_BOUND_2D) != 0);
+      return (im & IntersectionMatrix::INTER_EXTER_2D) == 0 &&
+             (im & IntersectionMatrix::BOUND_EXTER_2D) == 0 &&
+             ((im & IntersectionMatrix::INTER_INTER_2D) != 0 ||
+              (im & IntersectionMatrix::INTER_BOUND_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_INTER_2D) != 0 ||
+              (im & IntersectionMatrix::BOUND_BOUND_2D) != 0);
     }
     default:
       assert(false);
@@ -453,7 +468,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
                         auto IM = p_IMs[i];
                         if (inverse) {
-                          IM = IM__TWIST(IM);
+                          IM = IntersectionMatrix::Transpose(IM);
                         }
                         if (detail::EvaluatePredicate(predicate, IM)) {
                           return pair;
@@ -592,7 +607,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
                         auto IM = p_IMs[i];
                         if (inverse) {
-                          IM = IM__TWIST(IM);
+                          IM = IntersectionMatrix::Transpose(IM);
                         }
                         if (detail::EvaluatePredicate(predicate, IM)) {
                           return pair;

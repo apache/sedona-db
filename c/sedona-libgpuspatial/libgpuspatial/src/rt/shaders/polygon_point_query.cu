@@ -109,14 +109,14 @@ extern "C" __global__ void __raygen__gpuspatial() {
       bool matched = false;
 
       if (polygon.empty()) {
-        IM = IM__INTER_EXTER_0D | IM__EXTER_EXTER_2D;
+        IM = IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
       } else {
-        IM = IM__EXTER_EXTER_2D;
+        IM = IntersectionMatrix::EXTER_EXTER_2D;
       }
       RayCrossingCounter locator;
 
       if (polygon.empty()) return matched;
-      IM |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
+      IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
       uint32_t ring = 0;
       locator.Init();
       origin.z = reordered_polygon_idx;
@@ -173,12 +173,12 @@ extern "C" __global__ void __raygen__gpuspatial() {
       switch (final_location) {
         case PointLocation::kInside: {
           matched = true;
-          IM |= IM__INTER_INTER_0D;
+          IM |= IntersectionMatrix::INTER_INTER_0D;
           break;
         }
         case PointLocation::kBoundary: {
           matched = true;
-          IM |= IM__INTER_BOUND_0D;
+          IM |= IntersectionMatrix::INTER_BOUND_0D;
           break;
         }
         case PointLocation::kOutside: {
@@ -197,11 +197,11 @@ extern "C" __global__ void __raygen__gpuspatial() {
         assert(false);
       }
 #endif
-      if (!matched) IM |= IM__INTER_EXTER_0D;
+      if (!matched) IM |= IntersectionMatrix::INTER_EXTER_0D;
       return matched;
     };
 
-    int IM = IM__EXTER_EXTER_2D;
+    int IM = IntersectionMatrix::EXTER_EXTER_2D;
 
     if (!params.points.empty()) {
       handle_point(params.points[point_idx], 0 /*unused*/, IM);

@@ -1,5 +1,5 @@
 /*
-* PG-Strom Extension for GPU Acceleration on PostgreSQL Database
+ * PG-Strom Extension for GPU Acceleration on PostgreSQL Database
  *
  * Copyright (c) 2012-2024, KaiGai Kohei <kaigai@kaigai.gr.jp>
  * Copyright (c) 2017-2024, HeteroDB,Inc <contact@heterodb.com>
@@ -17,7 +17,8 @@
  * HETERODB,INC SPECIFICALLY DISCLAIMS ANY WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  * THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS, AND HETERODB,INC HAS
- * NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
+ * NO OBLIGATIONS TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
+ * MODIFICATIONS.
  */
 
 #pragma once
@@ -27,7 +28,7 @@
 #include "gpuspatial/geom/multi_polygon.cuh"
 #include "gpuspatial/geom/point.cuh"
 #include "gpuspatial/geom/polygon.cuh"
-#include "gpuspatial/relate/im.cuh"
+#include "gpuspatial/relate/intersection_matrix.cuh"
 // Ref: https://github.com/heterodb/pg-strom/blob/master/src/xpu_postgis.cu
 // A good visualize to cases
 // https://dev.luciad.com/portal/productDocumentation/LuciadFusion/docs/articles/guide/geometry/images/interior_exterior_boundary.png
@@ -49,112 +50,6 @@
 #define LONG_NBITS (sizeof(int64_t) * BITS_PER_BYTE)
 #endif
 namespace gpuspatial {
-
-/**
- * Transpose an IM
- */
-DEV_HOST_INLINE
-int32_t IM__TWIST(int32_t status) {
-  if (status < 0) return status; /* error */
-  return (((status & IM__INTER_INTER_2D)) | ((status & IM__INTER_BOUND_2D) << 6) |
-          ((status & IM__INTER_EXTER_2D) << 12) | ((status & IM__BOUND_INTER_2D) >> 6) |
-          ((status & IM__BOUND_BOUND_2D)) | ((status & IM__BOUND_EXTER_2D) << 6) |
-          ((status & IM__EXTER_INTER_2D) >> 12) | ((status & IM__EXTER_BOUND_2D) >> 6) |
-          ((status & IM__EXTER_EXTER_2D)));
-}
-
-DEV_HOST_INLINE void IM__ToString(int32_t status, char* res) {
-  if ((status & IM__INTER_INTER_2D) == IM__INTER_INTER_0D) {
-    res[0] = '0';
-  } else if ((status & IM__INTER_INTER_2D) == IM__INTER_INTER_1D) {
-    res[0] = '1';
-  } else if ((status & IM__INTER_INTER_2D) == IM__INTER_INTER_2D) {
-    res[0] = '2';
-  } else {
-    res[0] = 'F';
-  }
-
-  if ((status & IM__INTER_BOUND_2D) == IM__INTER_BOUND_0D) {
-    res[1] = '0';
-  } else if ((status & IM__INTER_BOUND_2D) == IM__INTER_BOUND_1D) {
-    res[1] = '1';
-  } else if ((status & IM__INTER_BOUND_2D) == IM__INTER_BOUND_2D) {
-    res[1] = '2';
-  } else {
-    res[1] = 'F';
-  }
-
-  if ((status & IM__INTER_EXTER_2D) == IM__INTER_EXTER_0D) {
-    res[2] = '0';
-  } else if ((status & IM__INTER_EXTER_2D) == IM__INTER_EXTER_1D) {
-    res[2] = '1';
-  } else if ((status & IM__INTER_EXTER_2D) == IM__INTER_EXTER_2D) {
-    res[2] = '2';
-  } else {
-    res[2] = 'F';
-  }
-
-  if ((status & IM__BOUND_INTER_2D) == IM__BOUND_INTER_0D) {
-    res[3] = '0';
-  } else if ((status & IM__BOUND_INTER_2D) == IM__BOUND_INTER_1D) {
-    res[3] = '1';
-  } else if ((status & IM__BOUND_INTER_2D) == IM__BOUND_INTER_2D) {
-    res[3] = '2';
-  } else {
-    res[3] = 'F';
-  }
-
-  if ((status & IM__BOUND_BOUND_2D) == IM__BOUND_BOUND_0D) {
-    res[4] = '0';
-  } else if ((status & IM__BOUND_BOUND_2D) == IM__BOUND_BOUND_1D) {
-    res[4] = '1';
-  } else if ((status & IM__BOUND_BOUND_2D) == IM__BOUND_BOUND_2D) {
-    res[4] = '2';
-  } else {
-    res[4] = 'F';
-  }
-
-  if ((status & IM__BOUND_EXTER_2D) == IM__BOUND_EXTER_0D) {
-    res[5] = '0';
-  } else if ((status & IM__BOUND_EXTER_2D) == IM__BOUND_EXTER_1D) {
-    res[5] = '1';
-  } else if ((status & IM__BOUND_EXTER_2D) == IM__BOUND_EXTER_2D) {
-    res[5] = '2';
-  } else {
-    res[5] = 'F';
-  }
-
-  if ((status & IM__EXTER_INTER_2D) == IM__EXTER_INTER_0D) {
-    res[6] = '0';
-  } else if ((status & IM__EXTER_INTER_2D) == IM__EXTER_INTER_1D) {
-    res[6] = '1';
-  } else if ((status & IM__EXTER_INTER_2D) == IM__EXTER_INTER_2D) {
-    res[6] = '2';
-  } else {
-    res[6] = 'F';
-  }
-
-  if ((status & IM__EXTER_BOUND_2D) == IM__EXTER_BOUND_0D) {
-    res[7] = '0';
-  } else if ((status & IM__EXTER_BOUND_2D) == IM__EXTER_BOUND_1D) {
-    res[7] = '1';
-  } else if ((status & IM__EXTER_BOUND_2D) == IM__EXTER_BOUND_2D) {
-    res[7] = '2';
-  } else {
-    res[7] = 'F';
-  }
-
-  if ((status & IM__EXTER_EXTER_2D) == IM__EXTER_EXTER_0D) {
-    res[8] = '0';
-  } else if ((status & IM__EXTER_EXTER_2D) == IM__EXTER_EXTER_1D) {
-    res[8] = '1';
-  } else if ((status & IM__EXTER_EXTER_2D) == IM__EXTER_EXTER_2D) {
-    res[8] = '2';
-  } else {
-    res[8] = 'F';
-  }
-  res[9] = '\0';
-}
 
 /**
  * Relate LineSegment P1-P2 with MultiPolygon.
@@ -274,12 +169,13 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
           if (p1_in_qq != PointLocation::kOutside &&
               p2_in_qq != PointLocation::kOutside) {
             /* P1-P2 is fully contained by Q1-Q2 */
-            if (p1_is_head) retval |= (IM__BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
-            if (p2_is_tail) retval |= (IM__BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
+            if (p1_is_head) retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
+            if (p2_is_tail) retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
             if (P1 == P2) {
-              if (!p1_is_head && !p2_is_tail) retval |= IM__INTER_BOUND_0D;
+              if (!p1_is_head && !p2_is_tail)
+                retval |= IntersectionMatrix::INTER_BOUND_0D;
             } else
-              retval |= IM__INTER_BOUND_1D;
+              retval |= IntersectionMatrix::INTER_BOUND_1D;
             return retval;
           }
 
@@ -294,9 +190,9 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
               p2_in_qq == PointLocation::kOutside) {
             /* P1 is contained by Q1-Q2, but P2 is not */
             if (p1_is_head)
-              retval |= (IM__BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
+              retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
             else
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
 
             if (q1_in_pp == PointLocation::kInside) {
               /* case of Q2-P1-Q1-P2; Q1-P2 is out of bounds */
@@ -304,14 +200,14 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
               status = relate(Q1, false, P2, p2_is_tail, geom, nrings, last_polygons,
                               stack_depth + 1);
               if (status < 0) return -1;
-              return (retval | status | IM__INTER_BOUND_1D);
+              return (retval | status | IntersectionMatrix::INTER_BOUND_1D);
             } else if (q2_in_pp == PointLocation::kInside) {
               /* case of Q1-P1-Q2-P2; Q2-P2 is out of bounds */
               assert(q1_in_pp != PointLocation::kInside);
               status = relate(Q2, false, P2, p2_is_tail, geom, nrings, last_polygons,
                               stack_depth + 1);
               if (status < 0) return -1;
-              return (retval | status | IM__INTER_BOUND_1D);
+              return (retval | status | IntersectionMatrix::INTER_BOUND_1D);
             } else {
               assert(q1_in_pp == PointLocation::kBoundary ||
                      q2_in_pp == PointLocation::kBoundary);
@@ -320,22 +216,22 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
                      p2_in_qq != PointLocation::kOutside) {
             /* P2 is contained by Q1-Q2, but P2 is not */
             if (p2_is_tail)
-              retval |= (IM__BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
+              retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
             else
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
 
             if (q1_in_pp == PointLocation::kInside) {
               /* P1-Q1-P2-Q2; P1-Q1 is out of bounds */
               status = relate(P1, p1_is_head, Q1, false, geom, nrings, last_polygons,
                               stack_depth + 1);
               if (status < 0) return -1;
-              return (retval | status | IM__INTER_BOUND_1D);
+              return (retval | status | IntersectionMatrix::INTER_BOUND_1D);
             } else if (q2_in_pp == PointLocation::kInside) {
               /* P1-Q2-P2-Q1; P1-Q2 is out of bounds */
               status = relate(P1, p1_is_head, Q2, false, geom, nrings, last_polygons,
                               stack_depth + 1);
               if (status < 0) return -1;
-              return (retval | status | IM__INTER_BOUND_1D);
+              return (retval | status | IntersectionMatrix::INTER_BOUND_1D);
             }
           } else if (seg_p1q2.locate_point(Q1) != PointLocation::kOutside &&
                      seg_q1p2.locate_point(Q2) != PointLocation::kOutside) {
@@ -352,7 +248,7 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
               if (status < 0) return -1;
               retval |= status;
             }
-            return (retval | IM__INTER_BOUND_1D);
+            return (retval | IntersectionMatrix::INTER_BOUND_1D);
           } else if (seg_p1q1.locate_point(Q2) != PointLocation::kOutside &&
                      seg_q2p1.locate_point(Q1) != PointLocation::kOutside) {
             /* case of P1-Q2-Q1-P2 */
@@ -368,21 +264,21 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
               if (status < 0) return -1;
               retval |= status;
             }
-            return (retval | IM__INTER_BOUND_1D);
+            return (retval | IntersectionMatrix::INTER_BOUND_1D);
           }
         } else if (qp1 == 0 && ((pq1 >= 0 && pq2 <= 0) || (pq1 <= 0 && pq2 >= 0))) {
           /* P1 touched Q1-Q2 */
           if (p1_is_head)
-            retval |= (IM__BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
+            retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
           else
-            retval |= IM__INTER_BOUND_0D;
+            retval |= IntersectionMatrix::INTER_BOUND_0D;
           p1_location = 'B';
         } else if (qp2 == 0 && ((pq1 >= 0 && pq2 <= 0) || (pq1 <= 0 && pq2 >= 0))) {
           /* P2 touched Q1-Q2 */
           if (p2_is_tail)
-            retval |= (IM__BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
+            retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
           else
-            retval |= IM__INTER_BOUND_0D;
+            retval |= IntersectionMatrix::INTER_BOUND_0D;
           p2_location = 'B';
         } else if (((qp1 >= 0 && qp2 <= 0) || (qp1 <= 0 && qp2 >= 0)) &&
                    ((pq1 >= 0 && pq2 <= 0) || (pq1 <= 0 && pq2 >= 0))) {
@@ -422,15 +318,15 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
 #endif
           if (P1 == C) {
             if (p1_is_head)
-              retval |= (IM__BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
+              retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_HEAD_CONTAINED);
             else
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
             p1_location = 'B';
           } else if (P2 == C) {
             if (p2_is_tail)
-              retval |= (IM__BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
+              retval |= (IntersectionMatrix::BOUND_BOUND_0D | IM__LINE_TAIL_CONTAINED);
             else
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
             p2_location = 'B';
           } else {
             /* try P1-C recursively */
@@ -443,7 +339,7 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
                             stack_depth + 1);
             if (status < 0) return -1;
             retval |= status;
-            return (retval | IM__INTER_BOUND_0D);
+            return (retval | IntersectionMatrix::INTER_BOUND_0D);
           }
         }
         /* move to the next edge */
@@ -503,7 +399,7 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
           /*
            * P1-P2 goes throught inside of the hole.
            */
-          return (retval | IM__INTER_EXTER_1D);
+          return (retval | IntersectionMatrix::INTER_EXTER_1D);
         }
       }
     }
@@ -514,17 +410,17 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
      */
     if (last_polygons) {
       if (p1_is_head && p1_location != 'B')
-        retval |= (IM__BOUND_INTER_0D | IM__LINE_HEAD_CONTAINED);
+        retval |= (IntersectionMatrix::BOUND_INTER_0D | IM__LINE_HEAD_CONTAINED);
       if (p2_is_tail && p2_location != 'B')
-        retval |= (IM__BOUND_INTER_0D | IM__LINE_TAIL_CONTAINED);
-      return (retval | IM__INTER_INTER_1D);
+        retval |= (IntersectionMatrix::BOUND_INTER_0D | IM__LINE_TAIL_CONTAINED);
+      return (retval | IntersectionMatrix::INTER_INTER_1D);
     }
   }
   /*
    * Once the control reached here, it means P1-P2 never goes inside
    * of the polygons.
    */
-  return (retval | IM__INTER_EXTER_1D);
+  return (retval | IntersectionMatrix::INTER_EXTER_1D);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -561,8 +457,8 @@ DEV_HOST_INLINE int32_t relate(const LinearRing<POINT_T>& ring,
         std::min(P1.x(), P2.x()) > mbr.get_max().x() ||
         std::max(P1.y(), P2.y()) < mbr.get_min().y() ||
         std::min(P1.y(), P2.y()) > mbr.get_max().y()) {
-      status = (IM__INTER_EXTER_1D | IM__BOUND_EXTER_0D | IM__EXTER_INTER_2D |
-                IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+      status = (IntersectionMatrix::INTER_EXTER_1D | IntersectionMatrix::BOUND_EXTER_0D | IntersectionMatrix::EXTER_INTER_2D |
+                IntersectionMatrix::EXTER_BOUND_1D | IntersectionMatrix::EXTER_EXTER_2D);
     } else {
       status = relate(P1, false, P2, false, geom, 0, false);
       // char res[10];
@@ -599,54 +495,54 @@ DEV_HOST_INLINE int32_t relate(const LinearRing<POINT_T>& ring,
   /*
    * transform rflags to ring-polygon relationship
    */
-  if ((rflags & IM__INTER_BOUND_2D) == IM__INTER_BOUND_1D)
-    boundary = IM__BOUND_BOUND_1D;
-  else if ((rflags & IM__INTER_BOUND_2D) == IM__INTER_BOUND_0D)
-    boundary = IM__BOUND_BOUND_0D;
+  if ((rflags & IntersectionMatrix::INTER_BOUND_2D) == IntersectionMatrix::INTER_BOUND_1D)
+    boundary = IntersectionMatrix::BOUND_BOUND_1D;
+  else if ((rflags & IntersectionMatrix::INTER_BOUND_2D) == IntersectionMatrix::INTER_BOUND_0D)
+    boundary = IntersectionMatrix::BOUND_BOUND_0D;
 
-  if ((rflags & IM__INTER_INTER_2D) == 0 && (rflags & IM__INTER_BOUND_2D) != 0 &&
-      (rflags & IM__INTER_EXTER_2D) == 0) {
+  if ((rflags & IntersectionMatrix::INTER_INTER_2D) == 0 && (rflags & IntersectionMatrix::INTER_BOUND_2D) != 0 &&
+      (rflags & IntersectionMatrix::INTER_EXTER_2D) == 0) {
     /* ring equals to the polygon */
-    return (IM__INTER_INTER_2D | IM__BOUND_BOUND_1D | IM__EXTER_EXTER_2D);
-  } else if ((rflags & IM__INTER_INTER_2D) == 0 && (rflags & IM__INTER_BOUND_2D) == 0 &&
-             (rflags & IM__INTER_EXTER_2D) != 0) {
+    return (IntersectionMatrix::INTER_INTER_2D | IntersectionMatrix::BOUND_BOUND_1D | IntersectionMatrix::EXTER_EXTER_2D);
+  } else if ((rflags & IntersectionMatrix::INTER_INTER_2D) == 0 && (rflags & IntersectionMatrix::INTER_BOUND_2D) == 0 &&
+             (rflags & IntersectionMatrix::INTER_EXTER_2D) != 0) {
     if (poly_has_outside) {
       /* disjoint */
-      return (IM__INTER_EXTER_2D | IM__BOUND_EXTER_1D | IM__EXTER_INTER_2D |
-              IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+      return (IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D | IntersectionMatrix::EXTER_INTER_2D |
+              IntersectionMatrix::EXTER_BOUND_1D | IntersectionMatrix::EXTER_EXTER_2D);
     } else {
       /* ring fully contains the polygons */
-      return (IM__INTER_INTER_2D | IM__INTER_BOUND_1D | IM__INTER_EXTER_2D |
-              IM__BOUND_EXTER_1D | IM__EXTER_EXTER_2D);
+      return (IntersectionMatrix::INTER_INTER_2D | IntersectionMatrix::INTER_BOUND_1D | IntersectionMatrix::INTER_EXTER_2D |
+              IntersectionMatrix::BOUND_EXTER_1D | IntersectionMatrix::EXTER_EXTER_2D);
     }
-  } else if ((rflags & IM__INTER_INTER_2D) != 0 && (rflags & IM__INTER_BOUND_2D) != 0
-             // TODO: Need this? && (rflags & IM__INTER_EXTER_2D) != 0
+  } else if ((rflags & IntersectionMatrix::INTER_INTER_2D) != 0 && (rflags & IntersectionMatrix::INTER_BOUND_2D) != 0
+             // TODO: Need this? && (rflags & IntersectionMatrix::INTER_EXTER_2D) != 0
   ) {
     /* ring has intersection to the polygon */
     assert(boundary != 0);
-    if ((rflags & IM__INTER_EXTER_2D) != 0) {
-      boundary |= IM__BOUND_EXTER_1D;
+    if ((rflags & IntersectionMatrix::INTER_EXTER_2D) != 0) {
+      boundary |= IntersectionMatrix::BOUND_EXTER_1D;
     }
-    return boundary | (IM__INTER_INTER_2D | IM__INTER_BOUND_1D | IM__INTER_EXTER_2D |
-                       IM__BOUND_INTER_1D | IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D |
-                       IM__EXTER_EXTER_2D);
-  } else if ((rflags & IM__INTER_INTER_2D) == 0 && (rflags & IM__INTER_BOUND_2D) != 0 &&
-             (rflags & IM__INTER_EXTER_2D) != 0) {
+    return boundary | (IntersectionMatrix::INTER_INTER_2D | IntersectionMatrix::INTER_BOUND_1D | IntersectionMatrix::INTER_EXTER_2D |
+                       IntersectionMatrix::BOUND_INTER_1D | IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+                       IntersectionMatrix::EXTER_EXTER_2D);
+  } else if ((rflags & IntersectionMatrix::INTER_INTER_2D) == 0 && (rflags & IntersectionMatrix::INTER_BOUND_2D) != 0 &&
+             (rflags & IntersectionMatrix::INTER_EXTER_2D) != 0) {
     if (poly_has_outside) {
       /* ring touched the polygon at a boundary, but no intersection */
       assert(boundary != 0);
-      return boundary | (IM__INTER_EXTER_2D | IM__BOUND_EXTER_1D | IM__EXTER_INTER_2D |
-                         IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+      return boundary | (IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D | IntersectionMatrix::EXTER_INTER_2D |
+                         IntersectionMatrix::EXTER_BOUND_1D | IntersectionMatrix::EXTER_EXTER_2D);
     } else {
       /* ring fully contains the polygon touched at boundaries */
       assert(boundary != 0);
-      return boundary | (IM__INTER_INTER_2D | IM__INTER_BOUND_1D | IM__INTER_EXTER_2D |
-                         IM__BOUND_EXTER_1D | IM__EXTER_EXTER_2D);
+      return boundary | (IntersectionMatrix::INTER_INTER_2D | IntersectionMatrix::INTER_BOUND_1D | IntersectionMatrix::INTER_EXTER_2D |
+                         IntersectionMatrix::BOUND_EXTER_1D | IntersectionMatrix::EXTER_EXTER_2D);
     }
-  } else if ((rflags & IM__INTER_INTER_2D) != 0 && (rflags & IM__INTER_EXTER_2D) == 0) {
+  } else if ((rflags & IntersectionMatrix::INTER_INTER_2D) != 0 && (rflags & IntersectionMatrix::INTER_EXTER_2D) == 0) {
     /* ring is fully contained by the polygon; might be touched */
-    return boundary | (IM__INTER_INTER_2D | IM__BOUND_INTER_1D | IM__EXTER_INTER_2D |
-                       IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+    return boundary | (IntersectionMatrix::INTER_INTER_2D | IntersectionMatrix::BOUND_INTER_1D | IntersectionMatrix::EXTER_INTER_2D |
+                       IntersectionMatrix::EXTER_BOUND_1D | IntersectionMatrix::EXTER_EXTER_2D);
   }
   // FIXME:
   printf("unknown intersection\n");
@@ -724,22 +620,22 @@ template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const POINT_T& geom1,
                                const Polygon<POINT_T, INDEX_T>& geom2,
                                PointLocation location) {
-  int32_t retval = IM__EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
 
   bool matched = false;
 
-  retval |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
+  retval |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
 
   /* dive into the polygon */
   switch (location) {
     case PointLocation::kInside: {
       matched = true;
-      retval |= IM__INTER_INTER_0D;
+      retval |= IntersectionMatrix::INTER_INTER_0D;
       break;
     }
     case PointLocation::kBoundary: {
       matched = true;
-      retval |= IM__INTER_BOUND_0D;
+      retval |= IntersectionMatrix::INTER_BOUND_0D;
       break;
     }
     case PointLocation::kOutside: {
@@ -748,7 +644,7 @@ DEV_HOST_INLINE int32_t relate(const POINT_T& geom1,
     default:
       return -1; /* error */
   }
-  if (!matched) retval |= IM__INTER_EXTER_0D;
+  if (!matched) retval |= IntersectionMatrix::INTER_EXTER_0D;
   return retval;
 }
 
@@ -767,23 +663,23 @@ DEV_HOST_INLINE int32_t relate(const POINT_T& geom1,
                                const MultiPolygon<POINT_T, INDEX_T>& geom2,
                                ArrayView<PointLocation> locations) {
   assert(geom2.num_polygons() == locations.size());
-  if (geom2.empty()) return IM__INTER_EXTER_0D | IM__EXTER_EXTER_2D;
-  int32_t retval = IM__EXTER_EXTER_2D;
+  if (geom2.empty()) return IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
   bool matched = false;
 
   for (int j = 0; j < geom2.num_polygons(); j++) {
-    retval |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
+    retval |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
 
     /* dive into the polygon */
     switch (locations[j]) {
       case PointLocation::kInside: {
         matched = true;
-        retval |= IM__INTER_INTER_0D;
+        retval |= IntersectionMatrix::INTER_INTER_0D;
         break;
       }
       case PointLocation::kBoundary: {
         matched = true;
-        retval |= IM__INTER_BOUND_0D;
+        retval |= IntersectionMatrix::INTER_BOUND_0D;
         break;
       }
       case PointLocation::kOutside: {
@@ -793,7 +689,7 @@ DEV_HOST_INLINE int32_t relate(const POINT_T& geom1,
         return -1; /* error */
     }
   }
-  if (!matched) retval |= IM__INTER_EXTER_0D;
+  if (!matched) retval |= IntersectionMatrix::INTER_EXTER_0D;
   return retval;
 }
 
@@ -812,9 +708,11 @@ DEV_HOST_INLINE int32_t relate(MultiPoint<POINT_T> geom1, MultiPoint<POINT_T> ge
   int32_t nloops2;
   int32_t retval;
   bool twist_retval = false;
-  if (geom1.empty() && geom2.empty()) return IM__EXTER_EXTER_2D;
-  if (geom1.empty()) return IM__EXTER_INTER_0D | IM__EXTER_EXTER_2D;
-  if (geom2.empty()) return IM__INTER_EXTER_0D | IM__EXTER_EXTER_2D;
+  if (geom1.empty() && geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+  if (geom1.empty())
+    return IntersectionMatrix::EXTER_INTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
+  if (geom2.empty())
+    return IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
   /*
    * micro optimization: geom2 should have smaller number of items
    */
@@ -824,7 +722,7 @@ DEV_HOST_INLINE int32_t relate(MultiPoint<POINT_T> geom1, MultiPoint<POINT_T> ge
       twist_retval = true;
     }
   }
-  retval = IM__EXTER_EXTER_2D;
+  retval = IntersectionMatrix::EXTER_EXTER_2D;
   nloops1 = geom1.num_points();
   nloops2 = geom2.num_points();
 
@@ -840,12 +738,12 @@ DEV_HOST_INLINE int32_t relate(MultiPoint<POINT_T> geom1, MultiPoint<POINT_T> ge
         auto const& pt2 = geom2.get_point(j);
 
         if (pt1 == pt2) {
-          retval |= IM__INTER_INTER_0D;
+          retval |= IntersectionMatrix::INTER_INTER_0D;
           matched1 = true;
           if (j >= base && j < base + LONG_NBITS) matched2 |= (1UL << (j - base));
         }
       }
-      if (!matched1) retval |= IM__INTER_EXTER_0D;
+      if (!matched1) retval |= IntersectionMatrix::INTER_EXTER_0D;
     }
     if (base + LONG_NBITS >= nloops2)
       __mask = (1UL << (nloops2 - base)) - 1;
@@ -853,11 +751,11 @@ DEV_HOST_INLINE int32_t relate(MultiPoint<POINT_T> geom1, MultiPoint<POINT_T> ge
       __mask = ~0UL;
 
     if (__mask != matched2) {
-      retval |= IM__EXTER_INTER_0D;
+      retval |= IntersectionMatrix::EXTER_INTER_0D;
       break;
     }
   }
-  return (twist_retval ? IM__TWIST(retval) : retval);
+  return (twist_retval ? IntersectionMatrix::Transpose(retval) : retval);
 }
 
 template <typename POINT_T>
@@ -876,14 +774,17 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
   int32_t retval;
 
   /* shortcut if either-geometry is empty */
-  if (geom1.empty() && geom2.empty()) return IM__EXTER_EXTER_2D;
-  if (geom1.empty()) return IM__EXTER_INTER_1D | IM__EXTER_BOUND_0D | IM__EXTER_EXTER_2D;
-  if (geom2.empty()) return IM__INTER_EXTER_0D | IM__EXTER_EXTER_2D;
+  if (geom1.empty() && geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+  if (geom1.empty())
+    return IntersectionMatrix::EXTER_INTER_1D | IntersectionMatrix::EXTER_BOUND_0D |
+           IntersectionMatrix::EXTER_EXTER_2D;
+  if (geom2.empty())
+    return IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
 
   auto nloops1 = geom1.num_points();
   auto nloops2 = geom2.num_line_strings();
 
-  retval = IM__EXTER_EXTER_2D;
+  retval = IntersectionMatrix::EXTER_EXTER_2D;
   for (size_t base = 0; base < nloops2; base += LONG_NBITS) {
     uint64_t head_matched = 0UL;
     uint64_t tail_matched = 0UL;
@@ -902,7 +803,7 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
         const auto& Q1 = ls.get_point(0);
 
         if (!ls.is_zero_length()) {
-          retval |= IM__EXTER_INTER_1D;
+          retval |= IntersectionMatrix::EXTER_INTER_1D;
         }
 
         /* walks on vertex of the line edges */
@@ -918,20 +819,20 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
           if (has_boundary) {
             if (k == 0 && P == Q1) {
               /* boundary case handling (head) */
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
               matched = true;
               if (j >= base && j < base + LONG_NBITS) head_matched |= (1UL << (j - base));
               continue;
             } else if (k == ls.num_segments() - 1 && P == Q2) {
               /* boundary case handling (tail) */
-              retval |= IM__INTER_BOUND_0D;
+              retval |= IntersectionMatrix::INTER_BOUND_0D;
               matched = true;
               if (j >= base && j < base + LONG_NBITS) tail_matched |= (1UL << (j - base));
               continue;
             }
           }
           if (seg.covers(P)) {
-            retval |= IM__INTER_INTER_0D;
+            retval |= IntersectionMatrix::INTER_INTER_0D;
             matched = true;
           }
         }
@@ -939,14 +840,14 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
       /*
        * This point is neither interior nor boundary of linestrings
        */
-      if (!matched) retval |= IM__INTER_EXTER_0D;
+      if (!matched) retval |= IntersectionMatrix::INTER_EXTER_0D;
     }
     /*
      * If herea are any linestring-edges not referenced by the points,
      * it needs to set EXTER-BOUND item.
      */
     if (head_matched != boundary_mask || tail_matched != boundary_mask) {
-      retval |= IM__EXTER_BOUND_0D;
+      retval |= IntersectionMatrix::EXTER_BOUND_0D;
       break;
     }
   }
@@ -973,18 +874,19 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
                                const MultiPolygon<POINT_T, INDEX_T>& geom2) {
   uint32_t nloops1;
   uint32_t nloops2;
-  int32_t retval = IM__EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
 
   if (geom1.empty()) {
-    if (geom2.empty()) return IM__EXTER_EXTER_2D;
-    return IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D;
+    if (geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+    return IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+           IntersectionMatrix::EXTER_EXTER_2D;
   } else if (geom2.empty())
-    return IM__INTER_EXTER_0D | IM__EXTER_EXTER_2D;
+    return IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
 
   nloops1 = geom1.num_points();
   nloops2 = geom2.num_polygons();
 
-  retval = IM__EXTER_EXTER_2D;
+  retval = IntersectionMatrix::EXTER_EXTER_2D;
   for (int i = 0; i < nloops1; i++) {
     const auto& pt = geom1.get_point(i);
     bool matched = false;
@@ -993,7 +895,7 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
       const auto& poly = geom2.get_polygon(j);
       /* skip empty polygon */
       if (poly.empty()) continue;
-      retval |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
+      retval |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
       auto& mbr = poly.get_mbr();
       if (!mbr.covers(pt.as_float())) {
         continue;
@@ -1003,12 +905,12 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
       switch (poly.locate_point(pt)) {
         case PointLocation::kInside: {
           matched = true;
-          retval |= IM__INTER_INTER_0D;
+          retval |= IntersectionMatrix::INTER_INTER_0D;
           break;
         }
         case PointLocation::kBoundary: {
           matched = true;
-          retval |= IM__INTER_BOUND_0D;
+          retval |= IntersectionMatrix::INTER_BOUND_0D;
           break;
         }
         case PointLocation::kOutside: {
@@ -1018,20 +920,20 @@ DEV_HOST_INLINE int32_t relate(const MultiPoint<POINT_T>& geom1,
           return -1; /* error */
       }
     }
-    if (!matched) retval |= IM__INTER_EXTER_0D;
+    if (!matched) retval |= IntersectionMatrix::INTER_EXTER_0D;
   }
   return retval;
 }
 
 template <typename POINT_T>
 DEV_HOST_INLINE int32_t relate(const LineString<POINT_T>& geom1, const POINT_T& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T>
 DEV_HOST_INLINE int32_t relate(const LineString<POINT_T>& geom1,
                                const MultiPoint<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T>
@@ -1098,13 +1000,13 @@ DEV_HOST_INLINE int32_t relate(const LineString<POINT_T>& geom1,
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
                                const POINT_T& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
                                const MultiPoint<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -1124,7 +1026,7 @@ template <typename POINT_T, typename INDEX_T>
 DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_T P2,
                         bool p2_is_tail, const MultiLineString<POINT_T, INDEX_T>& geom,
                         uint32_t start) {
-  int32_t retval = IM__EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
   bool p1_contained = false;
   bool p2_contained = false;
   uint32_t index = start;
@@ -1188,13 +1090,13 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
             q_has_boundary && ((q1_is_head && P1 == Q1) || (q2_is_tail && P1 == Q2));
 
         if (p1_is_bound && p1_on_q_bound) {
-          retval |= IM__BOUND_BOUND_0D;
+          retval |= IntersectionMatrix::BOUND_BOUND_0D;
         } else if (p1_is_bound && !p1_on_q_bound) {
-          retval |= IM__BOUND_INTER_0D;
+          retval |= IntersectionMatrix::BOUND_INTER_0D;
         } else if (!p1_is_bound && p1_on_q_bound) {
-          retval |= IM__INTER_BOUND_0D;
+          retval |= IntersectionMatrix::INTER_BOUND_0D;
         } else {
-          retval |= IM__INTER_INTER_0D;
+          retval |= IntersectionMatrix::INTER_INTER_0D;
         }
       }
 
@@ -1206,13 +1108,13 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
             q_has_boundary && ((q1_is_head && P2 == Q1) || (q2_is_tail && P2 == Q2));
 
         if (p2_is_bound && p2_on_q_bound) {
-          retval |= IM__BOUND_BOUND_0D;
+          retval |= IntersectionMatrix::BOUND_BOUND_0D;
         } else if (p2_is_bound && !p2_on_q_bound) {
-          retval |= IM__BOUND_INTER_0D;
+          retval |= IntersectionMatrix::BOUND_INTER_0D;
         } else if (!p2_is_bound && p2_on_q_bound) {
-          retval |= IM__INTER_BOUND_0D;
+          retval |= IntersectionMatrix::INTER_BOUND_0D;
         } else {
-          retval |= IM__INTER_INTER_0D;
+          retval |= IntersectionMatrix::INTER_INTER_0D;
         }
       }
 
@@ -1222,9 +1124,9 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
           /* P1-P2 is fully contained by Q1-Q2 */
           p1_contained = p2_contained = true;
           if (P1 == P2)
-            retval |= IM__INTER_INTER_0D;
+            retval |= IntersectionMatrix::INTER_INTER_0D;
           else
-            retval |= IM__INTER_INTER_1D;
+            retval |= IntersectionMatrix::INTER_INTER_1D;
           goto out;
         } else if (p1_in_qq != PointLocation::kOutside &&
                    p2_in_qq == PointLocation::kOutside) {
@@ -1233,11 +1135,11 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
           if (seg_p.locate_point(Q1) == PointLocation::kInside) {
             P1 = Q1;
             p1_is_head = false;
-            retval |= IM__INTER_INTER_1D;
+            retval |= IntersectionMatrix::INTER_INTER_1D;
           } else if (seg_p.locate_point(Q2) == PointLocation::kInside) {
             P1 = Q2;
             p1_is_head = false;
-            retval |= IM__INTER_INTER_1D;
+            retval |= IntersectionMatrix::INTER_INTER_1D;
           }
         } else if (p1_in_qq == PointLocation::kOutside &&
                    p2_in_qq != PointLocation::kOutside) {
@@ -1246,11 +1148,11 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
           if (seg_p.locate_point(Q1) == PointLocation::kInside) {
             P2 = Q1;
             p2_is_tail = false;
-            retval |= IM__INTER_INTER_1D;
+            retval |= IntersectionMatrix::INTER_INTER_1D;
           } else if (seg_p.locate_point(Q2) == PointLocation::kInside) {
             P2 = Q2;
             p2_is_tail = false;
-            retval |= IM__INTER_INTER_1D;
+            retval |= IntersectionMatrix::INTER_INTER_1D;
           }
         } else if (seg_p1q2.locate_point(Q1) != PointLocation::kOutside &&
                    seg_q1p2.locate_point(Q2) != PointLocation::kOutside) {
@@ -1290,16 +1192,16 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
         /* P1-P2 and Q1-Q2 crosses mutually */
         if (((pq1 > 0 && pq2 < 0) || (pq1 < 0 && pq2 > 0)) &&
             ((qp1 > 0 && qp2 < 0) || (qp1 < 0 && qp2 > 0))) {
-          retval |= IM__INTER_INTER_0D;
+          retval |= IntersectionMatrix::INTER_INTER_0D;
         }
       }
     }
   }
-  if (P1 != P2) retval |= IM__INTER_EXTER_1D;
+  if (P1 != P2) retval |= IntersectionMatrix::INTER_EXTER_1D;
 out:
   if (has_line && p_has_boundary) {
-    if (p1_is_head && !p1_contained) retval |= IM__BOUND_EXTER_0D;
-    if (p2_is_tail && !p2_contained) retval |= IM__BOUND_EXTER_0D;
+    if (p1_is_head && !p1_contained) retval |= IntersectionMatrix::BOUND_EXTER_0D;
+    if (p2_is_tail && !p2_contained) retval |= IntersectionMatrix::BOUND_EXTER_0D;
   }
   return retval;
 }
@@ -1309,16 +1211,18 @@ DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
                                const MultiLineString<POINT_T, INDEX_T>& geom2) {
   POINT_T P1, P2;
   uint32_t nloops;
-  int32_t retval1 = IM__EXTER_EXTER_2D;
-  int32_t retval2 = IM__EXTER_EXTER_2D;
+  int32_t retval1 = IntersectionMatrix::EXTER_EXTER_2D;
+  int32_t retval2 = IntersectionMatrix::EXTER_EXTER_2D;
   int32_t status;
 
   /* special empty cases */
   if (geom1.empty()) {
-    if (geom2.empty()) return IM__EXTER_EXTER_2D;
-    return IM__EXTER_INTER_1D | IM__EXTER_BOUND_0D | IM__EXTER_EXTER_2D;
+    if (geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+    return IntersectionMatrix::EXTER_INTER_1D | IntersectionMatrix::EXTER_BOUND_0D |
+           IntersectionMatrix::EXTER_EXTER_2D;
   } else if (geom2.empty())
-    return IM__INTER_EXTER_1D | IM__BOUND_EXTER_0D | IM__EXTER_EXTER_2D;
+    return IntersectionMatrix::INTER_EXTER_1D | IntersectionMatrix::BOUND_EXTER_0D |
+           IntersectionMatrix::EXTER_EXTER_2D;
 
   /* 1st loop */
   nloops = geom1.num_line_strings();
@@ -1350,7 +1254,7 @@ DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
       retval2 |= status;
     }
   }
-  return retval1 | IM__TWIST(retval2);
+  return retval1 | IntersectionMatrix::Transpose(retval2);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -1373,23 +1277,26 @@ DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
                                const MultiPolygon<POINT_T, INDEX_T>& geom2) {
-  int32_t retval = IM__EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
   int32_t status;
   /* special empty cases */
   if (geom1.empty()) {
-    if (geom2.empty()) return IM__EXTER_EXTER_2D;
-    return IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D;
+    if (geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+    return IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+           IntersectionMatrix::EXTER_EXTER_2D;
   } else if (geom2.empty())
-    return IM__INTER_EXTER_1D | IM__BOUND_EXTER_0D | IM__EXTER_EXTER_2D;
+    return IntersectionMatrix::INTER_EXTER_1D | IntersectionMatrix::BOUND_EXTER_0D |
+           IntersectionMatrix::EXTER_EXTER_2D;
 
-  retval = IM__EXTER_EXTER_2D;
+  retval = IntersectionMatrix::EXTER_EXTER_2D;
 
   if (!geom2.empty()) {
-    retval |= IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D;
+    retval |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
   }
 
   if (!geom1.get_mbr().intersects(geom2.get_mbr())) {
-    return (retval | IM__INTER_EXTER_1D | IM__BOUND_EXTER_0D);
+    return (retval | IntersectionMatrix::INTER_EXTER_1D |
+            IntersectionMatrix::BOUND_EXTER_0D);
   }
 
   for (size_t k = 0; k < geom1.num_line_strings(); k++) {
@@ -1420,7 +1327,8 @@ DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
           std::min(P1.x(), P2.x()) > mbr2.get_max().x() ||
           std::max(P1.y(), P2.y()) < mbr2.get_min().y() ||
           std::min(P1.y(), P2.y()) > mbr2.get_max().y()) {
-        retval |= (IM__INTER_EXTER_1D | IM__BOUND_EXTER_0D);
+        retval |=
+            (IntersectionMatrix::INTER_EXTER_1D | IntersectionMatrix::BOUND_EXTER_0D);
       } else {
         status = relate(P1, (has_boundary && p1_is_head), P2,
                         (has_boundary && i == nitems), geom2, 0, false);
@@ -1433,40 +1341,40 @@ DEV_HOST_INLINE int32_t relate(const MultiLineString<POINT_T, INDEX_T>& geom1,
 
     if (has_boundary) {
       status = (IM__LINE_HEAD_CONTAINED | IM__LINE_TAIL_CONTAINED);
-      if ((retval & status) != status) retval |= IM__BOUND_EXTER_0D;
+      if ((retval & status) != status) retval |= IntersectionMatrix::BOUND_EXTER_0D;
     }
   }
-  return (retval & IM__MASK_FULL);
+  return (retval & IntersectionMatrix::MASK_FULL);
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
                                const POINT_T& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
                                const POINT_T& geom2, PointLocation location) {
-  return IM__TWIST(relate(geom2, geom1, location));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1, location));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
                                const MultiPoint<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
                                const LineString<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
                                const MultiLineString<POINT_T, INDEX_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -1506,31 +1414,31 @@ DEV_HOST_INLINE int32_t relate(const Polygon<POINT_T, INDEX_T>& geom1,
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const POINT_T& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const POINT_T& geom2, ArrayView<PointLocation> locations) {
-  return IM__TWIST(relate(geom2, geom1, locations));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1, locations));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const MultiPoint<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const LineString<POINT_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const MultiLineString<POINT_T, INDEX_T>& geom2) {
-  return IM__TWIST(relate(geom2, geom1));
+  return IntersectionMatrix::Transpose(relate(geom2, geom1));
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -1550,18 +1458,21 @@ template <typename POINT_T, typename INDEX_T>
 DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
                                const MultiPolygon<POINT_T, INDEX_T>& geom2) {
   int32_t nloops;
-  int32_t retval = IM__EXTER_EXTER_2D;
+  int32_t retval = IntersectionMatrix::EXTER_EXTER_2D;
 
   /* special empty cases */
   if (geom1.empty()) {
-    if (geom2.empty()) return IM__EXTER_EXTER_2D;
-    return IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D;
+    if (geom2.empty()) return IntersectionMatrix::EXTER_EXTER_2D;
+    return IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+           IntersectionMatrix::EXTER_EXTER_2D;
   } else if (geom2.empty())
-    return IM__INTER_EXTER_2D | IM__BOUND_EXTER_1D | IM__EXTER_EXTER_2D;
+    return IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D |
+           IntersectionMatrix::EXTER_EXTER_2D;
 
   if (!geom1.get_mbr().intersects(geom2.get_mbr())) {
-    return (IM__INTER_EXTER_2D | IM__BOUND_EXTER_1D | IM__EXTER_INTER_2D |
-            IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+    return (IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D |
+            IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+            IntersectionMatrix::EXTER_EXTER_2D);
   }
 
   nloops = geom1.num_polygons();
@@ -1576,33 +1487,37 @@ DEV_HOST_INLINE int32_t relate(const MultiPolygon<POINT_T, INDEX_T>& geom1,
       if (status < 0) return -1;
       if (i == 0) {
         __retval = status;
-        if ((__retval & IM__INTER_INTER_2D) == 0)
+        if ((__retval & IntersectionMatrix::INTER_INTER_2D) == 0)
           break; /* disjoint, so we can skip holes */
       } else {
         /* add boundaries, if touched/crossed */
-        __retval |= (status & IM__BOUND_BOUND_2D);
+        __retval |= (status & IntersectionMatrix::BOUND_BOUND_2D);
 
         /* geom2 is disjoint from the hole? */
-        if ((status & IM__INTER_INTER_2D) == 0) continue;
+        if ((status & IntersectionMatrix::INTER_INTER_2D) == 0) continue;
         /*
          * geom2 is fully contained by the hole, so reconstruct
          * the DE9-IM as disjointed polygon.
          */
-        if ((status & IM__INTER_EXTER_2D) != 0 && (status & IM__EXTER_INTER_2D) == 0) {
+        if ((status & IntersectionMatrix::INTER_EXTER_2D) != 0 &&
+            (status & IntersectionMatrix::EXTER_INTER_2D) == 0) {
           __retval =
-              ((status & IM__BOUND_BOUND_2D) | IM__INTER_EXTER_2D | IM__BOUND_EXTER_1D |
-               IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D | IM__EXTER_EXTER_2D);
+              ((status & IntersectionMatrix::BOUND_BOUND_2D) |
+               IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D |
+               IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+               IntersectionMatrix::EXTER_EXTER_2D);
           break;
         }
 
         /*
          * geom2 has a valid intersection with the hole, add it.
          */
-        if ((status & IM__INTER_INTER_2D) != 0) {
-          __retval |= (IM__BOUND_INTER_1D | IM__EXTER_INTER_2D | IM__EXTER_BOUND_1D);
-          // FIXME: Only apply IM__EXTER_BOUND_1D if exterior of geom1 intersects boundary
-          // of geom2
-          // Refer: RelateTest - PolygonsNestedWithHole
+        if ((status & IntersectionMatrix::INTER_INTER_2D) != 0) {
+          __retval |=
+              (IntersectionMatrix::BOUND_INTER_1D | IntersectionMatrix::EXTER_INTER_2D |
+               IntersectionMatrix::EXTER_BOUND_1D);
+          // FIXME: Only apply IntersectionMatrix::EXTER_BOUND_1D if exterior of geom1
+          // intersects boundary of geom2 Refer: RelateTest - PolygonsNestedWithHole
           break;
         }
       }
