@@ -189,11 +189,16 @@ impl FileFormat for GeoParquetFormat {
         // copy more ParquetFormat code. It may be that caching at the object
         // store level is the way to go here.
         let metadatas: Vec<_> = futures::stream::iter(objects)
-            .map(|object| async move {
-                DFParquetMetadata::new(store.as_ref(), object)
-                    .with_metadata_size_hint(self.inner().metadata_size_hint())
-                    .fetch_metadata()
-                    .await
+            .map(|object| {
+                let file_metadata_cache =
+                    state.runtime_env().cache_manager.get_file_metadata_cache();
+                async move {
+                    DFParquetMetadata::new(store.as_ref(), object)
+                        .with_metadata_size_hint(self.inner().metadata_size_hint())
+                        .with_file_metadata_cache(Some(file_metadata_cache))
+                        .fetch_metadata()
+                        .await
+                }
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
             .buffered(state.config_options().execution.meta_fetch_concurrency)
