@@ -72,9 +72,12 @@ if __name__ == "__main__":
     import sys
 
     parser = argparse.ArgumentParser(description="Render SedonaDB SQL examples")
-    parser.add_argument("examples", nargs="+", help="SQL strings to be rendered")
+    parser.add_argument("examples", nargs="+", help="SQL strings to be rendered or `-` to read from stdin")
     parser.add_argument("--width", type=int, default=80)
     parser.add_argument("--ascii", default=False, action="store_true")
 
     args = parser.parse_args(sys.argv[1:])
+    if args.examples == ["-"]:
+        args.examples = sys.stdin.read().split("\n----\n")
+
     render_examples(args.examples, width=args.width, ascii=args.ascii)
