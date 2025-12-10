@@ -18,38 +18,30 @@
 
 title: ST_Analyze_Agg
 description: Compute the statistics of geometries for the input geometry
-sql_example: |
-  SELECT ST_Analyze_Agg(
-    ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)')
-  ) AS analyze
+aggregate_kernels:
+  - returns: struct
+    args: [geometry]
 ---
 
-## Format
+`ST_Analyze_Agg()` provides a high-level summary of its input geometries. The fields of
+its struct return type are:
+
+- `count`: Number of input geometries
+- `minx`, `miny`, `maxx`, `maxy`: Minimum bounding rectangle (envelope)
+- `mean_size_in_bytes`
+- `mean_points_per_geometry`
+- `puntal_count`: Number of point or multipoint geometries
+- `lineal_count`: Number of line or multilinestring geometries
+- `polygonal_count`: Number of polygon or multipolygon geometries
+- `geometrycollection_count`: Number of geometrycollection geometries
+- `mean_envelope_width`
+- `mean_envelope_height`
+- `mean_envelope_area`
+
+## Examples
 
 ```sql
-ST_Analyze_Agg (geom: geometry)
-```
-
-## Arguments
-
-- **geom**: Input geometry or geography.
-
-## SQL Example
-
-````{python}
-#| output: asis
-import sedonadb
-
-sd = sedonadb.connect()
-sd.options.width = 80
-sql = """
 SELECT ST_Analyze_Agg(
     ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)')
-) AS analyze
-"""
-print("```sql\n", sql.strip(), "\n```\n", sep="")
-````
-
-````{python}
-sd.sql(sql).show()
-````
+  ) AS analyze
+```
