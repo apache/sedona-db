@@ -18,7 +18,7 @@
 
 title: ST_Analyze_Agg
 description: Compute the statistics of geometries for the input geometry
-aggregate_kernels:
+kernels:
   - returns: struct
     args: [geometry]
 ---

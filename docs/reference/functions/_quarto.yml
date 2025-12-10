@@ -16,7 +16,7 @@
 # under the License.
 
 project:
-  title: "SQL Reference"
+  title: "Function Reference"
 format: gfm
 engine: jupyter
 execute:

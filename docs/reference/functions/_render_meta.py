@@ -1,0 +1,132 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+DEFAULT_ARG_NAMES = {
+    "geometry": "geom",
+    "geography": "geog",
+    "raster": "rast",
+}
+
+DEFAULT_ARG_DESCRIPTIONS = {
+    "geometry": "Input geometry",
+    "geography": "Input geography",
+    "raster": "Input rast",
+}
+
+
+def expand_arg(arg):
+    if isinstance(arg, str):
+        arg = {
+            "type": arg,
+            "name": DEFAULT_ARG_NAMES[arg],
+            "description": DEFAULT_ARG_DESCRIPTIONS[arg],
+        }
+    elif not isinstance(arg, dict):
+        raise TypeError(
+            "Expected args element to be a type string or a mapping with keys type/name/description"
+        )
+
+    if "default" not in arg:
+        arg["default"] = None
+
+    return arg
+
+
+def deduplicate_common_arg_combinations(expanded_args):
+    all_names = [arg["name"] for arg in expanded_args]
+    if all_names[:2] == ["geom", "geom"]:
+        all_names[:2] = ["geomA", "geomB"]
+    elif all_names[:2] == ["geog", "geog"]:
+        all_names[:2] = ["geogA", "geogB"]
+
+    return [
+        {
+            "name": new_name,
+            "type": arg["type"],
+            "description": arg["description"],
+            "default": arg["default"],
+        }
+        for arg, new_name in zip(expanded_args, all_names)
+    ]
+
+
+def expand_args(args):
+    args = [expand_arg(arg) for arg in args]
+    return deduplicate_common_arg_combinations(args)
+
+
+def render_description(description):
+    print("## Description\n")
+    print(description.strip())
+
+
+def render_arg(arg):
+    if arg["default"] is not None:
+        return f"{arg['name']}: {arg['type']} = {arg['default']}"
+    else:
+        return f"{arg['name']}: {arg['type']}"
+
+
+def render_usage(name, kernels):
+    print("## Usage\n\n")
+    print("```sql")
+    for kernel in kernels:
+        args = ", ".join(render_arg(arg) for arg in kernel["args"])
+        print(f"{kernel['returns']}{name}({args})")
+    print("```")
+
+
+def render_args(kernels):
+    expanded_args = {}
+    for kernel in reversed(kernels):
+        expanded_args.update(kernel["args"])
+
+    print("## Arguments\n")
+    for arg in expanded_args:
+        print(f"- **{arg['name']}** ({arg['type']}): {arg['description']}")
+
+
+def render_all(raw_meta):
+    if "description" in raw_meta:
+        render_description(raw_meta["description"])
+
+    if "kernels" in raw_meta:
+        for kernel in raw_meta["kernels"]:
+            kernel["args"] = expand_args(kernel["args"])
+
+        render_usage(raw_meta["title"], raw_meta["kernels"])
+        render_args(raw_meta["kernels"])
+
+if __name__ == "__main__":
+    import argparse
+    import io
+    import sys
+    import yaml
+
+    parser = argparse.ArgumentParser(description="Render SedonaDB SQL function header")
+    parser.add_argument(
+        "meta",
+        help="Function yaml metadata (e.g., frontmatter for a function doc page)",
+    )
+
+    args = parser.parse_args(sys.argv[1:])
+    if args.meta == "-":
+        args.meta = sys.stdin.read()
+
+    with io.StringIO(args.meta) as f:
+        raw_meta = yaml.safe_load(f)
+        render_all(raw_meta)
