@@ -32,17 +32,19 @@ DEFAULT_ARG_DESCRIPTIONS = {
 
 def expand_arg(arg):
     if isinstance(arg, dict):
-        pass
+        arg = {k: to_str(v) for k, v in arg.items()}
     else:
         arg = to_str(arg)
         arg = {
             "type": arg,
             "name": DEFAULT_ARG_NAMES[arg],
-            "description": DEFAULT_ARG_DESCRIPTIONS[arg],
+            "description": DEFAULT_ARG_DESCRIPTIONS.get(arg, None),
         }
 
     if "default" not in arg:
         arg["default"] = None
+    if "description" not in arg:
+        arg["description"] = None
 
     return arg
 
@@ -91,10 +93,15 @@ def render_usage(name, kernels):
 
 
 def render_args(kernels):
-    expanded_args = {}
-    for kernel in reversed(kernels):
-        args_dict = {arg["name"]: arg for arg in kernel["args"]}
-        expanded_args.update(args_dict)
+    try:
+        expanded_args = {}
+        for kernel in reversed(kernels):
+            args_dict = {arg["name"]: arg for arg in kernel["args"]}
+            expanded_args.update({k: v for k, v in args_dict.items() if v is not None})
+    except Exception as e:
+        raise ValueError(
+            f"Failed to consolidate argument documentation from kernels:\n{kernels}"
+        ) from e
 
     print("\n## Arguments\n")
     for arg in expanded_args.values():
@@ -119,15 +126,19 @@ def to_str(v):
     if isinstance(v, str):
         return v
 
-    out = io.StringIO()
-    for ast_item in v:
-        if ast_item["t"] == "Str":
-            out.write(ast_item["c"])
-        elif ast_item["t"] == "Space":
-            out.write(" ")
+    if isinstance(v, dict):
+        if v["t"] == "Str":
+            return v["c"]
+        if v["t"] == "Code":
+            return f"`{v['c'][1]}`"
+        elif v["t"] == "Space":
+            return " "
+        elif v["t"] == "Para":
+            return "".join(to_str(item) for item in v["c"])
         else:
             raise ValueError(f"Unhandled type in Pandoc ast convert: {v}")
-    return out.getvalue()
+    else:
+        return "".join(to_str(item) for item in v)
 
 
 if __name__ == "__main__":
