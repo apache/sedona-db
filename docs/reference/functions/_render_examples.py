@@ -84,4 +84,7 @@ if __name__ == "__main__":
     if args.examples == ["-"]:
         args.examples = sys.stdin.read().split("\n----\n")
 
-    render_examples(args.examples, width=args.width, ascii=args.ascii)
+    try:
+        render_examples(args.examples, width=args.width, ascii=args.ascii)
+    except Exception as e:
+        raise ValueError(f"Failed to render example\n{args.examples}") from e

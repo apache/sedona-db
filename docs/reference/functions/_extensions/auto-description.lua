@@ -17,6 +17,42 @@
 
 -- auto-description.lua
 -- Automatically adds a Description section based on frontmatter using _render_meta.py
+-- Also processes SQL code blocks using _render_examples.py
+
+local function render_sql_example(sql_code)
+  -- Create a temporary file for the SQL
+  local temp_file = os.tmpname()
+
+  -- Write SQL content to temporary file
+  local temp_handle = io.open(temp_file, "w")
+  if not temp_handle then
+    return {pandoc.CodeBlock(sql_code, pandoc.Attr("", {"sql"}, {}))}
+  end
+
+  temp_handle:write(sql_code)
+  temp_handle:close()
+
+  -- Execute _render_examples.py using stdin (with - argument)
+  local cmd = string.format("python3 _render_examples.py - < '%s'", temp_file)
+  local handle = io.popen(cmd, "r")
+  if not handle then
+    os.remove(temp_file)
+    return {pandoc.CodeBlock(sql_code, pandoc.Attr("", {"sql"}, {}))}
+  end
+
+  local result = handle:read("*all")
+  handle:close()
+  os.remove(temp_file)
+
+  -- Parse the markdown result and return as pandoc blocks
+  if result and result ~= "" then
+    local doc_result = pandoc.read(result, "markdown")
+    return doc_result.blocks
+  end
+
+  -- Fallback to original code block if rendering fails
+  return {pandoc.CodeBlock(sql_code, pandoc.Attr("", {"sql"}, {}))}
+end
 
 local function render_meta_content(doc)
   -- Use Pandoc's JSON encoding (may not work perfectly)
@@ -62,7 +98,22 @@ function Pandoc(doc)
   local description = doc.meta.description
 
   if description and description ~= "" then
-    -- Generate content using _render_meta.py
+    -- First pass: Process all existing SQL code blocks before generating new content
+    local new_blocks = {}
+    for i, block in ipairs(doc.blocks) do
+      if block.t == "CodeBlock" and block.classes and #block.classes > 0 and block.classes[1] == "sql" then
+        local rendered_blocks = render_sql_example(block.text)
+        -- Add all rendered blocks to new_blocks
+        for _, rendered_block in ipairs(rendered_blocks) do
+          table.insert(new_blocks, rendered_block)
+        end
+      else
+        table.insert(new_blocks, block)
+      end
+    end
+    doc.blocks = new_blocks
+
+    -- Second pass: Generate content using _render_meta.py
     local meta_blocks = render_meta_content(doc)
 
     if #meta_blocks > 0 then
