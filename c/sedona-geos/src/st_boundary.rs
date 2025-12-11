@@ -78,7 +78,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut BinaryBuilder) -> Resu
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
 
-    writer.append_value(wkb.as_ref());
+    writer.append_value(&wkb);
     Ok(())
 }
 
@@ -89,7 +89,11 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut BinaryBuilder) -> Resu
 /// before forming the final `GeometryCollection`. This aggregation step is crucial
 /// for adhering to OGC specifications for `GeometryCollection` boundaries.
 fn geos_boundary(geometry: &impl Geom) -> Result<Geometry> {
-    if geometry.geometry_type() == GeometryTypes::GeometryCollection {
+    if geometry
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+        == GeometryTypes::GeometryCollection
+    {
         let num_geometries = geometry.get_num_geometries().map_err(|e| {
             DataFusionError::Execution(format!("Failed to get number of geometries: {e}"))
         })?;
@@ -154,7 +158,8 @@ fn geos_boundary(geometry: &impl Geom) -> Result<Geometry> {
         }
 
         if result_components.len() == 1 {
-            Ok(Geom::clone(result_components.first().unwrap()))
+            Ok(Geom::clone(result_components.first().unwrap())
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?)
         } else {
             Geometry::create_geometry_collection(result_components).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to create geometry collection: {e}"))
@@ -170,7 +175,11 @@ fn geos_boundary(geometry: &impl Geom) -> Result<Geometry> {
 
 /// Checks if a geometry is an empty `GeometryCollection`.
 fn is_empty_geometry_collection(geom: &Geometry) -> Result<bool> {
-    if geom.geometry_type() == GeometryTypes::GeometryCollection {
+    if geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+        == GeometryTypes::GeometryCollection
+    {
         let num = geom.get_num_geometries().map_err(|e| {
             DataFusionError::Execution(format!("Failed to get number of geometries: {e}"))
         })?;
@@ -189,30 +198,44 @@ fn collect_boundary_components(
     lines: &mut Vec<Geometry>,
     polygons: &mut Vec<Geometry>,
 ) -> Result<()> {
-    match boundary.geometry_type() {
+    match boundary
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+    {
         // Recurse into sub-geometries if it's a collection
         GeometryTypes::GeometryCollection => {
             let num_geoms = boundary.get_num_geometries().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to get number of geometries: {e}"))
             })?;
 
-            for i in 0..num_geoms {
-                let component = boundary.get_geometry_n(i).map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to get {}th geometry: {e}", i + 1))
-                })?;
-                let owned_component = Geom::clone(&component);
-                collect_boundary_components(&owned_component, points, lines, polygons)?;
-            }
+            (0..num_geoms).try_for_each(|i| {
+                let component = boundary
+                    .get_geometry_n(i)
+                    .and_then(|g| Geom::clone(&g))
+                    .map_err(|e| {
+                        DataFusionError::Execution(format!(
+                            "Failed to process {}th geometry: {e}",
+                            i + 1
+                        ))
+                    })?;
+                collect_boundary_components(&component, points, lines, polygons)
+            })?;
         }
         // Collect simple, single-part components
         GeometryTypes::Point => {
-            points.push(Geom::clone(boundary));
+            points.push(
+                Geom::clone(boundary).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+            );
         }
         GeometryTypes::LineString => {
-            lines.push(Geom::clone(boundary));
+            lines.push(
+                Geom::clone(boundary).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+            );
         }
         GeometryTypes::Polygon => {
-            polygons.push(Geom::clone(boundary));
+            polygons.push(
+                Geom::clone(boundary).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+            );
         }
         // Decompose Multi-geometries and collect their parts
         GeometryTypes::MultiPoint => {
@@ -223,7 +246,9 @@ fn collect_boundary_components(
                 let point = boundary.get_geometry_n(i).map_err(|e| {
                     DataFusionError::Execution(format!("Failed to get {}th point: {e}", i + 1))
                 })?;
-                points.push(Geom::clone(&point));
+                points.push(
+                    Geom::clone(&point).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+                );
             }
         }
         GeometryTypes::MultiLineString => {
@@ -234,7 +259,9 @@ fn collect_boundary_components(
                 let line = boundary.get_geometry_n(i).map_err(|e| {
                     DataFusionError::Execution(format!("Failed to get {}th linestring: {e}", i + 1))
                 })?;
-                lines.push(Geom::clone(&line));
+                lines.push(
+                    Geom::clone(&line).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+                );
             }
         }
         GeometryTypes::MultiPolygon => {
@@ -245,7 +272,9 @@ fn collect_boundary_components(
                 let polygon = boundary.get_geometry_n(i).map_err(|e| {
                     DataFusionError::Execution(format!("Failed to get {}th polygon: {e}", i + 1))
                 })?;
-                polygons.push(Geom::clone(&polygon));
+                polygons.push(
+                    Geom::clone(&polygon).map_err(|e| DataFusionError::Execution(e.to_string()))?,
+                );
             }
         }
         // Ignore other types (e.g., empty geometries)

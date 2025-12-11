@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
-use datafusion_common::Result;
+use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -54,7 +54,7 @@ impl SedonaScalarKernel for STIsValid {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    builder.append_value(invoke_scalar(&wkb));
+                    builder.append_value(invoke_scalar(&wkb)?);
                 }
                 _ => builder.append_null(),
             }
@@ -66,8 +66,10 @@ impl SedonaScalarKernel for STIsValid {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry) -> bool {
-    geos_geom.is_valid()
+fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<bool> {
+    geos_geom.is_valid().map_err(|e| {
+        DataFusionError::Execution(format!("Failed to check if the geometry is valid: {e}"))
+    })
 }
 
 #[cfg(test)]

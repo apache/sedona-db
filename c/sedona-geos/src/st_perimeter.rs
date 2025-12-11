@@ -73,14 +73,14 @@ impl SedonaScalarKernel for STPerimeter {
 fn invoke_scalar(geos_geom: &geos::Geometry) -> GResult<f64> {
     // The .length() method returns the perimeter of the geometry for polygons
     // and lengths for the line strings, so we need to explicitly check for the geometry type
-    match geos_geom.geometry_type() {
+    match geos_geom.geometry_type()? {
         Polygon => geos_geom.length(),
         MultiPolygon => geos_geom.length(),
         GeometryCollection => {
             let mut sum = 0.0;
             for i in 0..geos_geom.get_num_geometries()? {
                 let geom = geos_geom.get_geometry_n(i)?;
-                match geom.geometry_type() {
+                match geom.geometry_type()? {
                     Polygon => sum += geom.length()?,
                     MultiPolygon => sum += geom.length()?,
                     _ => {}

@@ -78,7 +78,11 @@ fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<bool> {
     }
 
     // Check if geometry is a LineString - (PostGIS compatibility)
-    if geos_geom.geometry_type() != GeometryTypes::LineString {
+    if geos_geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+        != GeometryTypes::LineString
+    {
         return Err(DataFusionError::Execution(
             "ST_IsRing() should only be called on a linear feature".to_string(),
         ));

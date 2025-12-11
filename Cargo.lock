@@ -1072,12 +1072,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c_vec"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdd7a427adc0135366d99db65b36dae9237130997e560ed61118041fb72be6e8"
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2671,10 +2665,8 @@ dependencies = [
 [[package]]
 name = "geos"
 version = "10.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0473e63acafe4109b096ab8c1e6b8151e1cb25397811525779a9bc7187382a7b"
+source = "git+https://github.com/georust/geos.git?rev=47afbad2483e489911ddb456417808340e9342c3#47afbad2483e489911ddb456417808340e9342c3"
 dependencies = [
- "c_vec",
  "geo-types",
  "geos-sys",
  "libc",
@@ -2685,8 +2677,7 @@ dependencies = [
 [[package]]
 name = "geos-sys"
 version = "2.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dc873d24aefc72aa94c3c1c251afb82beb7be5926002746c0e1f585fef9854c"
+source = "git+https://github.com/georust/geos.git?rev=47afbad2483e489911ddb456417808340e9342c3#47afbad2483e489911ddb456417808340e9342c3"
 dependencies = [
  "libc",
  "pkg-config",
@@ -4992,7 +4983,6 @@ dependencies = [
  "geo-traits",
  "geo-types",
  "geos",
- "geos-sys",
  "rstest",
  "sedona",
  "sedona-common",

@@ -33,6 +33,36 @@ use sedona_schema::{
 use crate::executor::GeosExecutor;
 
 /// ST_ConcaveHull() implementation using the geos crate
+pub fn st_concave_hull_allow_holes_impl() -> ScalarKernelRef {
+    Arc::new(STConcaveHullAllowHoles {})
+}
+
+#[derive(Debug)]
+struct STConcaveHullAllowHoles {}
+
+impl SedonaScalarKernel for STConcaveHullAllowHoles {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::is_numeric(),
+                ArgMatcher::is_boolean(),
+            ],
+            WKB_GEOMETRY,
+        );
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        invoke_batch_impl(arg_types, args)
+    }
+}
+
 pub fn st_concave_hull_impl() -> ScalarKernelRef {
     Arc::new(STConcaveHull {})
 }
@@ -98,101 +128,39 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     executor.finish(Arc::new(builder.finish()))
 }
 
-fn invoke_scalar(
+fn invoke_scalar<W: std::io::Write>(
     geos_geom: &geos::Geometry,
     pct_convex: f64,
     allow_holes: bool,
-    writer: &mut impl std::io::Write,
+    writer: &mut W,
 ) -> Result<()> {
-    let input_wkb = geos_geom
+    let geometry = geos_geom
+        .concave_hull(pct_convex, allow_holes)
+        .map_err(|e| {
+            DataFusionError::Execution(format!("Failed to calculate concave hull: {e}"))
+        })?;
+
+    let geo_wkb = geometry
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to WKB: {e}")))?;
-    let wkb_bytes: &[u8] = input_wkb.as_ref();
 
-    let result_wkb = concave_hull_via_geos_sys(wkb_bytes, pct_convex, allow_holes)?;
-
-    writer.write_all(&result_wkb)?;
+    writer.write_all(&geo_wkb)?;
     Ok(())
-}
-
-fn concave_hull_via_geos_sys(input_wkb: &[u8], ratio: f64, allow_holes: bool) -> Result<Vec<u8>> {
-    unsafe {
-        let ctx = geos_sys::GEOS_init_r();
-        if ctx.is_null() {
-            return Err(DataFusionError::Execution(
-                "Failed to initialize GEOS context".to_string(),
-            ));
-        }
-
-        let wkb_reader = geos_sys::GEOSWKBReader_create_r(ctx);
-        if wkb_reader.is_null() {
-            geos_sys::GEOS_finish_r(ctx);
-            return Err(DataFusionError::Execution(
-                "Failed to create WKB reader".to_string(),
-            ));
-        }
-
-        let geom_ptr =
-            geos_sys::GEOSWKBReader_read_r(ctx, wkb_reader, input_wkb.as_ptr(), input_wkb.len());
-        geos_sys::GEOSWKBReader_destroy_r(ctx, wkb_reader);
-
-        if geom_ptr.is_null() {
-            geos_sys::GEOS_finish_r(ctx);
-            return Err(DataFusionError::Execution("Failed to read WKB".to_string()));
-        }
-
-        let hull_ptr =
-            geos_sys::GEOSConcaveHull_r(ctx, geom_ptr, ratio, if allow_holes { 1 } else { 0 });
-
-        geos_sys::GEOSGeom_destroy_r(ctx, geom_ptr);
-
-        if hull_ptr.is_null() {
-            geos_sys::GEOS_finish_r(ctx);
-            return Err(DataFusionError::Execution(
-                "GEOSConcaveHull_r returned null".to_string(),
-            ));
-        }
-
-        let wkb_writer = geos_sys::GEOSWKBWriter_create_r(ctx);
-        if wkb_writer.is_null() {
-            geos_sys::GEOSGeom_destroy_r(ctx, hull_ptr);
-            geos_sys::GEOS_finish_r(ctx);
-            return Err(DataFusionError::Execution(
-                "Failed to create WKB writer".to_string(),
-            ));
-        }
-
-        let mut wkb_size: usize = 0;
-        let wkb_ptr = geos_sys::GEOSWKBWriter_write_r(ctx, wkb_writer, hull_ptr, &mut wkb_size);
-
-        geos_sys::GEOSWKBWriter_destroy_r(ctx, wkb_writer);
-        geos_sys::GEOSGeom_destroy_r(ctx, hull_ptr);
-
-        if wkb_ptr.is_null() {
-            geos_sys::GEOS_finish_r(ctx);
-            return Err(DataFusionError::Execution(
-                "Failed to write WKB".to_string(),
-            ));
-        }
-
-        let wkb_slice = std::slice::from_raw_parts(wkb_ptr, wkb_size);
-        let result = wkb_slice.to_vec();
-
-        geos_sys::GEOSFree_r(ctx, wkb_ptr as *mut _);
-        geos_sys::GEOS_finish_r(ctx);
-
-        Ok(result)
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::Float64Array;
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_testing::{
+        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        create::create_array,
+        testers::ScalarUdfTester,
+    };
 
     use super::*;
 
@@ -205,16 +173,178 @@ mod tests {
         );
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
-        let result = tester.invoke_scalar_scalar("POINT (2.5 3.1)", 0.1).unwrap();
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        let result = tester
+            .invoke_scalar_scalar("POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))", 0.2)
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))",
+        );
+
+        let input_wkt_array = vec![
+            None,
+            Some("POINT EMPTY"),
+            Some("POINT (2.5 3.1)"),
+            Some("LINESTRING EMPTY"),
+            Some("LINESTRING (50 50, 150 150, 150 50)"),
+            Some("LINESTRING (100 150, 50 60, 70 80, 160 170)"),
+        ];
+
+        let tolerance_array: Arc<Float64Array> = Arc::new(Float64Array::from(vec![
+            Some(0.1),
+            Some(0.1),
+            Some(0.1),
+            Some(0.1),
+            Some(0.1),
+            Some(0.3),
+        ]));
+
+        let expected_array = create_array(
+            &[
+                None,
+                Some("POLYGON EMPTY"),
+                Some("POINT (2.5 3.1)"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON ((50 50, 150 150, 150 50, 50 50))"),
+                Some("POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester
+                .invoke_arrays(vec![
+                    create_array(&input_wkt_array, &sedona_type),
+                    tolerance_array,
+                ])
+                .unwrap(),
+            &expected_array,
+        );
+
+        let input_wkt_array = vec![
+            Some("MULTIPOINT EMPTY"),
+            Some("MULTIPOINT ((100 150), (160 170))"),
+            Some("MULTIPOINT ((0 0), (10 0), (0 10), (10 10), (5 5))"),
+            Some("MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))"),
+            Some("MULTIPOLYGON EMPTY"),
+            Some("MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))"),
+        ];
+
+        let tolerance_array: Arc<Float64Array> = Arc::new(Float64Array::from(vec![
+            Some(0.1),
+            Some(0.2),
+            Some(0.1),
+            Some(0.2),
+            Some(0.3),
+            Some(0.1),
+        ]));
+
+        let expected_array = create_array(
+            &[
+                Some("POLYGON EMPTY"),
+                Some("LINESTRING(100 150, 160 170)"),
+                Some("POLYGON ((5 5, 0 10, 10 10, 10 0, 0 0, 5 5))"),
+                Some("LINESTRING (50 50, 50 200)"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON ((5 2, 2 2, 2 5, 5 5, 6 3, 8 3, 8 1, 6 1, 5 2))"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester
+                .invoke_arrays(vec![
+                    create_array(&input_wkt_array, &sedona_type),
+                    tolerance_array,
+                ])
+                .unwrap(),
+            &expected_array,
+        );
+
+        let input_wkt_array = vec![
+            Some("MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))"),
+            Some("GEOMETRYCOLLECTION EMPTY"),
+            Some("GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT(5 6), LINESTRING(4 5, 5 6))"),
+            Some("GEOMETRYCOLLECTION(LINESTRING(1 1,2 2),GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)),GEOMETRYCOLLECTION(LINESTRING(6 6,7 7),POLYGON((8 8,9 9,10 10,8 8)))))"),
+        ];
+
+        let tolerance_array: Arc<Float64Array> = Arc::new(Float64Array::from(vec![
+            Some(0.1),
+            Some(0.3),
+            Some(0.1),
+            Some(0.1),
+        ]));
+
+        let expected_array = create_array(
+            &[
+                Some("POLYGON((51 150, 26 125, 26 200, 76 175, 126 200, 151 200, 176 175, 151 100, 126 125, 101 150, 51 150))"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"),
+                Some("LINESTRING(1 1,10 10)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        assert_array_equal(
+            &tester
+                .invoke_arrays(vec![
+                    create_array(&input_wkt_array, &sedona_type),
+                    tolerance_array,
+                ])
+                .unwrap(),
+            &expected_array,
+        );
+    }
+
+    #[rstest]
+    fn udf_allow_holes(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let udf =
+            SedonaScalarUDF::from_kernel("st_concavehull", st_concave_hull_allow_holes_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        );
+        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT EMPTY", 0.1, true)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT (2.5 3.1)", 0.1, true)
+            .unwrap();
         tester.assert_scalar_result_equals(result, "POINT (2.5 3.1)");
 
         let result = tester
-            .invoke_scalar_scalar("LINESTRING (50 50, 150 150, 150 50)", 0.1)
+            .invoke_scalar_scalar_scalar("POINT (2.5 3.1)", 0.1, true)
             .unwrap();
-        tester.assert_scalar_result_equals(result, "POLYGON ((50 50, 150 150, 150 50, 50 50))");
+        tester.assert_scalar_result_equals(result, "POINT (2.5 3.1)");
 
         let result = tester
-            .invoke_scalar_scalar("LINESTRING (100 150, 50 60, 70 80, 160 170)", 0.3)
+            .invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.2, true)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("LINESTRING (100 150, 50 60, 70 80, 160 170)", 0.2, true)
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "POLYGON ((50 60, 100 150, 160 170, 70 80, 50 60))",
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("LINESTRING (100 150, 50 60, 70 80, 160 170)", 0.2, false)
             .unwrap();
         tester.assert_scalar_result_equals(
             result,
@@ -222,16 +352,127 @@ mod tests {
         );
 
         let result = tester
-            .invoke_scalar_scalar(
+            .invoke_scalar_scalar_scalar(
+                "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))",
+                0.2,
+                false,
+            )
+            .unwrap();
+        assert_scalar_equal_wkb_geometry(
+            &result,
+            Some("POLYGON((70 80,50 60,100 150,160 170,70 80))"),
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))",
+                0.2,
+                true,
+            )
+            .unwrap();
+        assert_scalar_equal_wkb_geometry(
+            &result,
+            Some("POLYGON((50 60,100 150,160 170,70 80,50 60))"),
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("MULTIPOINT EMPTY", 0.2, false)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTIPOINT ((10 40), (40 30), (20 20), (30 10))",
+                0.1,
+                true,
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON ((40 30, 30 10, 20 20, 10 40, 40 30))");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTIPOINT ((10 40), (40 30), (20 20), (30 10))",
+                0.1,
+                false,
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON ((20 20, 10 40, 40 30, 30 10, 20 20))");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("MULTILINESTRING EMPTY", 0.1, false)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))",
+                0.1,
+                true,
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "POLYGON ((30 30, 40 40, 40 20, 30 10, 10 10, 20 20, 10 40, 30 30))",
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))",
+                0.1,
+                false,
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "POLYGON ((20 20, 10 40, 30 30, 40 40, 40 20, 30 10, 10 10, 20 20))",
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("MULTIPOLYGON EMPTY", 0.1, false)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))",
+                0.1,
+                true,
+            )
+            .unwrap();
+        tester
+            .assert_scalar_result_equals(result, "POLYGON((2 2,2 5,5 5,6 3,8 3,8 1,6 1,5 2,2 2))");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))",
+                0.1,
+                false,
+            )
+            .unwrap();
+        tester
+            .assert_scalar_result_equals(result, "POLYGON((5 2,2 2,2 5,5 5,6 3,8 3,8 1,6 1,5 2))");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("GEOMETRYCOLLECTION EMPTY", 0.1, true)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
                 "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT(5 6), LINESTRING(4 5, 5 6))",
                 0.1,
+                true,
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON ((1 1, 4 5, 5 6, 3 3, 1 1))");
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT(5 6), LINESTRING(4 5, 5 6))",
+                0.1,
+                false,
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, "POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))");
-
-        let result = tester
-            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
-            .unwrap();
-        assert!(result.is_null());
     }
 }

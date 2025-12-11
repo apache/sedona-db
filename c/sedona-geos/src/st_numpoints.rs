@@ -69,7 +69,10 @@ impl SedonaScalarKernel for STNumPoints {
 }
 
 fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
-    match geom.geometry_type() {
+    match geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+    {
         GeometryTypes::LineString => {
             let count = geom.get_num_points().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to get num points: {e}"))
