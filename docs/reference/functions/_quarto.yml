@@ -23,3 +23,4 @@ execute:
   echo: false
 filters:
   - _extensions/render-meta-and-examples.lua
+fig-dpi: 150
