@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
+
 DEFAULT_ARG_NAMES = {
     "geometry": "geom",
     "geography": "geog",
@@ -29,16 +31,15 @@ DEFAULT_ARG_DESCRIPTIONS = {
 
 
 def expand_arg(arg):
-    if isinstance(arg, str):
+    if isinstance(arg, dict):
+        pass
+    else:
+        arg = to_str(arg)
         arg = {
             "type": arg,
             "name": DEFAULT_ARG_NAMES[arg],
             "description": DEFAULT_ARG_DESCRIPTIONS[arg],
         }
-    elif not isinstance(arg, dict):
-        raise TypeError(
-            "Expected args element to be a type string or a mapping with keys type/name/description"
-        )
 
     if "default" not in arg:
         arg["default"] = None
@@ -71,7 +72,7 @@ def expand_args(args):
 
 def render_description(description):
     print("\n## Description\n")
-    print(description.strip())
+    print(to_str(description).strip())
 
 
 def render_arg(arg):
@@ -86,7 +87,7 @@ def render_usage(name, kernels):
     print("\n```sql")
     for kernel in kernels:
         args = ", ".join(render_arg(arg) for arg in kernel["args"])
-        print(f"{kernel['returns']} {name}({args})")
+        print(f"{to_str(kernel['returns'])} {to_str(name)}({args})")
     print("```")
 
 
@@ -98,7 +99,9 @@ def render_args(kernels):
 
     print("\n## Arguments\n")
     for arg in expanded_args.values():
-        print(f"- **{arg['name']}** ({arg['type']}): {arg['description']}")
+        print(
+            f"- **{to_str(arg['name'])}** ({to_str(arg['type'])}): {to_str(arg['description'])}"
+        )
 
 
 def render_all(raw_meta):
@@ -113,9 +116,23 @@ def render_all(raw_meta):
         render_args(raw_meta["kernels"])
 
 
+def to_str(v):
+    if isinstance(v, str):
+        return v
+
+    out = io.StringIO()
+    for ast_item in v:
+        if ast_item["t"] == "Str":
+            out.write(ast_item["c"])
+        elif ast_item["t"] == "Space":
+            out.write(" ")
+        else:
+            raise ValueError(f"Unhandled type in Pandoc ast convert: {v}")
+    return out.getvalue()
+
+
 if __name__ == "__main__":
     import argparse
-    import io
     import sys
     import yaml
 
