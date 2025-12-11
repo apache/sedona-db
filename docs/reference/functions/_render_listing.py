@@ -22,6 +22,29 @@ import yaml
 from _render_meta import render_meta
 
 
+def render_listing(paths):
+    """Lists meta information for zero or more filenames to function .qmd files
+
+    Output:
+
+    ```
+    ## [ST_Name](st_name.md)
+
+    <description>
+
+    ## Usage
+
+    return_type ST_Name(arg_name: arg_type)
+    ```
+    """
+    for file in paths:
+        raw_meta = read_frontmatter(file)
+        link_href = file.name.replace(".qmd", ".md")
+        print(f"\n## [{raw_meta['title']}]({link_href})\n\n")
+
+        render_meta(raw_meta, level=2, arguments=False)
+
+
 def read_frontmatter(path):
     frontmatter = io.StringIO()
     with open(path) as f:
@@ -56,10 +79,3 @@ if __name__ == "__main__":
     in_files: list[Path] = []
     for file_or_glob in args.files:
         in_files.extend(collect_files(file_or_glob))
-
-    for file in in_files:
-        raw_meta = read_frontmatter(file)
-        link_href = file.name.replace(".qmd", ".md")
-        print(f"\n## [{raw_meta['title']}]({link_href})\n\n")
-
-        render_meta(raw_meta, level=2, arguments=False)

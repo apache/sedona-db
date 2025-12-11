@@ -20,6 +20,39 @@ import sedonadb
 sd = sedonadb.connect()
 
 
+def render_examples(examples, width=80, ascii=False):
+    """Renders examples to stdout using SedonaDB for Python
+
+    This takes an iterable of example SQL strings and renders the SQL
+    and the result to stdout. All examples are run in the same
+    context.
+
+    Output:
+
+    ````
+
+    ```sql
+    --- examples that don't return a result are accumulated
+    SET some.config = true;
+    --- when a query does return a result, we end the sql code block
+    --- and print the result
+    SELECT one as 1;
+    ```
+
+    ```
+    <output>
+    ```
+
+    ````
+    """
+    try:
+        examples_iter = iter(examples)
+        while True:
+            render_examples_iter_until_result(examples_iter, width=width, ascii=ascii)
+    except StopIteration:
+        pass
+
+
 def render_examples_iter_until_result(examples_iter, width=80, ascii=False):
     example = next(examples_iter)
 
@@ -58,15 +91,6 @@ def render_examples_iter_until_result(examples_iter, width=80, ascii=False):
     print("```\n")
 
 
-def render_examples(examples, width=80, ascii=False):
-    try:
-        examples_iter = iter(examples)
-        while True:
-            render_examples_iter_until_result(examples_iter, width=width, ascii=ascii)
-    except StopIteration:
-        pass
-
-
 if __name__ == "__main__":
     import argparse
     import sys
@@ -75,7 +99,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "examples",
         nargs="+",
-        help="SQL strings to be rendered or `-` to read from stdin",
+        help=(
+            "SQL strings to be rendered or `-` to read from stdin. "
+            "When reading from stdin, multiple examples may be separated by "
+            "with `----` on its own line."
+        ),
     )
     parser.add_argument("--width", type=int, default=80)
     parser.add_argument("--ascii", default=False, action="store_true")
