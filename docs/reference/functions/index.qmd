@@ -16,5 +16,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: "SQL Reference"
+title: "SQL Function Reference"
 ---
+
+## Spatial Functions
+
+| Function | Description |
+|----------|-------------|
+| [ST_Analyze_Agg](st_analyze_agg.md) | Compute the statistics of geometries for the input geometry |
+| [ST_Buffer](st_buffer.md) | Create a buffer around a geometry |
+| [ST_Intersection](st_intersection.md) | Compute the intersection of two geometries or geographies |

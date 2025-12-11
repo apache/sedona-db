@@ -83,8 +83,8 @@ def render_arg(arg):
         return f"{arg['name']}: {arg['type']}"
 
 
-def render_usage(name, kernels):
-    print("\n## Usage\n")
+def render_usage(name, kernels, level):
+    print(f"\n{heading(level + 1)} Usage\n")
     print("\n```sql")
     for kernel in kernels:
         args = ", ".join(render_arg(arg) for arg in kernel["args"])
@@ -92,7 +92,7 @@ def render_usage(name, kernels):
     print("```")
 
 
-def render_args(kernels):
+def render_args(kernels, level):
     try:
         expanded_args = {}
         for kernel in reversed(kernels):
@@ -103,14 +103,14 @@ def render_args(kernels):
             f"Failed to consolidate argument documentation from kernels:\n{kernels}"
         ) from e
 
-    print("\n## Arguments\n")
+    print(f"\n{heading(level + 1)} Arguments\n")
     for arg in expanded_args.values():
         print(
             f"- **{to_str(arg['name'])}** ({to_str(arg['type'])}): {to_str(arg['description'])}"
         )
 
 
-def render_all(raw_meta):
+def render_meta(raw_meta, level=1, usage=True, arguments=True):
     if "description" in raw_meta:
         render_description(raw_meta["description"])
 
@@ -118,8 +118,15 @@ def render_all(raw_meta):
         for kernel in raw_meta["kernels"]:
             kernel["args"] = expand_args(kernel["args"])
 
-        render_usage(raw_meta["title"], raw_meta["kernels"])
-        render_args(raw_meta["kernels"])
+        if usage:
+            render_usage(raw_meta["title"], raw_meta["kernels"], level)
+
+        if arguments:
+            render_args(raw_meta["kernels"], level=level)
+
+
+def heading(level):
+    return "#" * level + " "
 
 
 def to_str(v):
@@ -158,4 +165,4 @@ if __name__ == "__main__":
 
     with io.StringIO(args.meta) as f:
         raw_meta = yaml.safe_load(f)
-        render_all(raw_meta)
+        render_meta(raw_meta)
