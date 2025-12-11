@@ -22,4 +22,4 @@ engine: jupyter
 execute:
   echo: false
 filters:
-  - _extensions/auto-description.lua
+  - _extensions/render-meta-and-examples.lua
