@@ -98,6 +98,8 @@ jobs:
         with:
           python-version: "3.x"
 
+      - uses: quarto-dev/quarto-actions/setup@v2
+
       - name: Use stable Rust
         id: rust
         run: |
