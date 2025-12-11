@@ -264,8 +264,12 @@ impl SpatialIndexBuilder {
                 .unwrap();
 
         let cache_size = batch_pos_vec.len();
-        let knn_components =
-            KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone())?;
+        let knn_components = matches!(
+            self.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(_)
+        )
+        .then(|| KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone()))
+        .transpose()?;
 
         Ok(SpatialIndex {
             schema: self.schema,
