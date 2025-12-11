@@ -25,3 +25,4 @@ execute:
   echo: false
 filters:
   - _extensions/render-meta-and-examples.lua
+  - _extensions/function-listing
