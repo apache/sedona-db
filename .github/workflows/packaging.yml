@@ -121,7 +121,7 @@ jobs:
 
       - name: Install dev SedonaDB Python
         run: |
-            pip install python/sedonadb/ -vv
+            pip install "python/sedonadb/[geopandas]" -v
 
       - name: Build documentation
         run: |

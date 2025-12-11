@@ -35,6 +35,7 @@ SELECT ST_Intersection(
 ```
 
 ```{python}
+import _matplotlib_defaults
 import sedonadb
 
 sd = sedonadb.connect()

@@ -50,6 +50,7 @@ SELECT ST_Buffer(
 ```
 
 ```{python}
+import _matplotlib_defaults
 import sedonadb
 
 sd = sedonadb.connect()

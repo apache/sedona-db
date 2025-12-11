@@ -15,13 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-project:
-  title: "Function Reference"
-format:
-  gfm:
-    fig-dpi: 300
-engine: jupyter
-execute:
-  echo: false
-filters:
-  - _extensions/render-meta-and-examples.lua
+import matplotlib.pyplot as plt
+
+plt.rcParams["axes.labelsize"] = 8
+plt.rcParams["xtick.labelsize"] = 8
+plt.rcParams["ytick.labelsize"] = 8
