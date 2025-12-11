@@ -71,7 +71,6 @@ def expand_args(args):
 
 
 def render_description(description):
-    print("\n## Description\n")
     print(to_str(description).strip())
 
 

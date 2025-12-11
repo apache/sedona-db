@@ -23,6 +23,8 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
 `ST_Analyze_Agg()` provides a high-level summary of its input geometries. The fields of
 its struct return type are:
 
