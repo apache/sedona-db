@@ -70,7 +70,7 @@ def expand_args(args):
 
 
 def render_description(description):
-    print("## Description\n")
+    print("\n## Description\n")
     print(description.strip())
 
 
@@ -82,21 +82,22 @@ def render_arg(arg):
 
 
 def render_usage(name, kernels):
-    print("## Usage\n\n")
-    print("```sql")
+    print("\n## Usage\n")
+    print("\n```sql")
     for kernel in kernels:
         args = ", ".join(render_arg(arg) for arg in kernel["args"])
-        print(f"{kernel['returns']}{name}({args})")
+        print(f"{kernel['returns']} {name}({args})")
     print("```")
 
 
 def render_args(kernels):
     expanded_args = {}
     for kernel in reversed(kernels):
-        expanded_args.update(kernel["args"])
+        args_dict = {arg["name"]: arg for arg in kernel["args"]}
+        expanded_args.update(args_dict)
 
-    print("## Arguments\n")
-    for arg in expanded_args:
+    print("\n## Arguments\n")
+    for arg in expanded_args.values():
         print(f"- **{arg['name']}** ({arg['type']}): {arg['description']}")
 
 
@@ -110,6 +111,7 @@ def render_all(raw_meta):
 
         render_usage(raw_meta["title"], raw_meta["kernels"])
         render_args(raw_meta["kernels"])
+
 
 if __name__ == "__main__":
     import argparse
