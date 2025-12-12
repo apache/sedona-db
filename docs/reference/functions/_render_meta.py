@@ -156,7 +156,7 @@ DEFAULT_ARG_NAMES = {
 DEFAULT_ARG_DESCRIPTIONS = {
     "geometry": "Input geometry",
     "geography": "Input geography",
-    "raster": "Input rast",
+    "raster": "Input raster",
 }
 
 
