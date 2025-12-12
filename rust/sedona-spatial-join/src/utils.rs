@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub(crate) mod bbox_sampler;
 pub(crate) mod concurrent_reservation;
 pub(crate) mod init_once_array;
 pub(crate) mod join_utils;

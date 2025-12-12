@@ -5225,6 +5225,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "fastrand",
  "float_next_after",
  "futures",
  "geo",

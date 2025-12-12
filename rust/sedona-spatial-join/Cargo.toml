@@ -64,6 +64,7 @@ wkb = { workspace = true }
 geo-index = { workspace = true }
 geos = { workspace = true }
 float_next_after = { workspace = true }
+fastrand = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
