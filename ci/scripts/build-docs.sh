@@ -40,7 +40,12 @@ pushd "${SEDONADB_DIR}/docs/reference/functions"
 find . -name "*.md" -delete
 
 # Render the Quarto project
-quarto render
+if quarto render ; then
+  echo "Function reference Quarto project rendered successfully"
+else
+  echo "Function reference Quarto project build failed"
+  exit 1
+fi
 
 popd
 
