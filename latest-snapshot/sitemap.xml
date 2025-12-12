@@ -52,4 +52,20 @@
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/</loc>
          <lastmod>2025-12-12</lastmod>
     </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/</loc>
+         <lastmod>2025-12-12</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_analyze_agg/</loc>
+         <lastmod>2025-12-12</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_buffer/</loc>
+         <lastmod>2025-12-12</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_intersection/</loc>
+         <lastmod>2025-12-12</lastmod>
+    </url>
 </urlset>

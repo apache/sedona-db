@@ -17,6 +17,7 @@
 
 griffe
 ipykernel
+matplotlib
 mike
 mkdocs
 mkdocs-git-revision-date-localized-plugin
