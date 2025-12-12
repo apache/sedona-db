@@ -83,7 +83,7 @@ impl SedonaScalarKernel for RsExample {
             skew_x: 1.0,
             skew_y: 1.0,
         };
-        let crs = lnglat().unwrap().to_json();
+        let crs = lnglat().unwrap().to_crs_string();
         builder.start_raster(&raster_metadata, Some(&crs))?;
         let nodata_value = 127u8;
         for band_id in 1..=3 {

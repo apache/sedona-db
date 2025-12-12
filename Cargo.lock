@@ -5166,6 +5166,7 @@ dependencies = [
  "sedona-raster",
  "sedona-schema",
  "sedona-testing",
+ "serde_json",
 ]
 
 [[package]]

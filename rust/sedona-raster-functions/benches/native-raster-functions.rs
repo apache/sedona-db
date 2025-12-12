@@ -19,6 +19,8 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
+
+    benchmark::scalar(c, &f, "native-raster", "rs_crs", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
     benchmark::scalar(
         c,
@@ -46,6 +48,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native-raster", "rs_scaley", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_skewx", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_skewy", Raster(64, 64));
+    benchmark::scalar(c, &f, "native-raster", "rs_srid", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_upperleftx", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_upperlefty", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_width", Raster(64, 64));

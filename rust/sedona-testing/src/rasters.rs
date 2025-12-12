@@ -91,6 +91,7 @@ pub fn generate_tiled_rasters(
     let (x_tiles, y_tiles) = number_of_tiles;
     let mut raster_builder = RasterBuilder::new(x_tiles * y_tiles);
     let band_count = 3;
+    let crs = lnglat().unwrap().to_crs_string();
 
     for tile_y in 0..y_tiles {
         for tile_x in 0..x_tiles {
@@ -108,7 +109,7 @@ pub fn generate_tiled_rasters(
                 skew_y: 0.0,
             };
 
-            raster_builder.start_raster(&raster_metadata, None)?;
+            raster_builder.start_raster(&raster_metadata, Some(&crs))?;
 
             for _ in 0..band_count {
                 // Set a nodata value appropriate for the data type
