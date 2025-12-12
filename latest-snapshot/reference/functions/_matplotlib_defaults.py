@@ -15,16 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-griffe
-ipykernel
-mike
-mkdocs
-mkdocs-git-revision-date-localized-plugin
-mkdocs-glightbox
-mkdocs-macros-plugin
-mkdocs-material
-mkdocstrings[python]
-nbconvert
-pyproj
-ruff
-lonboard
+import matplotlib.pyplot as plt
+
+plt.rcParams["axes.labelsize"] = 8
+plt.rcParams["xtick.labelsize"] = 8
+plt.rcParams["ytick.labelsize"] = 8

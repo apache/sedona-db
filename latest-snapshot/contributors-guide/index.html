@@ -2046,6 +2046,71 @@ cargo<span class="w"> </span>bench
 </li>
 <li>Push your changes and open a pull request.</li>
 </ol>
+<p>SQL function reference is special: because we provide so many functions, we have
+a specialized syntax for documenting them. The minimum required documentation for
+a function is a file <code>docs/reference/functions/function_name.qmd</code>:</p>
+<div class="codehilite"><pre><span></span><code><span class="c1">---</span>
+<span class="nl">title</span><span class="p">:</span><span class="w"> </span><span class="n">ST_FunctionName</span>
+<span class="nl">description</span><span class="p">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="n">brief</span><span class="w"> </span><span class="n">one</span><span class="w"> </span><span class="n">sentence</span><span class="w"> </span><span class="n">description</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="n">what</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="k">function</span><span class="w"> </span><span class="n">does</span><span class="p">.</span>
+<span class="nl">kernels</span><span class="p">:</span>
+<span class="w">  </span><span class="o">-</span><span class="w"> </span><span class="k">returns</span><span class="err">:</span><span class="w"> </span><span class="n">geometry</span>
+<span class="w">    </span><span class="nl">args</span><span class="p">:</span><span class="w"> </span><span class="o">[</span><span class="n">geometry</span><span class="o">]</span>
+<span class="c1">---</span>
+
+<span class="err">##</span><span class="w"> </span><span class="n">Examples</span>
+
+<span class="err">```</span><span class="k">sql</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">ST_FunctionName</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<span class="err">```</span>
+</code></pre></div>
+
+<p>After writing this file, the <code>.md</code> file may be rendered using <a href="https://quarto.org">Quarto</a>:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>docs/reference/functions
+quarto<span class="w"> </span>render
+</code></pre></div>
+<p>This command (1) expands <code>description</code> and <code>kernels</code> to a templated representation,
+(2) checks and renders the result of the SQL examples, and (3) executes any
+<a href="https://quarto.org/docs/computations/python.html">Python code chunks</a>. These may
+be used to render figures that demonstrate visually what a function does or how its
+parameters affect the result.</p>
+<p>The <code>kernels</code> section of the frontmatter allows multiple implementations of a function
+to be documented. For example, many functions include implementations for geometry
+<em>and</em> geography or allow extra arguments to be supplied to customize behaviour. As
+an example, the frontmatter for <code>ST_Buffer()</code> is:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">---</span>
+<span class="nx">title</span><span class="p">:</span><span class="w"> </span><span class="nx">ST_Buffer</span>
+<span class="nx">description</span><span class="p">:</span><span class="w"> </span><span class="p">&gt;</span>
+<span class="w">    </span><span class="nx">Computes</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="nx">geometry</span><span class="w"> </span><span class="nx">that</span><span class="w"> </span><span class="nx">represents</span><span class="w"> </span><span class="nx">all</span><span class="w"> </span><span class="nx">points</span><span class="w"> </span><span class="nx">whose</span><span class="w"> </span><span class="nx">distance</span><span class="w"> </span><span class="nx">from</span><span class="w"> </span><span class="nx">the</span><span class="w"> </span><span class="nx">input</span>
+<span class="w">    </span><span class="nx">geometry</span><span class="w"> </span><span class="k">is</span><span class="w"> </span><span class="nx">less</span><span class="w"> </span><span class="nx">than</span><span class="w"> </span><span class="k">or</span><span class="w"> </span><span class="nx">equal</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="nx">specified</span><span class="w"> </span><span class="nx">distance</span><span class="p">.</span>
+<span class="nx">kernels</span><span class="p">:</span>
+<span class="w">  </span><span class="o">-</span><span class="w"> </span><span class="nx">returns</span><span class="p">:</span><span class="w"> </span><span class="nx">geometry</span>
+<span class="w">    </span><span class="nx">args</span><span class="p">:</span>
+<span class="w">    </span><span class="o">-</span><span class="w"> </span><span class="nx">geometry</span>
+<span class="w">    </span><span class="o">-</span><span class="w"> </span><span class="nx">name</span><span class="p">:</span><span class="w"> </span><span class="nx">distance</span>
+<span class="w">      </span><span class="k">type</span><span class="p">:</span><span class="w"> </span><span class="nx">float64</span>
+<span class="w">      </span><span class="nx">description</span><span class="p">:</span><span class="w"> </span><span class="nx">Radius</span><span class="w"> </span><span class="nx">of</span><span class="w"> </span><span class="nx">the</span><span class="w"> </span><span class="nx">buffer</span>
+<span class="w">  </span><span class="o">-</span><span class="w"> </span><span class="nx">returns</span><span class="p">:</span><span class="w"> </span><span class="nx">geometry</span>
+<span class="w">    </span><span class="nx">args</span><span class="p">:</span>
+<span class="w">    </span><span class="o">-</span><span class="w"> </span><span class="nx">geometry</span>
+<span class="w">    </span><span class="o">-</span><span class="w"> </span><span class="nx">name</span><span class="p">:</span><span class="w"> </span><span class="nx">distance</span>
+<span class="w">      </span><span class="k">type</span><span class="p">:</span><span class="w"> </span><span class="nx">float64</span>
+<span class="w">    </span><span class="o">-</span><span class="w"> </span><span class="nx">name</span><span class="p">:</span><span class="w"> </span><span class="nx">params</span>
+<span class="w">      </span><span class="k">type</span><span class="p">:</span><span class="w"> </span><span class="nx">utf8</span>
+<span class="w">      </span><span class="nx">description</span><span class="p">:</span><span class="w"> </span><span class="nx">Space</span><span class="o">-</span><span class="nx">separated</span><span class="w"> </span><span class="err">`</span><span class="nx">key</span><span class="p">=</span><span class="nx">value</span><span class="err">`</span><span class="w"> </span><span class="nx">parameters</span><span class="p">.</span>
+<span class="o">---</span>
+</code></pre></div>
+
+<p>This illustrates a few ways in which arguments can be defined:</p>
+<ul>
+<li>By the string <code>geometry</code>, <code>geography</code>, or <code>raster</code>. These are expanded to a full
+  definition by quarto but are so common that we allow abbreviating them to avoid
+  typing <code>description: Input geometry</code> for every single function.</li>
+<li>With a YAML object of <code>name</code> / <code>type</code> / <code>description</code>. The type names are lowercase
+  Arrow type names which should be identical to those printed when executing a query
+  in SedonaDB.</li>
+</ul>
+<p>The build system for function documentation is a work in progress, so be sure to ask
+if you run into problems or have any questions about the syntax!</p>
 
 
 
@@ -2066,7 +2131,7 @@ cargo<span class="w"> </span>bench
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="November 9, 2025 03:42:23 UTC">November 9, 2025 03:42:23</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="December 12, 2025 16:07:28 UTC">December 12, 2025 16:07:28</span>
   </span>
 
     

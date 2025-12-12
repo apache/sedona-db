@@ -1,0 +1,81 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_Buffer
+description: >
+    Computes a geometry that represents all points whose distance from the input
+    geometry is less than or equal to a specified distance.
+kernels:
+  - returns: geometry
+    args:
+    - geometry
+    - name: distance
+      type: float64
+      description: Radius of the buffer
+  - returns: geometry
+    args:
+    - geometry
+    - name: distance
+      type: float64
+    - name: params
+      type: utf8
+      description: >
+        Space-separated `key=value` parameters. Supported parameters include `quad_segs`,
+        `endcap`, `join`, `mitre_limit`, and `side`. These parameters are identical to
+        the PostGIS buffer parameter strings.
+---
+
+## Examples
+
+```sql
+SELECT ST_Buffer(
+  ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
+  1.0
+) AS geom;
+```
+
+```{python}
+import _matplotlib_defaults
+import sedonadb
+
+sd = sedonadb.connect()
+
+sd.sql("""
+SELECT ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))') as geom
+""").to_view("input")
+
+df = sd.sql("SELECT *, ST_Buffer(geom, 1.0) AS result FROM input").to_pandas()
+
+ax = df.geom.plot(alpha=0.5)
+df.result.plot(ax=ax, facecolor='none', edgecolor='red')
+```
+
+```sql
+SELECT ST_Buffer(
+  ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
+  1.0,
+  'quad_segs=2'
+) AS geom;
+```
+
+```{python}
+df = sd.sql("SELECT *, ST_Buffer(geom, 1.0, 'quad_segs=2') AS result FROM input").to_pandas()
+
+ax = df.geom.plot(alpha=0.5)
+df.result.plot(ax=ax, facecolor='none', edgecolor='red')
+```
