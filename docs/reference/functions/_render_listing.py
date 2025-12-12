@@ -79,3 +79,5 @@ if __name__ == "__main__":
     in_files: list[Path] = []
     for file_or_glob in args.files:
         in_files.extend(collect_files(file_or_glob))
+
+    render_listing(in_files)
