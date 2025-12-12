@@ -16,6 +16,7 @@
 # under the License.
 
 griffe
+ipykernel
 mike
 mkdocs
 mkdocs-git-revision-date-localized-plugin

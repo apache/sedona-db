@@ -336,3 +336,73 @@ To contribute to the SedonaDB documentation:
     * `mkdocs build` - Build the documentation site.
     * `mkdocs -h` - Print help message and exit.
 1. Push your changes and open a pull request.
+
+SQL function reference is special: because we provide so many functions, we have
+a specialized syntax for documenting them. The minimum required documentation for
+a function is a file `docs/reference/functions/function_name.qmd`:
+
+    ---
+    title: ST_FunctionName
+    description: A brief one sentence description of what the function does.
+    kernels:
+      - returns: geometry
+        args: [geometry]
+    ---
+
+    ## Examples
+
+    ```sql
+    SELECT ST_FunctionName(ST_Point(0, 1)) AS val;
+    ```
+
+After writing this file, the `.md` file may be rendered using [Quarto](https://quarto.org):
+
+```shell
+cd docs/reference/functions
+quarto render
+```
+
+This command (1) expands `description` and `kernels` to a templated representation,
+(2) checks and renders the result of the SQL examples, and (3) executes any
+[Python code chunks](https://quarto.org/docs/computations/python.html). These may
+be used to render figures that demonstrate visually what a function does or how its
+parameters affect the result.
+
+The `kernels` section of the frontmatter allows multiple implementations of a function
+to be documented. For example, many functions include implementations for geometry
+*and* geography or allow extra arguments to be supplied to customize behaviour. As
+an example, the frontmatter for `ST_Buffer()` is:
+
+    ---
+    title: ST_Buffer
+    description: >
+        Computes a geometry that represents all points whose distance from the input
+        geometry is less than or equal to a specified distance.
+    kernels:
+      - returns: geometry
+        args:
+        - geometry
+        - name: distance
+          type: float64
+          description: Radius of the buffer
+      - returns: geometry
+        args:
+        - geometry
+        - name: distance
+          type: float64
+        - name: params
+          type: utf8
+          description: Space-separated `key=value` parameters.
+    ---
+
+This illustrates a few ways in which arguments can be defined:
+
+- By the string `geometry`, `geography`, or `raster`. These are expanded to a full
+  definition by quarto but are so common that we allow abbreviating them to avoid
+  typing `description: Input geometry` for every single function.
+- With a YAML object of `name` / `type` / `description`. The type names are lowercase
+  Arrow type names which should be identical to those printed when executing a query
+  in SedonaDB.
+
+The build system for function documentation is a work in progress, so be sure to ask
+if you run into problems or have any questions about the syntax!

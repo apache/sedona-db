@@ -98,6 +98,8 @@ jobs:
         with:
           python-version: "3.x"
 
+      - uses: quarto-dev/quarto-actions/setup@v2
+
       - name: Use stable Rust
         id: rust
         run: |
@@ -119,7 +121,7 @@ jobs:
 
       - name: Install dev SedonaDB Python
         run: |
-            pip install python/sedonadb/ -vv
+            pip install "python/sedonadb/[geopandas]" -v
 
       - name: Build documentation
         run: |

@@ -33,6 +33,17 @@ for notebook in $(find "${SEDONADB_DIR}/docs" -name "*.ipynb"); do
   jupyter nbconvert --to markdown "${notebook}"
 done
 
+# Clean + build SQL function documentation
+pushd "${SEDONADB_DIR}/docs/reference/functions"
+
+# Remove built markdown files (they confuse quarto)
+find . -name "*.md" -delete
+
+# Render the Quarto project
+quarto render
+
+popd
+
 pushd "${SEDONADB_DIR}"
 if mkdocs build --strict ; then
   echo "Success!"
