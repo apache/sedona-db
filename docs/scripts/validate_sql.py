@@ -17,9 +17,11 @@
 
 import sedonadb
 import difflib
+from pathlib import Path
 
+HERE = Path(__file__).parent
 
-with open("docs/reference/sql.md", "r") as f:
+with open(HERE.parent / "reference" / "sql.md", "r") as f:
     lines = f.readlines()
     # Headers with `##` are the function names.
     funs_in_doc = [line[3:-1] for line in lines if line.startswith("## ")]
