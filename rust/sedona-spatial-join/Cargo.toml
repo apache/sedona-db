@@ -72,3 +72,18 @@ sedona-testing = { workspace = true }
 wkt = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 rand = { workspace = true }
+
+[[bench]]
+name = "kdb"
+path = "bench/partitioning/kdb.rs"
+harness = false
+
+[[bench]]
+name = "rtree"
+path = "bench/partitioning/rtree.rs"
+harness = false
+
+[[bench]]
+name = "flat"
+path = "bench/partitioning/flat.rs"
+harness = false
