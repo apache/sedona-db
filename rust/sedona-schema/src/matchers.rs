@@ -173,6 +173,11 @@ impl ArgMatcher {
         Arc::new(IsGeography {})
     }
 
+    /// Matches any argument that is an item-level Crs type
+    pub fn is_item_crs() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsItemCrs {})
+    }
+
     /// Matches any raster argument
     pub fn is_raster() -> Arc<dyn TypeMatcher + Send + Sync> {
         Self::is_exact(RASTER)
@@ -347,6 +352,24 @@ impl TypeMatcher for IsGeography {
 
     fn type_if_null(&self) -> Option<SedonaType> {
         Some(WKB_GEOGRAPHY)
+    }
+}
+
+#[derive(Debug)]
+struct IsItemCrs {}
+
+impl TypeMatcher for IsItemCrs {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        if let SedonaType::Arrow(DataType::Struct(fields)) = arg {
+            let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
+            if field_names != ["item", "crs"] {
+                return false;
+            }
+
+            return true;
+        }
+
+        false
     }
 }
 

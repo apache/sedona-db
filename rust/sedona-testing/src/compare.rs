@@ -14,16 +14,18 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::iter::zip;
+use std::{iter::zip, sync::Arc};
 
-use arrow_array::ArrayRef;
-use arrow_schema::DataType;
+use arrow_array::{ArrayRef, RecordBatch};
+use arrow_schema::{DataType, Schema};
 use datafusion_common::{
-    cast::{as_binary_array, as_binary_view_array},
+    arrow::json::ArrayWriter,
+    cast::{as_binary_array, as_binary_view_array, as_struct_array},
     ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use serde_json::Value;
 
 use crate::create::create_scalar;
 
@@ -97,6 +99,31 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
             unreachable!()
         }
     }
+}
+
+/// Assert that a Struct result matches a JSON list result
+pub fn assert_struct_array_equals(actual: ArrayRef, expected_json_str: &str) {
+    let struct_array = as_struct_array(&actual).unwrap();
+    // Create a schema that matches the struct array fields
+    let fields = struct_array.fields().to_vec();
+    let schema = Schema::new(fields);
+
+    // Create a record batch with just the struct array converted to a column
+    let columns: Vec<ArrayRef> = struct_array.columns().to_vec();
+    let record_batch = RecordBatch::try_new(Arc::new(schema), columns).unwrap();
+
+    // Serialize to JSON using Arrow's JSON writer
+    let buf = Vec::new();
+    let mut writer = ArrayWriter::new(buf);
+    writer.write_batches(&[&record_batch]).unwrap();
+    writer.finish().unwrap();
+
+    // Get the JSON string
+    let actual_json_str = String::from_utf8(writer.into_inner()).unwrap();
+    let actual_json_value: Value = serde_json::from_str(&actual_json_str).unwrap();
+
+    let expected_json_value: Value = serde_json::from_str(expected_json_str).unwrap();
+    assert_eq!(actual_json_value, expected_json_value)
 }
 
 /// Assert a [`ScalarValue`] is a WKB_GEOMETRY scalar corresponding to the given WKT
