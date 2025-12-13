@@ -31,7 +31,7 @@ sd = sedonadb.connect()
 df = sd.sql(r"""
 SELECT DISTINCT routine_name
 FROM information_schema.routines
-WHERE routine_type = 'FUNCTION' AND routine_name LIKE 'st\_%' ESCAPE '\'
+WHERE routine_type = 'FUNCTION' AND regexp_like(routine_name, '^(st_|rs_)')
 ORDER BY routine_name
 """).to_pandas()
 st_funs_in_impl_set = set(df["routine_name"].tolist())
