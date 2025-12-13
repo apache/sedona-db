@@ -25,7 +25,7 @@ use sedona_schema::{
 /// ST_LineLocatePoint() scalar UDF implementation
 pub fn st_line_locate_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
-        "st_line_locate_point",
+        "st_linelocatepoint",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
             SedonaType::Arrow(DataType::Float64),
@@ -52,7 +52,7 @@ fn st_line_locate_point_doc() -> Documentation {
 /// ST_LineInterpolatePoint() scalar UDF implementation
 pub fn st_line_interpolate_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
-        "st_line_interpolate_point",
+        "st_lineinterpolatepoint",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_numeric()],
             WKB_GEOMETRY,
