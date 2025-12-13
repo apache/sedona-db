@@ -17,6 +17,9 @@
 [package]
 name = "sedona-geo-generic-alg"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -36,7 +39,7 @@ rstar = "0.12.0"
 i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
 
 [dev-dependencies]
-sedona-testing = { path = "../sedona-testing" }
+sedona-testing = { workspace = true }
 approx = { workspace = true }
 criterion = { workspace = true }
 pretty_env_logger = "0.4"

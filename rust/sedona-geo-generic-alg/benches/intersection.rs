@@ -37,7 +37,7 @@ fn multi_polygon_intersection(c: &mut Criterion) {
 
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    if criterion::black_box(b.intersects(a)) {
+                    if std::hint::black_box(b.intersects(a)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -57,7 +57,7 @@ fn multi_polygon_intersection(c: &mut Criterion) {
 
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    if criterion::black_box(a.intersects(b)) {
+                    if std::hint::black_box(a.intersects(b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -77,7 +77,7 @@ fn multi_polygon_intersection(c: &mut Criterion) {
 
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    if criterion::black_box(geo::Intersects::intersects(b, a)) {
+                    if std::hint::black_box(geo::Intersects::intersects(b, a)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -97,7 +97,7 @@ fn multi_polygon_intersection(c: &mut Criterion) {
 
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    if criterion::black_box(geo::Intersects::intersects(a, b)) {
+                    if std::hint::black_box(geo::Intersects::intersects(a, b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -134,7 +134,7 @@ fn multi_polygon_intersection_wkb(c: &mut Criterion) {
                 for b in &zone_polygon_wkbs {
                     let a_geom = wkb::reader::read_wkb(a).unwrap(); // Skip padding
                     let b_geom = wkb::reader::read_wkb(b).unwrap(); // Skip padding
-                    if criterion::black_box(b_geom.intersects(&a_geom)) {
+                    if std::hint::black_box(b_geom.intersects(&a_geom)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -175,7 +175,7 @@ fn multi_polygon_intersection_wkb_aligned(c: &mut Criterion) {
                 for b in &zone_polygon_wkbs {
                     let a_geom = wkb::reader::read_wkb(&a[3..]).unwrap(); // Skip padding
                     let b_geom = wkb::reader::read_wkb(&b[3..]).unwrap(); // Skip padding
-                    if criterion::black_box(b_geom.intersects(&a_geom)) {
+                    if std::hint::black_box(b_geom.intersects(&a_geom)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -214,7 +214,7 @@ fn multi_polygon_intersection_wkb_conv(c: &mut Criterion) {
                     let b_geom = wkb::reader::read_wkb(b).unwrap();
                     let a_geom = a_geom.to_geometry();
                     let b_geom = b_geom.to_geometry();
-                    if criterion::black_box(b_geom.intersects(&a_geom)) {
+                    if std::hint::black_box(b_geom.intersects(&a_geom)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -244,7 +244,7 @@ fn point_polygon_intersection(c: &mut Criterion) {
         bencher.iter(|| {
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    criterion::black_box(b.intersects(a));
+                    std::hint::black_box(b.intersects(a));
                 }
             }
         });
@@ -254,7 +254,7 @@ fn point_polygon_intersection(c: &mut Criterion) {
         bencher.iter(|| {
             for a in &plot_geoms {
                 for b in &zone_geoms {
-                    criterion::black_box(geo::Intersects::intersects(b, a));
+                    std::hint::black_box(geo::Intersects::intersects(b, a));
                 }
             }
         });
@@ -282,7 +282,7 @@ fn point_polygon_intersection_wkb(c: &mut Criterion) {
                 for b in &zone_polygon_wkbs {
                     let a_geom = wkb::reader::read_wkb(a).unwrap();
                     let b_geom = wkb::reader::read_wkb(b).unwrap();
-                    criterion::black_box(b_geom.intersects(&a_geom));
+                    std::hint::black_box(b_geom.intersects(&a_geom));
                 }
             }
         });
@@ -312,7 +312,7 @@ fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
                     let b_geom = wkb::reader::read_wkb(b).unwrap();
                     let a_geom = a_geom.to_geometry();
                     let b_geom = b_geom.to_geometry();
-                    criterion::black_box(b_geom.intersects(&a_geom));
+                    std::hint::black_box(b_geom.intersects(&a_geom));
                 }
             }
         });
@@ -338,7 +338,7 @@ fn rect_intersection(c: &mut Criterion) {
 
             for a in &plot_bbox {
                 for b in &zone_bbox {
-                    if criterion::black_box(a.intersects(b)) {
+                    if std::hint::black_box(a.intersects(b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -371,7 +371,7 @@ fn point_rect_intersection(c: &mut Criterion) {
 
             for a in &plot_centroids {
                 for b in &zone_bbox {
-                    if criterion::black_box(a.intersects(b)) {
+                    if std::hint::black_box(a.intersects(b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -404,7 +404,7 @@ fn point_triangle_intersection(c: &mut Criterion) {
 
             for a in &plot_centroids {
                 for b in &zone_triangles {
-                    if criterion::black_box(a.intersects(b)) {
+                    if std::hint::black_box(a.intersects(b)) {
                         intersects += 1;
                     } else {
                         non_intersects += 1;
@@ -422,7 +422,7 @@ fn point_triangle_intersection(c: &mut Criterion) {
         let point = Point::new(5., 5.);
 
         bencher.iter(|| {
-            assert!(criterion::black_box(&triangle).intersects(criterion::black_box(&point)));
+            assert!(std::hint::black_box(&triangle).intersects(std::hint::black_box(&point)));
         });
     });
 
@@ -431,7 +431,7 @@ fn point_triangle_intersection(c: &mut Criterion) {
         let point = Point::new(3., 5.);
 
         bencher.iter(|| {
-            assert!(criterion::black_box(&triangle).intersects(criterion::black_box(&point)));
+            assert!(std::hint::black_box(&triangle).intersects(std::hint::black_box(&point)));
         });
     });
 }
@@ -454,7 +454,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            assert!(!criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(!std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
     c.bench_function("LineString above Triangle", |bencher| {
@@ -470,7 +470,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         );
 
         bencher.iter(|| {
-            assert!(!criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(!std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
     c.bench_function("LineString around Rectangle", |bencher| {
@@ -482,7 +482,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         let poly = Rect::new(coord! {x:0., y:0.}, coord! {x:10., y:10.});
 
         bencher.iter(|| {
-            assert!(!criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(!std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
 
@@ -495,7 +495,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         let poly = Polygon::new(LineString::from_iter(ext), vec![]);
 
         bencher.iter(|| {
-            assert!(!criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(!std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
 
@@ -509,7 +509,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         let poly: Polygon = Rect::new(coord! {x:0., y:0.}, coord! {x:10., y:10.}).into();
 
         bencher.iter(|| {
-            assert!(criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
     c.bench_function("ls within rect ", |bencher| {
@@ -522,7 +522,7 @@ fn linestring_polygon_intersection(c: &mut Criterion) {
         let poly = Rect::new(coord! {x:0., y:0.}, coord! {x:10., y:10.});
 
         bencher.iter(|| {
-            assert!(criterion::black_box(&ls).intersects(criterion::black_box(&poly)));
+            assert!(std::hint::black_box(&ls).intersects(std::hint::black_box(&poly)));
         });
     });
 }

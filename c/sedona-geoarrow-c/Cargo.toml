@@ -17,8 +17,10 @@
 [package]
 name = "sedona-geoarrow-c"
 version.workspace = true
-authors.workspace = true
 license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -33,7 +35,7 @@ cc = { version = "1" }
 criterion = { workspace = true }
 rstest = { workspace = true }
 sedona = { workspace = true }
-sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
+sedona-testing = { workspace = true }
 
 [dependencies]
 arrow-schema = { workspace = true }

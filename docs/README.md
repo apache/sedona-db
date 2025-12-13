@@ -30,6 +30,23 @@ pip install -e "python/sedonadb/[test]" -vv
 pip install -r docs/requirements.txt
 ```
 
+The SQL function documentation is a [Quarto](https://quarto.org) project that must be rendered
+at least once to generate the Markdown files required by mkdocs. This may be done with:
+
+```shell
+cd docs/reference/functions
+quarto render
+```
+
+When iterating on documentation, it is usually best to use the `mkdocs` commands directly:
+
 * `mkdocs serve` - Start the live-reloading docs server.
 * `mkdocs build` - Build the documentation site.
 * `mkdocs -h` - Print help message and exit.
+
+The official documentation is built using a script which may be useful when building the documentation
+locally for the first time:
+
+```shell
+ci/scripts/build-docs.sh
+```

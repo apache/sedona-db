@@ -213,8 +213,35 @@ c/sedona-geoarrow-c/src/nanoarrow (vendored from https://github.com/apache/arrow
 c/sedona-s2geography/s2geography (submodule from https://github.com/paleolimbot/s2geography)
 c/sedona-s2geography/s2geometry (submodule from https://github.com/google/s2geometry)
 rust/sedona-geo-generic-alg (ported and contains copied code from https://github.com/georust/geo)
+c/sedona-libgpuspatial/libgpuspatial/cmake/thirdparty/get_nanoarrow.cmake (vendored from https://github.com/rapidsai/cudf)
+c/sedona-libgpuspatial/libgpuspatial/cmake/thirdparty/get_rmm.cmake (vendored from https://github.com/rapidsai/cudf)
+c/sedona-libgpuspatial/libgpuspatial/cmake/RAPIDS.cmake (vendored from https://github.com/rapidsai/rapids-cmake)
+c/sedona-libgpuspatial/libgpuspatial/cmake/rapids_config.cmake (vendored from https://github.com/rapidsai/rapids-logger)
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/floating_point.h (ported and contains copied code from https://github.com/rapidsai/cuspatial)
+
+
 
 MIT License
 --------------------------------------
 
 c/sedona-tg/src/tg (vendored from https://github.com/tidwall/tg)
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/doubledouble.h (ported and contains copied code from https://github.com/WarrenWeckesser/doubledouble)
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/morton_code.h (ported and contains copied code from https://github.com/ToruNiina/lbvh)
+c/sedona-libgpuspatial/libgpuspatial/test/geoarrow_geos (vendored from https://github.com/geoarrow/geoarrow-c-geos)
+
+
+Zlib License
+--------------------------------------
+
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.h (ported and contains copied code from https://github.com/progschj/ThreadPool)
+
+
+POSTGRESQL LICENSE
+--------------------------------------
+
+c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/relate.cuh (contains copied code from https://github.com/heterodb/pg-strom)
+
+
+NVIDIA SAMPLE CODE LICENSE
+--------------------------------------
+c/sedona-libgpuspatial/libgpuspatial/cmake/nvcuda_compile_module.cmake (contains copied code from https://github.com/NVIDIA/OptiX_Apps)

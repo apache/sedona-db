@@ -53,7 +53,7 @@ fn bench_parse(c: &mut criterion::Criterion) {
                     let factory = GEOSWkbFactory::new();
                     b.iter(|| {
                         let g = factory.create(&wkb).unwrap();
-                        criterion::black_box(g);
+                        std::hint::black_box(g);
                     });
                 },
             );
@@ -65,7 +65,7 @@ fn bench_parse(c: &mut criterion::Criterion) {
                 |b| {
                     b.iter(|| {
                         let g = geos::Geometry::new_from_wkb(wkb.buf()).unwrap();
-                        criterion::black_box(g);
+                        std::hint::black_box(g);
                     });
                 },
             );

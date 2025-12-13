@@ -186,6 +186,12 @@ class(`InternalContext`) <- c("sedonadb::InternalContext__bundle", "savvy_sedona
   }
 }
 
+`InternalDataFrame_select_indices` <- function(self) {
+  function(`names`, `indices`) {
+    .savvy_wrap_InternalDataFrame(.Call(savvy_InternalDataFrame_select_indices__impl, `self`, `names`, `indices`))
+  }
+}
+
 `InternalDataFrame_show` <- function(self) {
   function(`ctx`, `width_chars`, `ascii`, `limit` = NULL) {
     `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
@@ -233,6 +239,7 @@ class(`InternalContext`) <- c("sedonadb::InternalContext__bundle", "savvy_sedona
   e$`count` <- `InternalDataFrame_count`(ptr)
   e$`limit` <- `InternalDataFrame_limit`(ptr)
   e$`primary_geometry_column_index` <- `InternalDataFrame_primary_geometry_column_index`(ptr)
+  e$`select_indices` <- `InternalDataFrame_select_indices`(ptr)
   e$`show` <- `InternalDataFrame_show`(ptr)
   e$`to_arrow_schema` <- `InternalDataFrame_to_arrow_schema`(ptr)
   e$`to_arrow_stream` <- `InternalDataFrame_to_arrow_stream`(ptr)

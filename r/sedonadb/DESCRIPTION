@@ -13,9 +13,12 @@ SystemRequirements: Cargo (Rust's package manager), rustc
 Depends: R (>= 4.1.0)
 Suggests:
     adbcdrivermanager,
+    dplyr,
     rlang,
+    tibble,
     sf,
     testthat (>= 3.0.0),
+    tidyselect,
     withr,
     wk
 Imports:

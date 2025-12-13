@@ -108,13 +108,16 @@ impl PolygonizeAccumulator {
             DataFusionError::Execution(format!("Failed to get number of geometries: {e}"))
         })?;
 
-        let mut geos_geoms = Vec::with_capacity(num_geoms);
-        for i in 0..num_geoms {
-            let geom = collection.get_geometry_n(i).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to get geometry {i}: {e}"))
-            })?;
-            geos_geoms.push(geom.clone());
-        }
+        let geos_geoms = (0..num_geoms)
+            .map(|index| {
+                collection
+                    .get_geometry_n(index)
+                    .and_then(|g| g.clone())
+                    .map_err(|e| {
+                        DataFusionError::Execution(format!("Failed to clone geometry: {e}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let result = geos::Geometry::polygonize(&geos_geoms)
             .map_err(|e| DataFusionError::Execution(format!("Failed to polygonize: {e}")))?;
@@ -123,7 +126,7 @@ impl PolygonizeAccumulator {
             DataFusionError::Execution(format!("Failed to convert result to WKB: {e}"))
         })?;
 
-        Ok(Some(wkb.into()))
+        Ok(Some(wkb))
     }
 }
 

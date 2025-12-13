@@ -87,10 +87,15 @@ fn invoke_scalar(
     tolerance: f64,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let initial_type = geos_geom.geometry_type();
+    let initial_type = geos_geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
     let geometry = geos_geom
         .simplify(tolerance)
         .map_err(|e| DataFusionError::Execution(format!("Failed to simplify geometry: {e}")))?;
+    let post_geometry_type = geometry
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
 
     // GEOS inherently "promotes" a multi-geometry type (e.g., MultiPolygon, MultiLineString)
     // to its simpler, single-component counterpart (Polygon, LineString) if the
@@ -100,7 +105,7 @@ fn invoke_scalar(
     // (e.g., an initial MultiPolygon must always return a MultiPolygon), we revert
     // this promotion by re-wrapping the single component back into its original
     // multi-geometry container.
-    let geometry = match (initial_type, geometry.geometry_type()) {
+    let geometry = match (initial_type, post_geometry_type) {
         // If the original was a MultiPolygon but GEOS returned a Polygon (promotion),
         // wrap the Polygon back into a MultiPolygon.
         (GeometryTypes::MultiPolygon, GeometryTypes::Polygon) => {

@@ -17,6 +17,9 @@
 [package]
 name = "sedona-raster-functions"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -35,12 +38,13 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-sedona-testing = { path = "../sedona-testing", features = ["criterion"] }
+sedona-testing = { workspace = true, features = ["criterion"] }
 rstest = { workspace = true }
 
 [[bench]]

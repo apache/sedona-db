@@ -77,7 +77,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<Vec<u8>> {
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
 
-    Ok(wkb.into())
+    Ok(wkb)
 }
 
 #[cfg(test)]

@@ -16,8 +16,10 @@
 # under the License.
 [workspace]
 members = [
+    "c/sedona-extension",
     "c/sedona-geoarrow-c",
     "c/sedona-geos",
+    "c/sedona-libgpuspatial",
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
@@ -55,6 +57,8 @@ edition = "2021"
 # Same rust-version, arrow, and datafusion dependencies as datafusion-comet
 # https://github.com/apache/datafusion-comet/blob/main/native/Cargo.toml
 rust-version = "1.86"
+keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
+categories = ["science::geo", "database"]
 
 [workspace.dependencies]
 approx = "0.5"
@@ -74,7 +78,7 @@ bytes = "1.10"
 byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
 comfy-table = { version = "7.1.4" }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 datafusion = { version = "50.2.0", default-features = false }
 datafusion-catalog = { version = "50.2.0" }
 datafusion-common = { version = "50.2.0", default-features = false }
@@ -96,7 +100,7 @@ mimalloc = { version = "0.1", default-features = false }
 libmimalloc-sys = { version = "0.1", default-features = false }
 once_cell = "1.20"
 
-geos = { version = "10.0.0", features = ["geo", "v3_10_0"] }
+geos = { git="https://github.com/georust/geos.git", rev="47afbad2483e489911ddb456417808340e9342c3", features = ["geo", "v3_11_0"] }
 
 geo-types = "0.7.17"
 geo-traits = "0.3.0"
@@ -140,7 +144,7 @@ sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
 sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
-# sedona-testing is not published to crates.io, so it uses path-only in individual crates
+sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
 sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }

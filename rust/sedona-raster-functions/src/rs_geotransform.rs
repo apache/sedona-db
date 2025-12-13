@@ -24,6 +24,7 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::affine_transformation::rotation;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -117,6 +118,21 @@ pub fn rs_skewy_udf() -> SedonaScalarUDF {
     )
 }
 
+/// RS_Rotation() scalar UDF implementation
+///
+/// Calculate the uniform rotation of the raster
+/// in radians based on the skew parameters.
+pub fn rs_rotation_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "rs_rotation",
+        vec![Arc::new(RsGeoTransform {
+            param: GeoTransformParam::Rotation,
+        })],
+        Volatility::Immutable,
+        Some(rs_rotation_doc()),
+    )
+}
+
 fn rs_upperleftx_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
@@ -183,8 +199,20 @@ fn rs_skewy_doc() -> Documentation {
     .build()
 }
 
+fn rs_rotation_doc() -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Returns the uniform rotation of the raster in radians.".to_string(),
+        "RS_Rotation(raster: Raster)".to_string(),
+    )
+    .with_argument("raster", "Raster: Input raster")
+    .with_sql_example("SELECT RS_Rotation(RS_Example())".to_string())
+    .build()
+}
+
 #[derive(Debug, Clone)]
 enum GeoTransformParam {
+    Rotation,
     ScaleX,
     ScaleY,
     SkewX,
@@ -222,6 +250,10 @@ impl SedonaScalarKernel for RsGeoTransform {
                 Some(raster) => {
                     let metadata = raster.metadata();
                     match self.param {
+                        GeoTransformParam::Rotation => {
+                            let rotation = rotation(&raster);
+                            builder.append_value(rotation);
+                        }
                         GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),
                         GeoTransformParam::ScaleY => builder.append_value(metadata.scale_y()),
                         GeoTransformParam::SkewX => builder.append_value(metadata.skew_x()),
@@ -255,6 +287,10 @@ mod tests {
 
     #[test]
     fn udf_info() {
+        let udf: ScalarUDF = rs_rotation_udf().into();
+        assert_eq!(udf.name(), "rs_rotation");
+        assert!(udf.documentation().is_some());
+
         let udf: ScalarUDF = rs_scalex_udf().into();
         assert_eq!(udf.name(), "rs_scalex");
         assert!(udf.documentation().is_some());
@@ -283,6 +319,7 @@ mod tests {
     #[rstest]
     fn udf_invoke(
         #[values(
+            GeoTransformParam::Rotation,
             GeoTransformParam::ScaleX,
             GeoTransformParam::ScaleY,
             GeoTransformParam::SkewX,
@@ -293,6 +330,7 @@ mod tests {
         g: GeoTransformParam,
     ) {
         let udf = match g {
+            GeoTransformParam::Rotation => rs_rotation_udf(),
             GeoTransformParam::ScaleX => rs_scalex_udf(),
             GeoTransformParam::ScaleY => rs_scaley_udf(),
             GeoTransformParam::SkewX => rs_skewx_udf(),
@@ -304,10 +342,11 @@ mod tests {
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
         let expected_values = match g {
+            GeoTransformParam::Rotation => vec![Some(-0.0), None, Some(-0.29145679447786704)],
             GeoTransformParam::ScaleX => vec![Some(0.0), None, Some(0.2)],
-            GeoTransformParam::ScaleY => vec![Some(0.0), None, Some(0.4)],
-            GeoTransformParam::SkewX => vec![Some(0.0), None, Some(0.6)],
-            GeoTransformParam::SkewY => vec![Some(0.0), None, Some(0.8)],
+            GeoTransformParam::ScaleY => vec![Some(-0.0), None, Some(-0.4)],
+            GeoTransformParam::SkewX => vec![Some(0.0), None, Some(0.06)],
+            GeoTransformParam::SkewY => vec![Some(0.0), None, Some(0.08)],
             GeoTransformParam::UpperLeftX => vec![Some(1.0), None, Some(3.0)],
             GeoTransformParam::UpperLeftY => vec![Some(2.0), None, Some(4.0)],
         };

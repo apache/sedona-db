@@ -17,6 +17,9 @@
 [package]
 name = "sedona-geo"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -32,7 +35,7 @@ criterion = { workspace = true }
 rstest = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-schema = { workspace = true }
-sedona-testing = { path = "../sedona-testing", features = ["criterion", "geo"] }
+sedona-testing = { workspace = true, features = ["criterion", "geo"] }
 wkt = { workspace = true }
 
 [dependencies]

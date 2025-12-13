@@ -46,9 +46,9 @@ use crate::{
     utils::concurrent_reservation::ConcurrentReservation,
 };
 use arrow::array::BooleanBufferBuilder;
-use sedona_common::{option::SpatialJoinOptions, ExecutionMode};
+use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
 
-pub(crate) struct SpatialIndex {
+pub struct SpatialIndex {
     pub(crate) schema: SchemaRef,
 
     /// The spatial predicate evaluator for the spatial predicate.
@@ -89,7 +89,7 @@ pub(crate) struct SpatialIndex {
     pub(crate) probe_threads_counter: AtomicUsize,
 
     /// Shared KNN components (distance metrics and geometry cache) for efficient KNN queries
-    pub(crate) knn_components: KnnComponents,
+    pub(crate) knn_components: Option<KnnComponents>,
 
     /// Memory reservation for tracking the memory usage of the spatial index
     /// Cleared on `SpatialIndex` drop
@@ -117,6 +117,8 @@ impl SpatialIndex {
         let refiner_reservation = reservation.split(0);
         let refiner_reservation = ConcurrentReservation::try_new(0, refiner_reservation).unwrap();
         let rtree = RTreeBuilder::<f32>::new(0).finish::<HilbertSort>();
+        let knn_components = matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_))
+            .then(|| KnnComponents::new(0, &[], memory_pool.clone()).unwrap());
         Self {
             schema,
             evaluator,
@@ -128,7 +130,7 @@ impl SpatialIndex {
             geom_idx_vec: Vec::new(),
             visited_left_side: None,
             probe_threads_counter,
-            knn_components: KnnComponents::new(0, &[], memory_pool.clone()).unwrap(), // Empty index has no cache
+            knn_components,
             reservation,
         }
     }
@@ -138,12 +140,15 @@ impl SpatialIndex {
     }
 
     /// Create a KNN geometry accessor for accessing geometries with caching
-    fn create_knn_accessor(&self) -> SedonaKnnAdapter<'_> {
-        SedonaKnnAdapter::new(
+    fn create_knn_accessor(&self) -> Result<SedonaKnnAdapter<'_>> {
+        let Some(knn_components) = self.knn_components.as_ref() else {
+            return sedona_internal_err!("knn_components is not initialized when running KNN join");
+        };
+        Ok(SedonaKnnAdapter::new(
             &self.indexed_batches,
             &self.data_id_to_batch_pos,
-            &self.knn_components,
-        )
+            knn_components,
+        ))
     }
 
     /// Get the batch at the given index.
@@ -249,14 +254,21 @@ impl SpatialIndex {
         };
 
         // Select the appropriate distance metric
-        let distance_metric: &dyn DistanceMetric<f32> = if use_spheroid {
-            &self.knn_components.haversine_metric
-        } else {
-            &self.knn_components.euclidean_metric
+        let distance_metric: &dyn DistanceMetric<f32> = {
+            let Some(knn_components) = self.knn_components.as_ref() else {
+                return sedona_internal_err!(
+                    "knn_components is not initialized when running KNN join"
+                );
+            };
+            if use_spheroid {
+                &knn_components.haversine_metric
+            } else {
+                &knn_components.euclidean_metric
+            }
         };
 
         // Create geometry accessor for on-demand WKB decoding and caching
-        let geometry_accessor = self.create_knn_accessor();
+        let geometry_accessor = self.create_knn_accessor()?;
 
         // Use neighbors_geometry to find k nearest neighbors
         let initial_results = self.rtree.neighbors_geometry(
@@ -486,12 +498,13 @@ mod tests {
     use crate::{
         index::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         operand_evaluator::EvaluatedGeometryArray,
-        spatial_predicate::{RelationPredicate, SpatialRelationType},
+        spatial_predicate::{KNNPredicate, RelationPredicate, SpatialRelationType},
     };
 
     use super::*;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
+    use datafusion_common::JoinSide;
     use datafusion_execution::memory_pool::GreedyMemoryPool;
     use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
@@ -597,10 +610,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         // Create sample geometry data - points at known locations
@@ -694,10 +709,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
@@ -783,10 +800,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            true,
+            JoinSide::Left,
         ));
 
         let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
@@ -878,10 +897,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
@@ -970,10 +991,12 @@ mod tests {
         let metrics = SpatialJoinBuildMetrics::default();
         let schema = Arc::new(arrow_schema::Schema::empty());
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         let builder = SpatialIndexBuilder::new(
@@ -1015,10 +1038,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
@@ -1128,10 +1153,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         // Create sample geometry data - points at known locations
@@ -1214,10 +1241,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         // Create different geometry types
@@ -1296,10 +1325,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
@@ -1390,10 +1421,12 @@ mod tests {
         };
         let metrics = SpatialJoinBuildMetrics::default();
 
-        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
             Arc::new(Column::new("geom", 0)),
             Arc::new(Column::new("geom", 1)),
-            SpatialRelationType::Intersects,
+            5,
+            false,
+            JoinSide::Left,
         ));
 
         // Create geometry batch using the same pattern as other tests

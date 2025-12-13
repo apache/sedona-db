@@ -14,23 +14,22 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::ptr::swap_nonoverlapping;
-use std::sync::Arc;
 
 use arrow_array::ffi::FFI_ArrowSchema;
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
-use datafusion::{logical_expr::SortExpr, prelude::DataFrame};
+use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
-use datafusion_expr::Expr;
+use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
-use savvy::{savvy, savvy_err, IntoExtPtrSexp, Result};
+use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::reader::SedonaStreamReader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
 use sedona_schema::schema::SedonaSchema;
+use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
@@ -291,5 +290,22 @@ impl InternalDataFrame {
         })??;
 
         Ok(())
+    }
+
+    fn select_indices(&self, names: sexp::Sexp, indices: sexp::Sexp) -> Result<InternalDataFrame> {
+        let names_strsxp = savvy::StringSexp::try_from(names)?;
+        let indices_intsxp = savvy::IntegerSexp::try_from(indices)?;
+
+        let df_schema = self.inner.schema();
+        let exprs = zip(names_strsxp.iter(), indices_intsxp.iter())
+            .map(|(name, index)| {
+                let (table_ref, field) = df_schema.qualified_field(usize::try_from(*index)?);
+                let column = Column::new(table_ref.cloned(), field.name());
+                Ok(SelectExpr::Expression(Expr::Column(column).alias(name)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let inner = self.inner.clone().select(exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
     }
 }

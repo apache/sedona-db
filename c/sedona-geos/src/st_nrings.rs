@@ -64,7 +64,10 @@ impl SedonaScalarKernel for STNRings {
 }
 
 fn invoke_scalar<G: Geom>(geom: &G) -> Result<i32> {
-    match geom.geometry_type() {
+    match geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+    {
         GeometryTypes::Polygon => {
             if geom
                 .is_empty()

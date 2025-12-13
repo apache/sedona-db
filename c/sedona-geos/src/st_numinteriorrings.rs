@@ -69,7 +69,10 @@ impl SedonaScalarKernel for STNumInteriorRings {
 }
 
 fn invoke_scalar(geom: &Geometry) -> Result<Option<i32>> {
-    match geom.geometry_type() {
+    match geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
+    {
         GeometryTypes::Polygon => {
             let is_empty = geom.is_empty().map_err(|e| {
                 DataFusionError::Execution(format!("Failed to check if geometry is empty: {e}"))

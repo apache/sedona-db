@@ -91,18 +91,12 @@ impl<T, P: PointTraitExt<T = T>> BoundingRectTrait<T, PointTag> for P
 where
     T: CoordNum,
 {
-    type Output = Rect<T>;
+    type Output = Option<Rect<T>>;
 
     /// Return the bounding rectangle for a `Point`. It will have zero width
     /// and zero height.
     fn bounding_rect_trait(&self) -> Self::Output {
-        match self.geo_coord() {
-            Some(coord) => Rect::new(coord, coord),
-            None => {
-                let zero = Coord::<T>::zero();
-                Rect::new(zero, zero)
-            }
-        }
+        self.geo_coord().map(|coord| Rect::new(coord, coord))
     }
 }
 
@@ -259,7 +253,7 @@ where
             })
         } else {
             match self.as_type_ext() {
-                GeometryTypeExt::Point(g) => g.bounding_rect_trait().into(),
+                GeometryTypeExt::Point(g) => g.bounding_rect_trait(),
                 GeometryTypeExt::Line(g) => g.bounding_rect_trait().into(),
                 GeometryTypeExt::LineString(g) => g.bounding_rect_trait(),
                 GeometryTypeExt::Polygon(g) => g.bounding_rect_trait(),
@@ -289,6 +283,11 @@ fn bounding_rect_merge<T: CoordNum>(a: Rect<T>, b: Rect<T>) -> Rect<T> {
 
 #[cfg(test)]
 mod test {
+    use core::f64;
+
+    use wkb::writer::WriteOptions;
+    use wkb::Endianness;
+
     use super::bounding_rect_merge;
     use crate::line_string;
     use crate::BoundingRect;
@@ -398,8 +397,24 @@ mod test {
     fn point_bounding_rect_test() {
         assert_eq!(
             Rect::new(coord! { x: 1., y: 2. }, coord! { x: 1., y: 2. }),
-            point! { x: 1., y: 2. }.bounding_rect(),
+            point! { x: 1., y: 2. }.bounding_rect().unwrap(),
         );
+    }
+
+    #[test]
+    fn empty_point_bounding_rect_test() {
+        let pt = point! { x: f64::NAN, y: f64::NAN };
+        let mut wkb_buf = Vec::new();
+        wkb::writer::write_geometry(
+            &mut wkb_buf,
+            &pt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
+        let wkb = wkb::reader::read_wkb(&wkb_buf).unwrap();
+        assert!(wkb.bounding_rect().is_none());
     }
 
     #[test]

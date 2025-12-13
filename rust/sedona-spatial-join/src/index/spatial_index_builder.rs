@@ -59,7 +59,7 @@ const REFINER_RESERVATION_PREALLOC_SIZE: usize = 10 * 1024 * 1024; // 10MB
 /// 2. Building the spatial R-tree index
 /// 3. Setting up memory tracking and visited bitmaps
 /// 4. Configuring prepared geometries based on execution mode
-pub(crate) struct SpatialIndexBuilder {
+pub struct SpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
     options: SpatialJoinOptions,
@@ -81,7 +81,7 @@ pub(crate) struct SpatialIndexBuilder {
 
 /// Metrics for the build phase of the spatial join.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct SpatialJoinBuildMetrics {
+pub struct SpatialJoinBuildMetrics {
     /// Total time for collecting build-side of join
     pub(crate) build_time: metrics::Time,
     /// Memory used by the spatial-index in bytes
@@ -264,8 +264,12 @@ impl SpatialIndexBuilder {
                 .unwrap();
 
         let cache_size = batch_pos_vec.len();
-        let knn_components =
-            KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone())?;
+        let knn_components = matches!(
+            self.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(_)
+        )
+        .then(|| KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone()))
+        .transpose()?;
 
         Ok(SpatialIndex {
             schema: self.schema,

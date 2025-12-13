@@ -33,7 +33,13 @@ use crate::{
     spatial_predicate::SpatialPredicate,
 };
 
-pub(crate) async fn build_index(
+/// Build a spatial index from the build side streams.
+///
+/// This function reads the `concurrent_build_side_collection` configuration from the context
+/// to determine whether to collect build side partitions concurrently (using spawned tasks)
+/// or sequentially (for JNI/embedded contexts without async runtime support).
+#[allow(clippy::too_many_arguments)]
+pub async fn build_index(
     context: Arc<TaskContext>,
     build_schema: SchemaRef,
     build_streams: Vec<SendableRecordBatchStream>,
@@ -49,6 +55,7 @@ pub(crate) async fn build_index(
         .get::<SedonaOptions>()
         .cloned()
         .unwrap_or_default();
+    let concurrent = sedona_options.spatial_join.concurrent_build_side_collection;
     let memory_pool = context.memory_pool();
     let evaluator =
         create_operand_evaluator(&spatial_predicate, sedona_options.spatial_join.clone());
@@ -64,9 +71,24 @@ pub(crate) async fn build_index(
         collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &metrics));
     }
 
-    let build_partitions = collector
-        .collect_all(build_streams, reservations, collect_metrics_vec)
-        .await?;
+    let build_partitions = if concurrent {
+        // Collect partitions concurrently using collect_all which spawns tasks
+        collector
+            .collect_all(build_streams, reservations, collect_metrics_vec)
+            .await?
+    } else {
+        // Collect partitions sequentially (for JNI/embedded contexts)
+        let mut partitions = Vec::with_capacity(num_partitions);
+        for ((stream, reservation), metrics) in build_streams
+            .into_iter()
+            .zip(reservations)
+            .zip(&collect_metrics_vec)
+        {
+            let partition = collector.collect(stream, reservation, metrics).await?;
+            partitions.push(partition);
+        }
+        partitions
+    };
 
     let contains_external_stream = build_partitions
         .iter()
