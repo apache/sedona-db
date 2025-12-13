@@ -19,7 +19,6 @@ members = [
     "c/sedona-extension",
     "c/sedona-geoarrow-c",
     "c/sedona-geos",
-    "c/sedona-libgpuspatial",
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
