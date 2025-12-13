@@ -22,24 +22,32 @@ import difflib
 with open("docs/reference/sql.md", "r") as f:
     lines = f.readlines()
     # Headers with `##` are the function names.
-    st_funs_in_doc = [line[3:-1] for line in lines if line.startswith("## ")]
+    funs_in_doc = [line[3:-1] for line in lines if line.startswith("## ")]
 
 
 ### Check if all the functions are documented
 
 sd = sedonadb.connect()
 df = sd.sql(r"""
-SELECT DISTINCT routine_name
+SELECT DISTINCT
+  routine_name,
+  function_type,
+  CASE substr(routine_name, 1, 2)
+    WHEN 'st' THEN 'vector'
+    WHEN 'rs' THEN 'raster'
+    ELSE 'unknown'
+  END AS data_type,
+  count(*) OVER (PARTITION BY description) > 1 as has_alias
 FROM information_schema.routines
 WHERE routine_type = 'FUNCTION' AND regexp_like(routine_name, '^(st_|rs_)')
 ORDER BY routine_name
 """).to_pandas()
-st_funs_in_impl_set = set(df["routine_name"].tolist())
+funs_in_impl_set = set(df["routine_name"].tolist())
 
-st_funs_in_doc_set = set(f.lower() for f in st_funs_in_doc)
+funs_in_doc_set = set(f.lower() for f in funs_in_doc)
 
-funs_only_in_impl = sorted(st_funs_in_impl_set - st_funs_in_doc_set)
-funs_only_in_doc = sorted(st_funs_in_doc_set - st_funs_in_impl_set)
+funs_only_in_impl = sorted(funs_in_impl_set - funs_in_doc_set)
+funs_only_in_doc = sorted(funs_in_doc_set - funs_in_impl_set)
 
 if funs_only_in_impl or funs_only_in_doc:
     print("\nFunctions only in implementation:\n  - ", end="")
@@ -55,9 +63,9 @@ if funs_only_in_impl or funs_only_in_doc:
 
 ### Check if the function order is sorted
 
-if st_funs_in_doc != sorted(st_funs_in_doc):
+if funs_in_doc != sorted(funs_in_doc):
     diff = difflib.unified_diff(
-        st_funs_in_doc, sorted(st_funs_in_doc), fromfile="current", tofile="sorted"
+        funs_in_doc, sorted(funs_in_doc), fromfile="current", tofile="sorted"
     )
 
     print("\n".join(diff))
