@@ -43,6 +43,8 @@ const char* SedonaGeographyGlueAbseilVersion(void);
 
 double SedonaGeographyGlueTestLinkage(void);
 
+uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat);
+
 struct SedonaGeographyArrowUdf {
   int (*init)(struct SedonaGeographyArrowUdf* self, struct ArrowSchema* arg_schema,
               const char* options, struct ArrowSchema* out);

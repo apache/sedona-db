@@ -17,6 +17,9 @@
 [package]
 name = "sedona-testing"
 version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -43,14 +46,16 @@ criterion = { workspace = true, optional = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
+fastrand = { workspace = true }
 geo-traits = { workspace = true, features = ["geo-types"] }
 geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
 rand = { workspace = true }
-sedona-common = { path = "../sedona-common" }
-sedona-geometry = { path = "../sedona-geometry" }
-sedona-expr = { path = "../sedona-expr" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-common = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-raster = { workspace = true }
+sedona-schema = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
 geo = { workspace = true, optional = true }

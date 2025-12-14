@@ -133,7 +133,8 @@ impl OptimizerRule for SpatialJoinOptimizer {
         plan: LogicalPlan,
         config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
-        let Some(extension) = config.options().extensions.get::<SedonaOptions>() else {
+        let options = config.options();
+        let Some(extension) = options.extensions.get::<SedonaOptions>() else {
             return Ok(Transformed::no(plan));
         };
         if !extension.spatial_join.enable {
@@ -1161,11 +1162,14 @@ mod tests {
     ) -> Arc<ScalarFunctionExpr> {
         let return_type = udf.return_type(&[]).unwrap();
         let field = Arc::new(arrow::datatypes::Field::new("result", return_type, false));
+        // TODO: Pipe actual ConfigOptions from session instead of using defaults
+        // See: https://github.com/apache/sedona-db/issues/248
         Arc::new(ScalarFunctionExpr::new(
             udf.name(),
             Arc::clone(&udf),
             args,
             field,
+            Arc::new(ConfigOptions::default()),
         ))
     }
 

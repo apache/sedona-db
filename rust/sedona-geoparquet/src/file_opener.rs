@@ -18,11 +18,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::SchemaRef;
 use datafusion::datasource::{
-    file_format::parquet::fetch_parquet_metadata,
     listing::PartitionedFile,
     physical_plan::{parquet::ParquetAccessPlan, FileMeta, FileOpenFuture, FileOpener},
 };
 use datafusion_common::Result;
+use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
 use object_store::ObjectStore;
@@ -30,7 +30,10 @@ use parquet::file::{
     metadata::{ParquetMetaData, RowGroupMetaData},
     statistics::Statistics,
 };
-use sedona_expr::{spatial_filter::SpatialFilter, statistics::GeoStatistics};
+use sedona_expr::{
+    spatial_filter::{SpatialFilter, TableGeoStatistics},
+    statistics::GeoStatistics,
+};
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -113,13 +116,11 @@ impl FileOpener for GeoParquetFileOpener {
         let self_clone = self.clone();
 
         Ok(Box::pin(async move {
-            let parquet_metadata = fetch_parquet_metadata(
-                &self_clone.object_store,
-                &file_meta.object_meta,
-                self_clone.metadata_size_hint,
-                None,
-            )
-            .await?;
+            let parquet_metadata =
+                DFParquetMetadata::new(&self_clone.object_store, &file_meta.object_meta)
+                    .with_metadata_size_hint(self_clone.metadata_size_hint)
+                    .fetch_metadata()
+                    .await?;
 
             let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
 
@@ -177,8 +178,10 @@ fn filter_access_plan_using_geoparquet_file_metadata(
     metadata: &GeoParquetMetadata,
     metrics: &GeoParquetFileOpenerMetrics,
 ) -> Result<()> {
-    let table_geo_stats = geoparquet_file_geo_stats(file_schema, metadata)?;
-    if !spatial_filter.evaluate(&table_geo_stats) {
+    let column_geo_stats = geoparquet_file_geo_stats(file_schema, metadata)?;
+    let table_geo_stats =
+        TableGeoStatistics::try_from_stats_and_schema(&column_geo_stats, file_schema)?;
+    if !spatial_filter.evaluate(&table_geo_stats)? {
         metrics.files_ranges_spatial_pruned.add(1);
         for i in access_plan.row_group_indexes() {
             access_plan.skip(i);
@@ -216,11 +219,15 @@ fn filter_access_plan_using_geoparquet_covering(
     // Iterate through the row groups
     for i in row_group_indices_to_scan {
         // Generate row group statistics based on the covering statistics
-        let row_group_geo_stats =
+        let row_group_column_geo_stats =
             row_group_covering_geo_stats(parquet_metadata.row_group(i), &covering_specs);
+        let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &row_group_column_geo_stats,
+            file_schema,
+        )?;
 
         // Evaluate predicate!
-        if !spatial_filter.evaluate(&row_group_geo_stats) {
+        if !spatial_filter.evaluate(&row_group_geo_stats)? {
             metrics.row_groups_spatial_pruned.add(1);
             access_plan.skip(i);
         } else {

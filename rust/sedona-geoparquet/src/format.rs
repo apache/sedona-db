@@ -24,7 +24,7 @@ use datafusion::{
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
-            parquet::{fetch_parquet_metadata, ParquetFormat, ParquetFormatFactory},
+            parquet::{ParquetFormat, ParquetFormatFactory},
             FileFormat, FileFormatFactory,
         },
         physical_plan::{
@@ -34,6 +34,7 @@ use datafusion::{
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
+use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
@@ -171,6 +172,12 @@ impl FileFormat for GeoParquetFormat {
         store: &Arc<dyn ObjectStore>,
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
+        if objects.is_empty() {
+            return plan_err!(
+                "Can't infer Parquet schema for zero objects. Does the input path exist?"
+            );
+        }
+
         // First, try the underlying format without schema metadata. This should work
         // for regular Parquet reads and will at least ensure that the underlying schemas
         // are compatible.
@@ -182,13 +189,11 @@ impl FileFormat for GeoParquetFormat {
         // copy more ParquetFormat code. It may be that caching at the object
         // store level is the way to go here.
         let metadatas: Vec<_> = futures::stream::iter(objects)
-            .map(|object| {
-                fetch_parquet_metadata(
-                    store.as_ref(),
-                    object,
-                    self.inner().metadata_size_hint(),
-                    None,
-                )
+            .map(|object| async move {
+                DFParquetMetadata::new(store.as_ref(), object)
+                    .with_metadata_size_hint(self.inner().metadata_size_hint())
+                    .fetch_metadata()
+                    .await
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
             .buffered(state.config_options().execution.meta_fetch_concurrency)
@@ -680,6 +685,16 @@ mod test {
             total_size += batch.num_rows();
         }
         assert_eq!(total_size, 244);
+    }
+
+    #[tokio::test]
+    async fn file_that_does_not_exist() {
+        let ctx = setup_context();
+        let err = ctx.table("file_does_not_exist.parquet").await.unwrap_err();
+        assert_eq!(
+            err.message(),
+            "failed to resolve schema: file_does_not_exist"
+        );
     }
 
     #[rstest]

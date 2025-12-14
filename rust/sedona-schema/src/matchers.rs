@@ -21,7 +21,7 @@ use arrow_schema::DataType;
 use datafusion_common::{plan_err, Result};
 use sedona_common::sedona_internal_err;
 
-use crate::datatypes::{Edges, SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use crate::datatypes::{Edges, SedonaType, RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
 /// Helper to match arguments and compute return types
 #[derive(Debug)]
@@ -150,9 +150,12 @@ impl ArgMatcher {
 
     /// Matches the given Arrow type using PartialEq
     pub fn is_arrow(data_type: DataType) -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsExact {
-            exact_type: SedonaType::Arrow(data_type),
-        })
+        Self::is_exact(SedonaType::Arrow(data_type))
+    }
+
+    /// Matches the given [SedonaType] using PartialEq
+    pub fn is_exact(exact_type: SedonaType) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsExact { exact_type })
     }
 
     /// Matches any geography or geometry argument without considering Crs
@@ -170,6 +173,11 @@ impl ArgMatcher {
         Arc::new(IsGeography {})
     }
 
+    /// Matches any raster argument
+    pub fn is_raster() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Self::is_exact(RASTER)
+    }
+
     /// Matches a null argument
     pub fn is_null() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsNull {})
@@ -178,6 +186,11 @@ impl ArgMatcher {
     /// Matches any numeric argument
     pub fn is_numeric() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsNumeric {})
+    }
+
+    /// Matches any integer argument
+    pub fn is_integer() -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsInteger {})
     }
 
     /// Matches any string argument
@@ -354,6 +367,22 @@ impl TypeMatcher for IsNumeric {
 }
 
 #[derive(Debug)]
+struct IsInteger {}
+
+impl TypeMatcher for IsInteger {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        match arg {
+            SedonaType::Arrow(data_type) => data_type.is_integer(),
+            _ => false,
+        }
+    }
+
+    fn type_if_null(&self) -> Option<SedonaType> {
+        Some(SedonaType::Arrow(DataType::Int64))
+    }
+}
+
+#[derive(Debug)]
 struct IsString {}
 
 impl TypeMatcher for IsString {
@@ -452,6 +481,10 @@ mod tests {
             Some(SedonaType::Arrow(DataType::Float64))
         );
 
+        assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::UInt32)));
+        assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Int32)));
+        assert!(!ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Float64)));
+
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8View)));
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::LargeUtf8)));
@@ -478,6 +511,10 @@ mod tests {
             ArgMatcher::is_boolean().type_if_null(),
             Some(SedonaType::Arrow(DataType::Boolean))
         );
+
+        assert!(ArgMatcher::is_raster().match_type(&RASTER));
+        assert!(!ArgMatcher::is_raster().match_type(&SedonaType::Arrow(DataType::Int32)));
+        assert!(!ArgMatcher::is_raster().match_type(&WKB_GEOMETRY));
     }
 
     #[test]

@@ -16,13 +16,14 @@
 // under the License.
 use std::{sync::Arc, vec};
 
+use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -227,11 +228,125 @@ fn determine_return_type(
     sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
 }
 
+/// [SedonaScalarKernel] wrapper that handles the SRID argument for constructors like ST_Point
+#[derive(Debug)]
+pub(crate) struct SRIDifiedKernel {
+    inner: ScalarKernelRef,
+}
+
+impl SRIDifiedKernel {
+    pub(crate) fn new(inner: ScalarKernelRef) -> Self {
+        Self { inner }
+    }
+}
+
+impl SedonaScalarKernel for SRIDifiedKernel {
+    fn return_type_from_args_and_scalars(
+        &self,
+        args: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<SedonaType>> {
+        // args should consist of the original args and one extra arg for
+        // specifying CRS. So, first, validate the length and separate these.
+        //
+        // [arg0, arg1, ..., crs_arg];
+        //  ^^^^^^^^^^^^^^^
+        //     orig_args
+        let orig_args_len = match (args.len(), scalar_args.len()) {
+            (0, 0) => return Ok(None),
+            (l1, l2) if l1 == l2 => l1 - 1,
+            _ => return sedona_internal_err!("Arg types and arg values have different lengths"),
+        };
+
+        let orig_args = &args[..orig_args_len];
+        let orig_scalar_args = &scalar_args[..orig_args_len];
+
+        // Invoke the original return_type_from_args_and_scalars() first before checking the CRS argument
+        let mut inner_result = match self
+            .inner
+            .return_type_from_args_and_scalars(orig_args, orig_scalar_args)?
+        {
+            Some(sedona_type) => sedona_type,
+            // if no match, quit here. Since the CRS arg is also an unintended
+            // one, validating it would be a cryptic error to the user.
+            None => return Ok(None),
+        };
+
+        let crs = match scalar_args[orig_args_len] {
+            Some(crs) => crs,
+            None => return Ok(None),
+        };
+        let new_crs = match crs.cast_to(&DataType::Utf8) {
+            Ok(ScalarValue::Utf8(Some(crs))) => {
+                if crs == "0" {
+                    None
+                } else {
+                    validate_crs(&crs, None)?;
+                    deserialize_crs(&serde_json::Value::String(crs))?
+                }
+            }
+            Ok(ScalarValue::Utf8(None)) => None,
+            Ok(_) | Err(_) => return sedona_internal_err!("Can't cast Crs {crs:?} to Utf8"),
+        };
+
+        match &mut inner_result {
+            SedonaType::Wkb(_, crs) => *crs = new_crs,
+            SedonaType::WkbView(_, crs) => *crs = new_crs,
+            _ => {
+                return sedona_internal_err!("Return type must be Wkb or WkbView");
+            }
+        }
+
+        Ok(Some(inner_result))
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let orig_args_len = arg_types.len() - 1;
+        let orig_arg_types = &arg_types[..orig_args_len];
+        let orig_args = &args[..orig_args_len];
+
+        // Invoke the inner UDF first to propagate any errors even when the CRS is NULL.
+        // Note that, this behavior is different from PostGIS.
+        let result = self.inner.invoke_batch(orig_arg_types, orig_args)?;
+
+        // If the specified SRID is NULL, the result is also NULL.
+        if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
+            if sc.is_null() {
+                // Create the same length of NULLs as the original result.
+                let len = match &result {
+                    ColumnarValue::Array(array) => array.len(),
+                    ColumnarValue::Scalar(_) => 1,
+                };
+
+                let mut builder = BinaryBuilder::with_capacity(len, 0);
+                for _ in 0..len {
+                    builder.append_null();
+                }
+                let new_array = builder.finish();
+                return Ok(ColumnarValue::Array(Arc::new(new_array)));
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        sedona_internal_err!(
+            "Should not be called because return_type_from_args_and_scalars() is implemented"
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::rc::Rc;
 
     use arrow_schema::Field;
+    use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
     use sedona_geometry::{error::SedonaGeometryError, transform::CrsTransform};
     use sedona_schema::{
@@ -374,6 +489,7 @@ mod test {
             arg_fields,
             number_rows: 1,
             return_field,
+            config_options: Arc::new(ConfigOptions::default()),
         };
 
         let value = udf.invoke_with_args(args)?;

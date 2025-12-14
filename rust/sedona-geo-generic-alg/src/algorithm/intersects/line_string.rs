@@ -17,7 +17,7 @@
 //! Intersects implementations for LineString and MultiLineString (generic)
 //!
 //! Ported (and contains copied code) from `geo::algorithm::intersects::line_string`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/intersects/line_string.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/intersects/line_string.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::*;
 
@@ -46,15 +46,98 @@ macro_rules! impl_intersects_line_string_from_line {
 impl_intersects_line_string_from_line!(CoordTraitExt, CoordTag);
 impl_intersects_line_string_from_line!(PointTraitExt, PointTag);
 impl_intersects_line_string_from_line!(LineStringTraitExt, LineStringTag);
-impl_intersects_line_string_from_line!(PolygonTraitExt, PolygonTag);
 impl_intersects_line_string_from_line!(MultiPointTraitExt, MultiPointTag);
 impl_intersects_line_string_from_line!(MultiLineStringTraitExt, MultiLineStringTag);
-impl_intersects_line_string_from_line!(MultiPolygonTraitExt, MultiPolygonTag);
 impl_intersects_line_string_from_line!(GeometryTraitExt, GeometryTag);
 impl_intersects_line_string_from_line!(GeometryCollectionTraitExt, GeometryCollectionTag);
 impl_intersects_line_string_from_line!(LineTraitExt, LineTag);
-impl_intersects_line_string_from_line!(RectTraitExt, RectTag);
-impl_intersects_line_string_from_line!(TriangleTraitExt, TriangleTag);
+
+impl<T, LHS, RHS> IntersectsTrait<LineStringTag, PolygonTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: LineStringTraitExt<T = T>,
+    RHS: PolygonTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        if self.num_coords() == 0 {
+            return false;
+        }
+        if let Some(exterior) = rhs.exterior_ext() {
+            if has_disjoint_bboxes(self, rhs) {
+                return false;
+            }
+
+            // if no lines intersections, then linestring is either disjoint or within the polygon
+            // therefore sufficient to check any one point
+            let first_coord = unsafe { self.geo_coord_unchecked(0) };
+            first_coord.intersects(rhs)
+                || self.lines().any(|l| {
+                    exterior.lines().any(|other| l.intersects(&other))
+                        || rhs
+                            .interiors_ext()
+                            .any(|interior| interior.lines().any(|other| l.intersects(&other)))
+                })
+        } else {
+            false
+        }
+    }
+}
+
+impl<T, LHS, RHS> IntersectsTrait<LineStringTag, MultiPolygonTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: LineStringTraitExt<T = T>,
+    RHS: MultiPolygonTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        if self.num_coords() == 0 {
+            return false;
+        }
+        if has_disjoint_bboxes(self, rhs) {
+            return false;
+        }
+        // splitting into `LineString intersects Polygon`
+        rhs.polygons_ext().any(|poly| self.intersects(&poly))
+    }
+}
+
+impl<T, LHS, RHS> IntersectsTrait<LineStringTag, RectTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: LineStringTraitExt<T = T>,
+    RHS: RectTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        if self.num_coords() == 0 {
+            return false;
+        }
+
+        let first_coord = unsafe { self.geo_coord_unchecked(0) };
+        first_coord.intersects(rhs)
+            || self
+                .lines()
+                .any(|l| rhs.to_lines().iter().any(|other| l.intersects(&other)))
+    }
+}
+
+impl<T, LHS, RHS> IntersectsTrait<LineStringTag, TriangleTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: LineStringTraitExt<T = T>,
+    RHS: TriangleTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        if self.num_coords() == 0 {
+            return false;
+        }
+
+        let first_coord = unsafe { self.geo_coord_unchecked(0) };
+        first_coord.intersects(rhs)
+            || self
+                .lines()
+                .any(|l| rhs.to_lines().iter().any(|other| l.intersects(&other)))
+    }
+}
 
 symmetric_intersects_trait_impl!(
     GeoNum,
@@ -148,3 +231,83 @@ symmetric_intersects_trait_impl!(
     MultiLineStringTraitExt,
     MultiLineStringTag
 );
+
+#[cfg(test)]
+mod test {
+    use geo::{Convert, CoordsIter};
+
+    use super::*;
+    use crate::wkt;
+
+    #[test]
+    fn test_linestring_inside_polygon() {
+        let ls: LineString<f64> = wkt! {LINESTRING(1 1, 2 2)}.convert();
+        let poly: Polygon<f64> = Rect::new((0, 0), (10, 10)).to_polygon().convert();
+        assert!(ls.intersects(&poly));
+    }
+
+    #[test]
+    fn test_linestring_partial_polygon() {
+        let ls: LineString<f64> = wkt! {LINESTRING(-1 -1, 2 2)}.convert();
+        let poly: Polygon<f64> = Rect::new((0, 0), (10, 10)).to_polygon().convert();
+        assert!(ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_disjoint_polygon() {
+        let ls: LineString<f64> = wkt! {LINESTRING(-1 -1, -2 -2)}.convert();
+        let poly: Polygon<f64> = Rect::new((0, 0), (10, 10)).to_polygon().convert();
+        assert!(!ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_in_polygon_hole() {
+        let ls: LineString<f64> = wkt! {LINESTRING(4 4, 6 6)}.convert();
+        let bound = Rect::new((0, 0), (10, 10)).convert();
+        let hole = Rect::new((1, 1), (9, 9)).convert();
+        let poly = Polygon::new(
+            bound.exterior_coords_iter().collect(),
+            vec![hole.exterior_coords_iter().collect()],
+        );
+
+        assert!(!ls.intersects(&poly));
+    }
+
+    // ls_rect
+    #[test]
+    fn test_linestring_inside_rect() {
+        let ls: LineString<f64> = wkt! {LINESTRING(1 1, 2 2)}.convert();
+        let poly: Rect<f64> = Rect::new((0, 0), (10, 10)).convert();
+        assert!(ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_partial_rect() {
+        let ls: LineString<f64> = wkt! {LINESTRING(-1 -1, 2 2)}.convert();
+        let poly: Rect<f64> = Rect::new((0, 0), (10, 10)).convert();
+        assert!(ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_disjoint_rect() {
+        let ls: LineString<f64> = wkt! {LINESTRING(-1 -1, -2 -2)}.convert();
+        let poly: Rect<f64> = Rect::new((0, 0), (10, 10)).convert();
+        assert!(!ls.intersects(&poly));
+    }
+
+    // ls_triangle
+    #[test]
+    fn test_linestring_inside_triangle() {
+        let ls: LineString<f64> = wkt! {LINESTRING(5 5, 5 4)}.convert();
+        let poly: Triangle<f64> = wkt! {TRIANGLE(0 0, 10 0, 5 10)}.convert();
+        assert!(ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_partial_triangle() {
+        let ls: LineString<f64> = wkt! {LINESTRING(5 5, 5 -4)}.convert();
+        let poly: Triangle<f64> = wkt! {TRIANGLE(0 0, 10 0, 5 10)}.convert();
+        assert!(ls.intersects(&poly));
+    }
+    #[test]
+    fn test_linestring_disjoint_triangle() {
+        let ls: LineString<f64> = wkt! {LINESTRING(5 -5, 5 -4)}.convert();
+        let poly: Triangle<f64> = wkt! {TRIANGLE(0 0, 10 0, 5 10)}.convert();
+        assert!(!ls.intersects(&poly));
+    }
+}

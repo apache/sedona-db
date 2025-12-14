@@ -26,8 +26,8 @@ use parquet::file::metadata::ParquetMetaData;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::{Interval, IntervalTrait};
-use sedona_geometry::types::GeometryTypeAndDimensions;
-use std::collections::{HashMap, HashSet};
+use sedona_geometry::types::GeometryTypeAndDimensionsSet;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Write;
 
@@ -39,10 +39,11 @@ use serde_json::Value;
 ///
 /// In contrast to the _user-specified API_, which is just "WKB" or "Native", here we need to know
 /// the actual written encoding type so that we can save that in the metadata.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum GeoParquetColumnEncoding {
     /// Serialized Well-known Binary encoding
+    #[default]
     WKB,
     /// Native Point encoding
     #[serde(rename = "point")]
@@ -62,12 +63,6 @@ pub enum GeoParquetColumnEncoding {
     /// Native MultiPolygon encoding
     #[serde(rename = "multipolygon")]
     MultiPolygon,
-}
-
-impl Default for GeoParquetColumnEncoding {
-    fn default() -> Self {
-        Self::WKB
-    }
 }
 
 impl Display for GeoParquetColumnEncoding {
@@ -334,7 +329,7 @@ pub struct GeoParquetColumnMetadata {
     /// and multipolygons, it is not sufficient to specify `["MultiPolygon"]`, but it is expected
     /// to specify `["Polygon", "MultiPolygon"]`. Or if having 3D points, it is not sufficient to
     /// specify `["Point"]`, but it is expected to list `["Point Z"]`.
-    pub geometry_types: HashSet<GeometryTypeAndDimensions>,
+    pub geometry_types: GeometryTypeAndDimensionsSet,
 
     /// [PROJJSON](https://proj.org/specifications/projjson.html) object representing the
     /// Coordinate Reference System (CRS) of the geometry. If the field is not provided, the
@@ -419,7 +414,10 @@ impl GeoParquetMetadata {
                 column_meta.geometry_types.clear();
             } else {
                 for item in &other_column_meta.geometry_types {
-                    column_meta.geometry_types.insert(*item);
+                    column_meta
+                        .geometry_types
+                        .insert(&item)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 }
             }
         }
@@ -522,8 +520,7 @@ impl GeoParquetColumnMetadata {
         if self.geometry_types.is_empty() {
             stats
         } else {
-            let geometry_types = self.geometry_types.iter().cloned().collect::<Vec<_>>();
-            stats.with_geometry_types(Some(&geometry_types))
+            stats.with_geometry_types(Some(self.geometry_types.clone()))
         }
     }
 
@@ -548,7 +545,7 @@ impl GeoParquetColumnMetadata {
 #[cfg(test)]
 mod test {
     use geo_traits::Dimensions;
-    use sedona_geometry::types::GeometryTypeId;
+    use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeId};
 
     use super::*;
 
@@ -565,7 +562,7 @@ mod test {
         assert_eq!(meta.encoding, GeoParquetColumnEncoding::WKB);
         assert_eq!(
             meta.geometry_types.iter().next().unwrap(),
-            &GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy)
+            GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy)
         );
     }
 }

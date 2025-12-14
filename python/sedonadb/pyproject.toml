@@ -21,6 +21,7 @@ build-backend = "maturin"
 
 [project]
 name = "sedonadb"
+readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Rust",
@@ -33,6 +34,7 @@ dynamic = ["version"]
 test = [
     "adbc-driver-manager[dbapi]",
     "adbc-driver-postgresql",
+    "datafusion",
     "duckdb",
     "geoarrow-pyarrow",
     "geopandas",

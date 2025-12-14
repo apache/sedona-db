@@ -41,6 +41,20 @@ pub struct SedonaAggregateUDF {
     documentation: Option<Documentation>,
 }
 
+impl PartialEq for SedonaAggregateUDF {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl Eq for SedonaAggregateUDF {}
+
+impl std::hash::Hash for SedonaAggregateUDF {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
 impl SedonaAggregateUDF {
     /// Create a new SedonaAggregateUDF
     pub fn new(

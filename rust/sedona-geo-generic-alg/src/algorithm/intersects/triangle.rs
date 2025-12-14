@@ -17,10 +17,11 @@
 //! Intersects implementations for Triangle (generic)
 //!
 //! Ported (and contains copied code) from `geo::algorithm::intersects::triangle`:
-//! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/intersects/triangle.rs>.
+//! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/intersects/triangle.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use super::IntersectsTrait;
-use crate::*;
+use crate::{intersects::has_disjoint_bboxes, *};
+use geo_traits::LineStringTrait;
 use sedona_geo_traits_ext::*;
 
 impl<T, LHS, RHS> IntersectsTrait<TriangleTag, CoordTag, RHS> for LHS
@@ -88,5 +89,155 @@ where
 {
     fn intersects_trait(&self, rhs: &RHS) -> bool {
         self.to_polygon().intersects_trait(&rhs.to_polygon())
+    }
+}
+
+impl<T, LHS, RHS> IntersectsTrait<TriangleTag, PolygonTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: TriangleTraitExt<T = T>,
+    RHS: PolygonTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        // simplified logic based on Polygon intersects Polygon
+
+        if has_disjoint_bboxes(self, rhs) {
+            return false;
+        }
+
+        // empty polygon cannot intersect with triangle
+        let Some(exterior) = rhs.exterior_ext() else {
+            return false;
+        };
+        if exterior.num_coords() == 0 {
+            return false;
+        }
+
+        // if any of the polygon's corners intersect the triangle
+        let first_coord = unsafe { exterior.geo_coord_unchecked(0) };
+        if self.intersects(&first_coord) {
+            return true;
+        }
+
+        // or any point of the triangle intersects the polygon
+        if self.first_coord().intersects(rhs) {
+            return true;
+        }
+
+        let rect_lines = self.to_lines();
+
+        // or any of the polygon's lines intersect the triangle's lines
+        if exterior.lines().any(|rhs_line| {
+            rect_lines
+                .iter()
+                .any(|self_line| self_line.intersects(&rhs_line))
+        }) {
+            return true;
+        }
+        rhs.interiors_ext().any(|interior| {
+            interior.lines().any(|rhs_line| {
+                rect_lines
+                    .iter()
+                    .any(|self_line| self_line.intersects(&rhs_line))
+            })
+        })
+    }
+}
+
+symmetric_intersects_trait_impl!(
+    GeoNum,
+    PolygonTraitExt,
+    PolygonTag,
+    TriangleTraitExt,
+    TriangleTag
+);
+
+impl<T, LHS, RHS> IntersectsTrait<TriangleTag, RectTag, RHS> for LHS
+where
+    T: GeoNum,
+    LHS: TriangleTraitExt<T = T>,
+    RHS: RectTraitExt<T = T>,
+{
+    fn intersects_trait(&self, rhs: &RHS) -> bool {
+        // simplified logic based on Polygon intersects Polygon
+
+        if has_disjoint_bboxes(self, rhs) {
+            return false;
+        }
+
+        // if any of the rectangle's corners intersect the triangle
+        self.intersects(&rhs.min_coord())
+
+        // or some corner of the triangle intersects the rectangle
+        || self.first_coord().intersects(rhs)
+
+        // or any of the triangle's lines intersect the rectangle's lines
+        || rhs.to_lines().iter().any(|rhs_line| {
+            self.to_lines().iter().any(|self_line| self_line.intersects(&rhs_line))
+        })
+    }
+}
+
+symmetric_intersects_trait_impl!(GeoNum, RectTraitExt, RectTag, TriangleTraitExt, TriangleTag);
+
+#[cfg(test)]
+mod test_polygon {
+    use geo::{Convert, CoordsIter};
+
+    use super::*;
+
+    #[test]
+    fn test_disjoint() {
+        let triangle = Triangle::from([(0., 0.), (10., 0.), (10., 10.)]);
+        let polygon: Polygon<f64> = Rect::new((11, 11), (12, 12)).to_polygon().convert();
+        assert!(!triangle.intersects(&polygon));
+    }
+
+    #[test]
+    fn test_partial() {
+        let triangle = Triangle::from([(0., 0.), (10., 0.), (10., 10.)]);
+        let polygon: Polygon<f64> = Rect::new((9, 9), (12, 12)).to_polygon().convert();
+        assert!(triangle.intersects(&polygon));
+    }
+
+    #[test]
+    fn test_triangle_inside_polygon() {
+        let triangle = Triangle::from([(1., 1.), (2., 1.), (2., 2.)]);
+        let polygon: Polygon<f64> = Rect::new((0, 0), (10, 10)).to_polygon().convert();
+        assert!(triangle.intersects(&polygon));
+    }
+
+    #[test]
+    fn test_polygon_inside_triangle() {
+        let triangle = Triangle::from([(0., 0.), (10., 0.), (10., 10.)]);
+        let polygon: Polygon<f64> = Rect::new((1, 1), (2, 2)).to_polygon().convert();
+        assert!(triangle.intersects(&polygon));
+    }
+
+    // Hole related tests
+
+    #[test]
+    fn test_rect_inside_polygon_hole() {
+        let bound: Rect<f64> = Rect::new((0, 0), (10, 10)).convert();
+        let hole = Rect::new((1, 1), (9, 9)).convert();
+        let triangle = Triangle::from([(4., 4.), (4., 6.), (6., 6.)]);
+        let polygon = Polygon::new(
+            bound.exterior_coords_iter().collect(),
+            vec![hole.exterior_coords_iter().collect()],
+        );
+
+        assert!(!triangle.intersects(&polygon));
+    }
+
+    #[test]
+    fn test_triangle_equals_polygon_hole() {
+        let bound: Rect<f64> = Rect::new((0, 0), (10, 10)).convert();
+        let triangle = Triangle::from([(4., 4.), (4., 6.), (6., 6.)]);
+        let polygon = Polygon::new(
+            bound.exterior_coords_iter().collect(),
+            vec![triangle.exterior_coords_iter().collect()],
+        );
+
+        assert!(triangle.intersects(&polygon));
     }
 }

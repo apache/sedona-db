@@ -25,7 +25,7 @@ SedonaDB is perfect for processing smaller to medium datasets on local machines 
 
 ## Architecture
 
-![SedonaDB Architecture](docs/image/sedonadb-architecture.svg)
+![SedonaDB Architecture](https://raw.githubusercontent.com/apache/sedona-db/refs/heads/main/docs/image/sedonadb-architecture.svg)
 
 * **Columnar in-memory datasets**
     * Spatial indexing
@@ -47,22 +47,22 @@ Raster functions are coming soon. We expect SedonaDB Raster will match all raste
 
 SedonaDB has several advantages:
 
-* **🚀 High Performance:** Built in Rust for exceptional speed and memory efficiency
-* **🗺️ Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
-* **🌍 CRS Propagation:** Always maintains coordinate reference system information
-* **📁 Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
-* **⚡ Dual APIs:** Python and SQL interfaces for seamless workflow integration
-* **🔧 Extensible:** Easily customizable and extensible architecture
-* **🔗 Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
-* **👥 Active Community:** Great maintainers and contributors who encourage external contributions
+* **High Performance:** Built in Rust for exceptional speed and memory efficiency
+* **Comprehensive Spatial Toolkit:** Supports both vector and raster functions in a single library
+* **CRS Propagation:** Always maintains coordinate reference system information
+* **Format Flexibility:** Supports legacy and modern file formats including GeoParquet, Shapefile, GeoJSON
+* **Dual APIs:** Python and SQL interfaces for seamless workflow integration
+* **Extensible:** Easily customizable and extensible architecture
+* **Ecosystem Integration:** Interoperable with PyArrow-compatible libraries like GeoPandas, DuckDB, and Polars
+* **Active Community:** Great maintainers and contributors who encourage external contributions
 
 ## Performance Benchmarks
 
 This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoPandas 1.1.1 using SpatialBench Queries 1-12 at Scale Factors 1 and 10. Details can be found at [Apache Sedona SpatialBench](https://sedona.apache.org/spatialbench/single-node-benchmarks/).
 
 <div align="center">
-  <img src="docs/image/sf1-09242025.png" alt="SF1 Benchmark Results" width="45%" />
-  <img src="docs/image/sf10-09242025.png" alt="SF10 Benchmark Results" width="45%" />
+  <img src="https://raw.githubusercontent.com/apache/sedona-db/refs/heads/main/docs/image/sf1-09242025.png" alt="SF1 Benchmark Results" width="45%" />
+  <img src="https://raw.githubusercontent.com/apache/sedona-db/refs/heads/main/docs/image/sf10-09242025.png" alt="SF10 Benchmark Results" width="45%" />
 </div>
 
 ## Install
@@ -119,7 +119,7 @@ Read the dataset into a Python SedonaDB `DataFrame`. This is lazy: even though t
 
 ```python
 df = sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2025-08-20.0/theme=buildings/type=building/"
+    "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=buildings/type=building/"
 )
 df.to_view("buildings")
 ```
@@ -172,19 +172,19 @@ Here's the query output:
 
 ### Get Help
 
-- 💬 **Discord:** Join our [Discord community](https://discord.com/invite/9A3k5dEBsY) for real-time chat and support
-- 💭 **GitHub Discussions:** Start a [GitHub Discussion](https://github.com/apache/sedona/discussions) with questions or ideas
-- 📚 **Documentation:** Check out our [comprehensive docs](https://sedona.apache.org/sedonadb)
+- **Discord:** Join our [Discord community](https://discord.com/invite/9A3k5dEBsY) for real-time chat and support
+- **GitHub Discussions:** Start a [GitHub Discussion](https://github.com/apache/sedona/discussions) with questions or ideas
+- **Documentation:** Check out our [comprehensive docs](https://sedona.apache.org/sedonadb)
 
 ### Contributing
 
 We welcome contributions! Here's how you can get involved:
 
-* 🐛 **Report Issues:** Found a bug? Open an issue on GitHub
-* 💡 **Suggest Features:** Have an idea? Start a GitHub Discussion
-* 🔧 **Fix Issues:** Comment "take" on any open issue to claim it
-* 🚀 **Submit PRs:** Brainstorm features with contributors and submit pull requests
-* 📅 **Join Meetings:** Monthly contributor meetings - we'd love to have you!
+* **Report Issues:** Found a bug? Open an issue on GitHub
+* **Suggest Features:** Have an idea? Start a GitHub Discussion
+* **Fix Issues:** Comment "take" on any open issue to claim it
+* **Submit PRs:** Brainstorm features with contributors and submit pull requests
+* **Join Meetings:** Monthly contributor meetings - we'd love to have you!
 
 ### About SedonaDB
 

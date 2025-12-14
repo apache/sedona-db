@@ -41,15 +41,18 @@ pub trait SedonaSchema {
 
 impl SedonaSchema for DFSchema {
     fn sedona_types(&self) -> impl ExactSizeIterator<Item = Result<SedonaType>> {
-        self.as_arrow().sedona_types()
+        let arrow_schema = self.as_arrow();
+        <Schema as SedonaSchema>::sedona_types(arrow_schema)
     }
 
     fn geometry_column_indices(&self) -> Result<Vec<usize>> {
-        self.as_arrow().geometry_column_indices()
+        let arrow_schema = self.as_arrow();
+        <Schema as SedonaSchema>::geometry_column_indices(arrow_schema)
     }
 
     fn primary_geometry_column_index(&self) -> Result<Option<usize>> {
-        self.as_arrow().primary_geometry_column_index()
+        let arrow_schema = self.as_arrow();
+        <Schema as SedonaSchema>::primary_geometry_column_index(arrow_schema)
     }
 }
 

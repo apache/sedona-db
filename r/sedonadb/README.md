@@ -20,6 +20,8 @@
 
 <!-- badges: start -->
 
+[![R-multiverse
+status](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcommunity.r-multiverse.org%2Fapi%2Fpackages%2Fsedonadb&query=%24.Version&label=r-multiverse)](https://community.r-multiverse.org/sedonadb)
 <!-- badges: end -->
 
 The goal of sedonadb is to provide an R interface to [Apache
@@ -29,6 +31,13 @@ with a wide range of spatial capabilities built in, including spatial
 SQL with high function coverage and GeoParquet IO.
 
 ## Installation
+
+sedonadb can be installed from
+[R-multiverse](https://community.r-multiverse.org/):
+
+``` r
+install.packages("sedonadb", repos = "https://community.r-multiverse.org")
+```
 
 You can install the development version of sedonadb from
 [GitHub](https://github.com/) with:
@@ -51,6 +60,7 @@ and/or Parquet metadata:
 
 ``` r
 library(sedonadb)
+#> Warning: package 'sedonadb' was built under R version 4.5.2
 
 url <- "https://github.com/geoarrow/geoarrow-data/releases/download/v0.2.0/microsoft-buildings_point_geo.parquet"
 sd_read_parquet(url) |> sd_to_view("buildings", overwrite = TRUE)
@@ -84,28 +94,28 @@ Conversion to and from sf are supported:
 
 ``` r
 library(sf)
-#> Linking to GEOS 3.13.0, GDAL 3.8.5, PROJ 9.5.1; sf_use_s2() is TRUE
+#> Linking to GEOS 3.12.1, GDAL 3.8.4, PROJ 9.4.0; sf_use_s2() is TRUE
 
 nc <- sf::read_sf(system.file("shape/nc.shp", package = "sf"))
 nc |> sd_to_view("nc", overwrite = TRUE)
 
 sd_sql("SELECT * FROM nc")
-#> ┌─────────┬───┬─────────┬──────────────────────────────────────────────────────┐
-#> │   AREA  ┆ … ┆ NWBIR79 ┆                       geometry                       │
-#> │ float64 ┆   ┆ float64 ┆                       geometry                       │
-#> ╞═════════╪═══╪═════════╪══════════════════════════════════════════════════════╡
-#> │   0.114 ┆ … ┆    19.0 ┆ MULTIPOLYGON(((-81.4727554321289 36.23435592651367,… │
-#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-#> │   0.061 ┆ … ┆    12.0 ┆ MULTIPOLYGON(((-81.2398910522461 36.36536407470703,… │
-#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-#> │   0.143 ┆ … ┆   260.0 ┆ MULTIPOLYGON(((-80.45634460449219 36.24255752563476… │
-#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-#> │    0.07 ┆ … ┆   145.0 ┆ MULTIPOLYGON(((-76.00897216796875 36.31959533691406… │
-#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-#> │   0.153 ┆ … ┆  1197.0 ┆ MULTIPOLYGON(((-77.21766662597656 36.24098205566406… │
-#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-#> │   0.097 ┆ … ┆  1237.0 ┆ MULTIPOLYGON(((-76.74506378173828 36.23391723632812… │
-#> └─────────┴───┴─────────┴──────────────────────────────────────────────────────┘
+#> ┌─────────┬───────────┬─────────┬───┬─────────┬─────────┬────────────────────────────────────────┐
+#> │   AREA  ┆ PERIMETER ┆  CNTY_  ┆ … ┆  SID79  ┆ NWBIR79 ┆                geometry                │
+#> │ float64 ┆  float64  ┆ float64 ┆   ┆ float64 ┆ float64 ┆                geometry                │
+#> ╞═════════╪═══════════╪═════════╪═══╪═════════╪═════════╪════════════════════════════════════════╡
+#> │   0.114 ┆     1.442 ┆  1825.0 ┆ … ┆     0.0 ┆    19.0 ┆ MULTIPOLYGON(((-81.4727554321289 36.2… │
+#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+#> │   0.061 ┆     1.231 ┆  1827.0 ┆ … ┆     3.0 ┆    12.0 ┆ MULTIPOLYGON(((-81.2398910522461 36.3… │
+#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+#> │   0.143 ┆      1.63 ┆  1828.0 ┆ … ┆     6.0 ┆   260.0 ┆ MULTIPOLYGON(((-80.45634460449219 36.… │
+#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+#> │    0.07 ┆     2.968 ┆  1831.0 ┆ … ┆     2.0 ┆   145.0 ┆ MULTIPOLYGON(((-76.00897216796875 36.… │
+#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+#> │   0.153 ┆     2.206 ┆  1832.0 ┆ … ┆     3.0 ┆  1197.0 ┆ MULTIPOLYGON(((-77.21766662597656 36.… │
+#> ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+#> │   0.097 ┆      1.67 ┆  1833.0 ┆ … ┆     5.0 ┆  1237.0 ┆ MULTIPOLYGON(((-76.74506378173828 36.… │
+#> └─────────┴───────────┴─────────┴───┴─────────┴─────────┴────────────────────────────────────────┘
 #> Preview of up to 6 row(s)
 ```
 

@@ -267,8 +267,7 @@ impl GeometryFactory for WkbBytesFactory {
 /// This [GenericExecutor] implementation provides more optimization opportunities,
 /// but it requires additional manual processing of the raw [Wkb] bytes compared to
 /// the [WkbExecutor].
-pub(crate) type WkbBytesExecutor<'a, 'b> =
-    GenericExecutor<'a, 'b, WkbBytesFactory, WkbBytesFactory>;
+pub type WkbBytesExecutor<'a, 'b> = GenericExecutor<'a, 'b, WkbBytesFactory, WkbBytesFactory>;
 
 /// Trait for iterating over a container type as geometry scalars
 ///

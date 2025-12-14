@@ -53,7 +53,7 @@ jobs:
       R_KEEP_PKG_SOURCE: yes
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
@@ -103,6 +103,7 @@ jobs:
         with:
           needs: check
           working-directory: r/sedonadb
+          cache: false
 
       - name: Install R Package
         run: |

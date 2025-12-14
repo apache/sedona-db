@@ -1,0 +1,224 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# This workflow compiles CUDA code on GitHub-hosted runners (ubuntu-latest).
+# CUDA compilation (nvcc) works WITHOUT GPU hardware - only needs CUDA toolkit.
+# GPU runtime execution requires actual GPU, so tests are commented out.
+#
+name: rust-gpu
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'c/sedona-libgpuspatial/**'
+      - 'rust/sedona-spatial-join-gpu/**'
+      - '.github/workflows/rust-gpu.yml'
+
+  push:
+    branches:
+      - main
+    paths:
+      - 'c/sedona-libgpuspatial/**'
+      - 'rust/sedona-spatial-join-gpu/**'
+      - '.github/workflows/rust-gpu.yml'
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}-rust-gpu
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -l -eo pipefail {0}
+
+# Set workflow timeout to 90 minutes for CUDA compilation
+# Expected: ~45-60 minutes first time, ~10-15 minutes cached
+env:
+  WORKFLOW_TIMEOUT_MINUTES: 90
+  # At GEOS updated to 3.14.0
+  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
+
+jobs:
+  rust-gpu-build:
+    # Using GitHub-hosted runner to compile CUDA code
+    # CUDA compilation works without GPU hardware (only needs CUDA toolkit)
+    # GPU tests are skipped (no GPU hardware for runtime execution)
+    # TODO: Once GPU runner is ready, enable GPU tests with:
+    #   runs-on: [self-hosted, gpu, linux, cuda]
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ "clippy", "docs", "test", "build" ]
+
+    name: "${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: 0
+      # Disable debug info completely to save disk space
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      # Limit parallel compilation to reduce memory pressure (GPU compilation is intensive)
+      CARGO_BUILD_JOBS: 4
+
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Clone vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      # Set up environment variables for vcpkg and CUDA
+      - name: Set up environment variables and bootstrap vcpkg
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          CUDA_HOME: /usr/local/cuda
+        run: |
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+          cd ..
+
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+          echo "PATH=$VCPKG_ROOT:$PATH" >> $GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE" >> $GITHUB_ENV
+          echo "/usr/local/cuda/bin" >> $GITHUB_PATH
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # Free up space by removing tools we don't need
+          tool-cache: false  # Keep tool cache as we need build tools
+          android: true      # Remove Android SDK (not needed)
+          dotnet: true       # Remove .NET runtime (not needed)
+          haskell: true      # Remove Haskell toolchain (not needed)
+          large-packages: false  # Keep essential packages including build-essential
+          swap-storage: true     # Remove swap file to free space
+          docker-images: true    # Remove docker images (not needed)
+
+      # Install system dependencies including CUDA toolkit for compilation
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+
+          # Install transport tools for Kitware CMake (needed for newer CMake)
+          sudo apt-get install -y apt-transport-https ca-certificates gnupg software-properties-common wget
+
+          # Add Kitware repository for CMake
+          wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc | sudo apt-key add -
+          sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ jammy main'
+          sudo apt-get update
+
+          # Install build tools
+          sudo apt-get install -y build-essential pkg-config cmake flex bison
+
+          # Install libclang for bindgen (Rust FFI binding generator)
+          sudo apt-get install -y libclang-dev
+
+          # Verify compiler and CMake versions
+          gcc --version
+          g++ --version
+          cmake --version
+
+          # Install GEOS for spatial operations
+          sudo apt-get install -y libgeos-dev
+
+          # Install CUDA toolkit for compilation (nvcc)
+          # Note: CUDA compilation works without GPU hardware
+          # GPU runtime tests still require actual GPU
+          if ! command -v nvcc &> /dev/null; then
+            echo "Installing CUDA 12 toolkit for compilation..."
+
+            # Add NVIDIA CUDA repository
+            wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+            sudo dpkg -i cuda-keyring_1.1-1_all.deb
+            sudo apt-get update
+
+            # Remove any existing CUDA toolkit
+            sudo apt purge cuda-toolkit* -y || true
+
+            # Install CUDA 12 and driver (libcuda.so comes with driver)
+            sudo apt-get install -y cuda-toolkit-12 nvidia-driver-580-server
+
+            # Set CUDA path
+            echo "/usr/local/cuda/bin" >> $GITHUB_PATH
+
+            nvcc --version
+          else
+            echo "CUDA toolkit already installed: $(nvcc --version)"
+          fi
+
+      # Cache vcpkg installed packages (expensive to rebuild)
+      - name: Cache vcpkg binaries
+        id: cache-vcpkg
+        uses: actions/cache@v4
+        with:
+          path: vcpkg/packages
+          # Bump the number at the end of this line to force a new dependency build
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-2
+
+      # Install vcpkg dependencies from vcpkg.json manifest
+      - name: Install vcpkg dependencies
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ./vcpkg/vcpkg install abseil openssl
+          # Clean up vcpkg buildtrees and downloads to save space
+          rm -rf vcpkg/buildtrees
+          rm -rf vcpkg/downloads
+
+      - name: Use stable Rust
+        id: rust
+        run: |
+          rustup toolchain install stable --no-self-update
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "rust-gpu-v3"
+
+      # Build WITH GPU feature to compile CUDA code
+      # CUDA compilation (nvcc) works without GPU hardware
+      # Only GPU runtime execution requires actual GPU
+      - name: Build libgpuspatial (with CUDA compilation)
+        run: |
+          echo "=== Building libgpuspatial WITH GPU feature ==="
+          echo "Compiling CUDA code using nvcc (no GPU hardware needed for compilation)"
+          echo "Note: First build with CUDA takes 45-60 minutes (CMake + CUDA compilation)"
+          echo "Subsequent builds: 10-15 minutes (cached)"
+          echo ""
+          echo "Build started at: $(date)"
+          # Build library only (skip tests - they require CUDA driver which isn't available)
+          # --lib builds only the library, not test binaries
+          cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
+
+      - name: Build libgpuspatial Tests
+        run: |
+          echo "=== Building libgpuspatial tests ==="
+          cd c/sedona-libgpuspatial/libgpuspatial
+          mkdir build
+          cmake --preset=default-with-tests -S . -B build
+          cmake --build build --target all

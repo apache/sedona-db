@@ -38,7 +38,7 @@ def connect(**kwargs: Mapping[str, Any]) -> "Connection":
 
         >>> con = sedona.dbapi.connect()
         >>> with con.cursor() as cur:
-        ...     cur.execute("SELECT 1 as one")
+        ...     _ = cur.execute("SELECT 1 as one")
         ...     cur.fetchall()
         [(1,)]
     """

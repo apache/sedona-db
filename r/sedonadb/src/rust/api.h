@@ -44,6 +44,8 @@ SEXP savvy_InternalDataFrame_compute__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_count__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_limit__ffi(SEXP self__, SEXP c_arg__n);
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_select_indices__ffi(SEXP self__, SEXP c_arg__names,
+                                                 SEXP c_arg__indices);
 SEXP savvy_InternalDataFrame_show__ffi(SEXP self__, SEXP c_arg__ctx,
                                        SEXP c_arg__width_chars,
                                        SEXP c_arg__ascii, SEXP c_arg__limit);

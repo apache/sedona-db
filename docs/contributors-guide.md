@@ -66,17 +66,115 @@ Your first step is to create a personal copy of the repository and connect it to
         upstream  https://github.com/apache/sedona-db.git (fetch)
         upstream  https://github.com/apache/sedona-db.git (push)
         ```
+## System dependencies
+
+Some crates in the workspace wrap native libraries and require system dependencies (GEOS, PROJ, Abseil, OpenSSL, CMake, etc.). We recommend using:
+
+### macOS: Homebrew
+``` bash brew install abseil openssl cmake geos proj ```
+
+Ensure Homebrew-installed tools are on your PATH (Homebrew usually does this automatically).
+
+### Windows
+
+Suggested workflow (PowerShell):
+
+First, install Rust if it is not already installed:
+
+```powershell
+Invoke-WebRequest https://sh.rustup.rs -UseBasicParsing -OutFile rustup-init.exe
+.\rustup-init.exe
+# Restart PowerShell
+rustc --version
+cargo --version
+```
+
+Next, install Visual Studio Build Tools (<https://visualstudio.microsoft.com/downloads/>). Pick "Desktop development with C++" during install.
+
+Next, install CMake (<https://cmake.org/>). Ensure "Add CMake to system PATH" is selected during installation.
+
+```powershell
+cmake --version
+```
+
+
+Now, install and bootstrap vcpkg (example path: C:\dev\vcpkg — you can choose a different path; see note below about short paths):
+
+```powershell
+git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
+cd C:\dev\vcpkg
+.\bootstrap-vcpkg.bat
+```
+
+
+Next, install the required libraries with vcpkg:
+
+```powershell
+C:\dev\vcpkg\vcpkg.exe install geos proj abseil openssl
+```
+
+Configure environment variables (PowerShell example — update paths as needed):
+
+```powershell
+$env:VCPKG_ROOT = 'C:\dev\vcpkg'
+$env:CMAKE_TOOLCHAIN_FILE = "${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+
+# Add pkg-config/ msys path (hash may vary) for using pkg-config command
+$env:PATH = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/bin/;${env:PATH}"
+# Add path to DLLs (without this, the build still succeeds, but loading fails)
+$env:PATH = "${env:VCPKG_ROOT}/installed/x64-windows/bin/;${env:PATH}"
+# Add other pkg-config related settings
+$env:PKG_CONFIG_SYSROOT_DIR = "${env:VCPKG_ROOT}/downloads/tools/msys2/<msys-hash>/mingw64/"
+$env:PKG_CONFIG_PATH = "${env:VCPKG_ROOT}/installed/x64-windows/lib/pkgconfig/"
+```
+
+
+Note: the downloads/tools/msys2/<msys-hash> folder name varies per vcpkg bootstrap. Replace <msys-hash> with the actual folder name on your system.
+
+VS Code integration (so rust-analyzer sees the toolchain):
+
+Add to your ```settings.json```:
+
+```json
+{
+  "rust-analyzer.runnables.extraEnv": {
+    "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+  },
+  "rust-analyzer.cargo.extraEnv": {
+    "CMAKE_TOOLCHAIN_FILE": "C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake"
+  }
+}
+```
+
+### Linux
+
+Linux users may install system dependencies from a system package manager. Note that recent versions are required because the Abseil version required is relatively recent compared to the package version on some common LTS platforms.
+
+Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the required version of Abseil)
+
+```shell
+sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev python3-dev libabsl-dev
+```
 
 ## Rust
 
 SedonaDB is written in Rust and is a standard `cargo` workspace.
 
+Before running cargo test, make sure to set the CMake toolchain variable:
+
+```export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake```
+
+Replace `/path/to/vcpkg/` with the actual path to your vcpkg installation.
+
+Once set, you can run: `cargo test`
+
+This ensures that Cargo and proj-sys can find the correct C/C++ dependencies via CMake.
 You can install a recent version of the Rust compiler and cargo from
 [rustup.rs](https://rustup.rs/) and run tests using `cargo test`.
 
 A local development version of the CLI can be run with `cargo run --bin sedona-cli`.
 
-### Test data setup
+## Test data setup
 
 Some tests require submodules that contain test data or pinned versions of
 external dependencies. These submodules can be initialized with:
@@ -92,49 +190,6 @@ Additionally, some of the data required in the tests can be downloaded by runnin
 python submodules/download-assets.py
 ```
 
-### System dependencies
-
-Some crates wrap external native libraries and require system dependencies
-to build.
-
-!!!note "`sedona-s2geography`"
-    At this time, the only crate that requires this is the `sedona-s2geography`
-    crate, which requires [CMake](https://cmake.org),
-    [Abseil](https://github.com/abseil/abseil-cpp) and OpenSSL.
-
-#### macOS
-
-These can be installed on macOS with [Homebrew](https://brew.sh):
-
-```shell
-brew install abseil openssl cmake geos
-```
-
-#### Linux and Windows
-
-On Linux and Windows, it is recommended to use [vcpkg](https://github.com/microsoft/vcpkg)
-to provide external dependencies. This can be done by setting the `CMAKE_TOOLCHAIN_FILE`
-environment variable:
-
-```shell
-export CMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-#### Visual Studio Code (VSCode) Configuration
-
-When using VSCode, it may be necessary to set this environment variable in `settings.json`
-such that it can be found by rust-analyzer when running build/run tasks:
-
-```json
-{
-    "rust-analyzer.runnables.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    },
-    "rust-analyzer.cargo.extraEnv": {
-        "CMAKE_TOOLCHAIN_FILE": "/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-    }
-}
-```
 
 ## Python
 
@@ -165,21 +220,12 @@ pip install maturin
 
 ### Rust
 
-Debugging Rust code is most easily done by writing or finding a test that triggers
-the desired behavior and running it using the *Debug* selection in
-[VSCode](https://code.visualstudio.com/) with the
-[rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-extension. Rust code can also be debugged using the CLI by finding the `main()` function in
+Debugging Rust code is most easily done by writing or finding a test that triggers the desired behavior and running it using the *Debug* selection in [VSCode](https://code.visualstudio.com/) with the [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) extension. Rust code can also be debugged using the CLI by finding the `main()` function in
 `sedona-cli` and choosing the *Debug* run option.
 
 ### Python, C, and C++
 
-Installation of Python bindings with `maturin develop` ensures a debug-friendly build for
-debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in
-any IDE that supports debugging an editable Python package installation (e.g., VSCode);
-Rust, C, or C++ code can be debugged using the
-[CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
-*Attach to Process...* command from the command palette in VSCode.
+Installation of Python bindings with `maturin develop` ensures a debug-friendly build for debugging Rust, Python, or C/C++ code. Python code can be debugged using breakpoints in any IDE that supports debugging an editable Python package installation (e.g., VSCode); Rust, C, or C++ code can be debugged using the [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) *Attach to Process...* command from the command palette in VSCode.
 
 ## Testing
 
@@ -215,13 +261,29 @@ pytest python/sedonadb/tests
 
 Remember that you need to run `maturin develop` to update your python installation after changes in Rust code.
 
+## Linting
+
+Install pre-commit. This will automatically run various checks (e.g formatting) that will be needed to pass CI.
+
+```shell
+pre-commit install
+```
+
+If pre-commit is not already installed, you can install it using pip.
+
+```shell
+pip install pre-commit
+```
+
+Additionally, you should run clippy to catch common lints before pushing new Rust changes. This is not included in `pre-commit`, so this should be run manually. Fix any suggestions it makes, and run it again to make sure there are no other changes to make.
+
+```shell
+cargo clippy
+```
+
 ## Low-level benchmarking
 
-Low-level Rust benchmarks use [criterion](https://github.com/bheisler/criterion.rs).
-In general, there is at least one benchmark for every implementation of a function
-(some functions have more than one implementation provided by different libraries),
-and a few other benchmarks for low-level iteration where work was done to optimize
-specific cases.
+Low-level Rust benchmarks use [criterion](https://github.com/bheisler/criterion.rs). In general, there is at least one benchmark for every implementation of a function (some functions have more than one implementation provided by different libraries), and a few other benchmarks for low-level iteration where work was done to optimize specific cases.
 
 ### Running benchmarks
 
@@ -232,9 +294,7 @@ cd rust/sedona-geo
 cargo bench
 ```
 
-Benchmarks for a specific function can be run with a filter. These can be run
-from the workspace or a specific crate (although the output is usually easier
-to read for a specific crate).
+Benchmarks for a specific function can be run with a filter. These can be run from the workspace or a specific crate (although the output is usually easier to read for a specific crate).
 
 ```shell
 cargo bench -- st_area
@@ -242,9 +302,7 @@ cargo bench -- st_area
 
 ### Managing results
 
-By default, criterion saves the last run and will report the difference between the
-current benchmark and the last time it was run (although there are options to
-save and load various baselines).
+By default, criterion saves the last run and will report the difference between the current benchmark and the last time it was run (although there are options to save and load various baselines).
 
 A report of the latest results for all benchmarks can be opened with the following command:
 
@@ -278,3 +336,73 @@ To contribute to the SedonaDB documentation:
     * `mkdocs build` - Build the documentation site.
     * `mkdocs -h` - Print help message and exit.
 1. Push your changes and open a pull request.
+
+SQL function reference is special: because we provide so many functions, we have
+a specialized syntax for documenting them. The minimum required documentation for
+a function is a file `docs/reference/functions/function_name.qmd`:
+
+    ---
+    title: ST_FunctionName
+    description: A brief one sentence description of what the function does.
+    kernels:
+      - returns: geometry
+        args: [geometry]
+    ---
+
+    ## Examples
+
+    ```sql
+    SELECT ST_FunctionName(ST_Point(0, 1)) AS val;
+    ```
+
+After writing this file, the `.md` file may be rendered using [Quarto](https://quarto.org):
+
+```shell
+cd docs/reference/functions
+quarto render
+```
+
+This command (1) expands `description` and `kernels` to a templated representation,
+(2) checks and renders the result of the SQL examples, and (3) executes any
+[Python code chunks](https://quarto.org/docs/computations/python.html). These may
+be used to render figures that demonstrate visually what a function does or how its
+parameters affect the result.
+
+The `kernels` section of the frontmatter allows multiple implementations of a function
+to be documented. For example, many functions include implementations for geometry
+*and* geography or allow extra arguments to be supplied to customize behaviour. As
+an example, the frontmatter for `ST_Buffer()` is:
+
+    ---
+    title: ST_Buffer
+    description: >
+        Computes a geometry that represents all points whose distance from the input
+        geometry is less than or equal to a specified distance.
+    kernels:
+      - returns: geometry
+        args:
+        - geometry
+        - name: distance
+          type: float64
+          description: Radius of the buffer
+      - returns: geometry
+        args:
+        - geometry
+        - name: distance
+          type: float64
+        - name: params
+          type: utf8
+          description: Space-separated `key=value` parameters.
+    ---
+
+This illustrates a few ways in which arguments can be defined:
+
+- By the string `geometry`, `geography`, or `raster`. These are expanded to a full
+  definition by quarto but are so common that we allow abbreviating them to avoid
+  typing `description: Input geometry` for every single function.
+- With a YAML object of `name` / `type` / `description`. The type names are lowercase
+  Arrow type names which should be identical to those printed when executing a query
+  in SedonaDB.
+
+The build system for function documentation is a work in progress, so be sure to ask
+if you run into problems or have any questions about the syntax!

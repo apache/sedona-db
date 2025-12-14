@@ -16,31 +16,36 @@
 # under the License.
 [workspace]
 members = [
+    "c/sedona-extension",
     "c/sedona-geoarrow-c",
     "c/sedona-geos",
+    "c/sedona-libgpuspatial",
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
+    "python/sedonadb",
     "r/sedonadb/src/rust",
-    "rust/sedona-geo-traits-ext",
-    "rust/sedona-geo-generic-alg",
     "rust/sedona-adbc",
+    "rust/sedona-datasource",
     "rust/sedona-expr",
     "rust/sedona-functions",
+    "rust/sedona-geo-generic-alg",
+    "rust/sedona-geo-traits-ext",
     "rust/sedona-geo",
     "rust/sedona-geometry",
     "rust/sedona-geoparquet",
+    "rust/sedona-raster",
+    "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-testing",
     "rust/sedona",
-    "python/sedonadb",
     "sedona-cli",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -51,37 +56,42 @@ edition = "2021"
 
 # Same rust-version, arrow, and datafusion dependencies as datafusion-comet
 # https://github.com/apache/datafusion-comet/blob/main/native/Cargo.toml
-rust-version = "1.82"
+rust-version = "1.86"
+keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
+categories = ["science::geo", "database"]
 
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
-adbc_core = "0.20.0"
-adbc_ffi = "0.20.0"
+adbc_core = ">=0.21.0"
+adbc_ffi = ">=0.21.0"
 lru = "0.12"
-arrow = { version = "55.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "55.1.0" }
-arrow-cast = { version = "55.1.0" }
-arrow-data = { version = "55.1.0" }
-arrow-json = { version = "55.1.0" }
-arrow-schema = { version = "55.1.0" }
+arrow = { version = "56.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "56.0.0" }
+arrow-cast = { version = "56.0.0" }
+arrow-data = { version = "56.0.0" }
+arrow-json = { version = "56.0.0" }
+arrow-schema = { version = "56.0.0" }
+arrow-buffer = { version = "56.0.0" }
 async-trait = { version = "0.1.87" }
 bytes = "1.10"
 byteorder = "1"
 chrono = { version = "0.4.38", default-features = false }
-comfy-table = { version = "7.0" }
-criterion = { version = "0.5", features = ["html_reports"] }
-datafusion = { version = "49.0.0", default-features = false }
-datafusion-catalog = { version = "49.0.0" }
-datafusion-common = { version = "49.0.0", default-features = false }
-datafusion-common-runtime = { version = "49.0.0", default-features = false }
-datafusion-execution = { version = "49.0.0", default-features = false }
-datafusion-expr = { version = "49.0.0" }
-datafusion-ffi = {  version = "49.0.0" }
-datafusion-physical-expr = { version = "49.0.0" }
-datafusion-physical-plan = { version = "49.0.0" }
+comfy-table = { version = "7.1.4" }
+criterion = { version = "0.8", features = ["html_reports"] }
+datafusion = { version = "50.2.0", default-features = false }
+datafusion-catalog = { version = "50.2.0" }
+datafusion-common = { version = "50.2.0", default-features = false }
+datafusion-common-runtime = { version = "50.2.0", default-features = false }
+datafusion-datasource-parquet = { version = "50.2.0" }
+datafusion-execution = { version = "50.2.0", default-features = false }
+datafusion-expr = { version = "50.2.0" }
+datafusion-ffi = {  version = "50.2.0" }
+datafusion-physical-expr = { version = "50.2.0" }
+datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
+fastrand = "2.0"
 futures = { version = "0.3" }
 object_store = { version = "0.12.0", default-features = false }
 float_next_after = "1"
@@ -90,26 +100,26 @@ mimalloc = { version = "0.1", default-features = false }
 libmimalloc-sys = { version = "0.1", default-features = false }
 once_cell = "1.20"
 
-geos = { version = "10.0.0", features = ["geo", "v3_10_0"] }
+geos = { git="https://github.com/georust/geos.git", rev="47afbad2483e489911ddb456417808340e9342c3", features = ["geo", "v3_11_0"] }
 
 geo-types = "0.7.17"
 geo-traits = "0.3.0"
 geo = "0.31.0"
 
-geo-index = { version = "0.3.1" }
+geo-index = { version = "0.3.2", features = ["use-geo_0_31"] }
 
-wkb = "0.9.1"
+wkb = "0.9.2"
 wkt = "0.14.0"
 
 parking_lot = "0.12"
-parquet = { version = "55.1.0", default-features = false, features = [
+parquet = { version = "56.0.0", default-features = false, features = [
     "arrow",
     "async",
     "object_store",
 ] }
 rand = "0.8"
 regex = "1.8"
-rstest = "0.24.0"
+rstest = "0.26.1"
 serde = { version = "1" }
 serde_json = { version = "1" }
 serde_with = { version = "1" }
@@ -118,18 +128,27 @@ thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
 
-[patch.crates-io]
-# For R package build on Windows (can be removed when we upgrade to DataFusion main/51.0.0)
-datafusion = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion" }
-datafusion-catalog = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-catalog" }
-datafusion-common = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common" }
-datafusion-common-runtime = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-common-runtime" }
-datafusion-execution = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-execution" }
-datafusion-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-expr" }
-datafusion-ffi = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-ffi" }
-datafusion-physical-expr = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-expr" }
-datafusion-physical-plan = { git = "https://github.com/paleolimbot/datafusion.git", branch = "local-49-with-patch", package = "datafusion-physical-plan" }
+# Workspace path dependencies for internal crates
+sedona = { version = "0.3.0", path = "rust/sedona" }
+sedona-adbc = { version = "0.3.0", path = "rust/sedona-adbc" }
+sedona-common = { version = "0.3.0", path = "rust/sedona-common" }
+sedona-datasource = { version = "0.3.0", path = "rust/sedona-datasource" }
+sedona-expr = { version = "0.3.0", path = "rust/sedona-expr" }
+sedona-functions = { version = "0.3.0", path = "rust/sedona-functions" }
+sedona-geo = { version = "0.3.0", path = "rust/sedona-geo" }
+sedona-geo-generic-alg = { version = "0.3.0", path = "rust/sedona-geo-generic-alg" }
+sedona-geo-traits-ext = { version = "0.3.0", path = "rust/sedona-geo-traits-ext" }
+sedona-geometry = { version = "0.3.0", path = "rust/sedona-geometry" }
+sedona-geoparquet = { version = "0.3.0", path = "rust/sedona-geoparquet" }
+sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
+sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
+sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
+sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
+sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
 
-# TODO: remove them once changes we made to geo-index and wkb crates are merged to upstream and released
-geo-index = { git = "https://github.com/wherobots/geo-index.git", branch = "main" }
-wkb = { git = "https://github.com/georust/wkb.git", rev = "130eb0c2b343bc9299aeafba6d34c2a6e53f3b6a" }
+# C wrapper crates
+sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }
+sedona-geos = { version = "0.3.0", path = "c/sedona-geos" }
+sedona-proj = { version = "0.3.0", path = "c/sedona-proj", default-features = false }
+sedona-s2geography = { version = "0.3.0", path = "c/sedona-s2geography" }
+sedona-tg = { version = "0.3.0", path = "c/sedona-tg" }

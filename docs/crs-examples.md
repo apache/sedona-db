@@ -100,6 +100,12 @@ cities.schema
 
 
 
+> Note: In this case, for a POINT geometry, we can specify the CRS identifier at the last argument of `ST_Point()` directly. This might be handy when we deal only with POINT geometries.
+>
+> ```sql
+> SELECT ST_Point(-8238310.24, 4969803.3, 3857);
+> ```
+
 
 ```python
 cities.to_view("cities", overwrite=True)

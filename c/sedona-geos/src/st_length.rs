@@ -74,14 +74,14 @@ impl SedonaScalarKernel for STLength {
 fn invoke_scalar(geos_geom: &geos::Geometry) -> GResult<f64> {
     // The .length() property may return non-zero values for non line geometries,
     // so we check for the geometry type here
-    match geos_geom.geometry_type() {
+    match geos_geom.geometry_type()? {
         LineString => Ok(geos_geom.length()?),
         MultiLineString => Ok(geos_geom.length()?),
         GeometryCollection => {
             let mut sum = 0.0;
             for i in 0..geos_geom.get_num_geometries()? {
                 let geom = geos_geom.get_geometry_n(i)?;
-                match geom.geometry_type() {
+                match geom.geometry_type()? {
                     LineString => sum += geom.length()?,
                     MultiLineString => sum += geom.length()?,
                     _ => {}

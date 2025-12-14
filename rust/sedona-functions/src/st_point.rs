@@ -30,18 +30,21 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-use crate::executor::WkbExecutor;
+use crate::{executor::WkbExecutor, st_setsrid::SRIDifiedKernel};
 
 /// ST_Point() scalar UDF implementation
 ///
 /// Native implementation to create geometries from coordinates.
 /// See [`st_geogpoint_udf`] for the corresponding geography constructor.
 pub fn st_point_udf() -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeoFromPoint {
+        out_type: WKB_GEOMETRY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
+
     SedonaScalarUDF::new(
         "st_point",
-        vec![Arc::new(STGeoFromPoint {
-            out_type: WKB_GEOMETRY,
-        })],
+        vec![sridified_kernel, kernel],
         Volatility::Immutable,
         Some(doc("ST_Point", "Geometry")),
     )
@@ -52,11 +55,14 @@ pub fn st_point_udf() -> SedonaScalarUDF {
 /// Native implementation to create geometries from coordinates.
 /// See [`st_geogpoint_udf`] for the corresponding geography constructor.
 pub fn st_geogpoint_udf() -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeoFromPoint {
+        out_type: WKB_GEOGRAPHY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
+
     SedonaScalarUDF::new(
         "st_geogpoint",
-        vec![Arc::new(STGeoFromPoint {
-            out_type: WKB_GEOGRAPHY,
-        })],
+        vec![sridified_kernel, kernel],
         Volatility::Immutable,
         Some(doc("st_geogpoint", "Geography")),
     )
@@ -73,6 +79,7 @@ fn doc(name: &str, out_type_name: &str) -> Documentation {
     )
     .with_argument("x", "double: X value")
     .with_argument("y", "double: Y value")
+    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
     .with_sql_example(format!("{name}(-64.36, 45.09)"))
     .build()
 }
@@ -157,8 +164,11 @@ mod tests {
     use arrow_array::create_array;
     use arrow_array::ArrayRef;
     use arrow_schema::DataType;
+    use datafusion_expr::Literal;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::Edges;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
@@ -245,6 +255,56 @@ mod tests {
                 &WKB_GEOMETRY,
             ),
         );
+    }
+
+    #[rstest]
+    #[case(DataType::UInt32, 4326)]
+    #[case(DataType::Int32, 4326)]
+    #[case(DataType::Utf8, "4326")]
+    #[case(DataType::Utf8, "EPSG:4326")]
+    fn udf_invoke_with_srid(#[case] srid_type: DataType, #[case] srid_value: impl Literal + Copy) {
+        let udf = st_point_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(srid_type),
+            ],
+        );
+
+        let return_type = tester
+            .return_type_with_scalar_scalar_scalar(Some(1.0), Some(2.0), Some(srid_value))
+            .unwrap();
+        assert_eq!(return_type, SedonaType::Wkb(Edges::Planar, lnglat()));
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(1.0, 2.0, srid_value)
+            .unwrap();
+        tester.assert_scalar_result_equals_with_return_type(result, "POINT (1 2)", return_type);
+    }
+
+    #[test]
+    fn udf_invoke_with_invalid_srid() {
+        let udf = st_point_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+
+        let return_type = tester.return_type_with_scalar_scalar_scalar(
+            Some(1.0),
+            Some(2.0),
+            Some("gazornenplat"),
+        );
+        assert!(return_type.is_err());
+
+        let result = tester.invoke_scalar_scalar_scalar(1.0, 2.0, "gazornenplat");
+        assert!(result.is_err());
     }
 
     #[test]
