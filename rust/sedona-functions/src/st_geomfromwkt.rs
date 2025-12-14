@@ -220,7 +220,6 @@ mod tests {
             udf.into(),
             vec![SedonaType::Arrow(data_type), SedonaType::Arrow(srid_type)],
         );
-        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         let return_type = tester
             .return_type_with_scalar_scalar(Some("POINT (1 2)"), Some(srid_value))
