@@ -34,17 +34,21 @@ use wkb::Endianness;
 use wkt::Wkt;
 
 use crate::executor::WkbExecutor;
+use crate::st_setsrid::SRIDifiedKernel;
 
 /// ST_GeomFromWKT() UDF implementation
 ///
 /// An implementation of WKT reading using GeoRust's wkt crate.
 /// See [`st_geogfromwkt_udf`] for the corresponding geography function.
 pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeoFromWKT {
+        out_type: WKB_GEOMETRY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
+
     let udf = SedonaScalarUDF::new(
         "st_geomfromwkt",
-        vec![Arc::new(STGeoFromWKT {
-            out_type: WKB_GEOMETRY,
-        })],
+        vec![sridified_kernel, kernel],
         Volatility::Immutable,
         Some(doc("ST_GeomFromWKT", "Geometry")),
     );
@@ -83,6 +87,7 @@ fn doc(name: &str, out_type_name: &str) -> Documentation {
             out_type_name.to_lowercase()
         ),
     )
+    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
     .with_sql_example(format!("SELECT {name}('POINT(40.7128 -74.0060)')"))
     .with_related_udf("ST_AsText")
     .build()
@@ -146,8 +151,10 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
 mod tests {
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
-    use datafusion_expr::ScalarUDF;
+    use datafusion_expr::{Literal, ScalarUDF};
     use rstest::rstest;
+    use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::Edges;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
         create::{create_array, create_scalar},
@@ -191,6 +198,38 @@ mod tests {
                 &[Some("POINT (1 2)"), None, Some("POINT (3 4)")],
                 &WKB_GEOMETRY,
             ),
+        );
+    }
+
+    #[rstest(
+        data_type => [DataType::Utf8, DataType::Utf8View],
+        srid => [
+            (DataType::UInt32, 4326),
+            (DataType::Int32, 4326),
+            (DataType::Utf8, "4326"),
+            (DataType::Utf8, "EPSG:4326"),
+        ]
+    )]
+    fn udf_with_srid(data_type: DataType, srid: (DataType, impl Literal + Copy)) {
+        let (srid_type, srid_value) = srid;
+
+        let udf = st_geomfromwkt_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::Arrow(data_type), SedonaType::Arrow(srid_type)],
+        );
+
+        let return_type = tester
+            .return_type_with_scalar_scalar(Some("POINT (1 2)"), Some(srid_value))
+            .unwrap();
+        assert_eq!(return_type, SedonaType::Wkb(Edges::Planar, lnglat()));
+
+        // Scalar non-null
+        assert_scalar_equal_wkb_geometry(
+            &tester
+                .invoke_scalar_scalar("POINT (1 2)", srid_value)
+                .unwrap(),
+            Some("POINT (1 2)"),
         );
     }
 
