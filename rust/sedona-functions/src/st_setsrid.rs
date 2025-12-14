@@ -274,8 +274,9 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 
         let crs = match scalar_args[orig_args_len] {
             Some(crs) => crs,
-            // If the SRID is not a literal, fall back to the inner result without applying a CRS.
-            // This allows planning to succeed when the SRID is provided as a column or expression.
+            // If the kernel handles arguments as arrays, not as scalars, maybe_crs
+            // is None in the planning phase. In such a case, return the original
+            // result type without modifying its CRS.
             None => return Ok(Some(inner_result)),
         };
 
