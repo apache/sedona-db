@@ -312,7 +312,13 @@ fn deserialize_edges_and_crs(value: &Option<String>) -> Result<(Edges, Crs)> {
             };
 
             let crs = match json_value.get("crs") {
-                Some(crs_value) => deserialize_crs(crs_value)?,
+                Some(crs_value) => {
+                    if let Some(s) = crs_value.as_str() {
+                        deserialize_crs(s)?
+                    } else {
+                        deserialize_crs(&crs_value.to_string())?
+                    }
+                }
                 None => Crs::None,
             };
 
@@ -430,8 +436,7 @@ mod tests {
             "Wkb(ogc:crs84)"
         );
 
-        let projjson_value: Value = r#"{}"#.parse().unwrap();
-        let projjson_crs = deserialize_crs(&projjson_value).unwrap();
+        let projjson_crs = deserialize_crs("{}").unwrap();
         assert_eq!(
             SedonaType::Wkb(Edges::Planar, projjson_crs).to_string(),
             "Wkb({...})"

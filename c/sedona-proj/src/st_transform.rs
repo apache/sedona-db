@@ -192,8 +192,7 @@ impl SedonaScalarKernel for STTransform {
         // If there is no CRS argument, we cannot determine the return type.
         match crs_str_opt {
             Some(to_crs) => {
-                let val = serde_json::Value::String(to_crs.to_string());
-                let crs = deserialize_crs(&val)?;
+                let crs = deserialize_crs(&to_crs)?;
                 Ok(Some(SedonaType::Wkb(Edges::Planar, crs)))
             }
             _ => Ok(Some(SedonaType::Wkb(Edges::Planar, None))),
@@ -571,8 +570,7 @@ mod tests {
     }
 
     fn get_crs(auth_code: &str) -> Crs {
-        let crs_value = serde_json::Value::String(auth_code.to_string());
-        deserialize_crs(&crs_value).unwrap()
+        deserialize_crs(auth_code).unwrap()
     }
 
     fn invoke_udf_test(

@@ -140,7 +140,6 @@ mod test {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{Edges, WKB_GEOMETRY};
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
-    use serde_json::Value;
 
     use super::*;
 
@@ -190,8 +189,7 @@ mod test {
         assert_eq!(&result, &expected);
 
         // Check the "not already lnglat" case
-        let crs =
-            sedona_schema::crs::deserialize_crs(&Value::String("EPSG:3857".to_string())).unwrap();
+        let crs = sedona_schema::crs::deserialize_crs("EPSG:3857").unwrap();
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
             vec![SedonaType::Wkb(Edges::Planar, crs)],

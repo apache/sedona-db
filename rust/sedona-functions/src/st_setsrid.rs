@@ -209,7 +209,7 @@ fn determine_return_type(
                         None
                     } else {
                         validate_crs(&crs, maybe_engine)?;
-                        deserialize_crs(&serde_json::Value::String(crs))?
+                        deserialize_crs(&crs)?
                     }
                 }
                 None => None,
@@ -282,7 +282,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                     None
                 } else {
                     validate_crs(&crs, None)?;
-                    deserialize_crs(&serde_json::Value::String(crs))?
+                    deserialize_crs(&crs)?
                 }
             }
             Ok(ScalarValue::Utf8(None)) => None,

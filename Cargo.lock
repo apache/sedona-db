@@ -5197,7 +5197,9 @@ version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "criterion",
  "datafusion-common",
+ "lru",
  "sedona-common",
  "serde_json",
 ]

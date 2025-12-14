@@ -169,6 +169,7 @@ impl SedonaScalarKernel for StCrs {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use arrow_array::create_array;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -176,9 +177,6 @@ mod test {
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
-    use std::str::FromStr;
-
-    use super::*;
 
     #[test]
     fn udf_metadata() {
@@ -209,8 +207,7 @@ mod test {
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
         // Test with a CRS with an EPSG code
-        let crs_value = serde_json::Value::String("EPSG:4837".to_string());
-        let crs = deserialize_crs(&crs_value).unwrap();
+        let crs = deserialize_crs("EPSG:4837").unwrap();
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type.clone()]);
         let result = tester
@@ -234,8 +231,7 @@ mod test {
         );
 
         // Call with a CRS with no SRID (should error)
-        let crs_value = serde_json::Value::from_str("{}");
-        let crs = deserialize_crs(&crs_value.unwrap()).unwrap();
+        let crs = deserialize_crs("{}").unwrap();
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
         let result = tester.invoke_scalar("POINT (0 1)");
@@ -261,8 +257,7 @@ mod test {
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
 
         // Test with a CRS with an EPSG code
-        let crs_value = serde_json::Value::String("EPSG:4837".to_string());
-        let crs = deserialize_crs(&crs_value).unwrap();
+        let crs = deserialize_crs("EPSG:4837").unwrap();
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type.clone()]);
         let expected_crs = "\"EPSG:4837\"".to_string();
