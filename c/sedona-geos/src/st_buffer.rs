@@ -342,6 +342,43 @@ mod tests {
         assert_array_equal(&envelope_result, &expected_envelope);
     }
 
+    #[test]
+    fn test_empty_geometry() {
+        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let input_wkt = vec![
+            Some("POINT EMPTY"),
+            Some("LINESTRING EMPTY"),
+            Some("POLYGON EMPTY"),
+            Some("MULTIPOINT EMPTY"),
+            Some("MULTILINESTRING EMPTY"),
+            Some("MULTIPOLYGON EMPTY"),
+            Some("GEOMETRYCOLLECTION EMPTY"),
+        ];
+        let input_dist = 2;
+
+        let buffer_result = tester
+            .invoke_wkb_array_scalar(input_wkt, input_dist)
+            .unwrap();
+        let expected: ArrayRef = create_array(
+            &[
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+                Some("POLYGON EMPTY"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&buffer_result, &expected);
+    }
+
     #[rstest]
     fn udf_with_buffer_params(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_style_impl());
