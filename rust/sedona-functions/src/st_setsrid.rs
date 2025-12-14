@@ -274,12 +274,8 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 
         let crs = match scalar_args[orig_args_len] {
             Some(crs) => crs,
-            // If the kernel handles arguments as arrays, not as scalars, maybe_crs
-            // is None in the planning phase. In such a case, return the original
-            // result type without modifying its CRS.
-            None => return Ok(Some(inner_result)),
+            None => return Ok(None),
         };
-
         let new_crs = match crs.cast_to(&DataType::Utf8) {
             Ok(ScalarValue::Utf8(Some(crs))) => {
                 if crs == "0" {
