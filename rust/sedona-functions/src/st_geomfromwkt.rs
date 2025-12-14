@@ -63,14 +63,11 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
 /// An implementation of WKT reading using GeoRust's wkt crate.
 /// See [`st_geomfromwkt_udf`] for the corresponding geometry function.
 pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
-    let kernel = Arc::new(STGeoFromWKT {
-        out_type: WKB_GEOGRAPHY,
-    });
-    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
-
     let udf = SedonaScalarUDF::new(
         "st_geogfromwkt",
-        vec![sridified_kernel, kernel],
+        vec![Arc::new(STGeoFromWKT {
+            out_type: WKB_GEOGRAPHY,
+        })],
         Volatility::Immutable,
         Some(doc("ST_GeogFromWKT", "Geography")),
     );
