@@ -204,17 +204,18 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case(DataType::Utf8, DataType::UInt32, 4326)]
-    #[case(DataType::Utf8, DataType::Int32, 4326)]
-    #[case(DataType::Utf8, DataType::Utf8, "4326")]
-    #[case(DataType::Utf8, DataType::Utf8, "EPSG:4326")]
-    #[case(DataType::Utf8View, DataType::UInt32, 4326)]
-    fn udf_with_srid(
-        #[case] data_type: DataType,
-        #[case] srid_type: DataType,
-        #[case] srid_value: impl Literal + Copy,
-    ) {
+    #[rstest(
+        data_type => [DataType::Utf8, DataType::Utf8View],
+        srid => [
+            (DataType::UInt32, 4326),
+            (DataType::Int32, 4326),
+            (DataType::Utf8, "4326"),
+            (DataType::Utf8, "EPSG:4326"),
+        ]
+    )]
+    fn udf_with_srid(data_type: DataType, srid: (DataType, impl Literal + Copy)) {
+        let (srid_type, srid_value) = srid;
+
         let udf = st_geomfromwkt_udf();
         let tester = ScalarUdfTester::new(
             udf.into(),
