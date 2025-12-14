@@ -274,8 +274,11 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 
         let crs = match scalar_args[orig_args_len] {
             Some(crs) => crs,
-            None => return Ok(None),
+            // If the SRID is not a literal, fall back to the inner result without applying a CRS.
+            // This allows planning to succeed when the SRID is provided as a column or expression.
+            None => return Ok(Some(inner_result)),
         };
+
         let new_crs = match crs.cast_to(&DataType::Utf8) {
             Ok(ScalarValue::Utf8(Some(crs))) => {
                 if crs == "0" {
