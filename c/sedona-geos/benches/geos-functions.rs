@@ -43,7 +43,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "geos",
         "st_buffer",
-        ArrayScalar(Polygon(500), Float64(1.0, 10.0)),
+        ArrayScalar(Polygon(50), Float64(1.0, 10.0)), // Reduced from 500 so that it can finish
     );
 
     benchmark::scalar(c, &f, "geos", "st_centroid", Polygon(10));
