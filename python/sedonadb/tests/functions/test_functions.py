@@ -1148,6 +1148,27 @@ def test_st_geomfromtext(eng, wkt, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("wkt", "srid", "expected"),
+    [
+        (None, None, None),
+        ("POINT (0 0)", None, None),
+        ("POINT (0 0)", 0, 0),
+        ("POINT (0 0)", 4326, 4326),
+        ("POINT (0 0)", "4326", 4326),
+    ],
+)
+def test_st_geomfromtext_with_srid(eng, wkt, srid, expected):
+    if wkt is not None:
+        wkt = f"'{wkt}'"
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_SRID(ST_GeomFromText({val_or_null(wkt)}, {val_or_null(srid)}))",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom"),
     [
         "POINT (1 1)",
