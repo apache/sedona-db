@@ -1,3 +1,4 @@
+---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,8 +16,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-/.quarto/
-*.md
-*_files/
+title: ST_Area
+description: Returns the area of a geometry.
+kernels:
+  - returns: geometry
+    args: [geometry]
+---
 
-**/*.quarto_ipynb
+## Description
+
+`ST_Area()` Returns the area of a polygon or multi-polygon geometry.
+
+## Examples
+
+```sql
+SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
+```
