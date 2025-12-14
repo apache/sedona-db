@@ -7,13 +7,13 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/delta-lake/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/iceberg/">
       
       
-        <link rel="prev" href="../crs-examples/">
+        <link rel="prev" href="../delta-lake/">
       
       
-        <link rel="next" href="../iceberg/">
+        <link rel="next" href="../working-with-parquet-files/">
       
       
         
@@ -24,7 +24,7 @@
     
     
       
-        <title>Delta Lake - SedonaDB</title>
+        <title>Iceberg - SedonaDB</title>
       
     
     
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#sedonadb-delta-lake" class="md-skip">
+        <a href="#sedonadb-iceberg" class="md-skip">
           Skip to content
         </a>
       
@@ -127,7 +127,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Delta Lake
+              Iceberg
             
           </span>
         </div>
@@ -1018,6 +1018,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../delta-lake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Delta Lake
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1037,7 +1065,7 @@
   <span class="md-ellipsis">
     
   
-    Delta Lake
+    Iceberg
   
 
     
@@ -1055,7 +1083,7 @@
   <span class="md-ellipsis">
     
   
-    Delta Lake
+    Iceberg
   
 
     
@@ -1081,10 +1109,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#create-a-delta-lake-table-with-wkt" class="md-nav__link">
+  <a href="#create-an-iceberg-table-with-geometric-data" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create a Delta Lake table with WKT
+        Create an Iceberg table with geometric data
       
     </span>
   </a>
@@ -1092,10 +1120,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#read-delta-table-into-sedonadb" class="md-nav__link">
+  <a href="#read-the-iceberg-table-into-sedonadb-via-arrow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Read Delta table into SedonaDB
+        Read the Iceberg table into SedonaDB via Arrow
       
     </span>
   </a>
@@ -1103,10 +1131,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#filter-countries-in-a-particular-geographic-region" class="md-nav__link">
+  <a href="#future-iceberg-geographygeometry-work" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Filter countries in a particular geographic region
+        Future Iceberg geography/geometry work
       
     </span>
   </a>
@@ -1114,10 +1142,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-a-delta-lake-table-with-wkb" class="md-nav__link">
+  <a href="#create-an-iceberg-table-with-wkb-and-bbox" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create a Delta Lake table with WKB
+        Create an Iceberg table with WKB and bbox
       
     </span>
   </a>
@@ -1128,34 +1156,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../iceberg/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Iceberg
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1395,10 +1395,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#create-a-delta-lake-table-with-wkt" class="md-nav__link">
+  <a href="#create-an-iceberg-table-with-geometric-data" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create a Delta Lake table with WKT
+        Create an Iceberg table with geometric data
       
     </span>
   </a>
@@ -1406,10 +1406,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#read-delta-table-into-sedonadb" class="md-nav__link">
+  <a href="#read-the-iceberg-table-into-sedonadb-via-arrow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Read Delta table into SedonaDB
+        Read the Iceberg table into SedonaDB via Arrow
       
     </span>
   </a>
@@ -1417,10 +1417,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#filter-countries-in-a-particular-geographic-region" class="md-nav__link">
+  <a href="#future-iceberg-geographygeometry-work" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Filter countries in a particular geographic region
+        Future Iceberg geography/geometry work
       
     </span>
   </a>
@@ -1428,10 +1428,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#create-a-delta-lake-table-with-wkb" class="md-nav__link">
+  <a href="#create-an-iceberg-table-with-wkb-and-bbox" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create a Delta Lake table with WKB
+        Create an Iceberg table with WKB and bbox
       
     </span>
   </a>
@@ -1455,7 +1455,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/delta-lake.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/iceberg.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1463,66 +1463,86 @@
   
 
 
-<h1 id="sedonadb-delta-lake">SedonaDB + Delta Lake<a class="headerlink" href="#sedonadb-delta-lake" title="Permanent link">¶</a></h1>
-<p>This page shows how to read and write Delta Lake tables with SedonaDB.</p>
-<p>Make sure you run <code>pip install deltalake</code> to run the code snippets below.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">deltalake</span><span class="w"> </span><span class="kn">import</span> <span class="n">write_deltalake</span><span class="p">,</span> <span class="n">DeltaTable</span>
+<h1 id="sedonadb-iceberg">SedonaDB + Iceberg<a class="headerlink" href="#sedonadb-iceberg" title="Permanent link">¶</a></h1>
+<p>This page demonstrates how to store spatial data in Iceberg tables and how to query them with SedonaDB.</p>
+<p>You will learn how to create an Iceberg table with a well-known text (WKT) or well-known binary (WKB) column in an Iceberg table and some of the advantages of storing geometric data in Iceberg.</p>
+<p>Make sure to run <code>pip install pyiceberg</code> to install the required dependencies for this notebook.</p>
+<p>Let’s start by loading the required dependencies and saving a spatial dataset in an Iceberg table.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.catalog</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_catalog</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow.compute</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pc</span>
-
-<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pa</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 </code></pre></div>
-<p>Read in a GeoParquet dataset into a SedonaDB DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
+<h2 id="create-an-iceberg-table-with-geometric-data">Create an Iceberg table with geometric data<a class="headerlink" href="#create-an-iceberg-table-with-geometric-data" title="Permanent link">¶</a></h2>
+<p>Start by creating the Iceberg warehouse:</p>
+<div class="highlight"><pre><span></span><code><span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="s2">"/tmp/warehouse"</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>Now set up the catalog:</p>
+<div class="highlight"><pre><span></span><code><span class="n">warehouse_path</span> <span class="o">=</span> <span class="s2">"/tmp/warehouse"</span>
+<span class="n">catalog</span> <span class="o">=</span> <span class="n">load_catalog</span><span class="p">(</span>
+    <span class="s2">"default"</span><span class="p">,</span>
+    <span class="o">**</span><span class="p">{</span>
+        <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"sql"</span><span class="p">,</span>
+        <span class="s2">"uri"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"sqlite:///</span><span class="si">{</span><span class="n">warehouse_path</span><span class="si">}</span><span class="s2">/pyiceberg_catalog.db"</span><span class="p">,</span>
+        <span class="s2">"warehouse"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"file://</span><span class="si">{</span><span class="n">warehouse_path</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Use SedonaDB to read a Parquet file containing country data into a DataFrame.</p>
+<div class="highlight"><pre><span></span><code><span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+<span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
     <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"</span>
 <span class="p">)</span>
 </code></pre></div>
-<h2 id="create-a-delta-lake-table-with-wkt">Create a Delta Lake table with WKT<a class="headerlink" href="#create-a-delta-lake-table-with-wkt" title="Permanent link">¶</a></h2>
-<p>Now write the DataFrame to a Delta Lake table.  Notice that you must convert the geometry column to Well-Known Text (WKT) or Well-Known Binary (WKB) before writing to the Delta table.</p>
-<p>Delta Lake does not support geometry columns.</p>
-<p>This example shows how to create a Delta table with a WKT column.  The section that follows shows how to create a Delta table with a WKB column.</p>
+<p>Convert all the columns to be plain strings because Iceberg doesn’t support geometry columns yet:</p>
 <div class="highlight"><pre><span></span><code><span class="n">countries</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"countries"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span>
-    <span class="s2">"select name, continent, ST_AsText(geometry) as geometry_wkt from countries"</span>
-<span class="p">)</span>
-<span class="n">table_path</span> <span class="o">=</span> <span class="s2">"/tmp/delta_with_wkt"</span>
-<span class="n">write_deltalake</span><span class="p">(</span><span class="n">table_path</span><span class="p">,</span> <span class="n">df</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">(),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"overwrite"</span><span class="p">)</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">    select </span>
+<span class="s2">        ARROW_CAST(name, 'Utf8') as name, </span>
+<span class="s2">        ARROW_CAST(continent, 'Utf8') as continent, </span>
+<span class="s2">        ST_AsText(geometry) as geometry_wkt </span>
+<span class="s2">    from countries</span>
+<span class="s2">"""</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="read-delta-table-into-sedonadb">Read Delta table into SedonaDB<a class="headerlink" href="#read-delta-table-into-sedonadb" title="Permanent link">¶</a></h2>
-<p>Now read the Delta table back into a SedonaDB DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="n">dt</span> <span class="o">=</span> <span class="n">DeltaTable</span><span class="p">(</span><span class="n">table_path</span><span class="p">)</span>
-<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">to_pyarrow_table</span><span class="p">()</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
-<span class="n">df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<p>The explicit casting with <code>ARROW_CAST</code> is necessary because PyIceberg doesn't support string views.</p>
+<p>Check out the schema of the DataFrame:</p>
+<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">schema</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────┬───────────────┬────────────────────────────────────────────────────┐
-│             name            ┆   continent   ┆                    geometry_wkt                    │
-│             utf8            ┆      utf8     ┆                        utf8                        │
-╞═════════════════════════════╪═══════════════╪════════════════════════════════════════════════════╡
-│ Fiji                        ┆ Oceania       ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.55… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United Republic of Tanzania ┆ Africa        ┆ POLYGON((33.90371119710453 -0.9500000000000001,34… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Western Sahara              ┆ Africa        ┆ POLYGON((-8.665589565454809 27.656425889592356,-8… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Canada                      ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United States of America    ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Kazakhstan                  ┆ Asia          ┆ POLYGON((87.35997033076265 49.21498078062912,86.5… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Uzbekistan                  ┆ Asia          ┆ POLYGON((55.96819135928291 41.30864166926936,55.9… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Papua New Guinea            ┆ Oceania       ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Indonesia                   ┆ Asia          ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Argentina                   ┆ South America ┆ MULTIPOLYGON(((-68.63401022758323 -52.63637045887… │
-└─────────────────────────────┴───────────────┴────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>SedonaSchema with 3 fields:
+  name: utf8&lt;Utf8&gt;
+  continent: utf8&lt;Utf8&gt;
+  geometry_wkt: utf8&lt;Utf8&gt;
 </code></pre></div>
 
-<p>Notice that the <code>geometry_wkt</code> column is <code>utf8</code>.  It's not a geometry column.</p>
-<p>Let's convert the <code>geometry_wkt</code> column to a geometry column.</p>
+<p>Now create a new Iceberg table:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamespaceAlreadyExistsError</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">catalog</span><span class="o">.</span><span class="n">create_namespace</span><span class="p">(</span><span class="s2">"default"</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">NamespaceAlreadyExistsError</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="k">if</span> <span class="n">catalog</span><span class="o">.</span><span class="n">table_exists</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">):</span>
+    <span class="n">catalog</span><span class="o">.</span><span class="n">drop_table</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">)</span>
+
+<span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">create_table</span><span class="p">(</span>
+    <span class="s2">"default.countries"</span><span class="p">,</span>
+    <span class="n">schema</span><span class="o">=</span><span class="n">pa</span><span class="o">.</span><span class="n">schema</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Append the DataFrame to the table:</p>
+<div class="highlight"><pre><span></span><code><span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_arrow_table</span><span class="p">())</span>
+</code></pre></div>
+<p>Now let’s see how to read the data with SedonaDB.</p>
+<h2 id="read-the-iceberg-table-into-sedonadb-via-arrow">Read the Iceberg table into SedonaDB via Arrow<a class="headerlink" href="#read-the-iceberg-table-into-sedonadb-via-arrow" title="Permanent link">¶</a></h2>
+<p>Here’s how to read an Iceberg table into a SedonaDB DataFrame:</p>
+<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">load_table</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">)</span>
+<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
+</code></pre></div>
+<p>The Iceberg table is first exposed as an arrow table and then read into a SedonaDB DataFrame.</p>
+<p>Now view the contents of the SedonaDB DataFrame:</p>
 <div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"my_table"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
 <span class="n">res</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">SELECT</span>
@@ -1531,112 +1551,113 @@
 <span class="s2">  ST_GeomFromWKT(geometry_wkt) as geom</span>
 <span class="s2">from my_table</span>
 <span class="s2">"""</span><span class="p">)</span>
-<span class="n">res</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="n">res</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────┬───────────────┬────────────────────────────────────────────────────┐
-│             name            ┆   continent   ┆                        geom                        │
-│             utf8            ┆      utf8     ┆                      geometry                      │
-╞═════════════════════════════╪═══════════════╪════════════════════════════════════════════════════╡
-│ Fiji                        ┆ Oceania       ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.55… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United Republic of Tanzania ┆ Africa        ┆ POLYGON((33.90371119710453 -0.9500000000000001,34… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Western Sahara              ┆ Africa        ┆ POLYGON((-8.665589565454809 27.656425889592356,-8… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Canada                      ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United States of America    ┆ North America ┆ MULTIPOLYGON(((-122.84000000000003 49.00000000000… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Kazakhstan                  ┆ Asia          ┆ POLYGON((87.35997033076265 49.21498078062912,86.5… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Uzbekistan                  ┆ Asia          ┆ POLYGON((55.96819135928291 41.30864166926936,55.9… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Papua New Guinea            ┆ Oceania       ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Indonesia                   ┆ Asia          ┆ MULTIPOLYGON(((141.00021040259185 -2.600151055515… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Argentina                   ┆ South America ┆ MULTIPOLYGON(((-68.63401022758323 -52.63637045887… │
-└─────────────────────────────┴───────────────┴────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────┬───────────┬────────────────────────────────────────────────────────┐
+│             name            ┆ continent ┆                          geom                          │
+│             utf8            ┆    utf8   ┆                        geometry                        │
+╞═════════════════════════════╪═══════════╪════════════════════════════════════════════════════════╡
+│ Fiji                        ┆ Oceania   ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.555216… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ United Republic of Tanzania ┆ Africa    ┆ POLYGON((33.90371119710453 -0.9500000000000001,34.072… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Western Sahara              ┆ Africa    ┆ POLYGON((-8.665589565454809 27.656425889592356,-8.665… │
+└─────────────────────────────┴───────────┴────────────────────────────────────────────────────────┘
 </code></pre></div>
 
-<p>Confirm the schema of the DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="n">res</span><span class="o">.</span><span class="n">schema</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>SedonaSchema with 3 fields:
-  name: utf8&lt;Utf8&gt;
-  continent: utf8&lt;Utf8&gt;
-  geom: geometry&lt;Wkb&gt;
-</code></pre></div>
-
-<h2 id="filter-countries-in-a-particular-geographic-region">Filter countries in a particular geographic region<a class="headerlink" href="#filter-countries-in-a-particular-geographic-region" title="Permanent link">¶</a></h2>
-<p>Now, let's grab some countries in the western portion of South America using a polygon region.</p>
-<p>SedonaDB can run these types of queries on geometric data.</p>
-<div class="highlight"><pre><span></span><code><span class="n">res</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">SELECT</span>
-<span class="s2">  name,</span>
-<span class="s2">  continent,</span>
-<span class="s2">  ST_GeomFromWKT(geometry_wkt) as geom</span>
-<span class="s2">FROM my_table</span>
-<span class="s2">WHERE ST_Intersects(</span>
-<span class="s2">  ST_GeomFromWKT(geometry_wkt),</span>
-<span class="s2">  ST_GeomFromWKT('POLYGON((-81 5, -75 5, -75 -56, -81 -56, -81 5))')</span>
-<span class="s2">)</span>
-<span class="s2">"""</span><span class="p">)</span>
-<span class="n">res</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────┬───────────────┬───────────────────────────────────────────────────────────────────────┐
-│   name   ┆   continent   ┆                                  geom                                 │
-│   utf8   ┆      utf8     ┆                                geometry                               │
-╞══════════╪═══════════════╪═══════════════════════════════════════════════════════════════════════╡
-│ Chile    ┆ South America ┆ MULTIPOLYGON(((-68.63401022758323 -52.63637045887449,-68.63335000000… │
-├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Peru     ┆ South America ┆ POLYGON((-69.89363521999663 -4.2981869441943275,-70.7947688463023 -4… │
-├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Colombia ┆ South America ┆ POLYGON((-66.87632585312258 1.253360500489336,-67.0650481838525 1.13… │
-├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Ecuador  ┆ South America ┆ POLYGON((-75.37322323271385 -0.1520317521204504,-75.23372270374195 -… │
-└──────────┴───────────────┴───────────────────────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<h2 id="create-a-delta-lake-table-with-wkb">Create a Delta Lake table with WKB<a class="headerlink" href="#create-a-delta-lake-table-with-wkb" title="Permanent link">¶</a></h2>
-<p>You can also create a Delta table with WKB.</p>
-<p>WKB is binary, can be compressed more effectively than WKT, and results in smaller file sizes.</p>
-<p>The following example shows how to store the cities dataset in a Delta table with the geometry data stored as WKB.</p>
-<p>It also demonstrates how to add a <code>bbox</code> column to the Delta table, enabling more efficient filtering.</p>
+<p>You can see that the geom column contains the geometry type, which enables spatial analysis of the data.</p>
+<p>The geometry data is stored as WKT, which isn't as efficient as WKB.  The example that follows demonstrates how to store WKB in Iceberg tables.</p>
+<h2 id="future-iceberg-geographygeometry-work">Future Iceberg geography/geometry work<a class="headerlink" href="#future-iceberg-geographygeometry-work" title="Permanent link">¶</a></h2>
+<p>Iceberg added support for geometry and geography columns in the v3 spec.</p>
+<p>The Iceberg v3 implementation has not been released yet, and it the v3 spec hasn't started in Iceberg Rust.  Here is <a href="https://github.com/apache/iceberg-rust/issues/1884">the open issue</a> to add geo support to Iceberg Rust.</p>
+<p>It’s best to manually persist the bbox information of files in your Iceberg table if you’re storing geometric data as WKT or WKB. </p>
+<h2 id="create-an-iceberg-table-with-wkb-and-bbox">Create an Iceberg table with WKB and bbox<a class="headerlink" href="#create-an-iceberg-table-with-wkb-and-bbox" title="Permanent link">¶</a></h2>
+<p>Let’s see how to create an Iceberg table with a WKB and bbox columns to allow for faster spatial analyses.</p>
+<p>Start by creating the cities DataFrame.</p>
 <div class="highlight"><pre><span></span><code><span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
     <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"</span>
 <span class="p">)</span>
 <span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
+<p>Now write the DataFrame to an Iceberg table with bbox columns:</p>
 <div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">select </span>
-<span class="s2">    name, </span>
-<span class="s2">    ST_AsBinary(geometry) as geometry_wkb,</span>
-<span class="s2">    STRUCT(</span>
-<span class="s2">        ST_XMin(geometry) as xmin,</span>
-<span class="s2">        ST_YMin(geometry) as ymin,</span>
-<span class="s2">        ST_XMax(geometry) as xmax,</span>
-<span class="s2">        ST_YMax(geometry) as ymax</span>
-<span class="s2">    ) as bbox</span>
+<span class="s2">    ARROW_CAST(name, 'Utf8') as name, </span>
+<span class="s2">    ARROW_CAST(ST_AsBinary(geometry), 'Binary') as geometry_wkb,</span>
+<span class="s2">    ST_XMin(geometry) as bbox_xmin,</span>
+<span class="s2">    ST_YMin(geometry) as bbox_ymin,</span>
+<span class="s2">    ST_XMax(geometry) as bbox_xmax,</span>
+<span class="s2">    ST_YMax(geometry) as bbox_ymax</span>
 <span class="s2">from cities</span>
 <span class="s2">"""</span><span class="p">)</span>
-<span class="n">table_path</span> <span class="o">=</span> <span class="s2">"/tmp/delta_with_wkb"</span>
-<span class="n">write_deltalake</span><span class="p">(</span><span class="n">table_path</span><span class="p">,</span> <span class="n">df</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">(),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"overwrite"</span><span class="p">,</span> <span class="n">schema_mode</span><span class="o">=</span><span class="s2">"overwrite"</span><span class="p">)</span>
 </code></pre></div>
-<p>Read the Delta table and filter it to only include cities in the eastern half of North America.</p>
-<div class="highlight"><pre><span></span><code><span class="n">dt</span> <span class="o">=</span> <span class="n">DeltaTable</span><span class="p">(</span><span class="n">table_path</span><span class="p">)</span>
-<span class="n">dataset</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">to_pyarrow_dataset</span><span class="p">()</span>
-<span class="n">filter_expr</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="p">(</span><span class="n">pc</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">"bbox"</span><span class="p">,</span> <span class="s2">"xmax"</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mf">97.0</span><span class="p">)</span>
-    <span class="o">&amp;</span> <span class="p">(</span><span class="n">pc</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">"bbox"</span><span class="p">,</span> <span class="s2">"xmin"</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="o">-</span><span class="mf">67.0</span><span class="p">)</span>
-    <span class="o">&amp;</span> <span class="p">(</span><span class="n">pc</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">"bbox"</span><span class="p">,</span> <span class="s2">"ymax"</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mf">25.0</span><span class="p">)</span>
-    <span class="o">&amp;</span> <span class="p">(</span><span class="n">pc</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">"bbox"</span><span class="p">,</span> <span class="s2">"ymin"</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mf">50.0</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">catalog</span><span class="o">.</span><span class="n">table_exists</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">):</span>
+    <span class="n">catalog</span><span class="o">.</span><span class="n">drop_table</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">)</span>
+
+<span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">create_table</span><span class="p">(</span>
+    <span class="s2">"default.cities"</span><span class="p">,</span>
+    <span class="n">schema</span><span class="o">=</span><span class="n">pa</span><span class="o">.</span><span class="n">schema</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="p">),</span>
 <span class="p">)</span>
-<span class="n">filtered_table</span> <span class="o">=</span> <span class="n">dataset</span><span class="o">.</span><span class="n">to_table</span><span class="p">(</span><span class="nb">filter</span><span class="o">=</span><span class="n">filter_expr</span><span class="p">)</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">filtered_table</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">())</span>
+<div class="highlight"><pre><span></span><code><span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_arrow_table</span><span class="p">())</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"us_east_cities"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+<p>Load the <code>cities</code> table into a DataFrame with SedonaDB.</p>
+<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">load_table</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">)</span>
+<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
+<span class="n">df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────┬───────────────────────────┬─────────────┬─────────────┬─────────────┬─────────────┐
+│     name     ┆        geometry_wkb       ┆  bbox_xmin  ┆  bbox_ymin  ┆  bbox_xmax  ┆  bbox_ymax  │
+│     utf8     ┆           binary          ┆   float64   ┆   float64   ┆   float64   ┆   float64   │
+╞══════════════╪═══════════════════════════╪═════════════╪═════════════╪═════════════╪═════════════╡
+│ Vatican City ┆ 010100000054e57b4622e828… ┆  12.4533865 ┆  41.9032822 ┆  12.4533865 ┆  41.9032822 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ San Marino   ┆ 0101000000dcb122b42fe228… ┆  12.4417702 ┆  43.9360958 ┆  12.4417702 ┆  43.9360958 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Vaduz        ┆ 01010000006dae9ae7880823… ┆   9.5166695 ┆  47.1337238 ┆   9.5166695 ┆  47.1337238 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Lobamba      ┆ 01010000007bcb8b0233333f… ┆  31.1999971 ┆ -26.4666675 ┆  31.1999971 ┆ -26.4666675 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Luxembourg   ┆ 0101000000c08d39741f8518… ┆   6.1300028 ┆  49.6116604 ┆   6.1300028 ┆  49.6116604 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Palikir      ┆ 0101000000b237e796ccc463… ┆ 158.1499743 ┆   6.9166437 ┆ 158.1499743 ┆   6.9166437 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Majuro       ┆ 010100000027ef2df6286c65… ┆ 171.3800002 ┆   7.1030043 ┆ 171.3800002 ┆   7.1030043 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Funafuti     ┆ 0101000000be28e6c5ee6666… ┆ 179.2166471 ┆   -8.516652 ┆ 179.2166471 ┆   -8.516652 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Melekeok     ┆ 0101000000749b70af0cd460… ┆ 134.6265485 ┆   7.4873962 ┆ 134.6265485 ┆   7.4873962 │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Bir Lehlou   ┆ 0101000000f4d3c963174e23… ┆  -9.6525222 ┆  26.1191667 ┆  -9.6525222 ┆  26.1191667 │
+└──────────────┴───────────────────────────┴─────────────┴─────────────┴─────────────┴─────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="n">arrow_table</span><span class="o">.</span><span class="n">schema</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code><span class="n">name</span><span class="o">:</span><span class="w"> </span><span class="n">string</span>
+<span class="n">geometry_wkb</span><span class="o">:</span><span class="w"> </span><span class="n">binary</span>
+<span class="n">bbox_xmin</span><span class="o">:</span><span class="w"> </span><span class="n">double</span>
+<span class="n">bbox_ymin</span><span class="o">:</span><span class="w"> </span><span class="n">double</span>
+<span class="n">bbox_xmax</span><span class="o">:</span><span class="w"> </span><span class="n">double</span>
+<span class="n">bbox_ymax</span><span class="o">:</span><span class="w"> </span><span class="n">double</span>
+</code></pre></div>
+
+<p>Read the Iceberg table and filter it to only include cities in the eastern half of North America.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.expressions</span><span class="w"> </span><span class="kn">import</span> <span class="n">And</span><span class="p">,</span> <span class="n">GreaterThanOrEqual</span><span class="p">,</span> <span class="n">LessThanOrEqual</span>
+
+<span class="n">filter_expr</span> <span class="o">=</span> <span class="n">And</span><span class="p">(</span>
+    <span class="n">GreaterThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_xmax"</span><span class="p">,</span> <span class="o">-</span><span class="mf">97.0</span><span class="p">),</span>
+    <span class="n">LessThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_xmin"</span><span class="p">,</span> <span class="o">-</span><span class="mf">67.0</span><span class="p">),</span>
+    <span class="n">GreaterThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_ymax"</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span>
+    <span class="n">LessThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_ymin"</span><span class="p">,</span> <span class="mf">50.0</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">row_filter</span><span class="o">=</span><span class="n">filter_expr</span><span class="p">)</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
+
+<span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"us_east_cities"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"select name, ST_GeomFromWKB(geometry_wkb) as geom from us_east_cities"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div>
 <div class="codehilite"><pre><span></span><code>┌──────────────────┬──────────────────────────────────────────────┐
@@ -1682,7 +1703,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="November 3, 2025 20:16:13 UTC">November 3, 2025 20:16:13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="December 14, 2025 06:02:44 UTC">December 14, 2025 06:02:44</span>
   </span>
 
     
@@ -1718,7 +1739,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer">
         
           
-          <a href="../crs-examples/" class="md-footer__link md-footer__link--prev" aria-label="Previous: CRS Examples">
+          <a href="../delta-lake/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Delta Lake">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
@@ -1728,20 +1749,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                CRS Examples
+                Delta Lake
               </div>
             </div>
           </a>
         
         
           
-          <a href="../iceberg/" class="md-footer__link md-footer__link--next" aria-label="Next: Iceberg">
+          <a href="../working-with-parquet-files/" class="md-footer__link md-footer__link--next" aria-label="Next: Working with Parquet Files">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Iceberg
+                Working with Parquet Files
               </div>
             </div>
             <div class="md-footer__button md-icon">
