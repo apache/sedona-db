@@ -52,7 +52,7 @@ jobs:
           rustc -V
           cargo -V
       - name: pre-commit (cache)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
