@@ -1,29 +1,10 @@
-<!---
-  Licensed to the Apache Software Foundation (ASF) under one
-  or more contributor license agreements.  See the NOTICE file
-  distributed with this work for additional information
-  regarding copyright ownership.  The ASF licenses this file
-  to you under the Apache License, Version 2.0 (the
-  "License"); you may not use this file except in compliance
-  with the License.  You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing,
-  software distributed under the License is distributed on an
-  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-  KIND, either express or implied.  See the License for the
-  specific language governing permissions and limitations
-  under the License.
--->
-
 # SedonaDB + FlatGeobuf
 
 This page explains how to read FlatGeobuf files with SedonaDB.
 
-FlatGeobuf is a cloud-optimized binary format for geographic vector data designed for fast streaming and spatial filtering over HTTP.
+FlatGeobuf is a cloud-optimized binary format for geographic vector data designed for fast streaming and spatial filtering over HTTP.  It has a built-in spatial index, is easily compactible, contains CRS information, and is supported by many engines.
 
-It has a built-in spatial index, is easily compactible, contains CRS information, and is supported by many engines.
+SedonaDB is well-suited for reading FlatGeobuf files because it can leverage the FlatGeobuf index to read only a portion of the file.
 
 The examples on this page show you how to query FlatGeobuf files with SedonaDB over HTTP.
 
@@ -34,7 +15,7 @@ import sedona.db
 sd = sedona.db.connect()
 ```
 
-# Read Microsoft Buildings FlatGeobuf data with SedonaDB
+## Read Microsoft Buildings FlatGeobuf data with SedonaDB
 
 The Microsoft buildings dataset is a comprehensive open dataset of building footprints extracted from satellite imagery using computer vision and deep learning.
 
@@ -78,13 +59,59 @@ df.schema
 
 Now lets see how to read another FlatGeobuf dataset.
 
-# Read Vermont boundary FlatGeobuf data with SedonaDB
+## Read Vermont boundary FlatGeobuf data with SedonaDB
 
 The Vermont boundary dataset contains the polygon for the state of Vermont.
 
 The following example shows how to read the Vermont FlatGeobuf dataset and plot it.
 
+
 ```python
 url = "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/example-crs/files/example-crs_vermont-utm.fgb"
 sd.read_pyogrio(url).to_pandas().plot()
 ```
+
+
+
+
+    <Axes: >
+
+
+
+
+
+![png](flatgeobuf_files/flatgeobuf_8_1.png)
+
+
+
+## Read a portion of a large remote FlatGeobuf file
+
+Now let's look at how to read a portion of a 12GB FlatGeobuf file.
+
+
+```python
+%%time
+
+url = "https://flatgeobuf.septima.dk/population_areas.fgb"
+sd.read_pyogrio(url).to_view("population_areas", True)
+
+wkt = "POLYGON ((-73.978329 40.767412, -73.950005 40.767412, -73.950005 40.795098, -73.978329 40.795098, -73.978329 40.767412))"
+sd.sql(
+    f"""
+SELECT sum(population::INTEGER) FROM population_areas
+WHERE ST_Intersects(wkb_geometry, ST_SetSRID(ST_GeomFromWKT('{wkt}'), 4326))
+"""
+).show()
+```
+
+    ┌──────────────────────────────────┐
+    │ sum(population_areas.population) │
+    │               int64              │
+    ╞══════════════════════════════════╡
+    │                           256251 │
+    └──────────────────────────────────┘
+    CPU times: user 16 ms, sys: 15.3 ms, total: 31.4 ms
+    Wall time: 493 ms
+
+
+SedonaDB can query the 12GB FlatGeobuf file in about half of a second on a laptop for this area of interest.
