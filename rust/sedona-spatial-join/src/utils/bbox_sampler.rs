@@ -237,7 +237,7 @@ impl BoundingBoxSamples {
 
     /// Combine 2 samples into one. The combined samples remain uniformly sampled from the
     /// combined population.
-    pub fn combine(self, other: BoundingBoxSamples, seed: u64) -> BoundingBoxSamples {
+    pub fn combine(self, other: BoundingBoxSamples, rng: &mut Rng) -> BoundingBoxSamples {
         if self.population_count() == 0 {
             return other;
         }
@@ -248,7 +248,7 @@ impl BoundingBoxSamples {
         let self_sampling_rate = self.sampling_rate();
         let other_sampling_rate = other.sampling_rate();
         if self_sampling_rate > other_sampling_rate {
-            return other.combine(self, seed);
+            return other.combine(self, rng);
         }
         if other_sampling_rate <= 0.0 {
             return BoundingBoxSamples {
@@ -261,7 +261,6 @@ impl BoundingBoxSamples {
         // make both sides having the same sampling rate
         let subsampling_rate = self_sampling_rate / other_sampling_rate;
         let mut samples = self.samples;
-        let mut rng = Rng::with_seed(seed);
         for bbox in other.samples {
             if rng.f64() < subsampling_rate {
                 samples.push(bbox);
@@ -461,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_combine_with_zero_population() {
-        let seed = 7;
+        let mut rng = fastrand::Rng::with_seed(7);
         let empty = BoundingBoxSamples::empty();
         let non_empty = BoundingBoxSamples {
             samples: vec![
@@ -473,23 +472,23 @@ mod tests {
 
         let samples0 = empty.clone();
         let samples1 = non_empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert_eq!(combined, non_empty);
 
         let samples0 = non_empty.clone();
         let samples1 = empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert_eq!(combined, non_empty);
 
         let samples0 = empty.clone();
         let samples1 = empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert_eq!(combined, empty);
     }
 
     #[test]
     fn test_combine_with_zero_sampling_rate() {
-        let seed = 7;
+        let mut rng = fastrand::Rng::with_seed(7);
         let empty = BoundingBoxSamples {
             samples: Vec::new(),
             population_count: 100,
@@ -502,26 +501,26 @@ mod tests {
 
         let samples0 = empty.clone();
         let samples1 = non_empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert!(combined.samples().is_empty());
         assert_eq!(combined.population_count(), 200);
 
         let samples0 = non_empty.clone();
         let samples1 = empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert!(combined.samples().is_empty());
         assert_eq!(combined.population_count(), 200);
 
         let samples0 = empty.clone();
         let samples1 = empty.clone();
-        let combined = samples0.combine(samples1, seed);
+        let combined = samples0.combine(samples1, &mut rng);
         assert!(combined.samples().is_empty());
         assert_eq!(combined.population_count(), 200);
     }
 
     #[test]
     fn test_combine_samples() {
-        let seed = 7;
+        let mut rng = fastrand::Rng::with_seed(7);
         let mut left_samples = Vec::new();
         let mut right_samples = Vec::new();
         for k in 0..100 {
@@ -539,7 +538,7 @@ mod tests {
 
         // The combined samples should have approximately 150 samples.
         // 50 from the left side, 100 from the right side.
-        let combined = left.combine(right, seed);
+        let combined = left.combine(right, &mut rng);
         assert_eq!(combined.population_count(), 3000);
 
         let mut left_count: i32 = 0;
