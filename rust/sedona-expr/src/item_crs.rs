@@ -21,11 +21,12 @@ use arrow_array::{ArrayRef, StructArray};
 use arrow_schema::{DataType, Field};
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
-    internal_err, unwrap_or_internal_err, DataFusionError, Result, ScalarValue,
+    DataFusionError, Result, ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
+use serde_json::Value;
 
 use crate::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 
@@ -146,8 +147,10 @@ pub fn invoke_handle_item_crs(
         .map(|(item_arg, _)| item_arg.clone())
         .collect::<Vec<_>>();
 
-    let out_item_type = kernel.return_type(&item_types)?;
-    let out_item_type = unwrap_or_internal_err!(out_item_type);
+    let out_item_type = match kernel.return_type(&item_types)? {
+        Some(matched_item_type) => matched_item_type,
+        None => return sedona_internal_err!("Expected inner kernel to match types {item_types:?}"),
+    };
 
     let item_result =
         kernel.invoke_batch_from_args(&item_types, &item_args, return_type, num_rows)?;
@@ -162,7 +165,7 @@ pub fn invoke_handle_item_crs(
 pub fn make_item_crs(
     item_type: &SedonaType,
     item_result: ColumnarValue,
-    crs_result: ColumnarValue,
+    crs_result: &ColumnarValue,
 ) -> Result<ColumnarValue> {
     let out_fields = vec![
         item_type.to_storage_field("item", true)?,
@@ -227,7 +230,7 @@ fn parse_item_crs_arg(
                         Some(ColumnarValue::Scalar(crs_scalar)),
                     ))
                 } else {
-                    internal_err!(
+                    sedona_internal_err!(
                         "Expected struct scalar for item_crs but got {}",
                         scalar_value
                     )
@@ -254,10 +257,10 @@ fn parse_item_crs_arg(
     }
 }
 
-fn ensure_crs_args_equal(crs_args: &[&ColumnarValue]) -> Result<ColumnarValue> {
+fn ensure_crs_args_equal<'a>(crs_args: &[&'a ColumnarValue]) -> Result<&'a ColumnarValue> {
     match crs_args.len() {
-        0 => internal_err!("Zero CRS arguments as input to item_crs"),
-        1 => Ok(crs_args[0].clone()),
+        0 => sedona_internal_err!("Zero CRS arguments as input to item_crs"),
+        1 => Ok(crs_args[0]),
         _ => {
             let crs_args_string = crs_args
                 .iter()
@@ -268,19 +271,64 @@ fn ensure_crs_args_equal(crs_args: &[&ColumnarValue]) -> Result<ColumnarValue> {
                 ensure_crs_string_arrays_equal2(&crs_arrays[i - 1], &crs_arrays[i])?
             }
 
-            Ok(crs_args[0].clone())
+            Ok(crs_args[0])
         }
     }
 }
 
 fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()> {
     for (lhs_item, rhs_item) in zip(as_string_view_array(lhs)?, as_string_view_array(rhs)?) {
+        if lhs_item == rhs_item {
+            // First check for byte-for-byte equality (faster and most likely)
+            return Ok(());
+        }
+
+        if let (Some(lhs_item_str), Some(rhs_item_str)) = (lhs_item, rhs_item) {
+            let lhs_value = Value::String(lhs_item_str.to_string());
+            let rhs_value = Value::String(rhs_item_str.to_string());
+            let lhs_crs = deserialize_crs(&lhs_value)?;
+            let rhs_crs = deserialize_crs(&rhs_value)?;
+            if lhs_crs == rhs_crs {
+                return Ok(());
+            }
+        }
+
         if lhs_item != rhs_item {
             return Err(DataFusionError::Execution(format!(
-                "CRS values not equal: {lhs_item:?} vs {rhs_item:?}"
+                "CRS values not equal: {lhs_item:?} vs {rhs_item:?}",
             )));
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+
+    #[test]
+    fn crs_args_equal() {
+        // Zero args
+        let err = ensure_crs_args_equal(&[]).unwrap_err();
+        assert!(err.message().contains("Zero CRS arguments"));
+
+        let crs_lnglat = ColumnarValue::Scalar(ScalarValue::Utf8(Some("EPSG:4326".to_string())));
+        let crs_also_lnglat =
+            ColumnarValue::Scalar(ScalarValue::Utf8(Some("OGC:CRS84".to_string())));
+        let crs_other = ColumnarValue::Scalar(ScalarValue::Utf8(Some("EPSG:3857".to_string())));
+
+        let result_one_arg = ensure_crs_args_equal(&[&crs_lnglat]).unwrap();
+        assert!(std::ptr::eq(result_one_arg, &crs_lnglat));
+
+        let result_two_args = ensure_crs_args_equal(&[&crs_lnglat, &crs_also_lnglat]).unwrap();
+        assert!(std::ptr::eq(result_two_args, &crs_lnglat));
+
+        let err = ensure_crs_args_equal(&[&crs_lnglat, &crs_other]).unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: Some(\"EPSG:4326\") vs Some(\"EPSG:3857\")"
+        );
+    }
 }
