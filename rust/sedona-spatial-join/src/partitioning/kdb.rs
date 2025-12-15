@@ -282,6 +282,9 @@ impl KDBTree {
 
     /// Split this node along the specified axis.
     /// Returns true if the split was successful, false otherwise.
+    /// The split would fail when too many objects are crowded at the edge of the extent.
+    /// If splitting on one axis fails, we'll try the other axis. If both fail, we won't split.
+    /// Please refer to [Self::insert_rect] for details.
     fn split(&mut self, split_x: bool) -> bool {
         // Sort items by the appropriate coordinate
         if split_x {
@@ -386,17 +389,21 @@ impl KDBTree {
         );
 
         // Distribute items to children
-        for item in self.items.drain(..) {
-            let belongs_to_left = if split_x {
-                item.min().x <= split_coord
-            } else {
-                item.min().y <= split_coord
-            };
-
-            if belongs_to_left {
-                left_child.insert_rect(item);
-            } else {
-                right_child.insert_rect(item);
+        if split_x {
+            for item in self.items.drain(..) {
+                if item.min().x <= split_coord {
+                    left_child.insert_rect(item);
+                } else {
+                    right_child.insert_rect(item);
+                }
+            }
+        } else {
+            for item in self.items.drain(..) {
+                if item.min().y <= split_coord {
+                    left_child.insert_rect(item);
+                } else {
+                    right_child.insert_rect(item);
+                }
             }
         }
 
@@ -501,11 +508,11 @@ impl SpatialPartitioner for KDBPartitioner {
         let rect = bbox_to_geo_rect(bbox)?;
 
         let mut best_leaf_id: Option<u32> = None;
-        let mut max_area = 0.0_f32;
+        let mut max_area = -1.0_f32;
 
         self.tree.visit_intersecting_leaf_nodes(&rect, &mut |kdb| {
             let area = rect_intersection_area(&rect, kdb.extent());
-            if best_leaf_id.is_none() || area > max_area {
+            if area > max_area {
                 best_leaf_id = Some(kdb.leaf_id());
                 max_area = area;
             }
@@ -523,14 +530,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_kdb_insert_and_leaf_assignment() -> Result<()> {
+    fn test_kdb_insert_and_leaf_assignment() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent)?;
+        let mut tree = KDBTree::new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
             let y = (i / 10) as f64 * 10.0;
-            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))?;
+            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))
+                .unwrap();
         }
 
         tree.assign_leaf_ids();
@@ -543,11 +551,10 @@ mod tests {
         for (i, &id) in leaf_ids.iter().enumerate() {
             assert_eq!(id, i as u32);
         }
-        Ok(())
     }
 
     #[test]
-    fn test_kdb_partitioner() -> Result<()> {
+    fn test_kdb_partitioner() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
 
         let bboxes = (0..20).map(|i| {
@@ -556,20 +563,21 @@ mod tests {
             BoundingBox::xy((x, x + 5.0), (y, y + 5.0))
         });
 
-        let partitioner = KDBPartitioner::build(bboxes, 5, 3, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes, 5, 3, extent).unwrap();
 
         let test_bbox = BoundingBox::xy((1.0, 4.0), (1.0, 4.0));
-        match partitioner.partition(&test_bbox)? {
-            SpatialPartition::Regular(id) => {
-                assert!(id < partitioner.num_partitions() as u32);
-            }
-            _ => panic!("Expected Regular partition"),
+        let result = partitioner.partition(&test_bbox).unwrap();
+        assert!(
+            matches!(result, SpatialPartition::Regular(_)),
+            "Expected Regular partition"
+        );
+        if let SpatialPartition::Regular(id) = result {
+            assert!(id < partitioner.num_partitions() as u32);
         }
-        Ok(())
     }
 
     #[test]
-    fn test_kdb_find_overlapping_partitions() -> Result<()> {
+    fn test_kdb_find_overlapping_partitions() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
 
         let bboxes = (0..20).map(|i| {
@@ -578,32 +586,38 @@ mod tests {
             BoundingBox::xy((x, x + 5.0), (y, y + 5.0))
         });
 
-        let partitioner = KDBPartitioner::build(bboxes, 5, 3, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes, 5, 3, extent).unwrap();
 
         let large_bbox = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        assert_eq!(partitioner.partition(&large_bbox)?, SpatialPartition::Multi);
-        match partitioner.partition_no_multi(&large_bbox)? {
-            SpatialPartition::Regular(_) => {}
-            _ => panic!("Expected Regular partition"),
-        }
-        Ok(())
+        assert_eq!(
+            partitioner.partition(&large_bbox).unwrap(),
+            SpatialPartition::Multi
+        );
+        assert!(
+            matches!(
+                partitioner.partition_no_multi(&large_bbox).unwrap(),
+                SpatialPartition::Regular(_)
+            ),
+            "Expected Regular partition"
+        );
     }
 
     #[test]
-    fn test_find_leaf_nodes_matches_visit() -> Result<()> {
+    fn test_find_leaf_nodes_matches_visit() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent)?;
+        let mut tree = KDBTree::new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
             let y = (i / 10) as f64 * 10.0;
-            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))?;
+            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))
+                .unwrap();
         }
 
         tree.assign_leaf_ids();
 
         let query_bbox = BoundingBox::xy((0.0, 60.0), (0.0, 60.0));
-        let query_rect = bbox_to_geo_rect(&query_bbox)?;
+        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap();
 
         let mut via_find = Vec::new();
         tree.find_leaf_nodes(&query_rect, &mut via_find);
@@ -623,35 +637,33 @@ mod tests {
         for res in via_find.iter() {
             assert!(rects_intersect(&res.extent, &query_rect));
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_find_leaf_nodes_no_match() -> Result<()> {
+    fn test_find_leaf_nodes_no_match() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent)?;
+        let mut tree = KDBTree::new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
             let y = (i / 10) as f64 * 10.0;
-            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))?;
+            tree.insert(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)))
+                .unwrap();
         }
 
         tree.assign_leaf_ids();
 
         let query_bbox = BoundingBox::xy((200.0, 210.0), (200.0, 210.0));
-        let query_rect = bbox_to_geo_rect(&query_bbox)?;
+        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap();
 
         let mut matches = Vec::new();
         tree.find_leaf_nodes(&query_rect, &mut matches);
 
         assert!(matches.is_empty());
-        Ok(())
     }
 
     #[test]
-    fn test_max_overlap_selection() -> Result<()> {
+    fn test_max_overlap_selection() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let mut bboxes = Vec::new();
         for i in 0..10 {
@@ -667,17 +679,19 @@ mod tests {
             ));
         }
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 5, 2, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 5, 2, extent).unwrap();
         let test_bbox = BoundingBox::xy((30.0, 60.0), (25.0, 35.0));
-        match partitioner.partition(&test_bbox)? {
-            SpatialPartition::Regular(_) => {}
-            _ => panic!("Expected Regular partition"),
-        }
-        Ok(())
+        assert!(
+            matches!(
+                partitioner.partition(&test_bbox).unwrap(),
+                SpatialPartition::Regular(_)
+            ),
+            "Expected Regular partition"
+        );
     }
 
     #[test]
-    fn test_build_with_samples_outside_boundary() -> Result<()> {
+    fn test_build_with_samples_outside_boundary() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let bboxes: Vec<_> = (-100..200)
             .map(|k| {
@@ -686,13 +700,12 @@ mod tests {
             })
             .collect();
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 4, 100, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 4, 100, extent).unwrap();
         assert!(partitioner.num_partitions() >= 4);
-        Ok(())
     }
 
     #[test]
-    fn test_partition_assignment_consistency() -> Result<()> {
+    fn test_partition_assignment_consistency() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let bboxes: Vec<_> = (0..100)
             .map(|i| {
@@ -702,48 +715,55 @@ mod tests {
             })
             .collect();
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 3, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 3, extent).unwrap();
         let query_bbox = BoundingBox::xy((25.0, 27.0), (35.0, 37.0));
-        let first_result = partitioner.partition(&query_bbox)?;
+        let first_result = partitioner.partition(&query_bbox).unwrap();
 
         for _ in 0..10 {
-            let result = partitioner.partition(&query_bbox)?;
-            match (first_result, result) {
-                (SpatialPartition::Regular(id1), SpatialPartition::Regular(id2)) => {
-                    assert_eq!(id1, id2, "Partition assignment should be consistent");
-                }
-                _ => panic!("Expected Regular partitions"),
+            let result = partitioner.partition(&query_bbox).unwrap();
+            assert!(
+                matches!(
+                    (first_result, result),
+                    (SpatialPartition::Regular(_), SpatialPartition::Regular(_))
+                ),
+                "Expected Regular partitions"
+            );
+            if let (SpatialPartition::Regular(id1), SpatialPartition::Regular(id2)) =
+                (first_result, result)
+            {
+                assert_eq!(id1, id2, "Partition assignment should be consistent");
             }
         }
-        Ok(())
     }
 
     #[test]
-    fn test_empty_tree() -> Result<()> {
+    fn test_empty_tree() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let tree = KDBTree::new(5, 3, extent)?;
+        let tree = KDBTree::new(5, 3, extent).unwrap();
         assert_eq!(tree.items.len(), 0);
         assert!(tree.is_leaf());
-        Ok(())
     }
 
     #[test]
-    fn test_split_behavior() -> Result<()> {
+    fn test_split_behavior() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(3, 5, extent)?;
+        let mut tree = KDBTree::new(3, 5, extent).unwrap();
 
-        tree.insert(BoundingBox::xy((10.0, 20.0), (10.0, 20.0)))?;
-        tree.insert(BoundingBox::xy((30.0, 40.0), (30.0, 40.0)))?;
-        tree.insert(BoundingBox::xy((50.0, 60.0), (50.0, 60.0)))?;
+        tree.insert(BoundingBox::xy((10.0, 20.0), (10.0, 20.0)))
+            .unwrap();
+        tree.insert(BoundingBox::xy((30.0, 40.0), (30.0, 40.0)))
+            .unwrap();
+        tree.insert(BoundingBox::xy((50.0, 60.0), (50.0, 60.0)))
+            .unwrap();
         assert!(tree.is_leaf(), "Should still be a leaf with 3 items");
 
-        tree.insert(BoundingBox::xy((70.0, 80.0), (70.0, 80.0)))?;
+        tree.insert(BoundingBox::xy((70.0, 80.0), (70.0, 80.0)))
+            .unwrap();
         assert!(!tree.is_leaf(), "Should have split after 4th item");
-        Ok(())
     }
 
     #[test]
-    fn test_bbox_at_partition_boundary() -> Result<()> {
+    fn test_bbox_at_partition_boundary() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let mut bboxes = Vec::new();
         for i in 0..20 {
@@ -752,17 +772,19 @@ mod tests {
             bboxes.push(BoundingBox::xy((x, x + 5.0), (y, y + 5.0)));
         }
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 5, 2, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 5, 2, extent).unwrap();
         let boundary_bbox = BoundingBox::xy((49.0, 51.0), (45.0, 55.0));
-        match partitioner.partition(&boundary_bbox)? {
-            SpatialPartition::Regular(_) => {}
-            _ => panic!("Expected Regular partition"),
-        }
-        Ok(())
+        assert!(
+            matches!(
+                partitioner.partition(&boundary_bbox).unwrap(),
+                SpatialPartition::Regular(_)
+            ),
+            "Expected Regular partition"
+        );
     }
 
     #[test]
-    fn test_point_like_bboxes() -> Result<()> {
+    fn test_point_like_bboxes() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let bboxes: Vec<_> = (0..50)
             .map(|i| {
@@ -772,17 +794,16 @@ mod tests {
             })
             .collect();
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 3, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 3, extent).unwrap();
         let query_bbox = BoundingBox::xy((25.0, 25.0), (35.0, 35.0));
         assert!(matches!(
-            partitioner.partition(&query_bbox)?,
+            partitioner.partition(&query_bbox).unwrap(),
             SpatialPartition::Regular(_)
         ));
-        Ok(())
     }
 
     #[test]
-    fn test_large_number_of_partitions() -> Result<()> {
+    fn test_large_number_of_partitions() {
         let extent = BoundingBox::xy((0.0, 1000.0), (0.0, 1000.0));
         let bboxes: Vec<_> = (0..1000)
             .map(|i| {
@@ -792,7 +813,7 @@ mod tests {
             })
             .collect();
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 20, 5, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 20, 5, extent).unwrap();
         let test_cases = vec![
             BoundingBox::xy((0.0, 5.0), (0.0, 5.0)),
             BoundingBox::xy((500.0, 505.0), (500.0, 505.0)),
@@ -801,26 +822,24 @@ mod tests {
 
         for bbox in test_cases {
             assert!(matches!(
-                partitioner.partition(&bbox)?,
+                partitioner.partition(&bbox).unwrap(),
                 SpatialPartition::Regular(_)
             ));
         }
-        Ok(())
     }
 
     #[test]
-    fn test_out_of_bounds() -> Result<()> {
+    fn test_out_of_bounds() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
         let bboxes = vec![BoundingBox::xy((0.0, 10.0), (0.0, 10.0))];
 
-        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 4, extent)?;
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 4, extent).unwrap();
 
         // Query partition for an out of bounds bbox
         let query_bbox = BoundingBox::xy((200.0, 210.0), (200.0, 210.0));
-        let partition = partitioner.partition(&query_bbox)?;
+        let partition = partitioner.partition(&query_bbox).unwrap();
 
         assert_eq!(partition, SpatialPartition::None);
-        Ok(())
     }
 
     #[test]
@@ -832,12 +851,11 @@ mod tests {
     }
 
     #[test]
-    fn test_wraparound_queries_rejected() -> Result<()> {
+    fn test_wraparound_queries_rejected() {
         let extent = BoundingBox::xy((0.0, 360.0), (-90.0, 90.0));
         let samples = vec![BoundingBox::xy((0.0, 10.0), (-5.0, 5.0))];
-        let partitioner = KDBPartitioner::build(samples.into_iter(), 2, 2, extent)?;
+        let partitioner = KDBPartitioner::build(samples.into_iter(), 2, 2, extent).unwrap();
         let wrap_query = BoundingBox::xy((170.0, -170.0), (-5.0, 5.0));
         assert!(partitioner.partition(&wrap_query).is_err());
-        Ok(())
     }
 }

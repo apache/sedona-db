@@ -21,7 +21,9 @@
 //! intersection semantics as [`crate::partitioning::rtree::RTreePartitioner`]
 //! but avoids the RTree indexing overhead. It stores partition boundaries
 //! in a flat array and performs a linear scan to classify each query
-//! bounding box.
+//! bounding box. [`FlatPartitioner`] will definitely be more efficient
+//! than [`crate::partitioning::rtree::RTreePartitioner`] when the number of
+//! partitions is less than 16, which is the size of R-tree's leaf nodes.
 //!
 //! The partitioner follows the standard spatial partition semantics:
 //! - Returns [`SpatialPartition::Regular`] when exactly one boundary
@@ -129,10 +131,10 @@ mod tests {
     fn test_flat_partitioner_regular() {
         let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
         let bbox = BoundingBox::xy((10.0, 20.0), (10.0, 20.0));
-        match partitioner.partition(&bbox).unwrap() {
-            SpatialPartition::Regular(id) => assert_eq!(id, 0),
-            _ => panic!("expected Regular partition"),
-        }
+        assert_eq!(
+            partitioner.partition(&bbox).unwrap(),
+            SpatialPartition::Regular(0)
+        );
     }
 
     #[test]
