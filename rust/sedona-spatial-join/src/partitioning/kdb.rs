@@ -48,6 +48,7 @@ use crate::partitioning::{
 };
 use datafusion_common::Result;
 use geo::{Coord, Rect};
+use sedona_common::sedona_internal_err;
 use sedona_geometry::bounding_box::BoundingBox;
 
 /// K-D-B tree spatial partitioner implementation.
@@ -122,7 +123,9 @@ impl KDBTree {
         max_levels: usize,
         extent: BoundingBox,
     ) -> Result<Self> {
-        let extent_rect = bbox_to_geo_rect(&extent)?;
+        let Some(extent_rect) = bbox_to_geo_rect(&extent)? else {
+            return sedona_internal_err!("KDBTree extent cannot be empty");
+        };
         Ok(Self::new_with_level(
             max_items_per_node,
             max_levels,
@@ -150,8 +153,11 @@ impl KDBTree {
 
     /// Insert a bounding box into the tree.
     pub fn insert(&mut self, bbox: BoundingBox) -> Result<()> {
-        let rect = bbox_to_geo_rect(&bbox)?;
-        self.insert_rect(rect);
+        if let Some(rect) = bbox_to_geo_rect(&bbox)? {
+            if rect_contains_point(&self.extent, &rect.min()) {
+                self.insert_rect(rect);
+            }
+        }
         Ok(())
     }
 
@@ -494,7 +500,10 @@ impl SpatialPartitioner for KDBPartitioner {
     }
 
     fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let rect = bbox_to_geo_rect(bbox)?;
+        let rect = match bbox_to_geo_rect(bbox)? {
+            Some(rect) => rect,
+            None => return Ok(SpatialPartition::None),
+        };
         let mut sp: Option<SpatialPartition> = None;
 
         self.tree.visit_intersecting_leaf_nodes(&rect, &mut |kdb| {
@@ -509,7 +518,10 @@ impl SpatialPartitioner for KDBPartitioner {
     }
 
     fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let rect = bbox_to_geo_rect(bbox)?;
+        let rect = match bbox_to_geo_rect(bbox)? {
+            Some(rect) => rect,
+            None => return Ok(SpatialPartition::None),
+        };
 
         let mut best_leaf_id: Option<u32> = None;
         let mut max_area = -1.0_f32;
@@ -531,6 +543,8 @@ impl SpatialPartitioner for KDBPartitioner {
 
 #[cfg(test)]
 mod tests {
+    use sedona_geometry::interval::{Interval, IntervalTrait};
+
     use super::*;
 
     #[test]
@@ -562,9 +576,14 @@ mod tests {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
 
         let bboxes = (0..20).map(|i| {
-            let x = (i % 10) as f64 * 10.0;
-            let y = (i / 10) as f64 * 10.0;
-            BoundingBox::xy((x, x + 5.0), (y, y + 5.0))
+            if i % 5 != 0 {
+                let x = (i % 10) as f64 * 10.0;
+                let y = (i / 10) as f64 * 10.0;
+                BoundingBox::xy((x, x + 5.0), (y, y + 5.0))
+            } else {
+                // Mix in some empty bboxes
+                BoundingBox::xy(Interval::empty(), Interval::empty())
+            }
         });
 
         let partitioner = KDBPartitioner::build(bboxes, 5, 3, extent).unwrap();
@@ -621,7 +640,7 @@ mod tests {
         tree.assign_leaf_ids();
 
         let query_bbox = BoundingBox::xy((0.0, 60.0), (0.0, 60.0));
-        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap();
+        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap().unwrap();
 
         let mut via_find = Vec::new();
         tree.find_leaf_nodes(&query_rect, &mut via_find);
@@ -658,7 +677,7 @@ mod tests {
         tree.assign_leaf_ids();
 
         let query_bbox = BoundingBox::xy((200.0, 210.0), (200.0, 210.0));
-        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap();
+        let query_rect = bbox_to_geo_rect(&query_bbox).unwrap().unwrap();
 
         let mut matches = Vec::new();
         tree.find_leaf_nodes(&query_rect, &mut matches);
@@ -861,5 +880,22 @@ mod tests {
         let partitioner = KDBPartitioner::build(samples.into_iter(), 2, 2, extent).unwrap();
         let wrap_query = BoundingBox::xy((170.0, -170.0), (-5.0, 5.0));
         assert!(partitioner.partition(&wrap_query).is_err());
+    }
+
+    #[test]
+    fn test_kdb_partitioner_empty_bbox_query() {
+        let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
+        let bboxes = vec![BoundingBox::xy((0.0, 10.0), (0.0, 10.0))];
+        let partitioner = KDBPartitioner::build(bboxes.into_iter(), 10, 4, extent).unwrap();
+
+        let bbox = BoundingBox::xy(Interval::empty(), Interval::empty());
+        assert_eq!(
+            partitioner.partition(&bbox).unwrap(),
+            SpatialPartition::None
+        );
+        assert_eq!(
+            partitioner.partition_no_multi(&bbox).unwrap(),
+            SpatialPartition::None
+        );
     }
 }

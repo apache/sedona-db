@@ -34,45 +34,32 @@
 //!   the query bbox.
 
 use datafusion_common::Result;
-use geo::Rect;
 use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::interval::IntervalTrait;
 
-use crate::partitioning::util::{bbox_to_geo_rect, rect_intersection_area, rects_intersect};
 use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 
 /// Spatial partitioner that linearly scans partition boundaries.
 pub struct FlatPartitioner {
-    boundaries: Vec<Rect<f32>>,
-    num_partitions: usize,
+    boundaries: Vec<BoundingBox>,
 }
 
 impl FlatPartitioner {
     /// Create a new flat partitioner from explicit partition boundaries.
     pub fn try_new(boundaries: Vec<BoundingBox>) -> Result<Self> {
-        let mut rects = Vec::with_capacity(boundaries.len());
-        for bbox in boundaries {
-            rects.push(bbox_to_geo_rect(&bbox)?);
-        }
-
-        let num_partitions = rects.len();
-
-        Ok(Self {
-            boundaries: rects,
-            num_partitions,
-        })
+        Ok(Self { boundaries })
     }
 }
 
 impl SpatialPartitioner for FlatPartitioner {
     fn num_regular_partitions(&self) -> usize {
-        self.num_partitions
+        self.boundaries.len()
     }
 
     fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let query_rect = bbox_to_geo_rect(bbox)?;
         let mut first_match = None;
         for (idx, boundary) in self.boundaries.iter().enumerate() {
-            if rects_intersect(boundary, &query_rect) {
+            if boundary.intersects(bbox) {
                 if first_match.is_some() {
                     return Ok(SpatialPartition::Multi);
                 }
@@ -87,13 +74,26 @@ impl SpatialPartitioner for FlatPartitioner {
     }
 
     fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let query_rect = bbox_to_geo_rect(bbox)?;
         let mut best_partition = None;
-        let mut best_area = -1.0_f32;
+        let mut best_area = -1.0;
 
         for (idx, boundary) in self.boundaries.iter().enumerate() {
-            if rects_intersect(boundary, &query_rect) {
-                let area = rect_intersection_area(boundary, &query_rect);
+            if boundary.intersects(bbox) {
+                let area = {
+                    if let Ok(intersection) = boundary.intersection(bbox) {
+                        if !intersection.x().is_wraparound() {
+                            intersection.x().width() * intersection.y().width()
+                        } else {
+                            // Intersection has a wraparound X interval. Use a fallback
+                            // area value of 0. This makes the partitioner prefer other partitions.
+                            0.0
+                        }
+                    } else {
+                        // Intersection cannot be represented as a single bbox. Use a fallback
+                        // area value of 0. This makes the partitioner prefer other partitions.
+                        0.0
+                    }
+                };
                 if area > best_area {
                     best_area = area;
                     best_partition = Some(idx as u32);
@@ -110,6 +110,8 @@ impl SpatialPartitioner for FlatPartitioner {
 
 #[cfg(test)]
 mod tests {
+    use sedona_geometry::interval::{Interval, IntervalTrait};
+
     use super::*;
 
     fn sample_partitions() -> Vec<BoundingBox> {
@@ -168,12 +170,36 @@ mod tests {
     }
 
     #[test]
-    fn test_flat_partitioner_wraparound_boundary() {
-        use sedona_geometry::interval::{IntervalTrait, WraparoundInterval};
-        let partitions = vec![BoundingBox::xy(
-            WraparoundInterval::new(170.0, -170.0),
-            (0.0, 50.0),
-        )];
-        assert!(FlatPartitioner::try_new(partitions).is_err());
+    fn test_flat_partitioner_empty_bbox_build() {
+        let boundaries = vec![
+            BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
+            BoundingBox::xy(Interval::empty(), Interval::empty()),
+            BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
+        ];
+        let partitioner = FlatPartitioner::try_new(boundaries).unwrap();
+        assert_eq!(partitioner.num_regular_partitions(), 3);
+
+        // Verify that the third partition (index 2) is correctly mapped
+        let query = BoundingBox::xy((60.0, 70.0), (10.0, 20.0));
+        assert_eq!(
+            partitioner.partition(&query).unwrap(),
+            SpatialPartition::Regular(2)
+        );
+    }
+
+    #[test]
+    fn test_flat_partitioner_empty_bbox_query() {
+        let boundaries = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
+        let partitioner = FlatPartitioner::try_new(boundaries).unwrap();
+
+        let bbox = BoundingBox::xy(Interval::empty(), Interval::empty());
+        assert_eq!(
+            partitioner.partition(&bbox).unwrap(),
+            SpatialPartition::None
+        );
+        assert_eq!(
+            partitioner.partition_no_multi(&bbox).unwrap(),
+            SpatialPartition::None
+        );
     }
 }

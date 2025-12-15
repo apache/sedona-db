@@ -33,7 +33,7 @@ use sedona_geometry::interval::IntervalTrait;
 ///
 /// # Errors
 /// Returns an error if the bounding box has wraparound coordinates (e.g., crossing the anti-meridian)
-pub(crate) fn bbox_to_f32_rect(bbox: &BoundingBox) -> Result<(f32, f32, f32, f32)> {
+pub(crate) fn bbox_to_f32_rect(bbox: &BoundingBox) -> Result<Option<(f32, f32, f32, f32)>> {
     // Check for wraparound coordinates
     if bbox.x().is_wraparound() {
         return Err(DataFusionError::Execution(
@@ -45,14 +45,22 @@ pub(crate) fn bbox_to_f32_rect(bbox: &BoundingBox) -> Result<(f32, f32, f32, f32
     let min_y = bbox.y().lo();
     let max_x = bbox.x().hi();
     let max_y = bbox.y().hi();
-    Ok(f64_box_to_f32(min_x, min_y, max_x, max_y))
+
+    if min_x <= max_x && min_y <= max_y {
+        Ok(Some(f64_box_to_f32(min_x, min_y, max_x, max_y)))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Convert a [`BoundingBox`] into a [`Rect<f32>`] with the same adjusted bounds as
 /// [`bbox_to_f32_rect`].
-pub(crate) fn bbox_to_geo_rect(bbox: &BoundingBox) -> Result<Rect<f32>> {
-    let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(bbox)?;
-    Ok(make_rect(min_x, min_y, max_x, max_y))
+pub(crate) fn bbox_to_geo_rect(bbox: &BoundingBox) -> Result<Option<Rect<f32>>> {
+    if let Some((min_x, min_y, max_x, max_y)) = bbox_to_f32_rect(bbox)? {
+        Ok(Some(make_rect(min_x, min_y, max_x, max_y)))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Creates a `Rect` from four coordinate values representing the bounding box.
@@ -97,12 +105,16 @@ pub(crate) fn rect_contains_point(rect: &Rect<f32>, point: &Coord<f32>) -> bool 
 
 #[cfg(test)]
 mod tests {
+    use sedona_geometry::interval::Interval;
+
     use super::*;
 
     #[test]
     fn test_bbox_to_f32_rect_simple() {
         let bbox = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox).unwrap();
+        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox)
+            .expect("bbox_to_f32_rect failed")
+            .expect("bbox should not be empty");
 
         assert_eq!(min_x, 0.0f32);
         assert_eq!(min_y, 0.0f32);
@@ -113,7 +125,9 @@ mod tests {
     #[test]
     fn test_bbox_to_f32_rect_negative() {
         let bbox = BoundingBox::xy((-50.0, 50.0), (-50.0, 50.0));
-        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox).unwrap();
+        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox)
+            .expect("bbox_to_f32_rect failed")
+            .expect("bbox should not be empty");
 
         assert_eq!(min_x, -50.0f32);
         assert_eq!(min_y, -50.0f32);
@@ -124,7 +138,9 @@ mod tests {
     #[test]
     fn test_bbox_to_f32_rect_preserves_bounds() {
         let bbox = BoundingBox::xy((10.5, 20.7), (30.3, 40.9));
-        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox).unwrap();
+        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox)
+            .expect("bbox_to_f32_rect failed")
+            .expect("bbox should not be empty");
 
         // Min bounds should be <= the original values (rounded down if needed)
         assert!(min_x <= 10.5f32);
@@ -144,7 +160,9 @@ mod tests {
     #[test]
     fn test_bbox_to_f32_rect_large_values() {
         let bbox = BoundingBox::xy((-180.0, 180.0), (-90.0, 90.0));
-        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox).unwrap();
+        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox)
+            .expect("bbox_to_f32_rect failed")
+            .expect("bbox should not be empty");
 
         assert_eq!(min_x, -180.0f32);
         assert_eq!(min_y, -90.0f32);
@@ -171,5 +189,12 @@ mod tests {
         let c = make_rect(20.0_f32, 20.0_f32, 30.0_f32, 30.0_f32);
         assert!(!rects_intersect(&a, &c));
         assert_eq!(rect_intersection_area(&a, &c), 0.0);
+    }
+
+    #[test]
+    fn test_bbox_to_f32_rect_empty() {
+        let bbox = BoundingBox::xy(Interval::empty(), Interval::empty());
+        assert!(bbox_to_f32_rect(&bbox).unwrap().is_none());
+        assert!(bbox_to_geo_rect(&bbox).unwrap().is_none());
     }
 }

@@ -57,6 +57,8 @@ pub struct RTreePartitioner {
     boundaries: Vec<Rect<f32>>,
     /// Number of partitions (excluding None and Multi)
     num_partitions: usize,
+    /// Map from RTree index to original partition index
+    partition_map: Vec<usize>,
 }
 
 impl RTreePartitioner {
@@ -93,15 +95,27 @@ impl RTreePartitioner {
     fn build(boundaries: Vec<BoundingBox>, node_size: Option<u16>) -> Result<Self> {
         let num_partitions = boundaries.len();
 
+        // Filter valid boundaries and keep track of original indices
+        let mut valid_boundaries = Vec::with_capacity(num_partitions);
+        let mut partition_map = Vec::with_capacity(num_partitions);
+
+        for (i, bbox) in boundaries.iter().enumerate() {
+            if let Some(rect) = bbox_to_f32_rect(bbox)? {
+                valid_boundaries.push(rect);
+                partition_map.push(i);
+            }
+        }
+
+        let num_valid = valid_boundaries.len();
+
         // Build RTree index with partition boundaries
         let mut rtree_builder = match node_size {
-            Some(size) => RTreeBuilder::<f32>::new_with_node_size(num_partitions as u32, size),
-            None => RTreeBuilder::<f32>::new(num_partitions as u32),
+            Some(size) => RTreeBuilder::<f32>::new_with_node_size(num_valid as u32, size),
+            None => RTreeBuilder::<f32>::new(num_valid as u32),
         };
 
-        let mut rects = Vec::with_capacity(num_partitions);
-        for bbox in boundaries {
-            let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(&bbox)?;
+        let mut rects = Vec::with_capacity(num_valid);
+        for (min_x, min_y, max_x, max_y) in valid_boundaries {
             rtree_builder.add(min_x, min_y, max_x, max_y);
             rects.push(make_rect(min_x, min_y, max_x, max_y));
         }
@@ -112,6 +126,7 @@ impl RTreePartitioner {
             rtree,
             boundaries: rects,
             num_partitions,
+            partition_map,
         })
     }
 
@@ -128,7 +143,10 @@ impl SpatialPartitioner for RTreePartitioner {
 
     fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
         // Convert bbox to f32 for RTree query with proper bounds handling
-        let (min_x, min_y, max_x, max_y) = bbox_to_f32_rect(bbox)?;
+        let (min_x, min_y, max_x, max_y) = match bbox_to_f32_rect(bbox)? {
+            Some(rect) => rect,
+            None => return Ok(SpatialPartition::None),
+        };
 
         // Query RTree for intersecting partitions
         let intersecting_partitions = self.rtree.search(min_x, min_y, max_x, max_y);
@@ -141,7 +159,10 @@ impl SpatialPartitioner for RTreePartitioner {
             }
             1 => {
                 // Single intersection -> Regular partition
-                Ok(SpatialPartition::Regular(intersecting_partitions[0]))
+                let rtree_index = intersecting_partitions[0];
+                Ok(SpatialPartition::Regular(
+                    self.partition_map[rtree_index as usize] as u32,
+                ))
             }
             _ => {
                 // Multiple intersections -> Always return Multi
@@ -151,7 +172,10 @@ impl SpatialPartitioner for RTreePartitioner {
     }
 
     fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let rect = bbox_to_geo_rect(bbox)?;
+        let rect = match bbox_to_geo_rect(bbox)? {
+            Some(rect) => rect,
+            None => return Ok(SpatialPartition::None),
+        };
         let min = rect.min();
         let max = rect.max();
         let intersecting_partitions = self.rtree.search(min.x, min.y, max.x, max.y);
@@ -172,7 +196,7 @@ impl SpatialPartitioner for RTreePartitioner {
         }
 
         Ok(match best_partition {
-            Some(id) => SpatialPartition::Regular(id),
+            Some(id) => SpatialPartition::Regular(self.partition_map[id as usize] as u32),
             None => SpatialPartition::None,
         })
     }
@@ -180,6 +204,8 @@ impl SpatialPartitioner for RTreePartitioner {
 
 #[cfg(test)]
 mod tests {
+    use sedona_geometry::interval::{Interval, IntervalTrait};
+
     use super::*;
 
     #[test]
@@ -308,5 +334,39 @@ mod tests {
         let result = partitioner.partition(&bbox).unwrap();
         // Should be Multi since it spans multiple partitions
         assert_eq!(result, SpatialPartition::Multi);
+    }
+
+    #[test]
+    fn test_rtree_partitioner_empty_bbox_build() {
+        let boundaries = vec![
+            BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
+            BoundingBox::xy(Interval::empty(), Interval::empty()),
+            BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
+        ];
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
+        assert_eq!(partitioner.num_regular_partitions(), 3);
+
+        // Verify that the third partition (index 2) is correctly mapped
+        let query = BoundingBox::xy((60.0, 70.0), (10.0, 20.0));
+        assert_eq!(
+            partitioner.partition(&query).unwrap(),
+            SpatialPartition::Regular(2)
+        );
+    }
+
+    #[test]
+    fn test_rtree_partitioner_empty_bbox_query() {
+        let boundaries = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
+
+        let bbox = BoundingBox::xy(Interval::empty(), Interval::empty());
+        assert_eq!(
+            partitioner.partition(&bbox).unwrap(),
+            SpatialPartition::None
+        );
+        assert_eq!(
+            partitioner.partition_no_multi(&bbox).unwrap(),
+            SpatialPartition::None
+        );
     }
 }
