@@ -65,8 +65,9 @@ fn build_partitioners(boundaries: &[BoundingBox]) -> Vec<(u16, usize, RTreeParti
     NODE_SIZES
         .iter()
         .map(|&node_size| {
-            let partitioner = RTreePartitioner::new_with_node_size(boundaries.to_vec(), node_size)
-                .expect("failed to build RTree partitioner for benchmark");
+            let partitioner =
+                RTreePartitioner::try_new_with_node_size(boundaries.to_vec(), node_size)
+                    .expect("failed to build RTree partitioner for benchmark");
             let depth = partitioner.depth();
             (node_size, depth, partitioner)
         })

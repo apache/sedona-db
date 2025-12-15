@@ -117,7 +117,11 @@ impl KDBTree {
     /// * `max_items_per_node` - Maximum number of items before splitting a node
     /// * `max_levels` - Maximum depth of the tree
     /// * `extent` - The spatial extent covered by this tree
-    pub fn new(max_items_per_node: usize, max_levels: usize, extent: BoundingBox) -> Result<Self> {
+    pub fn try_new(
+        max_items_per_node: usize,
+        max_levels: usize,
+        extent: BoundingBox,
+    ) -> Result<Self> {
         let extent_rect = bbox_to_geo_rect(&extent)?;
         Ok(Self::new_with_level(
             max_items_per_node,
@@ -466,7 +470,7 @@ impl KDBPartitioner {
         max_levels: usize,
         extent: BoundingBox,
     ) -> Result<Self> {
-        let mut tree = KDBTree::new(max_items_per_node, max_levels, extent)?;
+        let mut tree = KDBTree::try_new(max_items_per_node, max_levels, extent)?;
 
         for bbox in bboxes {
             tree.insert(bbox)?;
@@ -532,7 +536,7 @@ mod tests {
     #[test]
     fn test_kdb_insert_and_leaf_assignment() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent).unwrap();
+        let mut tree = KDBTree::try_new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
@@ -605,7 +609,7 @@ mod tests {
     #[test]
     fn test_find_leaf_nodes_matches_visit() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent).unwrap();
+        let mut tree = KDBTree::try_new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
@@ -642,7 +646,7 @@ mod tests {
     #[test]
     fn test_find_leaf_nodes_no_match() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(5, 3, extent).unwrap();
+        let mut tree = KDBTree::try_new(5, 3, extent).unwrap();
 
         for i in 0..20 {
             let x = (i % 10) as f64 * 10.0;
@@ -739,7 +743,7 @@ mod tests {
     #[test]
     fn test_empty_tree() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let tree = KDBTree::new(5, 3, extent).unwrap();
+        let tree = KDBTree::try_new(5, 3, extent).unwrap();
         assert_eq!(tree.items.len(), 0);
         assert!(tree.is_leaf());
     }
@@ -747,7 +751,7 @@ mod tests {
     #[test]
     fn test_split_behavior() {
         let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
-        let mut tree = KDBTree::new(3, 5, extent).unwrap();
+        let mut tree = KDBTree::try_new(3, 5, extent).unwrap();
 
         tree.insert(BoundingBox::xy((10.0, 20.0), (10.0, 20.0)))
             .unwrap();

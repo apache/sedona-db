@@ -27,8 +27,8 @@ fn bench_flat_partition_queries(c: &mut Criterion) {
     let extent = default_extent();
     let partitions = grid_partitions(&extent, GRID_DIM);
     let queries = sample_queries(&extent, QUERY_BATCH_SIZE);
-    let partitioner =
-        FlatPartitioner::new(partitions).expect("failed to build Flat partitioner for benchmark");
+    let partitioner = FlatPartitioner::try_new(partitions)
+        .expect("failed to build Flat partitioner for benchmark");
 
     let mut group = c.benchmark_group("flat_partition_queries");
     group.throughput(Throughput::Elements(QUERY_BATCH_SIZE as u64));

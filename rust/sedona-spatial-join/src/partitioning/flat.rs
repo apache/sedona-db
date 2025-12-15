@@ -48,7 +48,7 @@ pub struct FlatPartitioner {
 
 impl FlatPartitioner {
     /// Create a new flat partitioner from explicit partition boundaries.
-    pub fn new(boundaries: Vec<BoundingBox>) -> Result<Self> {
+    pub fn try_new(boundaries: Vec<BoundingBox>) -> Result<Self> {
         let mut rects = Vec::with_capacity(boundaries.len());
         for bbox in boundaries {
             rects.push(bbox_to_geo_rect(&bbox)?);
@@ -123,13 +123,13 @@ mod tests {
 
     #[test]
     fn test_flat_partitioner_creation() {
-        let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
+        let partitioner = FlatPartitioner::try_new(sample_partitions()).unwrap();
         assert_eq!(partitioner.num_regular_partitions(), 4);
     }
 
     #[test]
     fn test_flat_partitioner_regular() {
-        let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
+        let partitioner = FlatPartitioner::try_new(sample_partitions()).unwrap();
         let bbox = BoundingBox::xy((10.0, 20.0), (10.0, 20.0));
         assert_eq!(
             partitioner.partition(&bbox).unwrap(),
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_flat_partitioner_multi() {
-        let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
+        let partitioner = FlatPartitioner::try_new(sample_partitions()).unwrap();
         let bbox = BoundingBox::xy((45.0, 55.0), (10.0, 20.0));
         assert_eq!(
             partitioner.partition(&bbox).unwrap(),
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_flat_partitioner_no_dup_prefers_largest_overlap() {
-        let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
+        let partitioner = FlatPartitioner::try_new(sample_partitions()).unwrap();
         let bbox = BoundingBox::xy((45.0, 80.0), (10.0, 20.0));
         match partitioner.partition_no_multi(&bbox).unwrap() {
             SpatialPartition::Regular(id) => assert_eq!(id, 1),
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_flat_partitioner_none() {
-        let partitioner = FlatPartitioner::new(sample_partitions()).unwrap();
+        let partitioner = FlatPartitioner::try_new(sample_partitions()).unwrap();
         let bbox = BoundingBox::xy((200.0, 250.0), (200.0, 250.0));
         assert_eq!(
             partitioner.partition(&bbox).unwrap(),
@@ -174,6 +174,6 @@ mod tests {
             WraparoundInterval::new(170.0, -170.0),
             (0.0, 50.0),
         )];
-        assert!(FlatPartitioner::new(partitions).is_err());
+        assert!(FlatPartitioner::try_new(partitions).is_err());
     }
 }

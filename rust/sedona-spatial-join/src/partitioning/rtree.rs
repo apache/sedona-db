@@ -79,14 +79,14 @@ impl RTreePartitioner {
     ///     BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
     ///     BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
     /// ];
-    /// let partitioner = RTreePartitioner::new(boundaries).unwrap();
+    /// let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
     /// ```
-    pub fn new(boundaries: Vec<BoundingBox>) -> Result<Self> {
+    pub fn try_new(boundaries: Vec<BoundingBox>) -> Result<Self> {
         Self::build(boundaries, None)
     }
 
     /// Create a new RTree partitioner with a custom node size.
-    pub fn new_with_node_size(boundaries: Vec<BoundingBox>, node_size: u16) -> Result<Self> {
+    pub fn try_new_with_node_size(boundaries: Vec<BoundingBox>, node_size: u16) -> Result<Self> {
         Self::build(boundaries, Some(node_size))
     }
 
@@ -188,21 +188,21 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
         assert_eq!(partitioner.num_regular_partitions(), 2);
     }
 
     #[test]
     fn test_rtree_partitioner_empty_boundaries() {
         let boundaries: Vec<BoundingBox> = vec![];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
         assert_eq!(partitioner.num_regular_partitions(), 0);
     }
 
     #[test]
     fn test_partition_with_empty_boundaries_returns_none() {
         let boundaries: Vec<BoundingBox> = vec![];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         let bbox = BoundingBox::xy((0.0, 1.0), (0.0, 1.0));
         let result = partitioner.partition(&bbox).unwrap();
@@ -215,7 +215,7 @@ mod tests {
         let boundaries = vec![
             BoundingBox::xy((170.0, -170.0), (0.0, 50.0)), // This represents wraparound
         ];
-        let result = RTreePartitioner::new(boundaries);
+        let result = RTreePartitioner::try_new(boundaries);
         assert!(result.is_err());
     }
 
@@ -227,7 +227,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (50.0, 100.0)), // Partition 2
             BoundingBox::xy((50.0, 100.0), (50.0, 100.0)), // Partition 3
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         // Test bbox that falls entirely in partition 0
         let bbox = BoundingBox::xy((10.0, 20.0), (10.0, 20.0));
@@ -246,7 +246,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),   // Partition 0
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)), // Partition 1
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         // Test bbox that spans both partitions - should return Multi
         let bbox = BoundingBox::xy((30.0, 60.0), (10.0, 20.0));
@@ -265,7 +265,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),   // Partition 0
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)), // Partition 1
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         // Test bbox that doesn't intersect any partition
         let bbox = BoundingBox::xy((200.0, 300.0), (200.0, 300.0));
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_partition_wraparound_input() {
         let boundaries = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         // Test with wraparound input bbox (should be rejected)
         let bbox = BoundingBox::xy((170.0, -170.0), (10.0, 20.0));
@@ -291,7 +291,7 @@ mod tests {
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
             BoundingBox::xy((0.0, 50.0), (50.0, 100.0)),
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
         assert_eq!(partitioner.num_regular_partitions(), 3);
     }
 
@@ -301,7 +301,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        let partitioner = RTreePartitioner::new(boundaries).unwrap();
+        let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
 
         // Test bbox exactly on the boundary between two partitions
         let bbox = BoundingBox::xy((45.0, 55.0), (10.0, 20.0));
