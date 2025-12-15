@@ -123,6 +123,9 @@ impl KDBTree {
         max_levels: usize,
         extent: BoundingBox,
     ) -> Result<Self> {
+        if max_items_per_node == 0 {
+            return sedona_internal_err!("max_items_per_node must be greater than 0");
+        }
         let Some(extent_rect) = bbox_to_geo_rect(&extent)? else {
             return sedona_internal_err!("KDBTree extent cannot be empty");
         };
