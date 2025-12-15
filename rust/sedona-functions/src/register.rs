@@ -120,6 +120,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm::st_y_udf,
         crate::st_xyzm::st_z_udf,
         crate::st_zmflag::st_zmflag_udf,
+        crate::st_from_sedona_spark::st_geomfromsedona_udf,
     );
 
     register_aggregate_udfs!(

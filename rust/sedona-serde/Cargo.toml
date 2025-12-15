@@ -15,11 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-functions"
+name = "sedona-serde"
 version.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description.workspace = true
@@ -31,28 +28,9 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [dev-dependencies]
-arrow-json = { workspace = true }
-criterion = { workspace = true }
-rstest = { workspace = true }
-sedona-testing = { workspace = true, features = ["criterion"] }
-datafusion = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dependencies]
-arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
-geo-traits = { workspace = true }
-sedona-common = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-geometry = { workspace = true }
-sedona-schema = { workspace = true }
-sedona-serde = { path = "../sedona-serde" }
-wkb = { workspace = true }
 wkt = { workspace = true }
-serde_json = { workspace = true }
-
-[[bench]]
-harness = false
-name = "native-functions"
+byteorder = "1.5.0"
