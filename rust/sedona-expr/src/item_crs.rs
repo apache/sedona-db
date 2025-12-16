@@ -161,6 +161,7 @@ pub fn invoke_handle_item_crs(
     }
 }
 
+/// Create a new item_crs struct [ColumnarValue]
 pub fn make_item_crs(
     item_type: &SedonaType,
     item_result: ColumnarValue,
@@ -247,7 +248,7 @@ fn parse_item_crs_arg(
                     ScalarValue::Utf8View(Some(crs.to_json()))
                 }
             } else {
-                ScalarValue::Null
+                ScalarValue::Utf8View(Some("0".to_string()))
             };
 
             Ok((arg.clone(), Some(ColumnarValue::Scalar(crs_scalar))))
@@ -303,7 +304,89 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
 #[cfg(test)]
 mod test {
 
+    use datafusion_common::DFSchema;
+    use datafusion_expr::{lit, Expr, ExprSchemable, ScalarUDF};
+    use sedona_schema::{
+        crs::Crs,
+        datatypes::{Edges, WKB_GEOMETRY},
+    };
+
+    use crate::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
+
     use super::*;
+
+    fn geom_lit(bytes: &[u8], crs: Crs) -> Expr {
+        let sedona_type = SedonaType::Wkb(Edges::Planar, crs);
+        let field = sedona_type.to_storage_field("", true).unwrap();
+        let metadata = field.metadata();
+        Expr::Literal(
+            ScalarValue::Binary(Some(bytes.to_vec())),
+            Some(metadata.into()),
+        )
+    }
+
+    fn item_crs_lit(bytes: &[u8], crs: Crs) -> Expr {
+        let crs_string = match crs {
+            Some(crs) => crs.to_crs_string(),
+            None => "0".to_string(),
+        };
+
+        let item_crs_value = make_item_crs(
+            &WKB_GEOMETRY,
+            ScalarValue::Binary(Some(bytes.to_vec())).into(),
+            &ScalarValue::Utf8View(Some(crs_string)).into(),
+        )
+        .unwrap();
+
+        match item_crs_value {
+            ColumnarValue::Array(_) => panic!("Expected scalar"),
+            ColumnarValue::Scalar(scalar_value) => lit(scalar_value),
+        }
+    }
+
+    #[test]
+    fn item_crs_kernel() {
+        let geom_to_geom_kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
+                WKB_GEOMETRY,
+            ),
+            Arc::new(|_arg_types, args| Ok(args[0].clone())),
+        );
+
+        let crsified_kernel = ItemCrsKernel::new_ref(geom_to_geom_kernel);
+        let udf: ScalarUDF = SedonaScalarUDF::from_kernel("fun", crsified_kernel).into();
+        let expr_schema = DFSchema::empty();
+
+        // A call with geometry + geometry should fail (this case would be handled by the
+        // original kernel, not the item_crs kernel)
+        let call = udf.call(vec![geom_lit(&[1, 2, 3], None), geom_lit(&[4, 5, 6], None)]);
+        let err = call.to_field(&expr_schema).unwrap_err();
+        assert_eq!(
+            err.message(),
+            "fun([Wkb(Planar, None), Wkb(Planar, None)]): No kernel matching arguments"
+        );
+
+        // A call with geometry + item_crs should return item_crs
+        let call = udf.call(vec![
+            geom_lit(&[1, 2, 3], None),
+            item_crs_lit(&[4, 5, 6], None),
+        ]);
+        let (_, call_field) = call.to_field(&expr_schema).unwrap();
+        assert!(
+            ArgMatcher::is_item_crs().match_type(&SedonaType::Arrow(call_field.data_type().clone()))
+        );
+
+        // A call with item_crs + geometry should return item_crs
+        let call = udf.call(vec![
+            item_crs_lit(&[4, 5, 6], None),
+            geom_lit(&[1, 2, 3], None),
+        ]);
+        let (_, call_field) = call.to_field(&expr_schema).unwrap();
+        assert!(
+            ArgMatcher::is_item_crs().match_type(&SedonaType::Arrow(call_field.data_type().clone()))
+        );
+    }
 
     #[test]
     fn crs_args_equal() {
@@ -316,12 +399,15 @@ mod test {
             ColumnarValue::Scalar(ScalarValue::Utf8(Some("OGC:CRS84".to_string())));
         let crs_other = ColumnarValue::Scalar(ScalarValue::Utf8(Some("EPSG:3857".to_string())));
 
+        // One arg
         let result_one_arg = ensure_crs_args_equal(&[&crs_lnglat]).unwrap();
         assert!(std::ptr::eq(result_one_arg, &crs_lnglat));
 
+        // Two args (equal)
         let result_two_args = ensure_crs_args_equal(&[&crs_lnglat, &crs_also_lnglat]).unwrap();
         assert!(std::ptr::eq(result_two_args, &crs_lnglat));
 
+        // Two args (not equal)
         let err = ensure_crs_args_equal(&[&crs_lnglat, &crs_other]).unwrap_err();
         assert_eq!(
             err.message(),
