@@ -85,7 +85,7 @@ fn return_type_handle_item_crs(
     // type, because any resulting geometry type should be CRS free.
     let item_arg_types = arg_types
         .iter()
-        .map(|arg_type| parse_item_crs_arg_type(arg_type).map(|(item_type, _)| item_type))
+        .map(|arg_type| parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type))
         .collect::<Result<Vec<_>>>()?;
 
     // Any kernel that uses scalars to determine the output type is spurious here, so we
@@ -118,6 +118,9 @@ pub fn invoke_handle_item_crs(
     return_type: &SedonaType,
     num_rows: usize,
 ) -> Result<ColumnarValue> {
+    // Separate the argument types into item and Option<crs>
+    // Don't strip the CRSes because we need them to compare with
+    // the item-level CRSes to ensure they are equal.
     let arg_types_unwrapped = arg_types
         .iter()
         .map(parse_item_crs_arg_type)
@@ -146,7 +149,11 @@ pub fn invoke_handle_item_crs(
         .map(|(item_arg, _)| item_arg.clone())
         .collect::<Vec<_>>();
 
-    let out_item_type = match kernel.return_type(&item_types)? {
+    let item_arg_types_no_crs = arg_types
+        .iter()
+        .map(|arg_type| parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type))
+        .collect::<Result<Vec<_>>>()?;
+    let out_item_type = match kernel.return_type(&item_arg_types_no_crs)? {
         Some(matched_item_type) => matched_item_type,
         None => return sedona_internal_err!("Expected inner kernel to match types {item_types:?}"),
     };
@@ -204,6 +211,23 @@ fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Opti
         Ok((item, Some(crs)))
     } else {
         Ok((sedona_type.clone(), None))
+    }
+}
+
+fn parse_item_crs_arg_type_strip_crs(
+    sedona_type: &SedonaType,
+) -> Result<(SedonaType, Option<SedonaType>)> {
+    match sedona_type {
+        SedonaType::Wkb(edges, _) => Ok((SedonaType::Wkb(*edges, None), None)),
+        SedonaType::WkbView(edges, _) => Ok((SedonaType::WkbView(*edges, None), None)),
+        SedonaType::Arrow(DataType::Struct(fields))
+            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
+        {
+            let item = SedonaType::from_storage_field(&fields[0])?;
+            let crs = SedonaType::from_storage_field(&fields[1])?;
+            Ok((item, Some(crs)))
+        }
+        other => Ok((other.clone(), None)),
     }
 }
 
