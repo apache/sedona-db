@@ -269,7 +269,7 @@ def test_st_buffer(eng, geom, dist, expected_area):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "dist", "expected"),
+    ("geom", "expected"),
     [
         ("POINT EMPTY", "POLYGON EMPTY"),
         ("LINESTRING EMPTY", "POLYGON EMPTY"),
