@@ -26,7 +26,6 @@ use datafusion_common::{
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
-use serde_json::Value;
 
 use crate::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 
@@ -284,10 +283,8 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
         }
 
         if let (Some(lhs_item_str), Some(rhs_item_str)) = (lhs_item, rhs_item) {
-            let lhs_value = Value::String(lhs_item_str.to_string());
-            let rhs_value = Value::String(rhs_item_str.to_string());
-            let lhs_crs = deserialize_crs(&lhs_value)?;
-            let rhs_crs = deserialize_crs(&rhs_value)?;
+            let lhs_crs = deserialize_crs(lhs_item_str)?;
+            let rhs_crs = deserialize_crs(rhs_item_str)?;
             if lhs_crs == rhs_crs {
                 return Ok(());
             }
