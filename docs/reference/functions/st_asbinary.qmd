@@ -1,3 +1,4 @@
+---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,8 +16,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-/.quarto/
-*.md
-*_files/
+title: ST_AsBinary
+description: Converts a geometry to Well-Known Binary (WKB) format.
+kernels:
+  - returns: geometry
+    args: [geometry]
+---
 
-**/*.quarto_ipynb
+## Description
+
+`ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
+
+## Examples
+
+```sql
+SELECT ST_AsBinary(ST_Point(1.0, 2.0));
+```
