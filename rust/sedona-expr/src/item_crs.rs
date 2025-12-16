@@ -248,7 +248,7 @@ fn parse_item_crs_arg(
                     ScalarValue::Utf8View(Some(crs.to_json()))
                 }
             } else {
-                ScalarValue::Utf8View(Some("0".to_string()))
+                ScalarValue::Utf8View(None)
             };
 
             Ok((arg.clone(), Some(ColumnarValue::Scalar(crs_scalar))))
@@ -303,49 +303,21 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
 
 #[cfg(test)]
 mod test {
-
-    use datafusion_common::DFSchema;
-    use datafusion_expr::{lit, Expr, ExprSchemable, ScalarUDF};
+    use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
     use sedona_schema::{
-        crs::Crs,
-        datatypes::{Edges, WKB_GEOMETRY},
+        crs::lnglat,
+        datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+    };
+    use sedona_testing::{
+        create::create_array_item_crs, create::create_scalar_item_crs, testers::ScalarUdfTester,
     };
 
     use crate::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 
     use super::*;
 
-    fn geom_lit(bytes: &[u8], crs: Crs) -> Expr {
-        let sedona_type = SedonaType::Wkb(Edges::Planar, crs);
-        let field = sedona_type.to_storage_field("", true).unwrap();
-        let metadata = field.metadata();
-        Expr::Literal(
-            ScalarValue::Binary(Some(bytes.to_vec())),
-            Some(metadata.into()),
-        )
-    }
-
-    fn item_crs_lit(bytes: &[u8], crs: Crs) -> Expr {
-        let crs_string = match crs {
-            Some(crs) => crs.to_crs_string(),
-            None => "0".to_string(),
-        };
-
-        let item_crs_value = make_item_crs(
-            &WKB_GEOMETRY,
-            ScalarValue::Binary(Some(bytes.to_vec())).into(),
-            &ScalarValue::Utf8View(Some(crs_string)).into(),
-        )
-        .unwrap();
-
-        match item_crs_value {
-            ColumnarValue::Array(_) => panic!("Expected scalar"),
-            ColumnarValue::Scalar(scalar_value) => lit(scalar_value),
-        }
-    }
-
-    #[test]
-    fn item_crs_kernel() {
+    fn test_udf() -> ScalarUDF {
         let geom_to_geom_kernel = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
@@ -355,36 +327,149 @@ mod test {
         );
 
         let crsified_kernel = ItemCrsKernel::new_ref(geom_to_geom_kernel);
-        let udf: ScalarUDF = SedonaScalarUDF::from_kernel("fun", crsified_kernel).into();
-        let expr_schema = DFSchema::empty();
+        SedonaScalarUDF::from_kernel("fun", crsified_kernel.clone()).into()
+    }
 
+    fn basic_item_crs_type() -> SedonaType {
+        SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()
+    }
+
+    #[test]
+    fn item_crs_kernel_no_match() {
         // A call with geometry + geometry should fail (this case would be handled by the
         // original kernel, not the item_crs kernel)
-        let call = udf.call(vec![geom_lit(&[1, 2, 3], None), geom_lit(&[4, 5, 6], None)]);
-        let err = call.to_field(&expr_schema).unwrap_err();
+        let tester = ScalarUdfTester::new(test_udf(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
             "fun([Wkb(Planar, None), Wkb(Planar, None)]): No kernel matching arguments"
         );
+    }
 
-        // A call with geometry + item_crs should return item_crs
-        let call = udf.call(vec![
-            geom_lit(&[1, 2, 3], None),
-            item_crs_lit(&[4, 5, 6], None),
-        ]);
-        let (_, call_field) = call.to_field(&expr_schema).unwrap();
-        assert!(
-            ArgMatcher::is_item_crs().match_type(&SedonaType::Arrow(call_field.data_type().clone()))
+    #[rstest]
+    fn item_crs_kernel_basic(
+        #[values(
+            (WKB_GEOMETRY, basic_item_crs_type()),
+            (basic_item_crs_type(), WKB_GEOMETRY),
+            (basic_item_crs_type(), basic_item_crs_type())
+        )]
+        arg_types: (SedonaType, SedonaType),
+    ) {
+        // A call with geometry + item_crs or both item_crs should return item_crs
+        let tester = ScalarUdfTester::new(test_udf(), vec![arg_types.0, arg_types.1]);
+        tester.assert_return_type(basic_item_crs_type());
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POINT (1 2)")
+            .unwrap();
+        assert_eq!(
+            result,
+            create_scalar_item_crs(Some("POINT (0 1)"), None, &WKB_GEOMETRY)
+        );
+    }
+
+    #[test]
+    fn item_crs_kernel_crs_values() {
+        let tester = ScalarUdfTester::new(
+            test_udf(),
+            vec![basic_item_crs_type(), basic_item_crs_type()],
+        );
+        tester.assert_return_type(basic_item_crs_type());
+
+        let scalar_item_crs_4326 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:4326"), &WKB_GEOMETRY);
+        let scalar_item_crs_crs84 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("OGC:CRS84"), &WKB_GEOMETRY);
+        let scalar_item_crs_3857 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:3857"), &WKB_GEOMETRY);
+
+        // Should be able to execute when both arguments have an equal
+        // (but not necessarily identical) CRS
+        let result = tester
+            .invoke_scalar_scalar(scalar_item_crs_4326.clone(), scalar_item_crs_crs84.clone())
+            .unwrap();
+        assert_eq!(result, scalar_item_crs_4326);
+
+        // We should get an error when the CRSes are not compatible
+        let err = tester
+            .invoke_scalar_scalar(scalar_item_crs_4326.clone(), scalar_item_crs_3857.clone())
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: Some(\"EPSG:4326\") vs Some(\"EPSG:3857\")"
+        );
+    }
+
+    #[test]
+    fn item_crs_kernel_crs_types() {
+        let scalar_item_crs_4326 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:4326"), &WKB_GEOMETRY);
+        let scalar_item_crs_crs84 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("OGC:CRS84"), &WKB_GEOMETRY);
+        let scalar_item_crs_3857 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:3857"), &WKB_GEOMETRY);
+
+        let sedona_type_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            test_udf(),
+            vec![basic_item_crs_type(), sedona_type_lnglat.clone()],
+        );
+        tester.assert_return_type(basic_item_crs_type());
+
+        // We should be able to execute item_crs + geometry when the crs compares equal
+        let result = tester
+            .invoke_scalar_scalar(scalar_item_crs_4326.clone(), "POINT (3 4)")
+            .unwrap();
+        assert_eq!(result, scalar_item_crs_4326);
+
+        let result = tester
+            .invoke_scalar_scalar(scalar_item_crs_crs84.clone(), "POINT (3 4)")
+            .unwrap();
+        assert_eq!(result, scalar_item_crs_crs84);
+
+        // We should get an error when the CRSes are not compatible
+        let err = tester
+            .invoke_scalar_scalar(scalar_item_crs_3857.clone(), "POINT (3 4)")
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: Some(\"EPSG:3857\") vs Some(\"OGC:CRS84\")"
+        );
+    }
+
+    #[test]
+    fn item_crs_kernel_arrays() {
+        let tester = ScalarUdfTester::new(
+            test_udf(),
+            vec![basic_item_crs_type(), basic_item_crs_type()],
         );
 
-        // A call with item_crs + geometry should return item_crs
-        let call = udf.call(vec![
-            item_crs_lit(&[4, 5, 6], None),
-            geom_lit(&[1, 2, 3], None),
-        ]);
-        let (_, call_field) = call.to_field(&expr_schema).unwrap();
-        assert!(
-            ArgMatcher::is_item_crs().match_type(&SedonaType::Arrow(call_field.data_type().clone()))
+        let array_item_crs_lnglat = create_array_item_crs(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("POINT (3 4)"),
+            ],
+            [Some("EPSG:4326"), Some("EPSG:4326"), Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let scalar_item_crs_4326 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:4326"), &WKB_GEOMETRY);
+        let scalar_item_crs_3857 =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:3857"), &WKB_GEOMETRY);
+
+        // This should succeed when all CRS combinations are compatible
+        let result = tester
+            .invoke_array_scalar(array_item_crs_lnglat.clone(), scalar_item_crs_4326.clone())
+            .unwrap();
+        assert_eq!(&result, &array_item_crs_lnglat);
+
+        // This should fail otherwise
+        let err = tester
+            .invoke_array_scalar(array_item_crs_lnglat.clone(), scalar_item_crs_3857.clone())
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: Some(\"EPSG:4326\") vs Some(\"EPSG:3857\")"
         );
     }
 

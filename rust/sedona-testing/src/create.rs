@@ -62,7 +62,7 @@ pub fn create_array_storage(wkt_values: &[Option<&str>], data_type: &SedonaType)
         SedonaType::Arrow(DataType::Struct(fields))
             if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
         {
-            let item_type = SedonaType::from_storage_field(&fields[1]).unwrap();
+            let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();
             create_array_item_crs(wkt_values, (0..wkt_values.len()).map(|_| None), &item_type)
         }
         _ => panic!("create_array_storage not implemented for {data_type:?}"),
@@ -104,7 +104,7 @@ pub fn create_scalar_storage(wkt_value: Option<&str>, data_type: &SedonaType) ->
         SedonaType::Arrow(DataType::Struct(fields))
             if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
         {
-            let item_type = SedonaType::from_storage_field(&fields[1]).unwrap();
+            let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();
             create_scalar_item_crs(wkt_value, None, &item_type)
         }
         _ => panic!("create_scalar_storage not implemented for {data_type:?}"),
