@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/functions/st_intersection/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/functions/st_asbinary/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_Intersection - SedonaDB</title>
+        <title>ST_AsBinary - SedonaDB</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_intersection" class="md-skip">
+        <a href="#st_asbinary" class="md-skip">
           Skip to content
         </a>
       
@@ -123,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Intersection
+              ST_AsBinary
             
           </span>
         </div>
@@ -1307,6 +1307,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#description" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Description
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1334,7 +1345,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/functions/st_intersection.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/functions/st_asbinary.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1342,34 +1353,28 @@
   
 
 
-<h1 id="st_intersection">ST_Intersection<a class="headerlink" href="#st_intersection" title="Permanent link">¶</a></h1>
-<p>Compute the intersection of two geometries or geographies.</p>
+<h1 id="st_asbinary">ST_AsBinary<a class="headerlink" href="#st_asbinary" title="Permanent link">¶</a></h1>
+<p>Converts a geometry to Well-Known Binary (WKB) format.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
-<span class="n">geography</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geogA</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="n">geogB</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_AsBinary</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geogA</strong> (geography): Input geography</li>
-<li><strong>geogB</strong> (geography): Input geography</li>
-<li><strong>geomA</strong> (geometry): Input geometry</li>
-<li><strong>geomB</strong> (geometry): Input geometry</li>
+<li><strong>geom</strong> (geometry): Input geometry</li>
 </ul>
+<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
+<p><code>ST_AsBinary()</code> Returns the Well-Known Binary representation of a
+geometry or geography. This function also has the alias ST_AsWKB.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span>
-<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'</span><span class="p">),</span>
-<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'</span><span class="p">)</span>
-<span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_AsBinary</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">.</span><span class="mi">0</span><span class="p">));</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────┐
-│                 val                │
-│              geometry              │
-╞════════════════════════════════════╡
-│ POLYGON((1 1,1 10,10 10,10 1,1 1)) │
-└────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────┐
+│ st_asbinary(st_point(Float64(1),Float64(2))) │
+│                    binary                    │
+╞══════════════════════════════════════════════╡
+│ 0101000000000000000000f03f0000000000000040   │
+└──────────────────────────────────────────────┘
 </code></pre></div>
-
-<p><a class="glightbox" data-type="image" data-width="100%" data-height="auto" href="../st_intersection_files/figure-commonmark/cell-2-output-1.png" data-desc-position="bottom"><img alt="" src="../st_intersection_files/figure-commonmark/cell-2-output-1.png"></a></p>
 
 
 
