@@ -271,20 +271,20 @@ def test_st_buffer(eng, geom, dist, expected_area):
 @pytest.mark.parametrize(
     ("geom", "dist", "expected"),
     [
-        ("POINT EMPTY", 2.0, "POLYGON EMPTY"),
-        ("LINESTRING EMPTY", 1.5, "POLYGON EMPTY"),
-        ("POLYGON EMPTY", 0.5, "POLYGON EMPTY"),
-        ("MULTIPOINT EMPTY", 1.0, "POLYGON EMPTY"),
-        ("MULTILINESTRING EMPTY", 1.0, "POLYGON EMPTY"),
-        ("MULTIPOLYGON EMPTY", 1.0, "POLYGON EMPTY"),
-        ("GEOMETRYCOLLECTION EMPTY", 1.0, "POLYGON EMPTY"),
+        ("POINT EMPTY", "POLYGON EMPTY"),
+        ("LINESTRING EMPTY", "POLYGON EMPTY"),
+        ("POLYGON EMPTY", "POLYGON EMPTY"),
+        ("MULTIPOINT EMPTY", "POLYGON EMPTY"),
+        ("MULTILINESTRING EMPTY", "POLYGON EMPTY"),
+        ("MULTIPOLYGON EMPTY", "POLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "POLYGON EMPTY"),
     ],
 )
-def test_st_buffer_empty(eng, geom, dist, expected):
+def test_st_buffer_empty(eng, geom, expected):
     eng = SedonaDB.create_or_skip()
 
     eng.assert_query_result(
-        f"SELECT ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)})",
+        f"SELECT ST_Buffer({geom_or_null(geom)}, {2.0})",
         expected,
     )
 
