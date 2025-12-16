@@ -57,7 +57,7 @@ object_store = { workspace = true }
 sedona-libgpuspatial = { path = "../../c/sedona-libgpuspatial" }
 
 # Sedona dependencies
-sedona-common = { path = "../sedona-common" }
+sedona-common = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }

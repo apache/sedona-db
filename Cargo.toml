@@ -45,6 +45,15 @@ members = [
 ]
 resolver = "2"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }
+
+[patch.crates-io]
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
+
+
 [workspace.package]
 version = "0.3.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
@@ -95,7 +104,7 @@ datafusion-common-runtime = { version = "50.2.0", default-features = false }
 datafusion-datasource-parquet = { version = "50.2.0" }
 datafusion-execution = { version = "50.2.0", default-features = false }
 datafusion-expr = { version = "50.2.0" }
-datafusion-ffi = {  version = "50.2.0" }
+datafusion-ffi = { version = "50.2.0" }
 datafusion-physical-expr = { version = "50.2.0" }
 datafusion-physical-plan = { version = "50.2.0" }
 dirs = "6.0.0"
@@ -132,7 +141,7 @@ rstest = "0.26.1"
 serde = { version = "1" }
 serde_json = { version = "1" }
 serde_with = { version = "1" }
-tempfile = { version = "3"}
+tempfile = { version = "3" }
 thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
