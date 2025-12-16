@@ -16,7 +16,8 @@
 // under the License.
 use std::{str::FromStr, sync::Arc};
 
-use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, StringViewArray, StructArray};
+use arrow_schema::{DataType, Field};
 use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
 use sedona_schema::datatypes::SedonaType;
@@ -58,19 +59,82 @@ pub fn create_array_storage(wkt_values: &[Option<&str>], data_type: &SedonaType)
     match data_type {
         SedonaType::Wkb(_, _) => Arc::new(make_wkb_array::<BinaryArray>(wkt_values)),
         SedonaType::WkbView(_, _) => Arc::new(make_wkb_array::<BinaryViewArray>(wkt_values)),
+        SedonaType::Arrow(DataType::Struct(fields))
+            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
+        {
+            let item_type = SedonaType::from_storage_field(&fields[1]).unwrap();
+            create_array_item_crs(wkt_values, (0..wkt_values.len()).map(|_| None), &item_type)
+        }
         _ => panic!("create_array_storage not implemented for {data_type:?}"),
     }
 }
 
-/// Create the storage [`ScalarValue`] from a WKT literal
+/// Create the storage [`ArrayRef`] from a sequence of WKT literals
 ///
 /// Panics on invalid WKT or unsupported data type.
+pub fn create_array_item_crs<'a>(
+    wkt_values: &[Option<&str>],
+    crs: impl IntoIterator<Item = Option<&'a str>>,
+    item_type: &SedonaType,
+) -> ArrayRef {
+    let out_fields = vec![
+        item_type.to_storage_field("item", true).unwrap(),
+        Field::new("crs", DataType::Utf8View, true),
+    ];
+
+    let item_array = create_array_storage(wkt_values, item_type);
+    let crs_array = Arc::new(crs.into_iter().collect::<StringViewArray>());
+    let nulls = item_array.nulls().cloned();
+    Arc::new(StructArray::new(
+        out_fields.into(),
+        vec![item_array, crs_array],
+        nulls,
+    ))
+}
+
+/// Create the storage [`ScalarValue`] from a WKT literal
+///
+/// Panics on invalid WKT or unsupported data type. Item CRS values
+/// are created with a Null CRS: use [create_scalar_item_crs] to explicitly
+/// create Item CRS scalars with a specific CRS.
 pub fn create_scalar_storage(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarValue {
     match data_type {
         SedonaType::Wkb(_, _) => ScalarValue::Binary(wkt_value.map(make_wkb)),
         SedonaType::WkbView(_, _) => ScalarValue::BinaryView(wkt_value.map(make_wkb)),
+        SedonaType::Arrow(DataType::Struct(fields))
+            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
+        {
+            let item_type = SedonaType::from_storage_field(&fields[1]).unwrap();
+            create_scalar_item_crs(wkt_value, None, &item_type)
+        }
         _ => panic!("create_scalar_storage not implemented for {data_type:?}"),
     }
+}
+
+/// Create a [`ScalarValue`] of an item_crs array from a WKT literal
+///
+/// Panics on invalid WKT or unsupported data type.
+pub fn create_scalar_item_crs(
+    wkt_value: Option<&str>,
+    crs: Option<&str>,
+    item_type: &SedonaType,
+) -> ScalarValue {
+    let out_fields = vec![
+        item_type.to_storage_field("item", true).unwrap(),
+        Field::new("crs", DataType::Utf8View, true),
+    ];
+
+    let storage_item = create_scalar_storage(wkt_value, item_type)
+        .to_array()
+        .unwrap();
+    let storage_crs = ScalarValue::Utf8View(crs.map(|item| item.to_string()))
+        .to_array()
+        .unwrap();
+    let nulls = storage_item.nulls().cloned();
+    let item_crs_array =
+        StructArray::try_new(out_fields.into(), vec![storage_item, storage_crs], nulls).unwrap();
+
+    ScalarValue::Struct(Arc::new(item_crs_array))
 }
 
 fn make_wkb_array<T>(wkt_values: &[Option<&str>]) -> T
