@@ -68,3 +68,4 @@ pub mod st_union_agg;
 mod st_xyzm;
 mod st_xyzm_minmax;
 mod st_zmflag;
+mod st_to_sedona_spark;

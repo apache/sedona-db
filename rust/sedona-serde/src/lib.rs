@@ -20,3 +20,4 @@ mod linestring;
 mod point;
 mod polygon;
 mod wkb;
+mod serialize;
