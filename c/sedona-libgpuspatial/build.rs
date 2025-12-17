@@ -129,8 +129,7 @@ fn main() {
         let dst = cmake::Config::new("./libgpuspatial")
             .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures)
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
-            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "INFO") // Set logging level
-            .define("CMAKE_BUILD_TYPE", profile_mode) // Match Cargo's build profile
+            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
             .build();
         let include_path = dst.join("include");
         println!(
