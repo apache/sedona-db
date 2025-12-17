@@ -185,7 +185,7 @@ jobs:
       - name: Install vcpkg dependencies
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
-          ./vcpkg/vcpkg install abseil openssl
+          ./vcpkg/vcpkg install abseil openssl spdlog fmt
           # Clean up vcpkg buildtrees and downloads to save space
           rm -rf vcpkg/buildtrees
           rm -rf vcpkg/downloads
