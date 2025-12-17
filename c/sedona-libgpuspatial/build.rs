@@ -157,6 +157,7 @@ fn main() {
         println!("cargo:rustc-link-lib=static=gpuspatial");
         println!("cargo:rustc-link-lib=static=rmm");
         println!("cargo:rustc-link-lib=static=rapids_logger");
+        println!("cargo:rustc-link-lib=static=spdlog");
         println!("cargo:rustc-link-lib=static=geoarrow");
         println!("cargo:rustc-link-lib=static=nanoarrow");
         println!("cargo:rustc-link-lib=stdc++");

@@ -38,6 +38,7 @@ members = [
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
+    "rust/sedona-spatial-join-gpu",
     "rust/sedona-testing",
     "rust/sedona",
     "sedona-cli",
