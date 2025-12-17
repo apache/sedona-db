@@ -178,24 +178,26 @@ pub fn make_item_crs(
         item_type.to_storage_field("item", true)?,
         Field::new("crs", DataType::Utf8View, true),
     ];
-    match item_result {
-        ColumnarValue::Array(item_array) => {
-            let nulls = item_array.nulls().cloned();
-            let crs_array = crs_result.to_array(item_array.len())?;
-            let item_crs_array =
-                StructArray::new(out_fields.into(), vec![item_array, crs_array], nulls);
-            Ok(ColumnarValue::Array(Arc::new(item_crs_array)))
-        }
-        ColumnarValue::Scalar(item_scalar) => {
-            let item_array = item_scalar.to_array()?;
-            let nulls = item_array.nulls().cloned();
-            let item_crs_array = StructArray::try_new(
-                out_fields.into(),
-                vec![item_array, crs_result.to_array(1)?],
-                nulls,
-            )?;
-            Ok(ScalarValue::Struct(Arc::new(item_crs_array)).into())
-        }
+
+    let scalar_result = matches!(
+        (&item_result, crs_result),
+        (ColumnarValue::Scalar(_), ColumnarValue::Scalar(_))
+    );
+
+    let item_crs_arrays = ColumnarValue::values_to_arrays(&[item_result, crs_result.clone()])?;
+    let item_array = &item_crs_arrays[0];
+    let crs_array = &item_crs_arrays[1];
+    let nulls = item_array.nulls().cloned();
+    let item_crs_array = StructArray::new(
+        out_fields.into(),
+        vec![item_array.clone(), crs_array.clone()],
+        nulls,
+    );
+
+    if scalar_result {
+        Ok(ScalarValue::Struct(Arc::new(item_crs_array)).into())
+    } else {
+        Ok(ColumnarValue::Array(Arc::new(item_crs_array)))
     }
 }
 

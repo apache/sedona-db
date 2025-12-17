@@ -23,7 +23,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::make_item_crs,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -124,18 +127,35 @@ impl SedonaScalarKernel for STSetSRID {
         determine_return_type(args, scalar_args, self.engine.as_ref())
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
-        _arg_types: &[SedonaType],
+        arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        _num_rows: usize,
     ) -> Result<ColumnarValue> {
-        Ok(args[0].clone())
+        let item_crs_matcher = ArgMatcher::is_item_crs();
+        if item_crs_matcher.match_type(return_type) {
+            // TODO: We need to normalize the crs_value here to auth:code if possible
+            let crs_value = args[1].cast_to(&DataType::Utf8View, None)?;
+            make_item_crs(&arg_types[0], args[0].clone(), &crs_value)
+        } else {
+            Ok(args[0].clone())
+        }
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
         sedona_internal_err!(
             "Should not be called because return_type_from_args_and_scalars() is implemented"
         )
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
     }
 }
 
@@ -159,18 +179,35 @@ impl SedonaScalarKernel for STSetCRS {
         determine_return_type(args, scalar_args, self.engine.as_ref())
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
-        _arg_types: &[SedonaType],
+        arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        _num_rows: usize,
     ) -> Result<ColumnarValue> {
-        Ok(args[0].clone())
+        let item_crs_matcher = ArgMatcher::is_item_crs();
+        if item_crs_matcher.match_type(return_type) {
+            // TODO: We need to normalize the crs_value here to auth:code if possible
+            let crs_value = args[1].cast_to(&DataType::Utf8View, None)?;
+            make_item_crs(&arg_types[0], args[0].clone(), &crs_value)
+        } else {
+            Ok(args[0].clone())
+        }
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
         sedona_internal_err!(
             "Should not be called because return_type_from_args_and_scalars() is implemented"
         )
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
     }
 }
 
@@ -223,6 +260,8 @@ fn determine_return_type(
                 _ => {}
             }
         }
+    } else {
+        return Ok(Some(SedonaType::new_item_crs(&args[0])?));
     }
 
     sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
@@ -345,6 +384,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 mod test {
     use std::rc::Rc;
 
+    use arrow_array::{create_array, ArrayRef};
     use arrow_schema::Field;
     use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
@@ -353,7 +393,11 @@ mod test {
         crs::lnglat,
         datatypes::{Edges, WKB_GEOMETRY},
     };
-    use sedona_testing::{compare::assert_value_equal, create::create_scalar_value};
+    use sedona_testing::{
+        compare::assert_value_equal,
+        create::{create_array, create_array_item_crs, create_scalar_value},
+        testers::ScalarUdfTester,
+    };
 
     use super::*;
 
@@ -459,6 +503,46 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.message(), "Unknown geometry error")
+    }
+
+    #[test]
+    fn udf_item_srid() {
+        let tester = ScalarUdfTester::new(
+            st_set_srid_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)],
+        );
+        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+
+        let geometry_array = create_array(&[Some("POINT (0 1)")], &WKB_GEOMETRY);
+        let crs_array = create_array!(Int32, [4326]) as ArrayRef;
+
+        let result = tester
+            .invoke_array_array(geometry_array, crs_array)
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array_item_crs(&[Some("POINT (0 1)")], [Some("4326")], &WKB_GEOMETRY)
+        );
+    }
+
+    #[test]
+    fn udf_item_crs() {
+        let tester = ScalarUdfTester::new(
+            st_set_crs_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+        );
+        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+
+        let geometry_array = create_array(&[Some("POINT (0 1)")], &WKB_GEOMETRY);
+        let crs_array = create_array!(Utf8, [Some("EPSG:4326")]) as ArrayRef;
+
+        let result = tester
+            .invoke_array_array(geometry_array, crs_array)
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array_item_crs(&[Some("POINT (0 1)")], [Some("EPSG:4326")], &WKB_GEOMETRY)
+        );
     }
 
     fn call_udf(
