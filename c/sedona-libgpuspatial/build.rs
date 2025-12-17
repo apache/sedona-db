@@ -157,6 +157,26 @@ fn main() {
         println!("cargo:rustc-link-lib=static=gpuspatial");
         println!("cargo:rustc-link-lib=static=rmm");
         println!("cargo:rustc-link-lib=static=rapids_logger");
+        // Determine if we are building in Debug mode (uses 'd' suffix) or Release mode.
+        // CARGO_CFG_DEBUG_ASSERTIONS will be "debug_assertions" in Debug, and unset in Release.
+        let profile_mode = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+
+        // Use the 'd' suffix for the debug build of spdlog (libspdlogd.a)
+        let spdlog_lib_name = if profile_mode == "debug" {
+            "spdlogd"
+        } else {
+            "spdlog"
+        };
+
+        println!(
+            "cargo:warning=Linking spdlog in {} mode: lib{}.a",
+            profile_mode, spdlog_lib_name
+        );
+        println!("cargo:rustc-link-lib=static={}", spdlog_lib_name);
         println!("cargo:rustc-link-lib=static=geoarrow");
         println!("cargo:rustc-link-lib=static=nanoarrow");
         println!("cargo:rustc-link-lib=stdc++");

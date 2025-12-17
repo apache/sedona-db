@@ -29,7 +29,6 @@ use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBui
 use futures::stream::Stream;
 
 use crate::gpu_backend::GpuBackend;
-use std::time::Instant;
 
 /// Stream that executes GPU spatial join
 ///
