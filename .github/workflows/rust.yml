@@ -56,15 +56,34 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
-      # Reduce debug info to save disk space
-      CARGO_PROFILE_DEV_DEBUG: 1
-      CARGO_PROFILE_TEST_DEBUG: 1
+      # Disable debug info completely to save disk space
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
       # Limit parallel compilation to reduce memory pressure
       CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: 'true'
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+          docker-images: true
+
+      - name: Additional disk cleanup
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          df -h
 
       - name: Clone vcpkg
         uses: actions/checkout@v6
