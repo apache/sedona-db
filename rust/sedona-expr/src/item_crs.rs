@@ -341,11 +341,12 @@ mod test {
 
     use super::*;
 
-    fn test_udf() -> ScalarUDF {
+    // A test function of something + geometry -> out_type
+    fn test_udf(out_type: SedonaType) -> ScalarUDF {
         let geom_to_geom_kernel = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
-                vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-                WKB_GEOMETRY,
+                vec![ArgMatcher::is_any(), ArgMatcher::is_geometry()],
+                out_type,
             ),
             Arc::new(|_arg_types, args| Ok(args[0].clone())),
         );
@@ -362,7 +363,7 @@ mod test {
     fn item_crs_kernel_no_match() {
         // A call with geometry + geometry should fail (this case would be handled by the
         // original kernel, not the item_crs kernel)
-        let tester = ScalarUdfTester::new(test_udf(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        let tester = ScalarUdfTester::new(test_udf(WKB_GEOMETRY), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
@@ -380,7 +381,7 @@ mod test {
         arg_types: (SedonaType, SedonaType),
     ) {
         // A call with geometry + item_crs or both item_crs should return item_crs
-        let tester = ScalarUdfTester::new(test_udf(), vec![arg_types.0, arg_types.1]);
+        let tester = ScalarUdfTester::new(test_udf(WKB_GEOMETRY), vec![arg_types.0, arg_types.1]);
         tester.assert_return_type(basic_item_crs_type());
         let result = tester
             .invoke_scalar_scalar("POINT (0 1)", "POINT (1 2)")
@@ -394,7 +395,7 @@ mod test {
     #[test]
     fn item_crs_kernel_crs_values() {
         let tester = ScalarUdfTester::new(
-            test_udf(),
+            test_udf(WKB_GEOMETRY),
             vec![basic_item_crs_type(), basic_item_crs_type()],
         );
         tester.assert_return_type(basic_item_crs_type());
@@ -434,7 +435,7 @@ mod test {
 
         let sedona_type_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
         let tester = ScalarUdfTester::new(
-            test_udf(),
+            test_udf(WKB_GEOMETRY),
             vec![basic_item_crs_type(), sedona_type_lnglat.clone()],
         );
         tester.assert_return_type(basic_item_crs_type());
@@ -463,7 +464,7 @@ mod test {
     #[test]
     fn item_crs_kernel_arrays() {
         let tester = ScalarUdfTester::new(
-            test_udf(),
+            test_udf(WKB_GEOMETRY),
             vec![basic_item_crs_type(), basic_item_crs_type()],
         );
 
@@ -495,6 +496,21 @@ mod test {
             err.message(),
             "CRS values not equal: Some(\"EPSG:4326\") vs Some(\"EPSG:3857\")"
         );
+    }
+
+    #[test]
+    fn item_crs_kernel_non_spatial_args_and_result() {
+        let scalar_item_crs =
+            create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:4326"), &WKB_GEOMETRY);
+
+        let tester = ScalarUdfTester::new(
+            test_udf(SedonaType::Arrow(DataType::Int32)),
+            vec![SedonaType::Arrow(DataType::Int32), basic_item_crs_type()],
+        );
+        tester.assert_return_type(DataType::Int32);
+
+        let result = tester.invoke_scalar_scalar(1234, scalar_item_crs).unwrap();
+        assert_eq!(result, ScalarValue::Int32(Some(1234)))
     }
 
     #[test]
