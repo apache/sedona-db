@@ -397,7 +397,7 @@ DEV_HOST int32_t relate(const POINT_T& P1, bool p1_is_head, const POINT_T& P2,
             (p1_location == 'B' && p2_location == 'I') ||
             (p1_location == 'B' && p2_location == 'B' && pc_location == 'I')) {
           /*
-           * P1-P2 goes throught inside of the hole.
+           * P1-P2 goes through inside of the hole.
            */
           return (retval | IntersectionMatrix::INTER_EXTER_1D);
         }
@@ -1118,7 +1118,7 @@ DEV_HOST int32_t relate(bool p_has_boundary, POINT_T P1, bool p1_is_head, POINT_
         }
       }
 
-      /* P1-P2 and Q1-Q2 are colinear */
+      /* P1-P2 and Q1-Q2 are collinear */
       if (qp1 == 0 && qp2 == 0) {
         if (p1_in_qq != PointLocation::kOutside && p2_in_qq != PointLocation::kOutside) {
           /* P1-P2 is fully contained by Q1-Q2 */
