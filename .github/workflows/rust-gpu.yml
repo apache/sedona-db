@@ -152,6 +152,9 @@ jobs:
           # Install GEOS for spatial operations
           sudo apt-get install -y libgeos-dev
 
+          # Install zstd for nanoarrow IPC compression
+          sudo apt-get install -y libzstd-dev
+
           # Install CUDA toolkit for compilation (nvcc)
           # Note: CUDA compilation works without GPU hardware
           # GPU runtime tests still require actual GPU
