@@ -63,14 +63,9 @@ jobs:
     # GPU tests are skipped (no GPU hardware for runtime execution)
     # TODO: Once GPU runner is ready, enable GPU tests with:
     #   runs-on: [self-hosted, gpu, linux, cuda]
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ "clippy", "docs", "test", "build" ]
-
-    name: "${{ matrix.name }}"
+    name: "build"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CARGO_INCREMENTAL: 0
       # Disable debug info completely to save disk space
@@ -116,9 +111,19 @@ jobs:
           android: true      # Remove Android SDK (not needed)
           dotnet: true       # Remove .NET runtime (not needed)
           haskell: true      # Remove Haskell toolchain (not needed)
-          large-packages: false  # Keep essential packages including build-essential
+          large-packages: true   # Remove large packages to free more space
           swap-storage: true     # Remove swap file to free space
           docker-images: true    # Remove docker images (not needed)
+
+      - name: Additional disk cleanup
+        run: |
+          # Remove additional unnecessary files
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          # Show available disk space
+          df -h
 
       # Install system dependencies including CUDA toolkit for compilation
       - name: Install system dependencies
@@ -215,10 +220,19 @@ jobs:
           # --lib builds only the library, not test binaries
           cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
 
+      - name: Cleanup build artifacts to free disk space
+        run: |
+          # Remove CMake build intermediates to free disk space
+          find target -name "*.o" -delete 2>/dev/null || true
+          find target -name "*.ptx" -delete 2>/dev/null || true
+          find target -type d -name "_deps" -exec rm -rf {} + 2>/dev/null || true
+          # Show available disk space
+          df -h
+
       - name: Build libgpuspatial Tests
         run: |
           echo "=== Building libgpuspatial tests ==="
           cd c/sedona-libgpuspatial/libgpuspatial
-          mkdir build
+          mkdir -p build
           cmake --preset=default-with-tests -S . -B build
           cmake --build build --target all
