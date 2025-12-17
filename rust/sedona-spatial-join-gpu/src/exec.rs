@@ -1,20 +1,3 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -201,14 +184,15 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                     let num_partitions = left.output_partitioning().partition_count();
                     let mut all_batches = Vec::new();
 
-                    log::info!("[GPU Join] ===== BUILD PHASE START =====");
-                    log::info!(
+                    println!("[GPU Join] ===== BUILD PHASE START =====");
+                    println!(
                         "[GPU Join] Reading {} left partitions from disk",
                         num_partitions
                     );
+                    log::info!("Build phase: reading {} left partitions", num_partitions);
 
                     for k in 0..num_partitions {
-                        log::debug!(
+                        println!(
                             "[GPU Join] Reading left partition {}/{}",
                             k + 1,
                             num_partitions
@@ -222,28 +206,27 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                             partition_batches += 1;
                             all_batches.push(batch);
                         }
-                        log::debug!(
+                        println!(
                             "[GPU Join] Partition {} read: {} batches, {} rows",
-                            k,
-                            partition_batches,
-                            partition_rows
+                            k, partition_batches, partition_rows
                         );
                     }
 
-                    log::debug!(
+                    println!(
                         "[GPU Join] All left partitions read: {} total batches",
                         all_batches.len()
                     );
-                    log::debug!(
+                    println!(
                         "[GPU Join] Concatenating {} batches into single batch for GPU",
                         all_batches.len()
                     );
+                    log::info!("Build phase: concatenating {} batches", all_batches.len());
 
                     // Concatenate all left batches
                     let left_batch = if all_batches.is_empty() {
                         return Err(DataFusionError::Internal("No data from left side".into()));
                     } else if all_batches.len() == 1 {
-                        log::debug!("[GPU Join] Single batch, no concatenation needed");
+                        println!("[GPU Join] Single batch, no concatenation needed");
                         all_batches[0].clone()
                     } else {
                         let concat_start = std::time::Instant::now();
@@ -256,18 +239,22 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                                 ))
                             })?;
                         let concat_elapsed = concat_start.elapsed();
-                        log::debug!(
+                        println!(
                             "[GPU Join] Concatenation complete in {:.3}s",
                             concat_elapsed.as_secs_f64()
                         );
                         result
                     };
 
-                    log::info!(
+                    println!(
                         "[GPU Join] Build phase complete: {} total left rows ready for GPU",
                         left_batch.num_rows()
                     );
-                    log::info!("[GPU Join] ===== BUILD PHASE END =====");
+                    println!("[GPU Join] ===== BUILD PHASE END =====\n");
+                    log::info!(
+                        "Build phase complete: {} total left rows",
+                        left_batch.num_rows()
+                    );
 
                     Ok(crate::build_data::GpuBuildData::new(left_batch, config))
                 })
@@ -276,7 +263,7 @@ impl ExecutionPlan for GpuSpatialJoinExec {
 
         // Phase 2: Probe Phase (per output partition)
         // Create a probe stream for this partition
-        log::debug!(
+        println!(
             "[GPU Join] Creating probe stream for partition {}",
             partition
         );

@@ -169,14 +169,16 @@ impl GpuSpatialJoinStream {
         loop {
             match &self.state {
                 GpuJoinState::Init => {
-                    log::info!(
+                    println!(
                         "[GPU Join] ===== PROBE PHASE START (Partition {}) =====",
                         self.partition
                     );
-                    log::info!("[GPU Join] Initializing GPU backend");
+                    println!("[GPU Join] Initializing GPU backend");
+                    log::info!("Initializing GPU backend for spatial join");
                     match self.initialize_gpu() {
                         Ok(()) => {
-                            log::debug!("[GPU Join] GPU backend initialized successfully");
+                            println!("[GPU Join] GPU backend initialized successfully");
+                            log::debug!("GPU backend initialized successfully");
                             self.state = GpuJoinState::InitRightStream;
                         }
                         Err(e) => {
@@ -189,8 +191,12 @@ impl GpuSpatialJoinStream {
                 }
 
                 GpuJoinState::InitRightStream => {
-                    log::debug!(
+                    println!(
                         "[GPU Join] Reading right partition {} from disk",
+                        self.partition
+                    );
+                    log::debug!(
+                        "Initializing right child stream for partition {}",
                         self.partition
                     );
                     match self.right.execute(self.partition, self.context.clone()) {
@@ -224,8 +230,14 @@ impl GpuSpatialJoinStream {
                                 // Right stream complete for this partition
                                 let total_right_rows: usize =
                                     self.right_batches.iter().map(|b| b.num_rows()).sum();
-                                log::debug!("[GPU Join] Right partition {} read complete: {} batches, {} rows",
+                                println!("[GPU Join] Right partition {} read complete: {} batches, {} rows",
                                     self.partition, self.right_batches.len(), total_right_rows);
+                                log::debug!(
+                                    "Read {} right batches with total {} rows from partition {}",
+                                    self.right_batches.len(),
+                                    total_right_rows,
+                                    self.partition
+                                );
                                 // Move to execute GPU join with this partition's right data
                                 self.state = GpuJoinState::ExecuteGpuJoin;
                             }
@@ -242,7 +254,8 @@ impl GpuSpatialJoinStream {
                 }
 
                 GpuJoinState::ExecuteGpuJoin => {
-                    log::debug!("[GPU Join] Waiting for build data (if not ready yet)...");
+                    println!("[GPU Join] Waiting for build data (if not ready yet)...");
+                    log::info!("Awaiting build data and executing GPU spatial join");
 
                     // Poll the shared build data future
                     let build_data = match futures::ready!(self.once_build_data.get_shared(_cx)) {
@@ -254,21 +267,29 @@ impl GpuSpatialJoinStream {
                         }
                     };
 
-                    log::debug!(
+                    println!(
                         "[GPU Join] Build data received: {} left rows",
+                        build_data.left_row_count
+                    );
+                    log::debug!(
+                        "Build data received: {} left rows",
                         build_data.left_row_count
                     );
 
                     // Execute GPU join with build data
-                    log::info!("[GPU Join] Starting GPU spatial join computation");
+                    println!("[GPU Join] Starting GPU spatial join computation");
                     match self.execute_gpu_join_with_build_data(&build_data) {
                         Ok(()) => {
                             let total_result_rows: usize =
                                 self.result_batches.iter().map(|b| b.num_rows()).sum();
-                            log::info!(
+                            println!(
                                 "[GPU Join] GPU join completed: {} result batches, {} total rows",
                                 self.result_batches.len(),
                                 total_result_rows
+                            );
+                            log::info!(
+                                "GPU join completed, produced {} result batches",
+                                self.result_batches.len()
                             );
                             self.state = GpuJoinState::EmitResults;
                         }
@@ -285,10 +306,11 @@ impl GpuSpatialJoinStream {
                         log::debug!("Emitting result batch with {} rows", batch.num_rows());
                         return Poll::Ready(Some(Ok(batch)));
                     }
-                    log::info!(
-                        "[GPU Join] ===== PROBE PHASE END (Partition {}) =====",
+                    println!(
+                        "[GPU Join] ===== PROBE PHASE END (Partition {}) =====\n",
                         self.partition
                     );
+                    log::debug!("All results emitted, stream complete");
                     self.state = GpuJoinState::Done;
                 }
 
@@ -355,7 +377,7 @@ impl GpuSpatialJoinStream {
         );
 
         // Concatenate all right batches into one batch
-        log::debug!(
+        println!(
             "[GPU Join] Concatenating {} right batches for partition {}",
             self.right_batches.len(),
             self.partition
@@ -363,7 +385,7 @@ impl GpuSpatialJoinStream {
         let _concat_timer = self.join_metrics.concat_time.timer();
         let concat_start = Instant::now();
         let right_batch = if self.right_batches.len() == 1 {
-            log::debug!("[GPU Join] Single right batch, no concatenation needed");
+            println!("[GPU Join] Single right batch, no concatenation needed");
             self.right_batches[0].clone()
         } else {
             let schema = self.right_batches[0].schema();
@@ -375,15 +397,20 @@ impl GpuSpatialJoinStream {
                     ))
                 })?;
             let concat_elapsed = concat_start.elapsed();
-            log::debug!(
+            println!(
                 "[GPU Join] Right batch concatenation complete in {:.3}s",
                 concat_elapsed.as_secs_f64()
             );
             result
         };
 
-        log::info!(
+        println!(
             "[GPU Join] Ready for GPU: {} left rows × {} right rows",
+            left_batch.num_rows(),
+            right_batch.num_rows()
+        );
+        log::info!(
+            "Using build data: {} left rows, {} right rows",
             left_batch.num_rows(),
             right_batch.num_rows()
         );

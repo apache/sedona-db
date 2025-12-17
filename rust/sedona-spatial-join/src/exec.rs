@@ -1323,12 +1323,12 @@ mod tests {
         let mut gpu_ctx = match GpuSpatialContext::new() {
             Ok(ctx) => ctx,
             Err(_) => {
-                log::warn!("GPU not available, skipping test");
+                eprintln!("GPU not available, skipping test");
                 return Ok(());
             }
         };
         if gpu_ctx.init().is_err() {
-            log::warn!("GPU init failed, skipping test");
+            eprintln!("GPU init failed, skipping test");
             return Ok(());
         }
 
@@ -1413,7 +1413,7 @@ mod tests {
             .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)")
             .await?;
         let explain_batches = explain_df.collect().await?;
-        log::info!("=== ST_Intersects Physical Plan ===");
+        println!("=== ST_Intersects Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
@@ -1432,7 +1432,7 @@ mod tests {
             result.num_rows() > 0,
             "Expected join results for ST_Intersects"
         );
-        log::info!(
+        println!(
             "ST_Intersects returned {} rows (expected 4)",
             result.num_rows()
         );
@@ -1444,7 +1444,7 @@ mod tests {
             .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Contains(L.geometry, R.geometry)")
             .await?;
         let explain_batches = explain_df.collect().await?;
-        log::info!("=== ST_Contains Physical Plan ===");
+        println!("\n=== ST_Contains Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
@@ -1463,7 +1463,7 @@ mod tests {
             result.num_rows() > 0,
             "Expected join results for ST_Contains"
         );
-        log::info!(
+        println!(
             "ST_Contains returned {} rows (expected 4)",
             result.num_rows()
         );
