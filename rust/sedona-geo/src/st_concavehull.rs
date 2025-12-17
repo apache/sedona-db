@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![allow(dead_code)]
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
@@ -37,6 +36,10 @@ use wkb::writer::{write_geometry, WriteOptions};
 use crate::to_geo::item_to_geometry;
 
 /// ST_ConcaveHull implementation using [ConcaveHull]
+///
+/// Geo returns a Polygon for every concave hull computation
+/// whereas the Geos implementation returns a MultiPolygon for
+/// certain geometries concave hull computation.
 pub fn st_concavehull_impl() -> ScalarKernelRef {
     Arc::new(STConcaveHull {})
 }
@@ -215,6 +218,7 @@ fn write_concave_hull<W: std::io::Write>(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
@@ -224,141 +228,192 @@ mod tests {
         compare::assert_scalar_equal_wkb_geometry_topologically, testers::ScalarUdfTester,
     };
 
-    use super::*;
+    /// Helper to initialize the UDF tester to avoid boilerplate in every test.
+    fn create_tester(sedona_type: SedonaType) -> ScalarUdfTester {
+        let udf = SedonaScalarUDF::from_kernel("st_concavehull", st_concavehull_impl());
+        ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type, SedonaType::Arrow(DataType::Float64)],
+        )
+    }
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_concavehull", st_concavehull_impl());
-        let tester = ScalarUdfTester::new(
-            udf.into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
+    fn test_return_type(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = create_tester(sedona_type);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
+    }
 
+    #[rstest]
+    fn test_null_inputs(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = create_tester(sedona_type);
         let result = tester
             .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
             .unwrap();
         assert!(result.is_null());
+    }
 
-        let result = tester.invoke_scalar_scalar("POINT EMPTY", 0.1).unwrap();
+    #[rstest]
+    #[case::point("POINT EMPTY")]
+    #[case::linestring("LINESTRING EMPTY")]
+    #[case::polygon("POLYGON EMPTY")]
+    #[case::multipoint("MULTIPOINT EMPTY")]
+    #[case::multilinestring("MULTILINESTRING EMPTY")]
+    #[case::multipolygon("MULTIPOLYGON EMPTY")]
+    #[case::collection("GEOMETRYCOLLECTION EMPTY")]
+    fn test_empty_geometries(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[case] input_wkt: &str,
+    ) {
+        let tester = create_tester(sedona_type);
+        // Empty geometries should result in an empty Polygon
+        let result = tester.invoke_scalar_scalar(input_wkt, 0.1).unwrap();
         assert_scalar_equal_wkb_geometry_topologically(&result, Some("POLYGON EMPTY"));
+    }
 
-        let result = tester.invoke_scalar_scalar("POINT (2.5 3.1)", 0.1).unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(&result, Some("POINT (2.5 3.1)"));
+    #[rstest]
+    // =========================================================================
+    // Differing Geometry Types, Identical Percentage (0.1)
+    // =========================================================================
 
-        let result = tester
-            .invoke_scalar_scalar("LINESTRING EMPTY", 0.1)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(&result, Some("POLYGON EMPTY"));
+    // Point
+    #[case("POINT (2.5 3.1)", 0.1, "POINT (2.5 3.1)")]
+    // Linestring (Fixed)
+    #[case(
+        "LINESTRING (50 50, 150 150, 150 50)",
+        0.1,
+        "POLYGON ((50 50, 150 150, 150 50, 50 50))"
+    )]
+    // Polygon
+    #[case(
+        "POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))",
+        0.1,
+        "POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"
+    )]
+    // Multipoint
+    #[case(
+        "MULTIPOINT ((0 0), (10 0), (0 10), (10 10), (5 5))",
+        0.1,
+        "POLYGON ((10 0, 10 10, 0 10, 0 0, 5 5, 10 0))"
+    )]
+    #[case(
+        "MULTIPOINT ((100 150), (160 170))",
+        0.1,
+        "POLYGON ((100 150, 160 170, 100 150))"
+    )]
+    // Multipolygon
+    #[case(
+        "MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))",
+        0.1,
+        "POLYGON ((5 2, 2 2, 2 5, 5 5, 6 3, 8 3, 8 1, 6 1, 5 2))"
+    )]
+    #[case(
+        "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
+            ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
+        0.1,
+        "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
+    )]
+    // Geometry Collections
+    #[case(
+        "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT(5 6), LINESTRING(4 5, 5 6))",
+        0.1,
+        "POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"
+    )]
+    #[case(
+        "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT EMPTY, LINESTRING(4 5, 5 6))",
+        0.1,
+        "POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"
+    )]
+    #[case(
+        "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
+            GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
+            GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
+        0.1,
+        "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+    )]
+    // =========================================================================
+    // Identical Geometry Types, Differing Percentages
+    // =========================================================================
 
-        let result = tester
-            .invoke_scalar_scalar("LINESTRING (50 50, 150 150, 150 50)", 0.1)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((50 50, 150 150, 150 50, 50 50))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("LINESTRING (100 150, 50 60, 70 80, 160 170)", 0.3)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))", 0.2)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("MULTIPOINT EMPTY", 0.1)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(&result, Some("POLYGON EMPTY"));
-
-        let result = tester
-            .invoke_scalar_scalar("MULTIPOINT ((100 150), (160 170))", 0.2)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((100 150, 160 170, 100 150))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("MULTIPOINT ((0 0), (10 0), (0 10), (10 10), (5 5))", 0.1)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((10 0, 10 10, 0 10, 0 0, 5 5, 10 0))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))", 0.2)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((50 200, 50 50, 50 100, 50 150, 50 200))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("MULTIPOLYGON EMPTY", 0.3)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(&result, Some("POLYGON EMPTY"));
-
-        let result = tester
-            .invoke_scalar_scalar(
-                "MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))",
-                0.1,
-            )
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((5 2, 2 2, 2 5, 5 5, 6 3, 8 3, 8 1, 6 1, 5 2))"),
-        );
-
-        let result = tester.invoke_scalar_scalar("MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))", 0.1).unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some(
-                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))",
-            ),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar("GEOMETRYCOLLECTION EMPTY", 0.3)
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(&result, Some("POLYGON EMPTY"));
-
-        let result = tester
-            .invoke_scalar_scalar(
-                "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT(5 6), LINESTRING(4 5, 5 6))",
-                0.1,
-            )
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"),
-        );
-
-        let result = tester
-            .invoke_scalar_scalar(
-                "GEOMETRYCOLLECTION (MULTIPOINT((1 1), (3 3)), POINT EMPTY, LINESTRING(4 5, 5 6))",
-                0.1,
-            )
-            .unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((3 3, 1 1, 4 5, 5 6, 3 3))"),
-        );
-
-        let result = tester.invoke_scalar_scalar("GEOMETRYCOLLECTION(LINESTRING(1 1,2 2),GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)),GEOMETRYCOLLECTION(LINESTRING(6 6,7 7),POLYGON((8 8,9 9,10 10,8 8)))))", 0.1).unwrap();
-        assert_scalar_equal_wkb_geometry_topologically(
-            &result,
-            Some("POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"),
-        );
+    // Linestring (Varying Pct: 0.1 vs 0.3)
+    #[case(
+        "LINESTRING (100 150, 50 60, 70 80, 160 170)",
+        0.1,
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"
+    )]
+    #[case(
+        "LINESTRING (100 150, 50 60, 70 80, 160 170)",
+        0.3,
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"
+    )]
+    // Polygon (Varying Pct: 0.1 vs 0.2)
+    #[case(
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))",
+        0.1,
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"
+    )]
+    #[case(
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))",
+        0.2,
+        "POLYGON ((70 80, 50 60, 100 150, 160 170, 70 80))"
+    )]
+    // Multipoint (0.1 vs 0.5)
+    #[case(
+        "MULTIPOINT ((100 150), (160 170))",
+        0.1,
+        "POLYGON ((100 150, 160 170, 100 150))"
+    )]
+    #[case(
+        "MULTIPOINT ((100 150), (160 170))",
+        0.5,
+        "POLYGON ((100 150, 160 170, 100 150))"
+    )]
+    // Multilinestring (0.1 vs 0.2)
+    #[case(
+        "MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))",
+        0.1,
+        "POLYGON ((50 200, 50 50, 50 100, 50 150, 50 200))"
+    )]
+    #[case(
+        "MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))",
+        0.2,
+        "POLYGON ((50 200, 50 50, 50 100, 50 150, 50 200))"
+    )]
+    // Multipolygon (0.1 vs 0.4)
+    #[case(
+        "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
+            ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
+        0.1,
+        "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
+    )]
+    #[case(
+        "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
+            ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
+        0.4,
+        "POLYGON((151 100,176 175,151 200,26 200,26 125,151 100))"
+    )]
+    // Geometry Collection (0.1 vs 0.6)
+    #[case(
+        "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
+            GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
+            GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
+        0.1,
+        "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+    )]
+    #[case(
+        "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
+            GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
+            GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
+        0.6,
+        "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+    )]
+    fn test_concave_hull_processing(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[case] input_wkt: &str,
+        #[case] pct_convex: f64,
+        #[case] expected_wkt: &str,
+    ) {
+        let tester = create_tester(sedona_type);
+        let result = tester.invoke_scalar_scalar(input_wkt, pct_convex).unwrap();
+        assert_scalar_equal_wkb_geometry_topologically(&result, Some(expected_wkt));
     }
 }
