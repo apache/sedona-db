@@ -31,7 +31,9 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [features]
+default = []
 backtrace = ["datafusion-common/backtrace"]
+gpu = ["sedona-spatial-join-gpu/gpu", "sedona-libgpuspatial/gpu"]
 
 [dependencies]
 arrow = { workspace = true }
@@ -66,12 +68,17 @@ geo-index = { workspace = true }
 geos = { workspace = true }
 float_next_after = { workspace = true }
 fastrand = { workspace = true }
+log = "0.4"
+
+# GPU spatial join (optional)
+sedona-spatial-join-gpu = { path = "../sedona-spatial-join-gpu", optional = true }
+sedona-libgpuspatial = { path = "../../c/sedona-libgpuspatial", optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }
 rstest = { workspace = true }
-sedona-testing = { workspace = true}
+sedona-testing = { workspace = true }
 wkt = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 rand = { workspace = true }

@@ -27,6 +27,7 @@ fn main() {
         .include("src/")
         .flag("-DGEOARROW_NAMESPACE=SedonaDB")
         .flag("-DNANOARROW_NAMESPACE=SedonaDB")
+        .flag("-Wno-type-limits")
         .compile("geoarrow");
 
     cc::Build::new()

@@ -77,6 +77,32 @@ config_namespace! {
         /// of spawning parallel tasks. Higher values reduce parallelization overhead
         /// for small datasets, while lower values enable more fine-grained parallelism.
         pub parallel_refinement_chunk_size: usize, default = 8192
+
+        /// GPU acceleration options
+        pub gpu: GpuOptions, default = GpuOptions::default()
+    }
+}
+
+config_namespace! {
+    /// Configuration options for GPU-accelerated spatial joins
+    pub struct GpuOptions {
+        /// Enable GPU-accelerated spatial joins (requires CUDA and GPU feature flag)
+        pub enable: bool, default = false
+
+        /// Minimum number of rows to consider GPU execution
+        pub min_rows_threshold: usize, default = 100000
+
+        /// GPU device ID to use (0 = first GPU, 1 = second, etc.)
+        pub device_id: usize, default = 0
+
+        /// Fall back to CPU if GPU initialization or execution fails
+        pub fallback_to_cpu: bool, default = true
+
+        /// Maximum GPU memory to use in megabytes (0 = unlimited)
+        pub max_memory_mb: usize, default = 0
+
+        /// Batch size for GPU processing
+        pub batch_size: usize, default = 8192
     }
 }
 

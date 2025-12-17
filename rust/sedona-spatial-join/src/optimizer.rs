@@ -235,11 +235,24 @@ impl SpatialJoinOptimizer {
     fn try_optimize_join(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
+        config: &ConfigOptions,
     ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
         // Check if this is a NestedLoopJoinExec that we can convert to spatial join
         if let Some(nested_loop_join) = plan.as_any().downcast_ref::<NestedLoopJoinExec>() {
             if let Some(spatial_join) = self.try_convert_to_spatial_join(nested_loop_join)? {
+                // Try GPU path first if feature is enabled
+                // Need to downcast to SpatialJoinExec for GPU optimizer
+                if let Some(spatial_join_exec) =
+                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                {
+                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
+                    {
+                        log::info!("Using GPU-accelerated spatial join");
+                        return Ok(Transformed::yes(gpu_join));
+                    }
+                }
+
+                // Fall back to CPU spatial join
                 return Ok(Transformed::yes(spatial_join));
             }
         }
@@ -247,6 +260,19 @@ impl SpatialJoinOptimizer {
         // Check if this is a HashJoinExec with spatial filter that we can convert to spatial join
         if let Some(hash_join) = plan.as_any().downcast_ref::<HashJoinExec>() {
             if let Some(spatial_join) = self.try_convert_hash_join_to_spatial(hash_join)? {
+                // Try GPU path first if feature is enabled
+                // Need to downcast to SpatialJoinExec for GPU optimizer
+                if let Some(spatial_join_exec) =
+                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                {
+                    if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
+                    {
+                        log::info!("Using GPU-accelerated spatial join for KNN");
+                        return Ok(Transformed::yes(gpu_join));
+                    }
+                }
+
+                // Fall back to CPU spatial join
                 return Ok(Transformed::yes(spatial_join));
             }
         }
@@ -1051,6 +1077,289 @@ fn is_spatial_predicate_supported(
             Ok(is_geometry_type_supported(left, left_schema)?
                 && is_geometry_type_supported(right, right_schema)?)
         }
+    }
+}
+
+// ============================================================================
+// GPU Optimizer Module
+// ============================================================================
+
+/// GPU optimizer module - conditionally compiled when GPU feature is enabled
+#[cfg(feature = "gpu")]
+mod gpu_optimizer {
+    use super::*;
+    use datafusion_common::DataFusionError;
+    use sedona_spatial_join_gpu::{
+        GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialJoinExec, GpuSpatialPredicate,
+    };
+
+    /// Attempt to create a GPU-accelerated spatial join.
+    /// Returns None if GPU path is not applicable for this query.
+    pub fn try_create_gpu_spatial_join(
+        spatial_join: &SpatialJoinExec,
+        config: &ConfigOptions,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        let sedona_options = config
+            .extensions
+            .get::<SedonaOptions>()
+            .ok_or_else(|| DataFusionError::Internal("SedonaOptions not found".into()))?;
+
+        // Check if GPU is enabled
+        if !sedona_options.spatial_join.gpu.enable {
+            return Ok(None);
+        }
+
+        // Check if predicate is supported on GPU
+        if !is_gpu_supported_predicate(&spatial_join.on) {
+            log::debug!("Predicate {:?} not supported on GPU", spatial_join.on);
+            return Ok(None);
+        }
+
+        // Get child plans
+        let left = spatial_join.left.clone();
+        let right = spatial_join.right.clone();
+
+        // Get schemas from child plans
+        let left_schema = left.schema();
+        let right_schema = right.schema();
+
+        // Find geometry columns in schemas
+        let left_geom_col = find_geometry_column(&left_schema)?;
+        let right_geom_col = find_geometry_column(&right_schema)?;
+
+        // Convert spatial predicate to GPU predicate
+        let gpu_predicate = convert_to_gpu_predicate(&spatial_join.on)?;
+
+        // Create GPU spatial join configuration
+        let gpu_config = GpuSpatialJoinConfig {
+            join_type: *spatial_join.join_type(),
+            left_geom_column: left_geom_col,
+            right_geom_column: right_geom_col,
+            predicate: gpu_predicate,
+            device_id: sedona_options.spatial_join.gpu.device_id as i32,
+            batch_size: sedona_options.spatial_join.gpu.batch_size,
+            additional_filters: spatial_join.filter.clone(),
+            max_memory: if sedona_options.spatial_join.gpu.max_memory_mb > 0 {
+                Some(sedona_options.spatial_join.gpu.max_memory_mb * 1024 * 1024)
+            } else {
+                None
+            },
+            fallback_to_cpu: sedona_options.spatial_join.gpu.fallback_to_cpu,
+        };
+
+        log::info!(
+            "Creating GPU spatial join: predicate: {:?}, left geom: {}, right geom: {}",
+            gpu_config.predicate,
+            gpu_config.left_geom_column.name,
+            gpu_config.right_geom_column.name,
+        );
+
+        let gpu_join = Arc::new(GpuSpatialJoinExec::new(left, right, gpu_config)?);
+
+        // If the original SpatialJoinExec had a projection, wrap the GPU join with a ProjectionExec
+        if spatial_join.contains_projection() {
+            use datafusion_physical_expr::expressions::Column;
+            use datafusion_physical_plan::projection::ProjectionExec;
+
+            // Get the projection indices from the SpatialJoinExec
+            let projection_indices = spatial_join
+                .projection()
+                .expect("contains_projection() was true but projection() returned None");
+
+            // Create projection expressions that map from GPU join output to desired output
+            let mut projection_exprs = Vec::new();
+            let gpu_schema = gpu_join.schema();
+
+            for &idx in projection_indices {
+                let field = gpu_schema.field(idx);
+                let col_expr = Arc::new(Column::new(field.name(), idx))
+                    as Arc<dyn datafusion_physical_expr::PhysicalExpr>;
+                projection_exprs.push((col_expr, field.name().clone()));
+            }
+
+            let projection_exec = ProjectionExec::try_new(projection_exprs, gpu_join)?;
+            Ok(Some(Arc::new(projection_exec)))
+        } else {
+            Ok(Some(gpu_join))
+        }
+    }
+
+    /// Check if spatial predicate is supported on GPU
+    pub(crate) fn is_gpu_supported_predicate(predicate: &SpatialPredicate) -> bool {
+        match predicate {
+            SpatialPredicate::Relation(rel) => {
+                use crate::spatial_predicate::SpatialRelationType;
+                matches!(
+                    rel.relation_type,
+                    SpatialRelationType::Intersects
+                        | SpatialRelationType::Contains
+                        | SpatialRelationType::Covers
+                        | SpatialRelationType::Within
+                        | SpatialRelationType::CoveredBy
+                        | SpatialRelationType::Touches
+                        | SpatialRelationType::Equals
+                )
+            }
+            // Distance predicates not yet supported on GPU
+            SpatialPredicate::Distance(_) => false,
+            // KNN not yet supported on GPU
+            SpatialPredicate::KNearestNeighbors(_) => false,
+        }
+    }
+
+    /// Find geometry column in schema
+    pub(crate) fn find_geometry_column(schema: &SchemaRef) -> Result<GeometryColumnInfo> {
+        use arrow_schema::DataType;
+
+        //         eprintln!("DEBUG find_geometry_column: Schema has {} fields", schema.fields().len());
+        //         for (idx, field) in schema.fields().iter().enumerate() {
+        //             eprintln!("  Field {}: name='{}', type={:?}, metadata={:?}",
+        //                 idx, field.name(), field.data_type(), field.metadata());
+        //         }
+
+        for (idx, field) in schema.fields().iter().enumerate() {
+            // Check if this is a WKB geometry column (Binary, LargeBinary, or BinaryView)
+            if matches!(
+                field.data_type(),
+                DataType::Binary | DataType::LargeBinary | DataType::BinaryView
+            ) {
+                // Check metadata for geometry type
+                if let Some(meta) = field.metadata().get("ARROW:extension:name") {
+                    if meta.contains("geoarrow.wkb") || meta.contains("geometry") {
+                        return Ok(GeometryColumnInfo {
+                            name: field.name().clone(),
+                            index: idx,
+                        });
+                    }
+                }
+
+                // If no metadata, assume first binary column is geometry
+                // This is a fallback for files without proper GeoArrow metadata
+                if idx == schema.fields().len() - 1
+                    || schema.fields().iter().skip(idx + 1).all(|f| {
+                        !matches!(
+                            f.data_type(),
+                            DataType::Binary | DataType::LargeBinary | DataType::BinaryView
+                        )
+                    })
+                {
+                    log::warn!(
+                        "Geometry column '{}' has no GeoArrow metadata, assuming it's WKB",
+                        field.name()
+                    );
+                    return Ok(GeometryColumnInfo {
+                        name: field.name().clone(),
+                        index: idx,
+                    });
+                }
+            }
+        }
+
+        //         eprintln!("DEBUG find_geometry_column: ERROR - No geometry column found!");
+        Err(DataFusionError::Plan(
+            "No geometry column found in schema".into(),
+        ))
+    }
+
+    /// Convert SpatialPredicate to GPU predicate
+    pub(crate) fn convert_to_gpu_predicate(
+        predicate: &SpatialPredicate,
+    ) -> Result<GpuSpatialPredicate> {
+        use crate::spatial_predicate::SpatialRelationType;
+        use sedona_libgpuspatial::SpatialPredicate as LibGpuPred;
+
+        match predicate {
+            SpatialPredicate::Relation(rel) => {
+                let gpu_pred = match rel.relation_type {
+                    SpatialRelationType::Intersects => LibGpuPred::Intersects,
+                    SpatialRelationType::Contains => LibGpuPred::Contains,
+                    SpatialRelationType::Covers => LibGpuPred::Covers,
+                    SpatialRelationType::Within => LibGpuPred::Within,
+                    SpatialRelationType::CoveredBy => LibGpuPred::CoveredBy,
+                    SpatialRelationType::Touches => LibGpuPred::Touches,
+                    SpatialRelationType::Equals => LibGpuPred::Equals,
+                    _ => {
+                        return Err(DataFusionError::Plan(format!(
+                            "Unsupported GPU predicate: {:?}",
+                            rel.relation_type
+                        )))
+                    }
+                };
+                Ok(GpuSpatialPredicate::Relation(gpu_pred))
+            }
+            _ => Err(DataFusionError::Plan(
+                "Only relation predicates supported on GPU".into(),
+            )),
+        }
+    }
+}
+
+// Re-export for use in main optimizer
+#[cfg(feature = "gpu")]
+use gpu_optimizer::try_create_gpu_spatial_join;
+
+// Stub for when GPU feature is disabled
+#[cfg(not(feature = "gpu"))]
+fn try_create_gpu_spatial_join(
+    _spatial_join: &SpatialJoinExec,
+    _config: &ConfigOptions,
+) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+    Ok(None)
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod gpu_tests {
+    use super::*;
+    use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::prelude::SessionConfig;
+    use sedona_common::option::add_sedona_option_extension;
+    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_find_geometry_column() {
+        use gpu_optimizer::find_geometry_column;
+
+        // Schema with geometry column
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
+        ]));
+
+        let result = find_geometry_column(&schema);
+        assert!(result.is_ok());
+        let geom_col = result.unwrap();
+        assert_eq!(geom_col.name, "geom");
+        assert_eq!(geom_col.index, 1);
+    }
+
+    #[test]
+    fn test_find_geometry_column_no_geom() {
+        use gpu_optimizer::find_geometry_column;
+
+        // Schema without geometry column
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, false),
+        ]));
+
+        let result = find_geometry_column(&schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_gpu_disabled_by_default() {
+        // Create default config
+        let config = SessionConfig::new();
+        let config = add_sedona_option_extension(config);
+        let options = config.options();
+
+        // GPU should be disabled by default
+        let sedona_options = options
+            .extensions
+            .get::<sedona_common::option::SedonaOptions>()
+            .unwrap();
+        assert!(!sedona_options.spatial_join.gpu.enable);
     }
 }
 
