@@ -72,7 +72,7 @@ impl SedonaScalarKernel for STGeomFromSedonaSpark {
         _scalar_args: &[Option<&ScalarValue>],
     ) -> datafusion_common::Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry(), ArgMatcher::is_string()],
+            vec![ArgMatcher::is_binary(), ArgMatcher::is_string()],
             self.out_type.clone(),
         );
 
@@ -143,7 +143,7 @@ mod tests {
         ScalarUdfTester::new(
             st_geomfromsedona_udf().into(),
             vec![
-                SedonaType::Wkb(Edges::Planar, None),
+                SedonaType::Arrow(DataType::Binary),
                 SedonaType::Arrow(DataType::Utf8),
             ],
         )
