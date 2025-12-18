@@ -201,15 +201,14 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                     let num_partitions = left.output_partitioning().partition_count();
                     let mut all_batches = Vec::new();
 
-                    println!("[GPU Join] ===== BUILD PHASE START =====");
-                    println!(
+                    log::info!("[GPU Join] ===== BUILD PHASE START =====");
+                    log::info!(
                         "[GPU Join] Reading {} left partitions from disk",
                         num_partitions
                     );
-                    log::info!("Build phase: reading {} left partitions", num_partitions);
 
                     for k in 0..num_partitions {
-                        println!(
+                        log::debug!(
                             "[GPU Join] Reading left partition {}/{}",
                             k + 1,
                             num_partitions
@@ -223,27 +222,28 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                             partition_batches += 1;
                             all_batches.push(batch);
                         }
-                        println!(
+                        log::debug!(
                             "[GPU Join] Partition {} read: {} batches, {} rows",
-                            k, partition_batches, partition_rows
+                            k,
+                            partition_batches,
+                            partition_rows
                         );
                     }
 
-                    println!(
+                    log::debug!(
                         "[GPU Join] All left partitions read: {} total batches",
                         all_batches.len()
                     );
-                    println!(
+                    log::debug!(
                         "[GPU Join] Concatenating {} batches into single batch for GPU",
                         all_batches.len()
                     );
-                    log::info!("Build phase: concatenating {} batches", all_batches.len());
 
                     // Concatenate all left batches
                     let left_batch = if all_batches.is_empty() {
                         return Err(DataFusionError::Internal("No data from left side".into()));
                     } else if all_batches.len() == 1 {
-                        println!("[GPU Join] Single batch, no concatenation needed");
+                        log::debug!("[GPU Join] Single batch, no concatenation needed");
                         all_batches[0].clone()
                     } else {
                         let concat_start = std::time::Instant::now();
@@ -256,22 +256,18 @@ impl ExecutionPlan for GpuSpatialJoinExec {
                                 ))
                             })?;
                         let concat_elapsed = concat_start.elapsed();
-                        println!(
+                        log::debug!(
                             "[GPU Join] Concatenation complete in {:.3}s",
                             concat_elapsed.as_secs_f64()
                         );
                         result
                     };
 
-                    println!(
+                    log::info!(
                         "[GPU Join] Build phase complete: {} total left rows ready for GPU",
                         left_batch.num_rows()
                     );
-                    println!("[GPU Join] ===== BUILD PHASE END =====\n");
-                    log::info!(
-                        "Build phase complete: {} total left rows",
-                        left_batch.num_rows()
-                    );
+                    log::info!("[GPU Join] ===== BUILD PHASE END =====");
 
                     Ok(crate::build_data::GpuBuildData::new(left_batch, config))
                 })
@@ -280,7 +276,7 @@ impl ExecutionPlan for GpuSpatialJoinExec {
 
         // Phase 2: Probe Phase (per output partition)
         // Create a probe stream for this partition
-        println!(
+        log::debug!(
             "[GPU Join] Creating probe stream for partition {}",
             partition
         );
