@@ -18,6 +18,7 @@
 use std::{fmt::Debug, iter::zip, sync::Arc};
 
 use arrow_array::{ArrayRef, StructArray};
+use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field};
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
@@ -162,7 +163,7 @@ pub fn invoke_handle_item_crs(
         kernel.invoke_batch_from_args(&item_types, &item_args, return_type, num_rows)?;
 
     if ArgMatcher::is_geometry_or_geography().match_type(&out_item_type) {
-        make_item_crs(&out_item_type, item_result, crs_result)
+        make_item_crs(&out_item_type, item_result, crs_result, None)
     } else {
         Ok(item_result)
     }
@@ -173,6 +174,7 @@ pub fn make_item_crs(
     item_type: &SedonaType,
     item_result: ColumnarValue,
     crs_result: &ColumnarValue,
+    extra_nulls: Option<&NullBuffer>,
 ) -> Result<ColumnarValue> {
     let out_fields = vec![
         item_type.to_storage_field("item", true)?,
@@ -187,7 +189,8 @@ pub fn make_item_crs(
     let item_crs_arrays = ColumnarValue::values_to_arrays(&[item_result, crs_result.clone()])?;
     let item_array = &item_crs_arrays[0];
     let crs_array = &item_crs_arrays[1];
-    let nulls = item_array.nulls().cloned();
+    let nulls = NullBuffer::union(item_array.nulls(), extra_nulls);
+
     let item_crs_array = StructArray::new(
         out_fields.into(),
         vec![item_array.clone(), crs_array.clone()],

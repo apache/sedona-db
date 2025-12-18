@@ -41,6 +41,7 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 [dependencies]
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
