@@ -38,8 +38,15 @@ impl SedonaScalarKernel for STGeomToSedonaSpark {
             SedonaType::Wkb(_, crs) => {
                 match crs {
                     Some(_crs) => {
-                        Ok(Some(4326))
-                    },
+                        let crs_id = _crs.srid()?;
+
+                        match crs_id {
+                            Some(srid) => Ok(Some(srid)),
+                            None => Err(datafusion_common::DataFusionError::Internal(
+                                "ST_GeomToSedonaSpark: Unsupported CRS without SRID".to_string(),
+                            )),
+                        }
+                    }
                     None => Ok(None),
                 }
                 //
@@ -93,6 +100,7 @@ mod tests {
     use crate::st_to_sedona_spark::st_geomtosedona_udf;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
+    use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{Edges, SedonaType};
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
@@ -203,6 +211,25 @@ mod tests {
         let result = tester.invoke_scalar(geometry).unwrap();
 
         let binary_geometry = fixture_to_bytes(fixture);
+
+        assert_eq!(result, ScalarValue::Binary(Some(binary_geometry)));
+    }
+
+    #[test]
+    fn test_serialization_with_crs() {
+        let crs = deserialize_crs("EPSG:4326").unwrap(); // to ensure Crs can be deserialized to provide
+
+        let tester = ScalarUdfTester::new(
+            st_geomtosedona_udf().into(),
+            vec![SedonaType::Wkb(Edges::Planar, crs.clone())],
+        );
+
+        let geometry = create_scalar(Some(POINT_WKT), &SedonaType::Wkb(Edges::Planar, crs));
+
+        let result = tester.invoke_scalar(geometry).unwrap();
+
+        let expected_fixture = include_str!("fixtures/crs_point.sedona");
+        let binary_geometry = fixture_to_bytes(expected_fixture);
 
         assert_eq!(result, ScalarValue::Binary(Some(binary_geometry)));
     }

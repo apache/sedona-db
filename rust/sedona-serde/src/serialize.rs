@@ -4,14 +4,14 @@ use crate::polygon::{serialize_multipolygon, serialize_polygon};
 use arrow_array::builder::BinaryBuilder;
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
 use datafusion_common::DataFusionError;
-use std::io::{Cursor};
+use std::io::Cursor;
 use wkb::reader::Wkb;
 use wkt::types::Dimension;
 
 pub fn serialize(
     wkb: &Wkb,
     builder: &mut BinaryBuilder,
-    epsg_crs: Option<i32>,
+    epsg_crs: Option<u32>,
 ) -> datafusion_common::Result<()> {
     use std::io::Cursor;
     let mut cursor = Cursor::new(wkb.buf());
@@ -35,7 +35,7 @@ pub fn serialize(
 pub fn write_geometry<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
-    epsg_crs: Option<i32>,
+    epsg_crs: Option<u32>,
 ) -> datafusion_common::Result<()> {
     let geometry_type = cursor.read_u32::<IN>()?;
     verify_geometry_type(geometry_type)?;
