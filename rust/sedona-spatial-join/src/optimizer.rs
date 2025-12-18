@@ -1211,12 +1211,6 @@ mod gpu_optimizer {
     pub(crate) fn find_geometry_column(schema: &SchemaRef) -> Result<GeometryColumnInfo> {
         use arrow_schema::DataType;
 
-        //         eprintln!("DEBUG find_geometry_column: Schema has {} fields", schema.fields().len());
-        //         for (idx, field) in schema.fields().iter().enumerate() {
-        //             eprintln!("  Field {}: name='{}', type={:?}, metadata={:?}",
-        //                 idx, field.name(), field.data_type(), field.metadata());
-        //         }
-
         for (idx, field) in schema.fields().iter().enumerate() {
             // Check if this is a WKB geometry column (Binary, LargeBinary, or BinaryView)
             if matches!(
@@ -1255,7 +1249,6 @@ mod gpu_optimizer {
             }
         }
 
-        //         eprintln!("DEBUG find_geometry_column: ERROR - No geometry column found!");
         Err(DataFusionError::Plan(
             "No geometry column found in schema".into(),
         ))
