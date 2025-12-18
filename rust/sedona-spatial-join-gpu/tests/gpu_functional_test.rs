@@ -190,7 +190,7 @@ async fn test_gpu_spatial_join_basic_correctness() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     if !is_gpu_available() {
-        eprintln!("GPU not available, skipping test");
+        log::warn!("GPU not available, skipping test");
         return;
     }
 
@@ -228,7 +228,7 @@ async fn test_gpu_spatial_join_basic_correctness() {
         };
 
         if iteration == 0 {
-            println!(
+            log::info!(
                 "Batch {}: {} polygons, {} points",
                 iteration,
                 polygons_batch.num_rows(),
@@ -280,9 +280,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
                     let batch_rows = batch.num_rows();
                     total_rows += batch_rows;
                     if batch_rows > 0 && iteration < 5 {
-                        println!(
+                        log::debug!(
                             "Iteration {}: Got {} rows from GPU join",
-                            iteration, batch_rows
+                            iteration,
+                            batch_rows
                         );
                     }
                 }
@@ -295,9 +296,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
         iteration += 1;
     }
 
-    println!(
+    log::info!(
         "Total rows from GPU join across {} iterations: {}",
-        iteration, total_rows
+        iteration,
+        total_rows
     );
     // Test passes if GPU join completes without crashing and finds results
     // The CUDA reference test loops through all batches to accumulate results
@@ -307,7 +309,7 @@ async fn test_gpu_spatial_join_basic_correctness() {
         iteration,
         total_rows
     );
-    println!(
+    log::info!(
         "GPU spatial join completed successfully with {} result rows",
         total_rows
     );
@@ -433,7 +435,7 @@ async fn test_gpu_spatial_join_correctness() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     if !is_gpu_available() {
-        eprintln!("GPU not available, skipping test");
+        log::warn!("GPU not available, skipping test");
         return;
     }
 
@@ -524,7 +526,7 @@ async fn test_gpu_spatial_join_correctness() {
     ];
 
     for (gpu_predicate, predicate_name) in predicates {
-        println!("\nTesting predicate: {}", predicate_name);
+        log::info!("Testing predicate: {}", predicate_name);
 
         // Run GPU spatial join
         let left_plan =
@@ -575,12 +577,12 @@ async fn test_gpu_spatial_join_correctness() {
                 gpu_result_pairs.push((left_id_col.value(i) as u32, right_id_col.value(i) as u32));
             }
         }
-        println!(
-            "  ✓ {} - GPU join: {} result rows",
+        log::info!(
+            "{} - GPU join: {} result rows",
             predicate_name,
             gpu_result_pairs.len()
         );
     }
 
-    println!("\n✓ All spatial predicates correctness tests passed");
+    log::info!("All spatial predicates correctness tests passed");
 }
