@@ -5199,6 +5199,8 @@ dependencies = [
  "arrow-array",
  "byteorder",
  "datafusion-common",
+ "sedona-schema",
+ "wkb",
  "wkt 0.14.0",
 ]
 

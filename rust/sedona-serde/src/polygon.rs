@@ -103,3 +103,91 @@ pub(crate) fn write_empty_polygon<OUT: ByteOrder>(
 
     Ok(())
 }
+
+pub fn serialize_polygon<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> datafusion_common::Result<()> {
+    let number_of_rings = cursor.read_u32::<OUT>()?;
+
+    let mut total_points = 0u32;
+    let coordinates_vector = Vec::new();
+    let mut coordinates_cursor = Cursor::new(coordinates_vector);
+    let metadata_vector = Vec::new();
+    let mut metadata_cursor = Cursor::new(metadata_vector);
+
+    metadata_cursor.write_u32::<OUT>(number_of_rings)?;
+
+    for _ in 0..number_of_rings {
+        let number_of_points_in_ring = cursor.read_u32::<OUT>()?;
+        metadata_cursor.write_u32::<OUT>(number_of_points_in_ring)?;
+
+        total_points += number_of_points_in_ring;
+
+        let mut buf = vec![0u8; (number_of_points_in_ring * 8 * 2) as usize];
+        cursor.read_exact(&mut buf)?;
+        _ = coordinates_cursor.write(&buf)?;
+    }
+
+    if total_points != 0 {
+        builder.write_u32::<OUT>(total_points)?;
+
+        _ = builder.write(coordinates_cursor.get_ref())?;
+    }
+
+    _ = builder.write(metadata_cursor.get_ref())?;
+
+    Ok(())
+}
+
+pub fn serialize_multipolygon<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> datafusion_common::Result<()> {
+    let number_of_polygons = cursor.read_u32::<OUT>()?;
+
+    let mut total_points = 0u32;
+    let coordinates_vector = Vec::new();
+    let mut coordinates_cursor = Cursor::new(coordinates_vector);
+    let metadata_vector = Vec::new();
+    let mut metadata_cursor = Cursor::new(metadata_vector);
+
+    metadata_cursor.write_u32::<OUT>(number_of_polygons)?;
+
+    for _ in 0..number_of_polygons {
+        let endianness_marker = cursor.read_u8()?;
+        let _geometry_type = cursor.read_u32::<OUT>()?;
+        if endianness_marker != 1 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid byte order in WKB".to_string(),
+            ));
+        }
+
+        if _geometry_type != 3 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid geometry type in WKB".to_string(),
+            ));
+        }
+
+        let number_of_rings = cursor.read_u32::<OUT>()?;
+        metadata_cursor.write_u32::<OUT>(number_of_rings)?;
+
+        for _ in 0..number_of_rings {
+            let number_of_points_in_ring = cursor.read_u32::<OUT>()?;
+            metadata_cursor.write_u32::<OUT>(number_of_points_in_ring)?;
+
+            total_points += number_of_points_in_ring;
+
+            let mut buf = vec![0u8; (number_of_points_in_ring * 8 * 2) as usize];
+            cursor.read_exact(&mut buf)?;
+            _ = coordinates_cursor.write(&buf)?;
+        }
+    }
+
+    builder.write_u32::<OUT>(total_points)?;
+
+    _ = builder.write(coordinates_cursor.get_ref())?;
+    _ = builder.write(metadata_cursor.get_ref())?;
+
+    Ok(())
+}

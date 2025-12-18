@@ -19,5 +19,5 @@ pub mod deserialize;
 mod linestring;
 mod point;
 mod polygon;
+pub mod serialize;
 mod wkb;
-mod serialize;

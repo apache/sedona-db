@@ -22,6 +22,8 @@ use datafusion_common::error::Result;
 use std::io::{Cursor, Read, Write};
 use wkt::types::Dimension;
 
+const NAN_2X: [u8; 16] = [0, 0, 0, 0, 0, 0, 248, 127, 0, 0, 0, 0, 0, 0, 248, 127];
+
 fn get_byte_type_for_point(dimension: Dimension) -> u32 {
     match dimension {
         Dimension::XY => 1u32,
@@ -89,6 +91,54 @@ pub fn parse_multipoint<IN: ByteOrder, OUT: ByteOrder>(
 
     for _ in 0..number_of_points {
         parse_point::<OUT>(builder, cursor, dimension)?;
+    }
+
+    Ok(())
+}
+
+pub fn serialize_point<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> Result<()> {
+    let mut buf = [0u8; 16];
+    cursor.read_exact(&mut buf)?;
+    if buf == NAN_2X {
+        builder.write_u32::<OUT>(0)?; // no coordinates
+
+        return Ok(());
+    }
+
+    builder.write_u32::<OUT>(1)?; // numCoordinates
+    builder.write_all(&buf)?;
+
+    Ok(())
+}
+
+pub fn serialize_multipoint<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> Result<()> {
+    let number_of_points = cursor.read_u32::<OUT>()?;
+    builder.write_u32::<OUT>(number_of_points)?; // numPoints
+    for _ in 0..number_of_points {
+        let endianness_marker = cursor.read_u8()?;
+        let _geometry_type = cursor.read_u32::<OUT>()?;
+
+        if _geometry_type != 1 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid geometry type in WKB".to_string(),
+            ));
+        }
+
+        if endianness_marker != 1 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid byte order in WKB".to_string(),
+            ));
+        }
+
+        let mut buf = [0u8; 16];
+        cursor.read_exact(&mut buf)?;
+        builder.write_all(&buf)?;
     }
 
     Ok(())

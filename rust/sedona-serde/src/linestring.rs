@@ -96,3 +96,68 @@ pub fn parse_multilinestring<IN: ByteOrder, OUT: ByteOrder>(
 
     Ok(())
 }
+
+pub fn serialize_linestring<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> datafusion_common::Result<()> {
+    let number_of_points = cursor.read_u32::<OUT>()?;
+    builder.write_u32::<OUT>(number_of_points)?;
+    let mut buf = [0u8; 8];
+
+    for _ in 0..number_of_points * 2 {
+        cursor.read_exact(&mut buf)?;
+        _ = builder.write(&buf)?;
+    }
+    Ok(())
+}
+
+pub fn serialize_multilinestring<OUT: ByteOrder>(
+    builder: &mut BinaryBuilder,
+    cursor: &mut Cursor<&[u8]>,
+) -> datafusion_common::Result<()> {
+    let number_of_linestrings = cursor.read_u32::<OUT>()?;
+
+    let metadata_vector = Vec::new();
+    let mut metadata_cursor = Cursor::new(metadata_vector);
+
+    let coordinates_vector = Vec::new();
+    let mut coordinates_cursor = Cursor::new(coordinates_vector);
+
+    let mut total_number_of_points = 0;
+
+    metadata_cursor.write_u32::<OUT>(number_of_linestrings)?;
+
+    for _ in 0..number_of_linestrings {
+        let byte_order = cursor.read_u8()?;
+        let _geometry_type = cursor.read_u32::<OUT>()?;
+        if _geometry_type != 2 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid geometry type in WKB".to_string(),
+            ));
+        }
+
+        if byte_order != 1 {
+            return Err(datafusion_common::DataFusionError::Internal(
+                "Invalid byte order in WKB".to_string(),
+            ));
+        }
+
+        let _number_of_points = cursor.read_u32::<OUT>()?;
+        total_number_of_points += _number_of_points;
+        // number_of_points+= _number_of_points;
+        metadata_cursor.write_u32::<OUT>(_number_of_points)?;
+
+        for _ in 0.._number_of_points * 2 {
+            let mut buf = [0u8; 8];
+            cursor.read_exact(&mut buf)?;
+            _ = coordinates_cursor.write(&buf)?;
+        }
+    }
+
+    builder.write_u32::<OUT>(total_number_of_points)?;
+
+    _ = builder.write(coordinates_cursor.get_ref())?;
+    _ = builder.write(metadata_cursor.get_ref())?;
+    Ok(())
+}
