@@ -66,7 +66,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "rust-${{ matrix.name }}-v4"
+          prefix-key: "rust-${{ matrix.name }}-v5"
 
       - name: Install dependencies
         shell: bash
