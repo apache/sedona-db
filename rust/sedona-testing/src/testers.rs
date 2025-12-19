@@ -119,6 +119,7 @@ impl AggregateUdfTester {
             name: "",
             is_distinct: false,
             exprs: &exprs,
+            expr_fields: &[],
         };
 
         self.udf.accumulator(accumulator_args)

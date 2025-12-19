@@ -22,6 +22,7 @@ use std::borrow::Cow;
 
 use crate::highlighter::{NoSyntaxHighlighter, SyntaxHighlighter};
 
+use datafusion::config::Dialect;
 use datafusion::sql::parser::{DFParser, Statement};
 use datafusion::sql::sqlparser::dialect::dialect_from_str;
 
@@ -34,33 +35,33 @@ use rustyline::{Context, Helper, Result};
 
 pub struct CliHelper {
     completer: FilenameCompleter,
-    dialect: String,
+    dialect: datafusion::config::Dialect,
     highlighter: Box<dyn Highlighter>,
 }
 
 impl CliHelper {
-    pub fn new(dialect: &str, color: bool) -> Self {
+    pub fn new(dialect: Dialect, color: bool) -> Self {
         let highlighter: Box<dyn Highlighter> = if !color {
             Box::new(NoSyntaxHighlighter {})
         } else {
-            Box::new(SyntaxHighlighter::new(dialect))
+            Box::new(SyntaxHighlighter::new(dialect.as_ref()))
         };
         Self {
             completer: FilenameCompleter::new(),
-            dialect: dialect.into(),
+            dialect,
             highlighter,
         }
     }
 
-    pub fn set_dialect(&mut self, dialect: &str) {
-        if dialect != self.dialect {
-            self.dialect = dialect.to_string();
+    pub fn set_dialect(&mut self, dialect: &datafusion::config::Dialect) {
+        if dialect != &self.dialect {
+            self.dialect = *dialect;
         }
     }
 
     fn validate_input(&self, input: &str) -> Result<ValidationResult> {
         if let Some(sql) = input.strip_suffix(';') {
-            let dialect = match dialect_from_str(&self.dialect) {
+            let dialect = match dialect_from_str(self.dialect) {
                 Some(dialect) => dialect,
                 None => {
                     return Ok(ValidationResult::Invalid(Some(format!(
@@ -97,7 +98,7 @@ impl CliHelper {
 
 impl Default for CliHelper {
     fn default() -> Self {
-        Self::new("generic", false)
+        Self::new(Dialect::Generic, false)
     }
 }
 
@@ -286,7 +287,7 @@ mod tests {
         );
 
         // valid in postgresql dialect
-        validator.set_dialect("postgresql");
+        validator.set_dialect(&Dialect::PostgreSQL);
         let result = readline_direct(Cursor::new(r"select 1 # 2;".as_bytes()), &validator)?;
         assert!(matches!(result, ValidationResult::Valid(None)));
 

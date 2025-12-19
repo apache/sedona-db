@@ -70,11 +70,11 @@ fn random_bbox(extent: &BoundingBox, rng: &mut StdRng, max_span: f64) -> Boundin
     let (min_x, max_x) = (extent.x().lo(), extent.x().hi());
     let (min_y, max_y) = (extent.y().lo(), extent.y().hi());
 
-    let span_x = rng.gen_range(0.01..max_span).min(max_x - min_x);
-    let span_y = rng.gen_range(0.01..max_span).min(max_y - min_y);
+    let span_x = rng.random_range(0.01..max_span).min(max_x - min_x);
+    let span_y = rng.random_range(0.01..max_span).min(max_y - min_y);
 
-    let start_x = rng.gen_range(min_x..=max_x - span_x);
-    let start_y = rng.gen_range(min_y..=max_y - span_y);
+    let start_x = rng.random_range(min_x..=max_x - span_x);
+    let start_y = rng.random_range(min_y..=max_y - span_y);
 
     BoundingBox::xy((start_x, start_x + span_x), (start_y, start_y + span_y))
 }
