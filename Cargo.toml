@@ -38,6 +38,7 @@ members = [
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
+    "rust/sedona-spatial-join-gpu",
     "rust/sedona-testing",
     "rust/sedona",
     "sedona-cli",
@@ -127,6 +128,14 @@ tempfile = { version = "3"}
 thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }
+
+[patch.crates-io]
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
 
 # Workspace path dependencies for internal crates
 sedona = { version = "0.3.0", path = "rust/sedona" }

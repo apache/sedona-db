@@ -83,7 +83,22 @@ impl SedonaContext {
         // and perhaps for all of these initializing them optionally from environment
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
-        let session_config = add_sedona_option_extension(session_config);
+        let mut session_config = add_sedona_option_extension(session_config);
+
+        // Auto-enable GPU when built with gpu feature
+        // The optimizer will check actual GPU availability at runtime
+        #[cfg(feature = "gpu")]
+        {
+            use sedona_common::option::SedonaOptions;
+            if let Some(sedona_opts) = session_config
+                .options_mut()
+                .extensions
+                .get_mut::<SedonaOptions>()
+            {
+                sedona_opts.spatial_join.gpu.enable = true;
+            }
+        }
+
         let rt_builder = RuntimeEnvBuilder::new();
         let runtime_env = rt_builder.build_arc()?;
 
