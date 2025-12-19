@@ -151,7 +151,7 @@ impl SedonaScalarKernel for StSridItemCrs {
             ColumnarValue::Array(array) => as_struct_array(array)?,
             ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => struct_array.as_ref(),
             ColumnarValue::Scalar(ScalarValue::Null) => {
-                return Ok(ColumnarValue::Scalar(ScalarValue::Utf8View(None)));
+                return Ok(ColumnarValue::Scalar(ScalarValue::UInt32(None)));
             }
             _ => return sedona_internal_err!("Unexpected input to ST_SRID"),
         };
