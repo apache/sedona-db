@@ -4920,6 +4920,7 @@ dependencies = [
  "sedona-expr",
  "sedona-geometry",
  "sedona-schema",
+ "sedona-serde",
  "sedona-testing",
  "serde_json",
  "tokio",
@@ -5193,6 +5194,18 @@ dependencies = [
  "lru",
  "sedona-common",
  "serde_json",
+]
+
+[[package]]
+name = "sedona-serde"
+version = "0.3.0"
+dependencies = [
+ "arrow-array",
+ "byteorder",
+ "datafusion-common",
+ "sedona-schema",
+ "wkb",
+ "wkt 0.14.0",
 ]
 
 [[package]]
