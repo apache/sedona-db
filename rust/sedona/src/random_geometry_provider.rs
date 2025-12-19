@@ -314,7 +314,7 @@ fn builder_with_partition_sizes(
     target_rows: usize,
 ) -> RandomPartitionedDataBuilder {
     let rows_for_one_batch_per_partition = batch_size * partitions;
-    let batches_per_partition = if target_rows % rows_for_one_batch_per_partition == 0 {
+    let batches_per_partition = if target_rows.is_multiple_of(rows_for_one_batch_per_partition) {
         target_rows / rows_for_one_batch_per_partition
     } else {
         target_rows / rows_for_one_batch_per_partition + 1
