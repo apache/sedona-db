@@ -70,14 +70,6 @@ rust-version = "1.86"
 keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
 categories = ["science::geo", "database"]
 
-[workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }
-
-[patch.crates-io]
-# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
-adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
-adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
-
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
