@@ -179,7 +179,7 @@ jobs:
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build
-          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-2
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
 
       # Install vcpkg dependencies from vcpkg.json manifest
       - name: Install vcpkg dependencies
@@ -198,7 +198,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "rust-gpu-v3"
+          prefix-key: "rust-gpu-v4"
 
       # Build WITH GPU feature to compile CUDA code
       # CUDA compilation (nvcc) works without GPU hardware
