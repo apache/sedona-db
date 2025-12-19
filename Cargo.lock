@@ -52,9 +52,8 @@ dependencies = [
 
 [[package]]
 name = "adbc_core"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a38cdcc3e43dc645038c2b6339dd98610c48ae593cc67839452e6670fa09f27"
+version = "0.22.0"
+source = "git+https://github.com/apache/arrow-adbc.git#7c9e5784ddfac43f61583eebf9f0540f5b6df435"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -62,9 +61,8 @@ dependencies = [
 
 [[package]]
 name = "adbc_ffi"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d36274376fdc4849cf47a78f3baeef4ae1654ef703dc3148d91adde3336c11"
+version = "0.22.0"
+source = "git+https://github.com/apache/arrow-adbc.git#7c9e5784ddfac43f61583eebf9f0540f5b6df435"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -546,7 +544,7 @@ version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9b39be18770d11421cdb1b9947a45dd3f37e93092cbf377614828a319d5fee8"
 dependencies = [
- "hermit-abi",
+ "hermit-abi 0.1.19",
  "libc",
  "winapi",
 ]
@@ -1360,6 +1358,34 @@ dependencies = [
 
 [[package]]
 name = "criterion"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "criterion-plot 0.5.0",
+ "futures",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "criterion"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d883447757bb0ee46f233e9dc22eb84d93a9508c9b868687b274fc431d886bf"
@@ -1369,7 +1395,7 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "criterion-plot",
+ "criterion-plot 0.8.1",
  "itertools 0.13.0",
  "num-traits",
  "oorandom",
@@ -1381,6 +1407,16 @@ dependencies = [
  "serde_json",
  "tinytemplate",
  "walkdir",
+]
+
+[[package]]
+name = "criterion-plot"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
+dependencies = [
+ "cast",
+ "itertools 0.10.5",
 ]
 
 [[package]]
@@ -2864,6 +2900,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermit-abi"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3243,10 +3285,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-terminal"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+dependencies = [
+ "hermit-abi 0.5.2",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -4907,7 +4969,7 @@ dependencies = [
  "arrow-array",
  "arrow-json",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion",
  "datafusion-common",
  "datafusion-expr",
@@ -4930,7 +4992,7 @@ version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "geo",
@@ -4952,7 +5014,7 @@ name = "sedona-geo-generic-alg"
 version = "0.3.0"
 dependencies = [
  "approx",
- "criterion",
+ "criterion 0.8.1",
  "float_next_after",
  "geo",
  "geo-traits",
@@ -4991,7 +5053,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "cc",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "errno",
@@ -5065,7 +5127,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "byteorder",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "geo-traits",
@@ -5107,7 +5169,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "cc",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "geo-traits",
@@ -5144,7 +5206,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "rstest",
@@ -5163,7 +5225,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "cmake",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "errno",
@@ -5184,7 +5246,7 @@ version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "lru",
  "sedona-common",
@@ -5198,8 +5260,9 @@ dependencies = [
  "arrow",
  "arrow-array",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion",
+ "datafusion-catalog",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-execution",
@@ -5214,6 +5277,7 @@ dependencies = [
  "geo-traits",
  "geo-types",
  "geos",
+ "log",
  "once_cell",
  "parking_lot",
  "rand 0.8.5",
@@ -5226,12 +5290,45 @@ dependencies = [
  "sedona-geo-traits-ext",
  "sedona-geometry",
  "sedona-geos",
+ "sedona-libgpuspatial",
  "sedona-schema",
+ "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join-gpu"
+version = "0.3.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "criterion 0.5.1",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "env_logger 0.11.8",
+ "futures",
+ "log",
+ "object_store",
+ "parking_lot",
+ "parquet",
+ "rand 0.8.5",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-geos",
+ "sedona-libgpuspatial",
+ "sedona-schema",
+ "sedona-testing",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]
@@ -5241,7 +5338,7 @@ dependencies = [
  "arrow-array",
  "arrow-cast",
  "arrow-schema",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "datafusion-physical-expr",
@@ -5268,7 +5365,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "cc",
- "criterion",
+ "criterion 0.8.1",
  "datafusion-common",
  "datafusion-expr",
  "geo",

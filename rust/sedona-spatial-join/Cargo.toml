@@ -71,7 +71,7 @@ fastrand = { workspace = true }
 log = "0.4"
 
 # GPU spatial join (optional)
-sedona-spatial-join-gpu = { path = "../sedona-spatial-join-gpu", optional = true }
+sedona-spatial-join-gpu = { workspace = true, optional = true }
 sedona-libgpuspatial = { path = "../../c/sedona-libgpuspatial", optional = true }
 
 [dev-dependencies]

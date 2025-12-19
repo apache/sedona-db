@@ -61,6 +61,14 @@ rust-version = "1.86"
 keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
 categories = ["science::geo", "database"]
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }
+
+[patch.crates-io]
+# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
+adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
+adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
+
 [workspace.dependencies]
 approx = "0.5"
 abi_stable = "0.11.3"
@@ -129,13 +137,6 @@ thiserror = { version = "2" }
 tokio = { version = "1.44" }
 url = "2.5.4"
 
-[workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(gpu_available)'] }
-
-[patch.crates-io]
-# Use main branch of arrow-adbc which supports Arrow 56.x (remove when 0.21.0 is released)
-adbc_core = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_core" }
-adbc_ffi = { git = "https://github.com/apache/arrow-adbc.git", package = "adbc_ffi" }
 
 # Workspace path dependencies for internal crates
 sedona = { version = "0.3.0", path = "rust/sedona" }
@@ -153,6 +154,7 @@ sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
 sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
+sedona-spatial-join-gpu = { version = "0.3.0", path = "rust/sedona-spatial-join-gpu" }
 sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
