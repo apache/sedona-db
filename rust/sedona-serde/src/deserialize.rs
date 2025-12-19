@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::linestring::{parse_linestring, parse_multilinestring};
-use crate::point::{parse_multipoint, parse_point, write_empty_point};
-use crate::polygon::{parse_multipolygon, parse_polygon, write_empty_polygon};
+use crate::linestring::{deserialize_linestring, deserialize_multilinestring};
+use crate::point::{deserialize_multipoint, deserialize_point, deserialize_empty_point};
+use crate::polygon::{deserialize_multipolygon, deserialize_polygon, deserialize_empty_polygon};
 use crate::wkb::write_wkb_byte_order_marker;
 use arrow_array::builder::BinaryBuilder;
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -36,10 +36,10 @@ pub fn deserialize(builder: &mut BinaryBuilder, bytes: &[u8]) -> datafusion_comm
 
     let mut reader = Cursor::new(bytes);
 
-    parse_geometry::<LittleEndian, LittleEndian>(builder, &mut reader, bytes)
+    deserialize_geometry::<LittleEndian, LittleEndian>(builder, &mut reader, bytes)
 }
 
-pub fn parse_geometry<IN: ByteOrder, OUT: ByteOrder>(
+pub fn deserialize_geometry<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     bytes: &[u8],
@@ -50,6 +50,12 @@ pub fn parse_geometry<IN: ByteOrder, OUT: ByteOrder>(
 
     let dimension = get_dimension((preamble_byte) >> 1);
 
+    if dimension != Dimension::XY {
+        return Err(DataFusionError::Execution(
+            "Only 2D geometries (XY) are supported".to_string(),
+        ));
+    }
+
     let _has_srid = (preamble_byte & 0x01) != 0;
 
     cursor.set_position(cursor.position() + 3); // Skip 3 bytes
@@ -58,21 +64,21 @@ pub fn parse_geometry<IN: ByteOrder, OUT: ByteOrder>(
         1 => {
             let number_of_coordinates = cursor.read_u32::<IN>()?;
             if number_of_coordinates == 0 {
-                write_empty_point::<OUT>(builder, dimension)?;
+                deserialize_empty_point::<OUT>(builder, dimension)?;
                 return Ok(());
             }
 
-            parse_point::<OUT>(builder, cursor, dimension)?;
+            deserialize_point::<OUT>(builder, cursor, dimension)?;
         }
         2 => {
-            parse_linestring::<IN, OUT>(builder, cursor, dimension)?;
+            deserialize_linestring::<IN, OUT>(builder, cursor, dimension)?;
         }
         3 => {
             let mut meta_data_reader = Cursor::new(bytes);
 
             let number_of_points = cursor.read_u32::<IN>()?;
             if number_of_points == 0 {
-                write_empty_polygon::<OUT>(builder, dimension)?;
+                deserialize_empty_polygon::<OUT>(builder, dimension)?;
 
                 return Ok(());
             }
@@ -80,20 +86,20 @@ pub fn parse_geometry<IN: ByteOrder, OUT: ByteOrder>(
             let metadata_start_position = number_of_points * 8 * 2;
             meta_data_reader.set_position(cursor.position() + (metadata_start_position) as u64);
 
-            parse_polygon::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
+            deserialize_polygon::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
             cursor.set_position(meta_data_reader.position());
         }
         4 => {
-            parse_multipoint::<IN, OUT>(builder, cursor, dimension)?;
+            deserialize_multipoint::<IN, OUT>(builder, cursor, dimension)?;
         }
         5 => {
             let mut meta_data_reader = Cursor::new(bytes);
-            parse_multilinestring::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
+            deserialize_multilinestring::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
             cursor.set_position(meta_data_reader.position());
         }
         6 => {
             let mut meta_data_reader = Cursor::new(bytes);
-            parse_multipolygon::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
+            deserialize_multipolygon::<IN, OUT>(builder, cursor, &mut meta_data_reader, dimension)?;
             cursor.set_position(meta_data_reader.position());
         }
         7 => {
@@ -104,7 +110,7 @@ pub fn parse_geometry<IN: ByteOrder, OUT: ByteOrder>(
             builder.write_u32::<OUT>(number_of_geometries)?;
 
             for _i in 0..number_of_geometries {
-                parse_geometry::<IN, OUT>(builder, cursor, bytes)?;
+                deserialize_geometry::<IN, OUT>(builder, cursor, bytes)?;
             }
         }
         _ => {

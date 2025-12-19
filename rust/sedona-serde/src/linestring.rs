@@ -30,7 +30,7 @@ fn get_linestring_marker(dimension: Dimension) -> u32 {
     }
 }
 
-pub fn parse_linestring<IN: ByteOrder, OUT: ByteOrder>(
+pub fn deserialize_linestring<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     dimension: Dimension,
@@ -53,7 +53,7 @@ pub fn parse_linestring<IN: ByteOrder, OUT: ByteOrder>(
     Ok(())
 }
 
-pub fn parse_multilinestring<IN: ByteOrder, OUT: ByteOrder>(
+pub fn deserialize_multilinestring<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     metadata_reader: &mut Cursor<&[u8]>,
@@ -145,7 +145,6 @@ pub fn serialize_multilinestring<OUT: ByteOrder>(
 
         let _number_of_points = cursor.read_u32::<OUT>()?;
         total_number_of_points += _number_of_points;
-        // number_of_points+= _number_of_points;
         metadata_cursor.write_u32::<OUT>(_number_of_points)?;
 
         for _ in 0.._number_of_points * 2 {

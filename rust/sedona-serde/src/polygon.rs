@@ -30,7 +30,7 @@ pub(crate) fn get_polygon_marker(dimension: Dimension) -> u32 {
     }
 }
 
-pub fn parse_polygon<IN: ByteOrder, OUT: ByteOrder>(
+pub fn deserialize_polygon<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     metadata_reader: &mut Cursor<&[u8]>,
@@ -57,7 +57,7 @@ pub fn parse_polygon<IN: ByteOrder, OUT: ByteOrder>(
     Ok(())
 }
 
-pub(crate) fn parse_multipolygon<IN: ByteOrder, OUT: ByteOrder>(
+pub(crate) fn deserialize_multipolygon<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     metadata_reader: &mut Cursor<&[u8]>,
@@ -80,13 +80,13 @@ pub(crate) fn parse_multipolygon<IN: ByteOrder, OUT: ByteOrder>(
     builder.write_u32::<OUT>(number_of_geometries)?;
 
     for _ in 0..number_of_geometries {
-        parse_polygon::<IN, OUT>(builder, cursor, metadata_reader, dimension)?;
+        deserialize_polygon::<IN, OUT>(builder, cursor, metadata_reader, dimension)?;
     }
 
     Ok(())
 }
 
-pub(crate) fn write_empty_polygon<OUT: ByteOrder>(
+pub(crate) fn deserialize_empty_polygon<OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     dimension: Dimension,
 ) -> datafusion_common::Result<()> {

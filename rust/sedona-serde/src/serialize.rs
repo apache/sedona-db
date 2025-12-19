@@ -59,12 +59,12 @@ pub fn write_geometry<IN: ByteOrder, OUT: ByteOrder>(
     }
 
     match wkb_byte {
-        1 => return serialize_point::<LittleEndian>(builder, cursor),
-        2 => return serialize_linestring::<LittleEndian>(builder, cursor),
-        3 => return serialize_polygon::<LittleEndian>(builder, cursor),
-        4 => return serialize_multipoint::<LittleEndian>(builder, cursor),
-        5 => return serialize_multilinestring::<LittleEndian>(builder, cursor),
-        6 => return serialize_multipolygon::<LittleEndian>(builder, cursor),
+        1 => return serialize_point::<OUT>(builder, cursor),
+        2 => return serialize_linestring::<OUT>(builder, cursor),
+        3 => return serialize_polygon::<OUT>(builder, cursor),
+        4 => return serialize_multipoint::<OUT>(builder, cursor),
+        5 => return serialize_multilinestring::<OUT>(builder, cursor),
+        6 => return serialize_multipolygon::<OUT>(builder, cursor),
         7 => {
             let number_of_geometries = cursor.read_u32::<IN>()?;
             builder.write_u32::<OUT>(number_of_geometries)?;

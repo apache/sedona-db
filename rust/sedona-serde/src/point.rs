@@ -33,7 +33,7 @@ fn get_byte_type_for_point(dimension: Dimension) -> u32 {
     }
 }
 
-pub fn write_empty_point<OUT: ByteOrder>(
+pub fn deserialize_empty_point<OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     dimension: Dimension,
 ) -> Result<()> {
@@ -46,7 +46,7 @@ pub fn write_empty_point<OUT: ByteOrder>(
     Ok(())
 }
 
-pub fn parse_point<OUT: ByteOrder>(
+pub fn deserialize_point<OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     dimension: Dimension,
@@ -65,7 +65,7 @@ pub fn parse_point<OUT: ByteOrder>(
     Ok(())
 }
 
-pub fn parse_multipoint<IN: ByteOrder, OUT: ByteOrder>(
+pub fn deserialize_multipoint<IN: ByteOrder, OUT: ByteOrder>(
     builder: &mut BinaryBuilder,
     cursor: &mut Cursor<&[u8]>,
     dimension: Dimension,
@@ -90,7 +90,7 @@ pub fn parse_multipoint<IN: ByteOrder, OUT: ByteOrder>(
     builder.write_u32::<OUT>(number_of_points)?;
 
     for _ in 0..number_of_points {
-        parse_point::<OUT>(builder, cursor, dimension)?;
+        deserialize_point::<OUT>(builder, cursor, dimension)?;
     }
 
     Ok(())

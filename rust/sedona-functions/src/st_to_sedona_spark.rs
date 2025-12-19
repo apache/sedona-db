@@ -17,7 +17,7 @@ impl SedonaScalarKernel for STGeomToSedonaSpark {
     fn return_type(&self, args: &[SedonaType]) -> datafusion_common::Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry()],
-            SedonaType::Arrow(DataType::BinaryView),
+            SedonaType::Arrow(DataType::Binary),
         );
 
         matcher.match_args(args)
