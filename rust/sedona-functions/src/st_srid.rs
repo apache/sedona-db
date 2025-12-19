@@ -14,24 +14,26 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use crate::executor::WkbExecutor;
-use arrow_array::builder::StringViewBuilder;
-use arrow_array::builder::UInt32Builder;
-use arrow_array::Array;
+use arrow_array::{
+    builder::{StringViewBuilder, UInt32Builder},
+    Array,
+};
 use arrow_schema::DataType;
-use datafusion_common::cast::as_string_view_array;
-use datafusion_common::cast::as_struct_array;
-use datafusion_common::ScalarValue;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{
+    cast::{as_string_view_array, as_struct_array},
+    exec_err, DataFusionError, Result, ScalarValue,
+};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::crs::deserialize_crs;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
-use std::iter::zip;
-use std::{sync::Arc, vec};
+use std::{collections::HashMap, iter::zip, sync::Arc};
 
 /// ST_Srid() scalar UDF implementation
 ///
@@ -39,7 +41,7 @@ use std::{sync::Arc, vec};
 pub fn st_srid_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_srid",
-        vec![Arc::new(StSrid {})],
+        vec![Arc::new(StSridItemCrs {}), Arc::new(StSrid {})],
         Volatility::Immutable,
         Some(st_srid_doc()),
     )
@@ -122,6 +124,84 @@ impl SedonaScalarKernel for StSrid {
 
         executor.finish(Arc::new(builder.finish()))
     }
+}
+
+#[derive(Debug)]
+struct StSridItemCrs {}
+
+impl SedonaScalarKernel for StSridItemCrs {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_item_crs()],
+            SedonaType::Arrow(DataType::UInt32),
+        );
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let mut builder = UInt32Builder::with_capacity(executor.num_iterations());
+
+        let item_crs_struct_array = match &args[0] {
+            ColumnarValue::Array(array) => as_struct_array(array)?,
+            ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => struct_array.as_ref(),
+            ColumnarValue::Scalar(ScalarValue::Null) => {
+                return Ok(ColumnarValue::Scalar(ScalarValue::Utf8View(None)));
+            }
+            _ => return sedona_internal_err!("Unexpected input to ST_SRID"),
+        };
+
+        let item_array = item_crs_struct_array.column(0);
+        let crs_string_array = as_string_view_array(item_crs_struct_array.column(1))?;
+        let mut batch_srids = HashMap::<String, u32>::new();
+
+        if let Some(item_nulls) = item_array.nulls() {
+            for (is_valid, maybe_crs) in zip(item_nulls, crs_string_array) {
+                if !is_valid {
+                    builder.append_null();
+                    continue;
+                }
+
+                append_srid(maybe_crs, &mut batch_srids, &mut builder)?;
+            }
+        } else {
+            for maybe_crs in crs_string_array {
+                append_srid(maybe_crs, &mut batch_srids, &mut builder)?;
+            }
+        }
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+fn append_srid(
+    maybe_crs: Option<&str>,
+    batch_srids: &mut HashMap<String, u32>,
+    builder: &mut UInt32Builder,
+) -> Result<()> {
+    if let Some(crs_str) = maybe_crs {
+        if let Some(srid) = batch_srids.get(crs_str) {
+            builder.append_value(*srid);
+        } else if let Some(crs) = deserialize_crs(crs_str)? {
+            if let Some(srid) = crs.srid()? {
+                batch_srids.insert(crs_str.to_string(), srid);
+                builder.append_value(srid);
+            } else {
+                return exec_err!("Can't extract SRID from item-level CRS '{crs_str}'");
+            }
+        } else {
+            builder.append_value(0);
+        }
+    } else {
+        builder.append_value(0);
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -300,6 +380,56 @@ mod test {
         let result = tester.invoke_scalar("POINT (0 1)");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("CRS has no SRID"));
+    }
+
+    #[test]
+    fn udf_item_srid() {
+        let tester = ScalarUdfTester::new(
+            st_srid_udf().into(),
+            vec![SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()],
+        );
+        tester.assert_return_type(DataType::UInt32);
+
+        let result = tester
+            .invoke_scalar(create_scalar_item_crs(
+                Some("POINT (0 1)"),
+                None,
+                &WKB_GEOMETRY,
+            ))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 0);
+
+        let result = tester
+            .invoke_scalar(create_scalar_item_crs(
+                Some("POINT (0 1)"),
+                Some("EPSG:3857"),
+                &WKB_GEOMETRY,
+            ))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 3857);
+
+        let item_crs_array = create_array_item_crs(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("POINT (4 5)"),
+                Some("POINT (6 7)"),
+                None,
+            ],
+            [
+                Some("OGC:CRS84"),
+                Some("EPSG:3857"),
+                Some("EPSG:3857"),
+                None,
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let expected_srid =
+            create_array!(UInt32, [Some(4326), Some(3857), Some(3857), Some(0), None]) as ArrayRef;
+
+        let result = tester.invoke_array(item_crs_array).unwrap();
+        assert_eq!(&result, &expected_srid);
     }
 
     #[test]
