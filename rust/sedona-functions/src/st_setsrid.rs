@@ -403,6 +403,15 @@ fn crs_input_nulls(crs_value: &ColumnarValue) -> Option<&NullBuffer> {
     }
 }
 
+/// Given an SRID or CRS array, compute the final crs array to put in the item_crs struct
+///
+/// For SRID arrays, this is `EPSG:<srid>` except for the SRID of 0 (which maps
+/// to a null value in the CRS array) and 4326 (which maps to a value of OGC:CRS84
+/// in the CRS array).
+///
+/// For CRS arrays of strings, this function attempts to abbreviate any inputs. For example,
+/// PROJJSON input will attempt to be abbreviated to authority:code if possible (or left
+/// as is otherwise). The special value "0" maps to a null value in the CRS array.
 fn normalize_crs_array(
     crs_value: &ColumnarValue,
     maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
@@ -416,6 +425,7 @@ fn normalize_crs_array(
         | DataType::UInt16
         | DataType::UInt32
         | DataType::UInt64 => {
+            // Local cache to avoid re-validating inputs
             let mut known_valid = HashSet::new();
 
             let int_value = crs_value.cast_to(&DataType::Int64, None)?;
@@ -447,7 +457,7 @@ fn normalize_crs_array(
             Ok(Arc::new(utf8_view_array))
         }
         _ => {
-            let mut known_valid = HashMap::<String, String>::new();
+            let mut known_abbreviated = HashMap::<String, String>::new();
 
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
@@ -460,7 +470,7 @@ fn normalize_crs_array(
                             return Ok(None);
                         }
 
-                        if let Some(abbreviated_crs) = known_valid.get(crs_str) {
+                        if let Some(abbreviated_crs) = known_abbreviated.get(crs_str) {
                             Ok(Some(abbreviated_crs.clone()))
                         } else if let Some(crs) = deserialize_crs(crs_str)? {
                             let abbreviated_crs =
@@ -470,7 +480,7 @@ fn normalize_crs_array(
                                     crs_str.to_string()
                                 };
 
-                            known_valid.insert(crs.to_string(), abbreviated_crs.clone());
+                            known_abbreviated.insert(crs.to_string(), abbreviated_crs.clone());
                             Ok(Some(abbreviated_crs))
                         } else {
                             Ok(None)

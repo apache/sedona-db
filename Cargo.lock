@@ -5259,7 +5259,6 @@ dependencies = [
  "sedona-geometry",
  "sedona-raster",
  "sedona-schema",
- "serde_json",
  "wkb",
  "wkt 0.14.0",
 ]

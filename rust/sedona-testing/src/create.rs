@@ -54,7 +54,8 @@ pub fn create_array(wkt_values: &[Option<&str>], data_type: &SedonaType) -> Arra
 
 /// Create the storage [`ArrayRef`] from a sequence of WKT literals
 ///
-/// Panics on invalid WKT or unsupported data type.
+/// Panics on invalid WKT or unsupported data type. Supports Item CRS
+/// types; however, sets the CRS to Null
 pub fn create_array_storage(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ArrayRef {
     match data_type {
         SedonaType::Wkb(_, _) => Arc::new(make_wkb_array::<BinaryArray>(wkt_values)),

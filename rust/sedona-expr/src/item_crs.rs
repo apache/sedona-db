@@ -30,6 +30,28 @@ use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMa
 
 use crate::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 
+/// Wrap a [SedonaScalarKernel] to provide Item CRS type support
+///
+/// Most kernels that operate on geometry or geography in some way
+/// can also support Item CRS inputs:
+///
+/// - Functions that return a non-spatial type whose value does not
+///   depend on the input CRS only need to operate on the `item` portion
+///   of any item_crs input (e.g., ST_Area()).
+/// - Functions that accept two or more spatial arguments must have
+///   compatible CRSes.
+/// - Functions that return a geometry or geography must also return
+///   an item_crs type where the output CRSes are propagated from the
+///   input.
+///
+/// This kernel provides an automatic wrapper enforcing these rules.
+/// It is appropriate for most functions except:
+///
+/// - Functions whose return value depends on the CRS
+/// - Functions whose return value depends on the value of a scalar
+///   argument
+/// - Functions whose return CRS is not strictly propagated from the
+///   CRSes of the arguments.
 #[derive(Debug)]
 pub struct ItemCrsKernel {
     inner: ScalarKernelRef,
@@ -65,9 +87,17 @@ impl SedonaScalarKernel for ItemCrsKernel {
     }
 }
 
-/// Propagate item crs types where appropriate
+/// Calculate a return type based on the underlying kernel
 ///
-/// Most kernels that operate on
+/// This function extracts the item portion of any item_crs input and
+/// passes the result to the underlying kernel's return type implementation.
+/// If the underlying kernel is going to return a geometry or geography type,
+/// we wrap it in an item_crs type.
+///
+/// This function does not pass on input scalars, because those types of
+/// functions as used in SedonaDB typically assign a type-level CRS.
+/// Functions that use scalar inputs to calculate an output type need
+/// to implement an item_crs implementation themselves.
 fn return_type_handle_item_crs(
     kernel: &dyn SedonaScalarKernel,
     arg_types: &[SedonaType],
@@ -112,7 +142,14 @@ fn return_type_handle_item_crs(
     }
 }
 
-pub fn invoke_handle_item_crs(
+/// Execute an underlying kernel
+///
+/// This function handles invoking the underlying kernel, which operates
+/// only on the `item` portion of the `item_crs` type. Before executing,
+/// this function handles ensuring that all CRSes are compatible, and,
+/// if necessary, wrap a geometry or geography output in an item_crs
+/// type.
+fn invoke_handle_item_crs(
     kernel: &dyn SedonaScalarKernel,
     arg_types: &[SedonaType],
     args: &[ColumnarValue],
@@ -170,6 +207,9 @@ pub fn invoke_handle_item_crs(
 }
 
 /// Create a new item_crs struct [ColumnarValue]
+///
+/// Optionally provide extra nulls (e.g., to satisfy a scalar function contract
+/// where null inputs -> null outputs).
 pub fn make_item_crs(
     item_type: &SedonaType,
     item_result: ColumnarValue,
@@ -204,6 +244,8 @@ pub fn make_item_crs(
     }
 }
 
+/// Given an input type, separate it into an item and crs type (if the input
+/// is an item_crs type). Otherwise, just return the item type as is.
 fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Option<SedonaType>)> {
     if let SedonaType::Arrow(DataType::Struct(fields)) = sedona_type {
         let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
@@ -219,6 +261,10 @@ fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Opti
     }
 }
 
+/// Given an input type, separate it into an item and crs type (if the input
+/// is an item_crs type). Otherwise, just return the item type as is. This
+/// version strips the CRS, which we need to do here before passing it to the
+/// underlying kernel (which expects all input CRSes to match).
 fn parse_item_crs_arg_type_strip_crs(
     sedona_type: &SedonaType,
 ) -> Result<(SedonaType, Option<SedonaType>)> {
@@ -236,6 +282,8 @@ fn parse_item_crs_arg_type_strip_crs(
     }
 }
 
+/// Separate an argument into the item and its crs (if applicable). This
+/// operates on the result of parse_item_crs_arg_type().
 fn parse_item_crs_arg(
     item_type: &SedonaType,
     crs_type: &Option<SedonaType>,
@@ -286,6 +334,7 @@ fn parse_item_crs_arg(
     }
 }
 
+/// Ensures values representing CRSes all represent equivalent CRS values
 fn ensure_crs_args_equal<'a>(crs_args: &[&'a ColumnarValue]) -> Result<&'a ColumnarValue> {
     match crs_args.len() {
         0 => sedona_internal_err!("Zero CRS arguments as input to item_crs"),
@@ -305,6 +354,8 @@ fn ensure_crs_args_equal<'a>(crs_args: &[&'a ColumnarValue]) -> Result<&'a Colum
     }
 }
 
+// Checks two string view arrays for equality when each represents a string representation
+// of a CRS
 fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()> {
     for (lhs_item, rhs_item) in zip(as_string_view_array(lhs)?, as_string_view_array(rhs)?) {
         if lhs_item == rhs_item {
@@ -312,6 +363,7 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
             continue;
         }
 
+        // Check the deserialized CRS values for equality
         if let (Some(lhs_item_str), Some(rhs_item_str)) = (lhs_item, rhs_item) {
             let lhs_crs = deserialize_crs(lhs_item_str)?;
             let rhs_crs = deserialize_crs(rhs_item_str)?;
