@@ -112,7 +112,7 @@ def test_item_crs_sedonadb():
 
     eng.assert_query_result(
         "SELECT ST_SRID(item_crs) FROM df_item_crs",
-        [(4326,), (4326,), (3857,), (3857,), (0,), (None,)],
+        [("4326",), ("4326",), ("3857",), ("3857",), ("0",), (None,)],
     )
 
     eng.assert_query_result(
