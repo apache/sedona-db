@@ -364,7 +364,7 @@ impl GeoParquetFileSource {
         if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
             let parquet_source = parquet_source.clone();
             // Extract the predicate from the existing source if it exists so we can keep a copy of it
-            let new_predicate = match (parquet_source.predicate().cloned(), predicate) {
+            let new_predicate = match (parquet_source.filter(), predicate) {
                 (None, None) => None,
                 (None, Some(specified_predicate)) => Some(specified_predicate),
                 (Some(inner_predicate), None) => Some(inner_predicate),
@@ -445,7 +445,7 @@ impl FileSource for GeoParquetFileSource {
                 .create_file_opener(object_store.clone(), base_config, partition);
 
         // If there are no geo columns or no pruning predicate, just return the inner opener
-        if self.predicate.is_none() || !storage_schema_contains_geo(&base_config.file_schema()) {
+        if self.predicate.is_none() || !storage_schema_contains_geo(base_config.file_schema()) {
             return inner_opener;
         }
 
@@ -819,7 +819,7 @@ mod test {
             GeoParquetFileSource::try_from_file_source(Arc::new(parquet_source), None, None)
                 .unwrap();
         let geo_source_with_predicate = geo_source.with_predicate(predicate);
-        assert!(geo_source_with_predicate.inner.predicate().is_some());
+        assert!(geo_source_with_predicate.inner.filter().is_some());
     }
 
     #[tokio::test]

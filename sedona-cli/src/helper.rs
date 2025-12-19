@@ -48,7 +48,7 @@ impl CliHelper {
         };
         Self {
             completer: FilenameCompleter::new(),
-            dialect: dialect.into(),
+            dialect,
             highlighter,
         }
     }
@@ -61,7 +61,7 @@ impl CliHelper {
 
     fn validate_input(&self, input: &str) -> Result<ValidationResult> {
         if let Some(sql) = input.strip_suffix(';') {
-            let dialect = match dialect_from_str(&self.dialect) {
+            let dialect = match dialect_from_str(self.dialect) {
                 Some(dialect) => dialect,
                 None => {
                     return Ok(ValidationResult::Invalid(Some(format!(
