@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import geopandas
 import pyproj
 import pytest
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
@@ -82,12 +84,56 @@ def test_st_setcrs_sedonadb(eng, geom, crs, expected_srid):
     assert df.crs.to_epsg() == expected_srid
 
 
+# We haven't wired up the engines to use/support item-level CRS yet. This
+# will be easier when EWKB and/or EWKT is supported (and/or this concept
+# is supported in geoarrow.pyarrow, which we use for testing)
+def test_item_crs_sedonadb():
+    eng = SedonaDB()
+    df = geopandas.GeoDataFrame(
+        {
+            "srid": [4326, 4326, 3857, 3857, 0, 0],
+            "geometry": geopandas.GeoSeries.from_wkt(
+                [
+                    "POINT (0 1)",
+                    "POINT (2 3)",
+                    "POINT (4 5)",
+                    "POINT (6 7)",
+                    "POINT (8 9)",
+                    None,
+                ]
+            ),
+        }
+    )
+
+    eng.con.create_data_frame(df).to_view("df")
+    eng.con.sql("SELECT ST_SetSRID(geometry, srid) as item_crs FROM df").to_view(
+        "df_item_crs"
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_SRID(item_crs) FROM df_item_crs",
+        [("4326",), ("4326",), ("3857",), ("3857",), ("0",), (None,)],
+    )
+
+    eng.assert_query_result(
+        "SELECT ST_Crs(item_crs) FROM df_item_crs",
+        [
+            ("OGC:CRS84",),
+            ("OGC:CRS84",),
+            ("EPSG:3857",),
+            ("EPSG:3857",),
+            ("0",),
+            (None,),
+        ],
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_crs_sedonadb(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), 'EPSG:26920'))",
-        '"EPSG:26920"',
+        "EPSG:26920",
     )
     eng.assert_query_result(
         "SELECT ST_CRS(ST_SetCrs(ST_GeomFromText('POINT (1 1)'), NULL))",
