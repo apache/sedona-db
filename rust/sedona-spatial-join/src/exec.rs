@@ -652,7 +652,7 @@ mod tests {
         let bounds = Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 100.0, y: 100.0 });
 
         let left_data = RandomPartitionedDataBuilder::new()
-            .seed(1)
+            .seed(11584)
             .num_partitions(2)
             .batches_per_partition(2)
             .rows_per_batch(30)
@@ -664,7 +664,7 @@ mod tests {
             .build()?;
 
         let right_data = RandomPartitionedDataBuilder::new()
-            .seed(2)
+            .seed(54843)
             .num_partitions(4)
             .batches_per_partition(4)
             .rows_per_batch(30)

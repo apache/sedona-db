@@ -303,8 +303,8 @@ mod tests {
         // Stage 1
         for _ in 0..100 {
             let bbox = BoundingBox::xy(
-                (rng.gen::<f64>(), rng.gen::<f64>()),
-                (rng.gen::<f64>(), rng.gen::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
             );
             sampler.add_bbox(&bbox);
             count += 1;
@@ -314,8 +314,8 @@ mod tests {
         // Stage 2
         for _ in 0..9900 {
             let bbox = BoundingBox::xy(
-                (rng.gen::<f64>(), rng.gen::<f64>()),
-                (rng.gen::<f64>(), rng.gen::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
             );
             sampler.add_bbox(&bbox);
             count += 1;
@@ -325,8 +325,8 @@ mod tests {
         // Stage 3
         for _ in 0..5000 {
             let bbox = BoundingBox::xy(
-                (rng.gen::<f64>(), rng.gen::<f64>()),
-                (rng.gen::<f64>(), rng.gen::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
             );
             sampler.add_bbox(&bbox);
             count += 1;
@@ -336,8 +336,8 @@ mod tests {
 
         for _ in 0..5000 {
             let bbox = BoundingBox::xy(
-                (rng.gen::<f64>(), rng.gen::<f64>()),
-                (rng.gen::<f64>(), rng.gen::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
             );
             sampler.add_bbox(&bbox);
             count += 1;
@@ -347,8 +347,8 @@ mod tests {
         // Stage 4
         for _ in 0..20000 {
             let bbox = BoundingBox::xy(
-                (-rng.gen::<f64>(), -rng.gen::<f64>()),
-                (rng.gen::<f64>(), rng.gen::<f64>()),
+                (-rng.random::<f64>(), -rng.random::<f64>()),
+                (rng.random::<f64>(), rng.random::<f64>()),
             );
             sampler.add_bbox(&bbox);
             count += 1;
@@ -374,8 +374,8 @@ mod tests {
 
         // Add 10000 points uniformly distributed
         for _ in 0..10000 {
-            let x = rng.gen::<f64>() * 100.0;
-            let y = rng.gen::<f64>() * 100.0;
+            let x = rng.random::<f64>() * 100.0;
+            let y = rng.random::<f64>() * 100.0;
             let bbox = BoundingBox::xy((x, x), (y, y));
             sampler.add_bbox(&bbox);
         }
@@ -444,8 +444,8 @@ mod tests {
 
         for _ in 0..50000 {
             let bbox = BoundingBox::xy(
-                (rng.gen::<f64>() * 100.0, rng.gen::<f64>() * 100.0),
-                (rng.gen::<f64>() * 100.0, rng.gen::<f64>() * 100.0),
+                (rng.random::<f64>() * 100.0, rng.random::<f64>() * 100.0),
+                (rng.random::<f64>() * 100.0, rng.random::<f64>() * 100.0),
             );
             sampler.add_bbox(&bbox);
         }
