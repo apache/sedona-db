@@ -1,22 +1,7 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow_array::RecordBatch;
+// Add these imports to create data for the test
+use arrow::array::{BinaryArray, Int32Array};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{
@@ -37,15 +22,30 @@ use std::task::{Context, Poll};
 /// Mock execution plan for testing
 struct MockExec {
     schema: Arc<Schema>,
+    properties: PlanProperties,
+    batches: Vec<RecordBatch>, // Added to hold test data
 }
 
 impl MockExec {
-    fn new() -> Self {
+    // Modified to accept batches
+    fn new(batches: Vec<RecordBatch>) -> Self {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("geometry", DataType::Binary, false),
         ]));
-        Self { schema }
+        let eq_props = datafusion::physical_expr::EquivalenceProperties::new(schema.clone());
+        let partitioning = datafusion::physical_plan::Partitioning::UnknownPartitioning(1);
+        let properties = datafusion::physical_plan::PlanProperties::new(
+            eq_props,
+            partitioning,
+            datafusion::physical_plan::execution_plan::EmissionType::Final,
+            datafusion::physical_plan::execution_plan::Boundedness::Bounded,
+        );
+        Self {
+            schema,
+            properties,
+            batches,
+        }
     }
 }
 
@@ -75,7 +75,7 @@ impl ExecutionPlan for MockExec {
     }
 
     fn properties(&self) -> &PlanProperties {
-        unimplemented!("properties not needed for test")
+        &self.properties
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
@@ -96,19 +96,22 @@ impl ExecutionPlan for MockExec {
     ) -> DFResult<SendableRecordBatchStream> {
         Ok(Box::pin(MockStream {
             schema: self.schema.clone(),
+            batches: self.batches.clone().into_iter(), // Pass iterator of batches
         }))
     }
 }
 
 struct MockStream {
     schema: Arc<Schema>,
+    batches: std::vec::IntoIter<RecordBatch>, // Added iterator
 }
 
 impl Stream for MockStream {
     type Item = DFResult<RecordBatch>;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(None)
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Return next batch from the iterator
+        Poll::Ready(self.batches.next().map(Ok))
     }
 }
 
@@ -122,8 +125,8 @@ impl RecordBatchStream for MockStream {
 #[tokio::test]
 async fn test_gpu_join_exec_creation() {
     // Create simple mock execution plans as children
-    let left_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
-    let right_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
+    let left_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>; // Empty input
+    let right_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>;
 
     // Create GPU spatial join configuration
     let config = GpuSpatialJoinConfig {
@@ -155,8 +158,8 @@ async fn test_gpu_join_exec_creation() {
 #[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_exec_display() {
-    let left_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
-    let right_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
+    let left_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>;
+    let right_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>;
 
     let config = GpuSpatialJoinConfig {
         join_type: datafusion::logical_expr::JoinType::Inner,
@@ -187,8 +190,19 @@ async fn test_gpu_join_exec_display() {
 #[tokio::test]
 async fn test_gpu_join_execution_with_fallback() {
     // This test should handle GPU not being available and fallback to CPU error
-    let left_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
-    let right_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("geometry", DataType::Binary, false),
+    ]));
+
+    // Create a dummy batch with 1 row
+    let id_col = Arc::new(Int32Array::from(vec![1]));
+    let geom_col = Arc::new(BinaryArray::from(vec![&b"POINT(0 0)"[..]]));
+    let batch = RecordBatch::try_new(schema.clone(), vec![id_col, geom_col]).unwrap();
+
+    // Use MockExec with data
+    let left_plan = Arc::new(MockExec::new(vec![batch.clone()])) as Arc<dyn ExecutionPlan>;
+    let right_plan = Arc::new(MockExec::new(vec![batch])) as Arc<dyn ExecutionPlan>;
 
     let config = GpuSpatialJoinConfig {
         join_type: datafusion::logical_expr::JoinType::Inner,
@@ -256,9 +270,9 @@ async fn test_gpu_join_execution_with_fallback() {
 #[cfg(feature = "gpu")]
 #[tokio::test]
 async fn test_gpu_join_with_empty_input() {
-    // Test with empty batches (MockExec returns empty stream)
-    let left_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
-    let right_plan = Arc::new(MockExec::new()) as Arc<dyn ExecutionPlan>;
+    // Keep this test using empty input to verify behavior on empty streams if needed
+    let left_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>;
+    let right_plan = Arc::new(MockExec::new(vec![])) as Arc<dyn ExecutionPlan>;
 
     let config = GpuSpatialJoinConfig {
         join_type: datafusion::logical_expr::JoinType::Inner,
