@@ -25,9 +25,10 @@ use datafusion::{
         file_format::{file_compression_type::FileCompressionType, FileFormat, FileFormatFactory},
         listing::PartitionedFile,
         physical_plan::{
-            FileGroupPartitioner, FileMeta, FileOpenFuture, FileOpener, FileScanConfig,
-            FileSinkConfig, FileSource,
+            FileGroupPartitioner, FileOpenFuture, FileOpener, FileScanConfig, FileSinkConfig,
+            FileSource,
         },
+        table_schema::TableSchema,
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
@@ -204,7 +205,7 @@ impl FileFormat for ExternalFileFormat {
 struct ExternalFileSource {
     spec: Arc<dyn ExternalFormatSpec>,
     batch_size: Option<usize>,
-    file_schema: Option<SchemaRef>,
+    file_schema: Option<TableSchema>,
     file_projection: Option<Vec<usize>>,
     filters: Vec<Arc<dyn PhysicalExpr>>,
     metrics: ExecutionPlanMetricsSet,
@@ -240,7 +241,7 @@ impl FileSource for ExternalFileSource {
                 range: None,
             },
             batch_size: self.batch_size,
-            file_schema: self.file_schema.clone(),
+            file_schema: self.file_schema.as_ref().map(|s| s.file_schema().clone()),
             file_projection: self.file_projection.clone(),
             filters: self.filters.clone(),
         };
@@ -285,7 +286,7 @@ impl FileSource for ExternalFileSource {
         })
     }
 
-    fn with_schema(&self, schema: SchemaRef) -> Arc<dyn FileSource> {
+    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
         Arc::new(Self {
             file_schema: Some(schema),
             ..self.clone()
@@ -360,11 +361,11 @@ struct ExternalFileOpener {
 }
 
 impl FileOpener for ExternalFileOpener {
-    fn open(&self, file_meta: FileMeta, _file: PartitionedFile) -> Result<FileOpenFuture> {
+    fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
         let mut self_clone = self.clone();
         Ok(Box::pin(async move {
-            self_clone.args.src.meta.replace(file_meta.object_meta);
-            self_clone.args.src.range = file_meta.range;
+            self_clone.args.src.meta.replace(file.object_meta);
+            self_clone.args.src.range = file.range;
             let reader = self_clone.spec.open_reader(&self_clone.args).await?;
             let stream =
                 futures::stream::iter(reader.into_iter().map(|batch| batch.map_err(Into::into)));

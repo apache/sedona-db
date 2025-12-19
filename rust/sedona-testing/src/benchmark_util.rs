@@ -22,7 +22,7 @@ use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{AggregateUDF, ScalarUDF};
 use geo_types::Rect;
-use rand::{distributions::Uniform, rngs::StdRng, Rng, SeedableRng};
+use rand::{distr::Uniform, rngs::StdRng, Rng, SeedableRng};
 
 use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
@@ -402,7 +402,7 @@ impl BenchmarkArgSpec {
             ),
             BenchmarkArgSpec::Int64(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist = Uniform::new(lo, hi);
+                let dist = Uniform::new(lo, hi).unwrap();
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let int64_array: Int64Array =
@@ -413,7 +413,7 @@ impl BenchmarkArgSpec {
             }
             BenchmarkArgSpec::Float64(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist = Uniform::new(lo, hi);
+                let dist = Uniform::new(lo, hi).unwrap();
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let float64_array: Float64Array =
@@ -424,7 +424,7 @@ impl BenchmarkArgSpec {
             }
             BenchmarkArgSpec::Int32(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist = Uniform::new(lo, hi);
+                let dist = Uniform::new(lo, hi).unwrap();
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let int32_array: arrow_array::Int32Array =

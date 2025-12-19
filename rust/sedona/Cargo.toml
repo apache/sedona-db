@@ -48,14 +48,13 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 rstest = { workspace = true }
 
 [dependencies]
-abi_stable = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { version = "1.5.17", optional = true }
 aws-credential-types = { version = "1.2.0", optional = true }
 comfy-table = { workspace = true }
-datafusion = { workspace = true, default_features = false, features = ["parquet"] }
+datafusion = { workspace = true, default_features = false, features = ["sql", "parquet"] }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }

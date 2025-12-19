@@ -32,7 +32,7 @@ use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
 };
-use rand::distributions::Uniform;
+use rand::distr::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use sedona_common::sedona_internal_err;
@@ -389,7 +389,7 @@ impl RandomPartitionedDataBuilder {
             .collect();
 
         // Generate random distances between 0.0 and 100.0
-        let distance_dist = Uniform::new(0.0, 100.0);
+        let distance_dist = Uniform::new(0.0, 100.0).unwrap();
         let distances: Vec<f64> = (0..self.rows_per_batch)
             .map(|_| rng.sample(distance_dist))
             .collect();
@@ -397,7 +397,7 @@ impl RandomPartitionedDataBuilder {
         // Generate random geometries based on the geometry type
         let wkb_geometries: Vec<Option<Vec<u8>>> = (0..self.rows_per_batch)
             .map(|_| {
-                if rng.sample(Uniform::new(0.0, 1.0)) < self.null_rate {
+                if rng.sample(Uniform::new(0.0, 1.0).unwrap()) < self.null_rate {
                     None
                 } else {
                     Some(generate_random_wkb(rng, &self.options))
@@ -546,15 +546,15 @@ fn generate_random_geometry<R: rand::Rng>(
 }
 
 fn generate_random_point<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOptions) -> Point {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         // This is a bit of a hack because geo-types doesn't support empty point; however,
         // this does work with respect to sending this directly to the WKB reader and getting
         // the WKB result we want
         Point::new(f64::NAN, f64::NAN)
     } else {
         // Generate random points within the specified bounds
-        let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x);
-        let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y);
+        let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x).unwrap();
+        let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y).unwrap();
         let x = rng.sample(x_dist);
         let y = rng.sample(y_dist);
         Point::new(x, y)
@@ -565,14 +565,15 @@ fn generate_random_linestring<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> LineString {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         LineString::new(vec![])
     } else {
         let (center_x, center_y, half_size) = generate_random_circle(rng, options);
         let vertices_dist = Uniform::new_inclusive(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
-        );
+        )
+        .unwrap();
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
         let coords =
@@ -582,14 +583,15 @@ fn generate_random_linestring<R: rand::Rng>(
 }
 
 fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOptions) -> Polygon {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         Polygon::new(LineString::new(vec![]), vec![])
     } else {
         let (center_x, center_y, half_size) = generate_random_circle(rng, options);
         let vertices_dist = Uniform::new_inclusive(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
-        );
+        )
+        .unwrap();
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
         let coords =
@@ -598,8 +600,8 @@ fn generate_random_polygon<R: rand::Rng>(rng: &mut R, options: &RandomGeometryOp
         let mut holes = Vec::new();
 
         // Potentially add a hole based on probability
-        let add_hole = rng.gen_bool(options.polygon_hole_rate);
-        let hole_scale_factor_dist = Uniform::new(0.1, 0.5);
+        let add_hole = rng.random_bool(options.polygon_hole_rate);
+        let hole_scale_factor_dist = Uniform::new(0.1, 0.5).unwrap();
         let hole_scale_factor = rng.sample(hole_scale_factor_dist);
         if add_hole {
             let new_size = half_size * hole_scale_factor;
@@ -617,7 +619,7 @@ fn generate_random_multipoint<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> MultiPoint {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         MultiPoint::new(vec![])
     } else {
         let children = generate_random_children(rng, options, generate_random_point);
@@ -629,7 +631,7 @@ fn generate_random_multilinestring<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> MultiLineString {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         MultiLineString::new(vec![])
     } else {
         let children = generate_random_children(rng, options, generate_random_linestring);
@@ -641,7 +643,7 @@ fn generate_random_multipolygon<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> MultiPolygon {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         MultiPolygon::new(vec![])
     } else {
         let children = generate_random_children(rng, options, generate_random_polygon);
@@ -653,7 +655,7 @@ fn generate_random_geometrycollection<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> GeometryCollection {
-    if rng.gen_bool(options.empty_rate) {
+    if rng.random_bool(options.empty_rate) {
         GeometryCollection::new_from(vec![])
     } else {
         let children = generate_random_children(rng, options, generate_random_geometry);
@@ -667,7 +669,7 @@ fn generate_random_children<R: Rng, T, F: Fn(&mut R, &RandomGeometryOptions) -> 
     func: F,
 ) -> Vec<T> {
     let num_parts_dist =
-        Uniform::new_inclusive(options.num_parts_range.0, options.num_parts_range.1);
+        Uniform::new_inclusive(options.num_parts_range.0, options.num_parts_range.1).unwrap();
     let num_parts = rng.sample(num_parts_dist);
 
     // Constrain this feature to the size range indicated in the option
@@ -712,7 +714,7 @@ fn pick_random_geometry_type<R: Rng>(rng: &mut R) -> GeometryTypeId {
         GeometryTypeId::MultiPoint,
         GeometryTypeId::MultiLineString,
         GeometryTypeId::MultiPolygon,
-    ][rng.gen_range(0..6)]
+    ][rng.random_range(0..6)]
 }
 
 fn generate_random_circle<R: rand::Rng>(
@@ -720,18 +722,20 @@ fn generate_random_circle<R: rand::Rng>(
     options: &RandomGeometryOptions,
 ) -> (f64, f64, f64) {
     // Generate random diamond polygons (rotated squares)
-    let size_dist = Uniform::new(options.size_range.0, options.size_range.1);
+    let size_dist = Uniform::new(options.size_range.0, options.size_range.1).unwrap();
     let half_size = rng.sample(size_dist) / 2.0;
 
     // Ensure diamond fits within bounds by constraining center position
     let center_x_dist = Uniform::new(
         options.bounds.min().x + half_size,
         options.bounds.max().x - half_size,
-    );
+    )
+    .unwrap();
     let center_y_dist = Uniform::new(
         options.bounds.min().y + half_size,
         options.bounds.max().y - half_size,
-    );
+    )
+    .unwrap();
     let center_x = rng.sample(center_x_dist);
     let center_y = rng.sample(center_y_dist);
 
@@ -778,7 +782,7 @@ fn generate_circular_vertices<R: rand::Rng>(
     let mut out = Vec::new();
 
     // Randomize starting angle (0 to 2 * PI)
-    let start_angle_dist = Uniform::new(0.0, 2.0 * PI);
+    let start_angle_dist = Uniform::new(0.0, 2.0 * PI).unwrap();
     let mut angle: f64 = rng.sample(start_angle_dist);
 
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);

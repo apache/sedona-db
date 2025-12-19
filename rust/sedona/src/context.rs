@@ -31,7 +31,7 @@ use async_trait::async_trait;
 use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
-    common::{plan_datafusion_err, plan_err},
+    common::plan_err,
     error::{DataFusionError, Result},
     execution::{context::DataFilePaths, runtime_env::RuntimeEnvBuilder, SessionStateBuilder},
     prelude::{DataFrame, SessionConfig, SessionContext},
@@ -222,8 +222,8 @@ impl SedonaContext {
     /// statements
     pub async fn multi_sql(&self, sql: &str) -> Result<Vec<DataFrame>> {
         let task_ctx = self.ctx.task_ctx();
-        let dialect_str = &task_ctx.session_config().options().sql_parser.dialect;
-        let dialect = ThreadSafeDialect::try_new(dialect_str)?;
+        let dialect = &task_ctx.session_config().options().sql_parser.dialect;
+        let dialect = ThreadSafeDialect::try_new(dialect)?;
 
         let statements = dialect.parse(sql)?;
         let mut results = Vec::with_capacity(statements.len());
@@ -509,12 +509,14 @@ struct ThreadSafeDialect {
 unsafe impl Send for ThreadSafeDialect {}
 
 impl ThreadSafeDialect {
-    pub fn try_new(dialect_str: &str) -> Result<Self> {
-        let dialect = dialect_from_str(dialect_str)
-            .ok_or_else(|| plan_datafusion_err!("Unsupported SQL dialect: {dialect_str}"))?;
-        Ok(Self {
-            inner: dialect.into(),
-        })
+    pub fn try_new(dialect: &datafusion::config::Dialect) -> Result<Self> {
+        if let Some(box_dialect) = dialect_from_str(dialect) {
+            Ok(Self {
+                inner: box_dialect.into(),
+            })
+        } else {
+            plan_err!("Unexpected dialect: {dialect}")
+        }
     }
 
     pub fn parse(&self, sql: &str) -> Result<VecDeque<Statement>> {
