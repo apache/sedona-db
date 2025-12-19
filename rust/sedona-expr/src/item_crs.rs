@@ -309,14 +309,14 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
     for (lhs_item, rhs_item) in zip(as_string_view_array(lhs)?, as_string_view_array(rhs)?) {
         if lhs_item == rhs_item {
             // First check for byte-for-byte equality (faster and most likely)
-            return Ok(());
+            continue;
         }
 
         if let (Some(lhs_item_str), Some(rhs_item_str)) = (lhs_item, rhs_item) {
             let lhs_crs = deserialize_crs(lhs_item_str)?;
             let rhs_crs = deserialize_crs(rhs_item_str)?;
             if lhs_crs == rhs_crs {
-                return Ok(());
+                continue;
             }
         }
 
