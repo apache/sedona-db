@@ -221,7 +221,7 @@ impl AuthorityCode {
     /// Example: "EPSG:4269"
     pub fn crs(auth_code: &str) -> Crs {
         let ac = if Self::validate_epsg_code(auth_code) {
-            format!("EPSG:{}", auth_code)
+            format!("EPSG:{auth_code}")
         } else {
             auth_code.to_string()
         };
