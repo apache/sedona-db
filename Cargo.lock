@@ -5204,6 +5204,7 @@ dependencies = [
  "arrow-schema",
  "criterion",
  "datafusion",
+ "datafusion-catalog",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-execution",
@@ -5218,6 +5219,7 @@ dependencies = [
  "geo-traits",
  "geo-types",
  "geos",
+ "log",
  "once_cell",
  "parking_lot",
  "rand 0.8.5",
@@ -5230,12 +5232,45 @@ dependencies = [
  "sedona-geo-traits-ext",
  "sedona-geometry",
  "sedona-geos",
+ "sedona-libgpuspatial",
  "sedona-schema",
+ "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join-gpu"
+version = "0.3.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "criterion",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "env_logger 0.11.8",
+ "futures",
+ "log",
+ "object_store",
+ "parking_lot",
+ "parquet",
+ "rand 0.8.5",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-geos",
+ "sedona-libgpuspatial",
+ "sedona-schema",
+ "sedona-testing",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

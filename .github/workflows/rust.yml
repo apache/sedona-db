@@ -133,7 +133,8 @@ jobs:
       - name: Build
         if: matrix.name == 'build'
         run: |
-          cargo build --workspace --all-targets --all-features
+          # Use default features only (excludes gpu feature to avoid CUDA dependency)
+          cargo build --workspace --exclude sedonadb --exclude sedona-libgpuspatial --exclude sedona-spatial-join-gpu --all-targets
           # Clean up build artifacts aggressively
           rm -rf target/debug/deps
           rm -rf target/debug/incremental
@@ -142,7 +143,8 @@ jobs:
       - name: Clippy
         if: matrix.name == 'clippy'
         run: |
-          cargo clippy --workspace --all-targets --all-features -- -Dwarnings
+          # Use default features only (excludes gpu feature to avoid CUDA dependency)
+          cargo clippy --workspace --exclude sedonadb --exclude sedona-libgpuspatial --exclude sedona-spatial-join-gpu --all-targets -- -Dwarnings
           # Clean up clippy artifacts aggressively
           rm -rf target/debug/deps
           rm -rf target/debug/incremental
@@ -151,7 +153,8 @@ jobs:
       - name: Test
         if: matrix.name == 'test'
         run: |
-          cargo test --workspace --all-targets --all-features
+          # Use default features only (excludes gpu feature to avoid CUDA dependency)
+          cargo test --workspace --exclude sedonadb --exclude sedona-libgpuspatial --exclude sedona-spatial-join-gpu --all-targets
           # Clean up intermediate build artifacts to free disk space aggressively
           cargo clean -p sedona-s2geography
           rm -rf target/debug/deps
@@ -164,7 +167,8 @@ jobs:
       - name: Doctests
         if: matrix.name == 'test'
         run: |
-          cargo test --workspace --doc --all-features
+          # Use default features only (excludes gpu feature to avoid CUDA dependency)
+          cargo test --workspace --exclude sedonadb --exclude sedona-libgpuspatial --exclude sedona-spatial-join-gpu --doc
           # Clean up after doctests
           cargo clean
 
@@ -172,7 +176,8 @@ jobs:
         if: matrix.name == 'docs'
         run: |
           # Generate docs with reduced parallelism to avoid memory issues
-          cargo doc --workspace --all-features -j 2
+          # Use default features only (excludes gpu feature to avoid CUDA dependency)
+          cargo doc --workspace --exclude sedonadb --exclude sedona-libgpuspatial --exclude sedona-spatial-join-gpu -j 2
 
       - name: Format
         if: matrix.name == 'fmt'
