@@ -38,7 +38,7 @@ use sedona_geometry::{
     },
 };
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -70,8 +70,15 @@ struct STCollectAggr {}
 
 impl SedonaAccumulator for STCollectAggr {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry_or_geography()], WKB_GEOMETRY);
-        matcher.match_args(args)
+        let geom_matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+        let geog_matcher = ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY);
+        for matcher in [geom_matcher, geog_matcher] {
+            match matcher.match_args(args) {
+                result @ Ok(Some(_)) => return result,
+                _ => {}
+            }
+        }
+        Ok(None)
     }
 
     fn accumulator(
@@ -299,7 +306,7 @@ impl Accumulator for CollectionAccumulator {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
     use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
 
     use super::*;
@@ -370,5 +377,12 @@ mod test {
             err.message(),
             "Can't ST_Collect_Agg() mixed dimension geometries"
         );
+    }
+
+    #[rstest]
+    fn udf_geog(#[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType) {
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), WKB_GEOGRAPHY);
     }
 }
