@@ -1550,7 +1550,7 @@ Since: v0.2.
 SELECT ST_Translate(ST_GeomFromText('POINT(-71.01 42.37)'), 1, 2);
 ```
 
-## vST_UnaryUnion
+## ST_UnaryUnion
 
 This variant of ST_Union operates on a single geometry input. The input geometry can be a simple Geometry type, a MultiGeometry, or a GeometryCollection. The function calculates the geometric union across all components and elements within the provided geometry object.
 
