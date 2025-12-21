@@ -73,9 +73,8 @@ impl SedonaAccumulator for STCollectAggr {
         let geom_matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         let geog_matcher = ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY);
         for matcher in [geom_matcher, geog_matcher] {
-            match matcher.match_args(args) {
-                result @ Ok(Some(_)) => return result,
-                _ => {}
+            if let result @ Ok(Some(_)) = matcher.match_args(args) {
+                return result;
             }
         }
         Ok(None)
