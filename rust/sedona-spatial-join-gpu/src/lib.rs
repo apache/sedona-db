@@ -1,16 +1,20 @@
 // Module declarations
-mod build_data;
+mod evaluated_batch;
+mod operand_evaluator;
+
+mod build_index;
+
 pub mod config;
 pub mod exec;
-pub mod gpu_backend;
-pub(crate) mod once_fut;
+mod index;
+pub mod spatial_predicate;
 pub mod stream;
+pub mod utils;
 
 // Re-exports for convenience
-pub use config::{GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialPredicate};
+pub use config::GpuSpatialJoinConfig;
 pub use datafusion::logical_expr::JoinType;
 pub use exec::GpuSpatialJoinExec;
-pub use sedona_libgpuspatial::SpatialPredicate;
 pub use stream::GpuSpatialJoinStream;
 
 #[derive(Debug, thiserror::Error)]

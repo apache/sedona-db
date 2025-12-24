@@ -47,7 +47,7 @@ def calculate_bbox_and_generate_points(geoparquet_path, n_points, output_path):
 
     # Generate random coordinates
     random_x = np.random.uniform(minx, maxx, n_points)
-    random_y = np.random.uniform(miny, miny, n_points)
+    random_y = np.random.uniform(miny, maxy, n_points)
 
     # 4. Create a GeoDataFrame from the points
 

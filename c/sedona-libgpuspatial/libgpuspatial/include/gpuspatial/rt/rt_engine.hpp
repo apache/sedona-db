@@ -33,7 +33,6 @@
 #define GPUSPATIAL_OPTIX_LAUNCH_PARAMS_NAME "params"
 
 namespace gpuspatial {
-namespace details {
 
 /*! SBT record for a raygen program */
 struct __align__(OPTIX_SBT_RECORD_ALIGNMENT) RaygenRecord {
@@ -160,6 +159,9 @@ RTConfig get_default_rt_config(const std::string& ptx_root);
 
 class RTEngine {
  public:
+  RTEngine(const RTEngine&) = delete;
+  RTEngine& operator=(const RTEngine&) = delete;
+
   RTEngine();
   ~RTEngine();
 
@@ -201,5 +203,4 @@ class RTEngine {
   bool initialized_;
 };
 
-}  // namespace details
 }  // namespace gpuspatial

@@ -91,13 +91,16 @@ impl SedonaContext {
         let session_config = {
             use sedona_common::option::SedonaOptions;
             let mut session_config = session_config;
+            let mut batch_size = session_config.options().execution.batch_size;
             if let Some(sedona_opts) = session_config
                 .options_mut()
                 .extensions
                 .get_mut::<SedonaOptions>()
             {
                 sedona_opts.spatial_join.gpu.enable = true;
+                batch_size = sedona_opts.spatial_join.gpu.batch_size;
             }
+            session_config.options_mut().execution.batch_size = batch_size;
             session_config
         };
 

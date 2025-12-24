@@ -40,11 +40,12 @@ use arrow::ipc::reader::StreamReader;
 use arrow_array::{Int32Array, RecordBatch};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion_common::JoinType;
+use datafusion_physical_expr::expressions::Column;
 use futures::StreamExt;
-use sedona_spatial_join_gpu::{
-    GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialJoinExec, GpuSpatialPredicate,
-    SpatialPredicate,
-};
+use sedona_libgpuspatial::{GpuSpatial, GpuSpatialRelationPredicate};
+use sedona_spatial_join_gpu::spatial_predicate::{RelationPredicate, SpatialPredicate};
+use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
 use std::fs::File;
 use std::sync::Arc;
 
@@ -55,16 +56,6 @@ fn create_point_wkb(x: f64, y: f64) -> Vec<u8> {
     wkb.extend_from_slice(&x.to_le_bytes());
     wkb.extend_from_slice(&y.to_le_bytes());
     wkb
-}
-
-/// Check if GPU is actually available
-fn is_gpu_available() -> bool {
-    use sedona_libgpuspatial::GpuSpatialContext;
-
-    match GpuSpatialContext::new() {
-        Ok(mut ctx) => ctx.init().is_ok(),
-        Err(_) => false,
-    }
 }
 
 /// Mock execution plan that produces geometry data
@@ -189,14 +180,14 @@ impl ExecutionPlan for GeometryDataExec {
 async fn test_gpu_spatial_join_basic_correctness() {
     let _ = env_logger::builder().is_test(true).try_init();
 
-    if !is_gpu_available() {
-        eprintln!("GPU not available, skipping test");
+    if !GpuSpatial::is_gpu_available() {
+        log::warn!("GPU not available, skipping test");
         return;
     }
 
     let test_data_dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../c/sedona-libgpuspatial/libgpuspatial/test_data"
+        "/../../c/sedona-libgpuspatial/libgpuspatial/test/data/arrowipc"
     );
     let points_path = format!("{}/test_points.arrows", test_data_dir);
     let polygons_path = format!("{}/test_polygons.arrows", test_data_dir);
@@ -228,20 +219,19 @@ async fn test_gpu_spatial_join_basic_correctness() {
         };
 
         if iteration == 0 {
-            println!(
+            log::info!(
                 "Batch {}: {} polygons, {} points",
                 iteration,
                 polygons_batch.num_rows(),
                 points_batch.num_rows()
             );
         }
-
-        // Find geometry column index
-        let points_geom_idx = points_batch
+        let polygons_geom_idx = polygons_batch
             .schema()
             .index_of("geometry")
             .expect("geometry column not found");
-        let polygons_geom_idx = polygons_batch
+        // Find geometry column index
+        let points_geom_idx = points_batch
             .schema()
             .index_of("geometry")
             .expect("geometry column not found");
@@ -252,25 +242,31 @@ async fn test_gpu_spatial_join_basic_correctness() {
         let right_plan =
             Arc::new(SingleBatchExec::new(points_batch.clone())) as Arc<dyn ExecutionPlan>;
 
+        let left_col = Column::new("geometry", polygons_geom_idx);
+        let right_col = Column::new("geometry", points_geom_idx);
+
         let config = GpuSpatialJoinConfig {
-            join_type: datafusion::logical_expr::JoinType::Inner,
-            left_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: polygons_geom_idx,
-            },
-            right_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: points_geom_idx,
-            },
-            predicate: GpuSpatialPredicate::Relation(SpatialPredicate::Intersects),
             device_id: 0,
-            batch_size: 8192,
-            additional_filters: None,
             max_memory: None,
             fallback_to_cpu: false,
         };
 
-        let gpu_join = Arc::new(GpuSpatialJoinExec::new(left_plan, right_plan, config).unwrap());
+        let gpu_join = Arc::new(
+            GpuSpatialJoinExec::try_new(
+                left_plan,
+                right_plan,
+                SpatialPredicate::Relation(RelationPredicate::new(
+                    Arc::new(left_col),
+                    Arc::new(right_col),
+                    GpuSpatialRelationPredicate::Contains,
+                )),
+                None,
+                &JoinType::Inner,
+                None,
+                config,
+            )
+            .unwrap(),
+        );
         let task_context = Arc::new(TaskContext::default());
         let mut stream = gpu_join.execute(0, task_context).unwrap();
 
@@ -280,9 +276,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
                     let batch_rows = batch.num_rows();
                     total_rows += batch_rows;
                     if batch_rows > 0 && iteration < 5 {
-                        println!(
+                        log::debug!(
                             "Iteration {}: Got {} rows from GPU join",
-                            iteration, batch_rows
+                            iteration,
+                            batch_rows
                         );
                     }
                 }
@@ -295,9 +292,10 @@ async fn test_gpu_spatial_join_basic_correctness() {
         iteration += 1;
     }
 
-    println!(
+    log::info!(
         "Total rows from GPU join across {} iterations: {}",
-        iteration, total_rows
+        iteration,
+        total_rows
     );
     // Test passes if GPU join completes without crashing and finds results
     // The CUDA reference test loops through all batches to accumulate results
@@ -307,7 +305,7 @@ async fn test_gpu_spatial_join_basic_correctness() {
         iteration,
         total_rows
     );
-    println!(
+    log::info!(
         "GPU spatial join completed successfully with {} result rows",
         total_rows
     );
@@ -432,8 +430,8 @@ async fn test_gpu_spatial_join_correctness() {
 
     let _ = env_logger::builder().is_test(true).try_init();
 
-    if !is_gpu_available() {
-        eprintln!("GPU not available, skipping test");
+    if !GpuSpatial::is_gpu_available() {
+        log::warn!("GPU not available, skipping test");
         return;
     }
 
@@ -461,13 +459,21 @@ async fn test_gpu_spatial_join_correctness() {
     // Create RecordBatches (shared for all predicates)
     let polygon_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
-        Field::new("geometry", DataType::Binary, false),
+        WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
     ]));
 
     let point_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
-        Field::new("geometry", DataType::Binary, false),
+        WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
     ]));
+
+    let polygons_geom_idx = polygon_schema
+        .index_of("geometry")
+        .expect("geometry column not found");
+    // Find geometry column index
+    let points_geom_idx = point_schema
+        .index_of("geometry")
+        .expect("geometry column not found");
 
     let polygon_ids = Int32Array::from(vec![0, 1, 2, 3, 4]);
     let point_ids = Int32Array::from(vec![0, 1, 2, 3, 4]);
@@ -513,18 +519,18 @@ async fn test_gpu_spatial_join_correctness() {
     // Note: Some predicates may not be fully implemented in GPU yet
     // Currently testing Intersects and Contains as known working predicates
     let predicates = vec![
-        (SpatialPredicate::Equals, "Equals"),
-        (SpatialPredicate::Disjoint, "Disjoint"),
-        (SpatialPredicate::Touches, "Touches"),
-        (SpatialPredicate::Contains, "Contains"),
-        (SpatialPredicate::Covers, "Covers"),
-        (SpatialPredicate::Intersects, "Intersects"),
-        (SpatialPredicate::Within, "Within"),
-        (SpatialPredicate::CoveredBy, "CoveredBy"),
+        (GpuSpatialRelationPredicate::Equals, "Equals"),
+        (GpuSpatialRelationPredicate::Disjoint, "Disjoint"),
+        (GpuSpatialRelationPredicate::Touches, "Touches"),
+        (GpuSpatialRelationPredicate::Contains, "Contains"),
+        (GpuSpatialRelationPredicate::Covers, "Covers"),
+        (GpuSpatialRelationPredicate::Intersects, "Intersects"),
+        (GpuSpatialRelationPredicate::Within, "Within"),
+        (GpuSpatialRelationPredicate::CoveredBy, "CoveredBy"),
     ];
 
     for (gpu_predicate, predicate_name) in predicates {
-        println!("\nTesting predicate: {}", predicate_name);
+        log::info!("Testing predicate: {}", predicate_name);
 
         // Run GPU spatial join
         let left_plan =
@@ -532,25 +538,31 @@ async fn test_gpu_spatial_join_correctness() {
         let right_plan =
             Arc::new(SingleBatchExec::new(point_batch.clone())) as Arc<dyn ExecutionPlan>;
 
+        let left_col = Column::new("geometry", polygons_geom_idx);
+        let right_col = Column::new("geometry", points_geom_idx);
+
         let config = GpuSpatialJoinConfig {
-            join_type: datafusion::logical_expr::JoinType::Inner,
-            left_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: 1,
-            },
-            right_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: 1,
-            },
-            predicate: GpuSpatialPredicate::Relation(gpu_predicate),
             device_id: 0,
-            batch_size: 8192,
-            additional_filters: None,
             max_memory: None,
             fallback_to_cpu: false,
         };
 
-        let gpu_join = Arc::new(GpuSpatialJoinExec::new(left_plan, right_plan, config).unwrap());
+        let gpu_join = Arc::new(
+            GpuSpatialJoinExec::try_new(
+                left_plan,
+                right_plan,
+                SpatialPredicate::Relation(RelationPredicate::new(
+                    Arc::new(left_col),
+                    Arc::new(right_col),
+                    gpu_predicate,
+                )),
+                None,
+                &JoinType::Inner,
+                None,
+                config,
+            )
+            .unwrap(),
+        );
         let task_context = Arc::new(TaskContext::default());
         let mut stream = gpu_join.execute(0, task_context).unwrap();
 
@@ -575,12 +587,12 @@ async fn test_gpu_spatial_join_correctness() {
                 gpu_result_pairs.push((left_id_col.value(i) as u32, right_id_col.value(i) as u32));
             }
         }
-        println!(
-            "  ✓ {} - GPU join: {} result rows",
+        log::info!(
+            "{} - GPU join: {} result rows",
             predicate_name,
             gpu_result_pairs.len()
         );
     }
 
-    println!("\n✓ All spatial predicates correctness tests passed");
+    log::info!("All spatial predicates correctness tests passed");
 }

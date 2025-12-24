@@ -14,15 +14,21 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#pragma once
 
-#include "gpuspatial/index/streaming_joiner.hpp"
+use std::pin::Pin;
 
-#include <memory>
+use futures::Stream;
 
-namespace gpuspatial {
-std::unique_ptr<StreamingJoiner> CreateSpatialJoiner();
+use crate::evaluated_batch::EvaluatedBatch;
+use datafusion_common::Result;
 
-void InitSpatialJoiner(StreamingJoiner* index, const char* ptx_root,
-                       uint32_t concurrency);
-}  // namespace gpuspatial
+/// A stream that produces [`EvaluatedBatch`] items. This stream may have purely in-memory or
+/// out-of-core implementations. The type of the stream could be queried calling `is_external()`.
+pub(crate) trait EvaluatedBatchStream: Stream<Item = Result<EvaluatedBatch>> {
+    /// Returns true if this stream is an external stream, where batch data were spilled to disk.
+    fn is_external(&self) -> bool;
+}
+
+pub(crate) type SendableEvaluatedBatchStream = Pin<Box<dyn EvaluatedBatchStream + Send>>;
+
+pub(crate) mod in_mem;

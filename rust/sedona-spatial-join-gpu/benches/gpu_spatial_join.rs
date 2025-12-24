@@ -20,13 +20,14 @@ use arrow_array::{Int32Array, RecordBatch};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion_common::JoinType;
+use datafusion_physical_expr::expressions::Column;
 use futures::StreamExt;
+use sedona_libgpuspatial::GpuSpatialRelationPredicate;
 use sedona_schema::crs::lnglat;
 use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
-use sedona_spatial_join_gpu::{
-    GeometryColumnInfo, GpuSpatialJoinConfig, GpuSpatialJoinExec, GpuSpatialPredicate,
-    SpatialPredicate,
-};
+use sedona_spatial_join_gpu::spatial_predicate::{RelationPredicate, SpatialPredicate};
+use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
 use sedona_testing::create::create_array_storage;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -201,12 +202,12 @@ fn prepare_benchmark_data(polygons: &[String], points: &[String]) -> BenchmarkDa
     // Create RecordBatches
     let polygon_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
-        Field::new("geometry", DataType::Binary, false),
+        WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
     ]));
 
     let point_schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
-        Field::new("geometry", DataType::Binary, false),
+        WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
     ]));
 
     let polygon_ids = Int32Array::from((0..polygons.len() as i32).collect::<Vec<_>>());
@@ -238,25 +239,34 @@ fn bench_gpu_spatial_join(rt: &Runtime, data: &BenchmarkData) -> usize {
         let right_plan =
             Arc::new(SingleBatchExec::new(data.point_batch.clone())) as Arc<dyn ExecutionPlan>;
 
+        let polygons_geom_idx = data.polygon_batch.schema().index_of("geometry").unwrap();
+        let points_geom_idx = data.point_batch.schema().index_of("geometry").unwrap();
+
+        let left_col = Column::new("geometry", polygons_geom_idx);
+        let right_col = Column::new("geometry", points_geom_idx);
+
         let config = GpuSpatialJoinConfig {
-            join_type: datafusion::logical_expr::JoinType::Inner,
-            left_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: 1,
-            },
-            right_geom_column: GeometryColumnInfo {
-                name: "geometry".to_string(),
-                index: 1,
-            },
-            predicate: GpuSpatialPredicate::Relation(SpatialPredicate::Intersects),
             device_id: 0,
-            batch_size: 8192,
-            additional_filters: None,
             max_memory: None,
             fallback_to_cpu: false,
         };
 
-        let gpu_join = Arc::new(GpuSpatialJoinExec::new(left_plan, right_plan, config).unwrap());
+        let gpu_join = Arc::new(
+            GpuSpatialJoinExec::try_new(
+                left_plan,
+                right_plan,
+                SpatialPredicate::Relation(RelationPredicate::new(
+                    Arc::new(left_col),
+                    Arc::new(right_col),
+                    GpuSpatialRelationPredicate::Contains,
+                )),
+                None,
+                &JoinType::Inner,
+                None,
+                config,
+            )
+            .unwrap(),
+        );
         let task_context = Arc::new(TaskContext::default());
         let mut stream = gpu_join.execute(0, task_context).unwrap();
 

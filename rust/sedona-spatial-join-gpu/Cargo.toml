@@ -38,16 +38,18 @@ gpu = ["sedona-libgpuspatial/gpu"]
 arrow = { workspace = true }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
-datafusion = { workspace = true }
+datafusion = { workspace = true, features = ["parquet"] }
+datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-execution = { workspace = true }
+datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
-log = "0.4"
 parking_lot = { workspace = true }
+sysinfo = "0.30"
 
 # Parquet and object store for direct file reading
 parquet = { workspace = true }
@@ -55,19 +57,34 @@ object_store = { workspace = true }
 
 # GPU dependencies
 sedona-libgpuspatial = { workspace = true }
+sedona-geo = { workspace = true }
 
 # Sedona dependencies
 sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-schema = { workspace = true }
+wkb = { workspace = true }
+geo = { workspace = true }
+sedona-geo-generic-alg = { workspace = true }
+geo-traits = { workspace = true, features = ["geo-types"] }
+sedona-geo-traits-ext = { workspace = true }
+geo-types = { workspace = true }
+geo-index = { workspace = true }
+float_next_after = { workspace = true }
+log = "0.4"
+fastrand = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 env_logger = { workspace = true }
 rand = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-geos = { workspace = true }
-sedona-schema = { workspace = true }
+
 sedona-testing = { workspace = true }
+sedona-geos = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 
 [[bench]]
 name = "gpu_spatial_join"
