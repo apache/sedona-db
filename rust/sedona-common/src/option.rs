@@ -102,7 +102,9 @@ config_namespace! {
         pub max_memory_mb: usize, default = 0
 
         /// Batch size for GPU processing
-        pub batch_size: usize, default = 8192
+        /// Must be a very high value to saturate the GPU for best performance.
+        /// This value will overwrite datafusion.execution.batch_size
+        pub batch_size: usize, default = 2*1000*1000
     }
 }
 

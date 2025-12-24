@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include "gpuspatial/index/detail/rt_engine.hpp"
+#include "../../include/gpuspatial/rt/rt_engine.hpp"
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/exception.h"
 #include "gpuspatial/utils/logger.hpp"
@@ -57,7 +57,6 @@ void context_log_cb(unsigned int level, const char* tag, const char* message, vo
 }  // namespace
 
 namespace gpuspatial {
-namespace details {
 
 // --- RTConfig Method Definitions ---
 
@@ -103,6 +102,12 @@ RTConfig get_default_rt_config(const std::string& ptx_root) {
 RTEngine::RTEngine() : initialized_(false) {}
 
 RTEngine::~RTEngine() {
+  cudaError_t probe = cudaPeekAtLastError();
+
+  if (probe == cudaErrorCudartUnloading) {
+    GPUSPATIAL_LOG_ERROR("CUDA runtime is unloaded");
+    return;
+  }
   if (initialized_) {
     releaseOptixResources();
   }
@@ -112,6 +117,7 @@ void RTEngine::Init(const RTConfig& config) {
   if (initialized_) {
     releaseOptixResources();
   }
+  GPUSPATIAL_LOG_INFO("Initialize RTEngine");
   initOptix(config);
   createContext();
   createModule(config);
@@ -163,7 +169,7 @@ OptixTraversableHandle RTEngine::BuildAccelCustom(cudaStream_t cuda_stream,
   OPTIX_CHECK(optixAccelComputeMemoryUsage(optix_context_, &accelOptions, &build_input, 1,
                                            &blas_buffer_sizes));
 
-  GPUSPATIAL_LOG_INFO(
+  GPUSPATIAL_LOG_DEBUG(
       "ComputeBVHMemoryUsage, AABB count: %u, temp size: %zu MB, output size: %zu MB",
       num_prims, blas_buffer_sizes.tempSizeInBytes / 1024 / 1024,
       blas_buffer_sizes.outputSizeInBytes / 1024 / 1024);
@@ -195,6 +201,8 @@ OptixTraversableHandle RTEngine::BuildAccelCustom(cudaStream_t cuda_stream,
         reinterpret_cast<CUdeviceptr>(out_buf.data()),
         blas_buffer_sizes.outputSizeInBytes, &traversable, nullptr, 0));
   }
+
+  out_buf.shrink_to_fit(cuda_stream);
 
   return traversable;
 }
@@ -488,15 +496,15 @@ std::vector<char> RTEngine::readData(const std::string& filename) {
 }
 
 void RTEngine::releaseOptixResources() {
+  GPUSPATIAL_LOG_INFO("Release OptiX resources");
   for (auto& [id, res] : resources_) {
-    optixPipelineDestroy(res.pipeline);
-    optixProgramGroupDestroy(res.raygen_pg);
-    optixProgramGroupDestroy(res.miss_pg);
-    optixProgramGroupDestroy(res.hitgroup_pg);
-    optixModuleDestroy(res.module);
+    OPTIX_CHECK(optixPipelineDestroy(res.pipeline));
+    OPTIX_CHECK(optixProgramGroupDestroy(res.raygen_pg));
+    OPTIX_CHECK(optixProgramGroupDestroy(res.miss_pg));
+    OPTIX_CHECK(optixProgramGroupDestroy(res.hitgroup_pg));
+    OPTIX_CHECK(optixModuleDestroy(res.module));
   }
-  optixDeviceContextDestroy(optix_context_);
+  OPTIX_CHECK(optixDeviceContextDestroy(optix_context_));
 }
 
-}  // namespace details
 }  // namespace gpuspatial

@@ -24,8 +24,7 @@ use std::{
     sync::Arc,
 };
 
-use datafusion::error::{DataFusionError, Result};
-use datafusion_common::SharedResult;
+use datafusion_common::{DataFusionError, Result, SharedResult};
 use futures::{
     future::{BoxFuture, Shared},
     ready, FutureExt,
@@ -161,5 +160,40 @@ impl<T: 'static> OnceFut<T> {
             OnceFutState::Pending(_) => unreachable!(),
             OnceFutState::Ready(r) => Poll::Ready(r.clone().map_err(DataFusionError::Shared)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::Pin;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn check_error_nesting() {
+        let once_fut =
+            OnceFut::<()>::new(async { Err(DataFusionError::Internal("some error".to_string())) });
+
+        struct TestFut(OnceFut<()>);
+        impl Future for TestFut {
+            type Output = Result<()>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                match ready!(self.0.get(cx)) {
+                    Ok(()) => Poll::Ready(Ok(())),
+                    Err(e) => Poll::Ready(Err(e)),
+                }
+            }
+        }
+
+        let res = TestFut(once_fut).await;
+        let arrow_err_from_fut = res.expect_err("once_fut always return error");
+
+        let wrapped_err = arrow_err_from_fut;
+        let root_err = wrapped_err.find_root();
+
+        let _expected = DataFusionError::Internal("some error".to_string());
+
+        assert!(matches!(root_err, _expected))
     }
 }

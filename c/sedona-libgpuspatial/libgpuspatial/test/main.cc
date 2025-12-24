@@ -17,6 +17,8 @@
 #include <filesystem>  // Requires C++17
 #include <iostream>
 #include <string>
+
+#include "gpuspatial_testing.hpp"
 #include "gtest/gtest.h"
 
 namespace TestUtils {

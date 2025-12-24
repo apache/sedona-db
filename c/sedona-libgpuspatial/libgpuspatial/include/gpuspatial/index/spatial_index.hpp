@@ -15,26 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 #pragma once
-#include "gpuspatial/relate/predicate.cuh"
-
-#include "nanoarrow/nanoarrow.hpp"
+#include "gpuspatial/geom/box.cuh"
+#include "gpuspatial/geom/point.cuh"
 
 #include <memory>
 #include <stdexcept>
 #include <vector>
-namespace gpuspatial {
 
-class StreamingJoiner {
+namespace gpuspatial {
+template <typename SCALAR_T, int N_DIM>
+class SpatialIndex {
  public:
-  struct Context {
-    virtual ~Context() = default;
-  };
+  using point_t = Point<SCALAR_T, N_DIM>;
+  using box_t = Box<point_t>;
 
   struct Config {
     virtual ~Config() = default;
   };
 
-  virtual ~StreamingJoiner() = default;
+  virtual ~SpatialIndex() = default;
 
   /**
    * Initialize the index with the given configuration. This method should be called only
@@ -45,12 +44,9 @@ class StreamingJoiner {
 
   /**
    * Provide an array of geometries to build the index.
-   * @param array ArrowArray that contains the geometries in WKB format.
-   * @param offset starting index of the ArrowArray
-   * @param length length of the ArrowArray to read.
+   * @param rects An array of rectangles to be indexed.
    */
-  virtual void PushBuild(const ArrowSchema* schema, const ArrowArray* array,
-                         int64_t offset, int64_t length) = 0;
+  virtual void PushBuild(const box_t* rects, uint32_t n_rects) = 0;
 
   /**
    * Waiting the index to be built.
@@ -64,33 +60,17 @@ class StreamingJoiner {
   virtual void Clear() = 0;
 
   /**
-   * Query the index with an array of geometries in WKB format and return the indices of
-   * the geometries in stream and the index that satisfy a given predicate. This method is
-   * thread-safe.
+   * Query the index with an array of rectangles and return the indices of
+   * the rectangles. This method is thread-safe.
    * @param context A context object that can be used to store intermediate results.
-   * @param array ArrowArray that contains the geometries in WKB format.
-   * @param offset starting index of the ArrowArray
-   * @param length length of the ArrowArray to read.
-   * @param predicate A predicate to filter the query results.
    * @param build_indices A vector to store the indices of the geometries in the index
    * that have a spatial overlap with the geometries in the stream.
    * @param stream_indices A vector to store the indices of the geometries in the stream
    * that have a spatial overlap with the geometries in the index.
-   * @param stream_index_offset An offset to be added to stream_indices
    */
-  virtual void PushStream(Context* context, const ArrowSchema* schema,
-                          const ArrowArray* array, int64_t offset, int64_t length,
-                          Predicate predicate, std::vector<uint32_t>* build_indices,
-                          std::vector<uint32_t>* stream_indices,
-                          int32_t stream_index_offset) {
-    throw std::runtime_error("Not implemented");
-  }
-
-  /**
-   * Create a context object for issuing queries against the index.
-   * @return A context object that is used to store intermediate results.
-   */
-  virtual std::shared_ptr<Context> CreateContext() {
+  virtual void Probe(const box_t* rects, uint32_t n_rects,
+                     std::vector<uint32_t>* build_indices,
+                     std::vector<uint32_t>* stream_indices) {
     throw std::runtime_error("Not implemented");
   }
 };

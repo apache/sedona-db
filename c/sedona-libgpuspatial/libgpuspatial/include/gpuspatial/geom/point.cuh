@@ -73,7 +73,14 @@ class Point {
 
   DEV_HOST_INLINE const scalar_t* get_data() const { return &data_.x; }
 
-  DEV_HOST_INLINE bool empty() const { return std::isnan(data_.x); }
+  DEV_HOST_INLINE bool empty() const {
+    for (int dim = 0; dim < n_dim; dim++) {
+      if (std::isnan(get_coordinate(dim))) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   DEV_HOST_INLINE void set_empty() {
     for (int dim = 0; dim < n_dim; dim++) {
@@ -102,11 +109,7 @@ class Point {
    * @brief Provides const access to the x-coordinate.
    * This method is only available if N_DIM >= 1.
    */
-  DEV_HOST_INLINE const scalar_t& x() const {
-    if constexpr (N_DIM >= 1) {
-      return data_.x;
-    }
-  }
+  DEV_HOST_INLINE const scalar_t& x() const { return data_.x; }
 
   /**
    * @brief Provides access to the y-coordinate.

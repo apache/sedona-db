@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 #pragma once
-#include "gpuspatial/index/detail/rt_engine.hpp"
+#include "../rt/rt_engine.hpp"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/relate/predicate.cuh"
 #include "gpuspatial/utils/queue.h"
@@ -33,6 +33,7 @@ class RelateEngine {
     bool bvh_fast_build = false;
     bool bvh_fast_compact = true;
     float memory_quota = 0.8;
+    int segs_per_aabb = 32;
   };
 
   RelateEngine() = default;
@@ -40,80 +41,94 @@ class RelateEngine {
   RelateEngine(const DeviceGeometries<POINT_T, INDEX_T>* geoms1);
 
   RelateEngine(const DeviceGeometries<POINT_T, INDEX_T>* geoms1,
-               const details::RTEngine* rt_engine);
+               const RTEngine* rt_engine);
 
   void set_config(const Config& config) { config_ = config; }
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const DeviceGeometries<POINT_T, INDEX_T>& geoms2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
 
   template <typename GEOM2_ARRAY_VIEW_T>
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
 
   // This is a generic version that can accept any two geometry array views
   template <typename GEOM1_ARRAY_VIEW_T, typename GEOM2_ARRAY_VIEW_T>
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const GEOM1_ARRAY_VIEW_T& geom_array1,
                 const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
 
   // These are the specific overloads for RT-accelerated PIP queries
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const MultiPointArrayView<POINT_T, INDEX_T>& geom_array1,
                 const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const PointArrayView<POINT_T, INDEX_T>& geom_array2, Predicate predicate,
-                Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
 
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
                 const MultiPointArrayView<POINT_T, INDEX_T>& geom_array2,
-                Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids);
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
 
   void EvaluateImpl(const rmm::cuda_stream_view& stream,
                     const PointArrayView<POINT_T, INDEX_T>& point_array,
                     const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
                     const PolygonArrayView<POINT_T, INDEX_T>& poly_array,
-                    Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids,
-                    bool inverse = false);
+                    Predicate predicate, rmm::device_uvector<INDEX_T>& point_ids,
+                    rmm::device_uvector<INDEX_T>& poly_ids, bool inverse = false);
 
   void EvaluateImpl(const rmm::cuda_stream_view& stream,
                     const PointArrayView<POINT_T, INDEX_T>& point_array,
                     const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
                     const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_poly_array,
-                    Predicate predicate, Queue<thrust::pair<uint32_t, uint32_t>>& ids,
-                    bool inverse);
+                    Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                    rmm::device_uvector<INDEX_T>& ids2, bool inverse);
+
+  size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
+                         const PolygonArrayView<POINT_T, INDEX_T>& polys,
+                         ArrayView<uint32_t> poly_ids, int segs_per_aabb);
+
+  size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
+                          const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
+                          ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb);
 
   /**
    * Build BVH for a subset of polygons
@@ -122,34 +137,28 @@ class RelateEngine {
    * @param polygon_ids
    * @param buffer
    */
-  OptixTraversableHandle BuildBVH(const rmm::cuda_stream_view& stream,
-                                  const PolygonArrayView<POINT_T, INDEX_T>& polygons,
-                                  ArrayView<uint32_t> polygon_ids,
-                                  rmm::device_uvector<INDEX_T>& seg_begins,
-                                  rmm::device_buffer& buffer,
-                                  rmm::device_uvector<INDEX_T>& aabb_poly_ids,
-                                  rmm::device_uvector<INDEX_T>& aabb_ring_ids);
+  OptixTraversableHandle BuildBVH(
+      const rmm::cuda_stream_view& stream,
+      const PolygonArrayView<POINT_T, INDEX_T>& polygons, ArrayView<uint32_t> polygon_ids,
+      int segs_per_aabb, rmm::device_buffer& buffer,
+      rmm::device_uvector<INDEX_T>& aabb_poly_ids,
+      rmm::device_uvector<INDEX_T>& aabb_ring_ids,
+      rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets);
 
   OptixTraversableHandle BuildBVH(
       const rmm::cuda_stream_view& stream,
       const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-      ArrayView<uint32_t> multi_poly_ids, rmm::device_uvector<INDEX_T>& seg_begins,
-      rmm::device_uvector<INDEX_T>& part_begins, rmm::device_buffer& buffer,
+      ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb, rmm::device_buffer& buffer,
       rmm::device_uvector<INDEX_T>& aabb_multi_poly_ids,
       rmm::device_uvector<INDEX_T>& aabb_part_ids,
-      rmm::device_uvector<INDEX_T>& aabb_ring_ids);
-
-  size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
-                         const PolygonArrayView<POINT_T, INDEX_T>& polys,
-                         ArrayView<uint32_t> poly_ids);
-
-  size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
-                         const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-                         ArrayView<uint32_t> multi_poly_ids);
+      rmm::device_uvector<INDEX_T>& aabb_ring_ids,
+      rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets,
+      rmm::device_uvector<INDEX_T>& part_begins, double& t_compute_aabb,
+      double& t_build_bvh);
 
  private:
   Config config_;
   const DeviceGeometries<POINT_T, INDEX_T>* geoms1_;
-  const details::RTEngine* rt_engine_;
+  const RTEngine* rt_engine_;
 };
 }  // namespace gpuspatial

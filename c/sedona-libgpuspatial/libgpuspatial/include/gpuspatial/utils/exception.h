@@ -53,7 +53,7 @@ inline void optixCheck(OptixResult res, const char* call, const char* file,
     std::stringstream ss;
     ss << "OptiX API call (" << call << ") failed with error " << optixGetErrorName(res)
        << " (" << file << ":" << line << ")";
-    GPUSPATIAL_LOG_ERROR("Optix API error: {}", ss.str());
+    GPUSPATIAL_LOG_ERROR("Optix API error: %s", ss.str());
     throw GPUException(res, ss.str().c_str());
   }
 }
@@ -64,7 +64,7 @@ inline void cudaCheck(cudaError_t error, const char* call, const char* file,
     std::stringstream ss;
     ss << "CUDA API call (" << call << ") failed with error " << cudaGetErrorString(error)
        << " (" << file << ":" << line << ")";
-    GPUSPATIAL_LOG_ERROR("CUDA API error: {}", ss.str());
+    GPUSPATIAL_LOG_ERROR("CUDA API error: %s", ss.str());
     throw GPUException(ss.str().c_str());
   }
 }

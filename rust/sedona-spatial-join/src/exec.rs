@@ -1318,20 +1318,6 @@ mod tests {
         use sedona_common::option::ExecutionMode;
         use sedona_testing::create::create_array_storage;
 
-        // Check if GPU is available
-        use sedona_libgpuspatial::GpuSpatialContext;
-        let mut gpu_ctx = match GpuSpatialContext::new() {
-            Ok(ctx) => ctx,
-            Err(_) => {
-                eprintln!("GPU not available, skipping test");
-                return Ok(());
-            }
-        };
-        if gpu_ctx.init().is_err() {
-            eprintln!("GPU init failed, skipping test");
-            return Ok(());
-        }
-
         // Create guaranteed-to-intersect test data
         // 3 polygons and 5 points where 4 points are inside polygons
         let polygon_wkts = vec![
@@ -1380,11 +1366,11 @@ mod tests {
             execution_mode: ExecutionMode::PrepareNone,
             gpu: sedona_common::option::GpuOptions {
                 enable: true,
-                batch_size: 1024,
                 fallback_to_cpu: false,
                 max_memory_mb: 8192,
                 min_rows_threshold: 0,
                 device_id: 0,
+                batch_size: 100,
             },
             ..Default::default()
         };
@@ -1413,7 +1399,7 @@ mod tests {
             .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)")
             .await?;
         let explain_batches = explain_df.collect().await?;
-        println!("=== ST_Intersects Physical Plan ===");
+        log::info!("=== ST_Intersects Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
@@ -1432,7 +1418,7 @@ mod tests {
             result.num_rows() > 0,
             "Expected join results for ST_Intersects"
         );
-        println!(
+        log::info!(
             "ST_Intersects returned {} rows (expected 4)",
             result.num_rows()
         );
@@ -1444,7 +1430,7 @@ mod tests {
             .sql("EXPLAIN SELECT * FROM L JOIN R ON ST_Contains(L.geometry, R.geometry)")
             .await?;
         let explain_batches = explain_df.collect().await?;
-        println!("\n=== ST_Contains Physical Plan ===");
+        log::info!("=== ST_Contains Physical Plan ===");
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
@@ -1463,7 +1449,7 @@ mod tests {
             result.num_rows() > 0,
             "Expected join results for ST_Contains"
         );
-        println!(
+        log::info!(
             "ST_Contains returned {} rows (expected 4)",
             result.num_rows()
         );
