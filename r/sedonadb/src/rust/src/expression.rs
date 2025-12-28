@@ -17,13 +17,26 @@
 
 use std::sync::Arc;
 
-use datafusion_expr::{expr::ScalarFunction, Expr};
+use datafusion_common::ScalarValue;
+use datafusion_expr::{
+    expr::{FieldMetadata, ScalarFunction},
+    Expr,
+};
 use savvy::{savvy, savvy_err};
 use sedona::context::SedonaContext;
+
+use crate::ffi::import_array;
 
 #[savvy]
 pub struct SedonaDBExpr {
     pub inner: Expr,
+}
+
+#[savvy]
+impl SedonaDBExpr {
+    fn debug_string(&self) -> savvy::Result<savvy::Sexp> {
+        format!("{:?}", self.inner).try_into()
+    }
 }
 
 #[savvy]
@@ -33,6 +46,22 @@ pub struct SedonaDBExprFactory {
 
 #[savvy]
 impl SedonaDBExprFactory {
+    fn literal(
+        array_xptr: savvy::Sexp,
+        schema_xptr: savvy::Sexp,
+    ) -> savvy::Result<SedonaDBExpr> {
+        let (field, array_ref) = import_array(array_xptr, schema_xptr)?;
+        let metadata = if field.metadata().is_empty() {
+            None
+        } else {
+            Some(FieldMetadata::new_from_field(&field))
+        };
+
+        let scalar_value = ScalarValue::try_from_array(&array_ref, 0)?;
+        let inner = Expr::Literal(scalar_value, metadata);
+        Ok(SedonaDBExpr { inner })
+    }
+
     fn scalar_function(&self, name: &str, args: savvy::Sexp) -> savvy::Result<SedonaDBExpr> {
         if let Some(scalar_udf) = self.ctx.ctx.state().scalar_functions().get(name) {
             let args = Self::exprs(args)?;
