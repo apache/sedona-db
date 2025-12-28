@@ -27,7 +27,47 @@ as_sedonadb_expr <- function(x, ..., type = NULL) {
   UseMethod("as_sedonadb_expr")
 }
 
+#' @export
 as_sedonadb_expr.SedonaDBExpr <- function(x, ..., type = NULL) {
+  handle_type_request(x, type)
+}
+
+#' @export
+as_sedonadb_expr.character <- function(x, ..., type = NULL) {
+  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+}
+
+#' @export
+as_sedonadb_expr.integer <- function(x, ..., type = NULL) {
+  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+}
+
+#' @export
+as_sedonadb_expr.double <- function(x, ..., type = NULL) {
+  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+}
+
+as_sedonadb_expr_from_nanoarrow <- function(x, ..., type = NULL) {
+  if (length(x) != 1 || is.object(x)) {
+    stop("Can't convert non-scalar chr to sedonadb_expr")
+  }
+
+  array <- nanoarrow::as_nanoarrow_array(x)
+  as_sedonadb_expr(array, type = type)
+}
+
+#' @export
+as_sedonadb_expr.nanoarrow_array <- function(x, ..., type = NULL) {
+  schema <- nanoarrow::infer_nanoarrow_schema(x)
+
+  array_export <- nanoarrow::nanoarrow_allocate_array()
+  nanoarrow::nanoarrow_pointer_export(x, array_export)
+
+  expr <- SedonaDBExprFactory$literal(array_export, schema)
+  handle_type_request(expr, type)
+}
+
+handle_type_request <- function(x, type) {
   if (!is.null(type)) {
     x$cast(nanoarrow::as_nanoarrow_schema(x))
   } else {
@@ -35,8 +75,10 @@ as_sedonadb_expr.SedonaDBExpr <- function(x, ..., type = NULL) {
   }
 }
 
-
-
-
-
-
+#' @export
+print.SedonaDBExpr <- function(x, ...) {
+  cat("<SedonaDBExpr>\n")
+  cat(x$debug_string())
+  cat("\n")
+  invisible(x)
+}

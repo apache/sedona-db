@@ -265,3 +265,71 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
 `print.sedonadb::InternalDataFrame__bundle` <- function(x, ...) {
   cat('sedonadb::InternalDataFrame\n')
 }
+
+### wrapper functions for SedonaDBExpr
+
+`SedonaDBExpr_debug_string` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_debug_string__impl, `self`)
+  }
+}
+
+`.savvy_wrap_SedonaDBExpr` <- function(ptr) {
+  e <- new.env(parent = emptyenv())
+  e$.ptr <- ptr
+  e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
+
+  class(e) <- c("sedonadb::SedonaDBExpr", "SedonaDBExpr", "savvy_sedonadb__sealed")
+  e
+}
+
+
+
+`SedonaDBExpr` <- new.env(parent = emptyenv())
+
+### associated functions for SedonaDBExpr
+
+
+
+class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__sealed")
+
+#' @export
+`print.sedonadb::SedonaDBExpr__bundle` <- function(x, ...) {
+  cat('sedonadb::SedonaDBExpr\n')
+}
+
+### wrapper functions for SedonaDBExprFactory
+
+`SedonaDBExprFactory_scalar_function` <- function(self) {
+  function(`name`, `args`) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_scalar_function__impl, `self`, `name`, `args`))
+  }
+}
+
+`.savvy_wrap_SedonaDBExprFactory` <- function(ptr) {
+  e <- new.env(parent = emptyenv())
+  e$.ptr <- ptr
+  e$`scalar_function` <- `SedonaDBExprFactory_scalar_function`(ptr)
+
+  class(e) <- c("sedonadb::SedonaDBExprFactory", "SedonaDBExprFactory", "savvy_sedonadb__sealed")
+  e
+}
+
+
+
+`SedonaDBExprFactory` <- new.env(parent = emptyenv())
+
+### associated functions for SedonaDBExprFactory
+
+`SedonaDBExprFactory`$`literal` <- function(`array_xptr`, `schema_xptr`) {
+  .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_literal__impl, `array_xptr`, `schema_xptr`))
+}
+
+
+class(`SedonaDBExprFactory`) <- c("sedonadb::SedonaDBExprFactory__bundle", "savvy_sedonadb__sealed")
+
+#' @export
+`print.sedonadb::SedonaDBExprFactory__bundle` <- function(x, ...) {
+  cat('sedonadb::SedonaDBExprFactory\n')
+}
+
