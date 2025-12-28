@@ -47,9 +47,14 @@ as_sedonadb_expr.double <- function(x, ..., type = NULL) {
   as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
 }
 
+#' @export
+as_sedonadb_expr.raw <- function(x, ..., type = NULL) {
+  as_sedonadb_expr_from_nanoarrow(list(x), ..., type = type)
+}
+
 as_sedonadb_expr_from_nanoarrow <- function(x, ..., type = NULL) {
   if (length(x) != 1 || is.object(x)) {
-    stop("Can't convert non-scalar chr to sedonadb_expr")
+    stop("Can't convert non-scalar to sedonadb_expr")
   }
 
   array <- nanoarrow::as_nanoarrow_array(x)
