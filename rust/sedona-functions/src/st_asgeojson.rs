@@ -58,7 +58,7 @@ impl GeoJsonType {
 ///
 /// An implementation of GeoJSON writing using the geojson crate.
 pub fn st_asgeojson_udf() -> SedonaScalarUDF {
-    let udf = SedonaScalarUDF::new(
+    SedonaScalarUDF::new(
         "st_asgeojson",
         vec![
             Arc::new(STAsGeoJSON {}),
@@ -66,8 +66,7 @@ pub fn st_asgeojson_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
         Some(st_asgeojson_doc()),
-    );
-    udf
+    )
 }
 
 fn st_asgeojson_doc() -> Documentation {
