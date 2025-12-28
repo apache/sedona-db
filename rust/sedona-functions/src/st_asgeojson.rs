@@ -60,10 +60,7 @@ impl GeoJsonType {
 pub fn st_asgeojson_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_asgeojson",
-        vec![
-            Arc::new(STAsGeoJSON {}),
-            Arc::new(STAsGeoJSONWithType {}),
-        ],
+        vec![Arc::new(STAsGeoJSON {}), Arc::new(STAsGeoJSONWithType {})],
         Volatility::Immutable,
         Some(st_asgeojson_doc()),
     )
@@ -76,7 +73,10 @@ fn st_asgeojson_doc() -> Documentation {
         "ST_AsGeoJSON (A: Geometry [, type: String])",
     )
     .with_argument("geom", "geometry: Input geometry or geography")
-    .with_argument("type", "string (optional): Output type - 'Simple' (default), 'Feature', or 'FeatureCollection'")
+    .with_argument(
+        "type",
+        "string (optional): Output type - 'Simple' (default), 'Feature', or 'FeatureCollection'",
+    )
     .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0))")
     .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0), 'Feature')")
     .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0), 'FeatureCollection')")
@@ -176,14 +176,16 @@ fn convert_to_geojson(
                 match geo_geometry {
                     Some(geom) => {
                         // Convert geo_types::Geometry to geojson::Geometry
-                        let geojson_geom: geojson::Geometry = (&geom).try_into()
-                            .map_err(|e| DataFusionError::Execution(format!("Failed to convert to GeoJSON: {:?}", e)))?;
+                        let geojson_geom: geojson::Geometry = (&geom).try_into().map_err(|e| {
+                            DataFusionError::Execution(format!(
+                                "Failed to convert to GeoJSON: {:?}",
+                                e
+                            ))
+                        })?;
 
                         // Wrap the geometry based on the type parameter and serialize
                         let geojson_output = match geojson_type {
-                            GeoJsonType::Simple => {
-                                geojson_geom
-                            }
+                            GeoJsonType::Simple => geojson_geom,
                             GeoJsonType::Feature => {
                                 let feature = geojson::Feature {
                                     bbox: None,
@@ -248,9 +250,7 @@ fn wkb_to_geometry(item: impl GeometryTrait<T = f64>) -> Result<Option<Geometry>
         GeometryType::MultiLineString(geom) => {
             Some(Geometry::MultiLineString(geom.to_multi_line_string()))
         }
-        GeometryType::MultiPolygon(geom) => {
-            Some(Geometry::MultiPolygon(geom.to_multi_polygon()))
-        }
+        GeometryType::MultiPolygon(geom) => Some(Geometry::MultiPolygon(geom.to_multi_polygon())),
         GeometryType::GeometryCollection(geom) => convert_geometry_collection(geom)?,
         _ => None,
     };
@@ -273,17 +273,14 @@ fn convert_geometry_collection<GC: GeometryCollectionTrait<T = f64>>(
                 GeometryType::MultiLineString(g) => {
                     Some(Geometry::MultiLineString(g.to_multi_line_string()))
                 }
-                GeometryType::MultiPolygon(g) => {
-                    Some(Geometry::MultiPolygon(g.to_multi_polygon()))
-                }
+                GeometryType::MultiPolygon(g) => Some(Geometry::MultiPolygon(g.to_multi_polygon())),
                 GeometryType::GeometryCollection(g) => {
                     // Support one level of nested GeometryCollection
-                    return convert_geometry_collection(g)?
-                        .ok_or_else(|| {
-                            DataFusionError::NotImplemented(
-                                "Nested GeometryCollection with unsupported types".to_string(),
-                            )
-                        });
+                    return convert_geometry_collection(g)?.ok_or_else(|| {
+                        DataFusionError::NotImplemented(
+                            "Nested GeometryCollection with unsupported types".to_string(),
+                        )
+                    });
                 }
                 _ => None,
             };
@@ -308,9 +305,7 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY,
-    };
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY};
     use sedona_testing::{compare::assert_scalar_equal, testers::ScalarUdfTester};
 
     use super::*;
@@ -396,10 +391,7 @@ mod tests {
     }
 
     #[rstest]
-    fn geojson_type_parameter(
-        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)]
-        sedona_type: SedonaType,
-    ) {
+    fn geojson_type_parameter(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         // Test Simple type (default)
         let tester = ScalarUdfTester::new(st_asgeojson_udf().into(), vec![sedona_type.clone()]);
         let result = tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap();
