@@ -131,12 +131,30 @@ def test_st_astext(eng, geom):
         ("MULTIPOLYGON EMPTY", '{"type":"MultiPolygon","coordinates":[]}'),
         ("GEOMETRYCOLLECTION EMPTY", '{"type":"GeometryCollection","geometries":[]}'),
         ("POINT (1 2)", '{"type":"Point","coordinates":[1.0,2.0]}'),
-        ("LINESTRING (0 0, 1 1)", '{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}'),
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}'),
-        ("MULTIPOINT ((0 0), (1 1))", '{"type":"MultiPoint","coordinates":[[0.0,0.0],[1.0,1.0]]}'),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", '{"type":"MultiLineString","coordinates":[[[0.0,0.0],[1.0,1.0]],[[2.0,2.0],[3.0,3.0]]]}'),
-        ("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))", '{"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]],[[[2.0,2.0],[3.0,2.0],[3.0,3.0],[2.0,3.0],[2.0,2.0]]]]}'),
-        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (1 1, 2 2))", '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.0,0.0]},{"type":"LineString","coordinates":[[1.0,1.0],[2.0,2.0]]}]}'),
+        (
+            "LINESTRING (0 0, 1 1)",
+            '{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}',
+        ),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}',
+        ),
+        (
+            "MULTIPOINT ((0 0), (1 1))",
+            '{"type":"MultiPoint","coordinates":[[0.0,0.0],[1.0,1.0]]}',
+        ),
+        (
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+            '{"type":"MultiLineString","coordinates":[[[0.0,0.0],[1.0,1.0]],[[2.0,2.0],[3.0,3.0]]]}',
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
+            '{"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]],[[[2.0,2.0],[3.0,2.0],[3.0,3.0],[2.0,3.0],[2.0,2.0]]]]}',
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (1 1, 2 2))",
+            '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.0,0.0]},{"type":"LineString","coordinates":[[1.0,1.0],[2.0,2.0]]}]}',
+        ),
     ],
 )
 def test_st_asgeojson(eng, geom, expected):
