@@ -121,6 +121,32 @@ def test_st_astext(eng, geom):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", '{"type":"Point","coordinates":[]}'),
+        ("LINESTRING EMPTY", '{"type":"LineString","coordinates":[]}'),
+        ("POLYGON EMPTY", '{"type":"Polygon","coordinates":[]}'),
+        ("MULTIPOINT EMPTY", '{"type":"MultiPoint","coordinates":[]}'),
+        ("MULTILINESTRING EMPTY", '{"type":"MultiLineString","coordinates":[]}'),
+        ("MULTIPOLYGON EMPTY", '{"type":"MultiPolygon","coordinates":[]}'),
+        ("GEOMETRYCOLLECTION EMPTY", '{"type":"GeometryCollection","geometries":[]}'),
+        ("POINT (1 2)", '{"type":"Point","coordinates":[1.0,2.0]}'),
+        ("LINESTRING (0 0, 1 1)", '{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}'),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}'),
+        ("MULTIPOINT ((0 0), (1 1))", '{"type":"MultiPoint","coordinates":[[0.0,0.0],[1.0,1.0]]}'),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", '{"type":"MultiLineString","coordinates":[[[0.0,0.0],[1.0,1.0]],[[2.0,2.0],[3.0,3.0]]]}'),
+        ("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))", '{"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]],[[[2.0,2.0],[3.0,2.0],[3.0,3.0],[2.0,3.0],[2.0,2.0]]]]}'),
+        ("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (1 1, 2 2))", '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.0,0.0]},{"type":"LineString","coordinates":[[1.0,1.0],[2.0,2.0]]}]}'),
+    ],
+)
+def test_st_asgeojson(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_AsGeoJSON({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
         # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
