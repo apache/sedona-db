@@ -45,8 +45,6 @@ arrow-buffer = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
-geo-types = { workspace = true }
-geojson = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geometry = { workspace = true }

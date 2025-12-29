@@ -17,6 +17,7 @@
 pub mod centroid;
 pub mod register;
 mod st_area;
+mod st_asgeojson;
 mod st_buffer;
 mod st_centroid;
 pub mod st_concavehull;
