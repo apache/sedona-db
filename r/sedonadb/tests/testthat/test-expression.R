@@ -37,6 +37,13 @@ test_that("basic literals can be converted to expressions", {
   )
 })
 
+test_that("non-scalars can't be automatically converted to literals", {
+  expect_error(
+    as_sedonadb_expr(1:5)$debug_string(),
+    "Can't convert non-scalar to sedonadb_expr"
+  )
+})
+
 test_that("expressions can be printed", {
   expect_snapshot(
     print(as_sedonadb_expr("foofy"))

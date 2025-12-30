@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::ScalarValue;
+use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{
     expr::{FieldMetadata, ScalarFunction},
     Expr,
@@ -25,7 +25,7 @@ use datafusion_expr::{
 use savvy::{savvy, savvy_err};
 use sedona::context::SedonaContext;
 
-use crate::ffi::import_array;
+use crate::{context::InternalContext, ffi::import_array};
 
 #[savvy]
 pub struct SedonaDBExpr {
@@ -46,10 +46,13 @@ pub struct SedonaDBExprFactory {
 
 #[savvy]
 impl SedonaDBExprFactory {
-    fn literal(
-        array_xptr: savvy::Sexp,
-        schema_xptr: savvy::Sexp,
-    ) -> savvy::Result<SedonaDBExpr> {
+    fn new(ctx: &InternalContext) -> Self {
+        Self {
+            ctx: ctx.inner.clone(),
+        }
+    }
+
+    fn literal(array_xptr: savvy::Sexp, schema_xptr: savvy::Sexp) -> savvy::Result<SedonaDBExpr> {
         let (field, array_ref) = import_array(array_xptr, schema_xptr)?;
         let metadata = if field.metadata().is_empty() {
             None
@@ -59,6 +62,11 @@ impl SedonaDBExprFactory {
 
         let scalar_value = ScalarValue::try_from_array(&array_ref, 0)?;
         let inner = Expr::Literal(scalar_value, metadata);
+        Ok(SedonaDBExpr { inner })
+    }
+
+    fn column(name: &str, qualifier: Option<&str>) -> savvy::Result<SedonaDBExpr> {
+        let inner = Expr::Column(Column::new(qualifier, name));
         Ok(SedonaDBExpr { inner })
     }
 
@@ -80,7 +88,9 @@ impl SedonaDBExprFactory {
         savvy::ListSexp::try_from(exprs_sexp)?
             .iter()
             .map(|(_, item)| -> savvy::Result<Expr> {
-                let expr_wrapper = SedonaDBExpr::try_from(item)?;
+                // This seems to require $.ptr from the list() input (can't just
+                // use list of R SedonaDBExpr objects)
+                let expr_wrapper: &SedonaDBExpr = item.try_into()?;
                 Ok(expr_wrapper.inner.clone())
             })
             .collect()
