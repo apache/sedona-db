@@ -5,4 +5,3 @@
     Output
       <SedonaDBExpr>
       Literal(Utf8("foofy"), None)
-

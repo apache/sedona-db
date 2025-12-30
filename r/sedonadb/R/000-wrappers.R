@@ -321,8 +321,17 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
 
 ### associated functions for SedonaDBExprFactory
 
+`SedonaDBExprFactory`$`column` <- function(`name`, `qualifier` = NULL) {
+  .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_column__impl, `name`, `qualifier`))
+}
+
 `SedonaDBExprFactory`$`literal` <- function(`array_xptr`, `schema_xptr`) {
   .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_literal__impl, `array_xptr`, `schema_xptr`))
+}
+
+`SedonaDBExprFactory`$`new` <- function(`ctx`) {
+  `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
+  .savvy_wrap_SedonaDBExprFactory(.Call(savvy_SedonaDBExprFactory_new__impl, `ctx`))
 }
 
 
@@ -332,4 +341,3 @@ class(`SedonaDBExprFactory`) <- c("sedonadb::SedonaDBExprFactory__bundle", "savv
 `print.sedonadb::SedonaDBExprFactory__bundle` <- function(x, ...) {
   cat('sedonadb::SedonaDBExprFactory\n')
 }
-
