@@ -35,6 +35,7 @@ use datafusion::{
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
+use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
@@ -275,7 +276,7 @@ impl FileFormat for GeoParquetFormat {
 
     async fn create_physical_plan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         config: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // A copy of ParquetSource::create_physical_plan() that ensures the underlying
@@ -291,6 +292,9 @@ impl FileFormat for GeoParquetFormat {
         if let Some(metadata_size_hint) = metadata_size_hint {
             source = source.with_metadata_size_hint(metadata_size_hint)
         }
+
+        source = source
+            .with_file_metadata_cache(state.runtime_env().cache_manager.get_file_metadata_cache());
 
         let conf = FileScanConfigBuilder::from(config)
             .with_source(Arc::new(source))
@@ -332,6 +336,8 @@ pub struct GeoParquetFileSource {
     inner: ParquetSource,
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
+    // pub(crate) parquet_file_reader_factory: Option<Arc<dyn ParquetFileReaderFactory>>,
+    file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
 }
 
 impl GeoParquetFileSource {
@@ -341,6 +347,7 @@ impl GeoParquetFileSource {
             inner: ParquetSource::new(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
+            file_metadata_cache: None,
         }
     }
 
@@ -388,6 +395,7 @@ impl GeoParquetFileSource {
                 inner: parquet_source.clone(),
                 metadata_size_hint,
                 predicate: new_predicate,
+                file_metadata_cache: None,
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -400,7 +408,16 @@ impl GeoParquetFileSource {
             inner: self.inner.with_predicate(predicate.clone()),
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
+            file_metadata_cache: self.file_metadata_cache.clone(),
         }
+    }
+
+    pub fn with_file_metadata_cache(
+        mut self,
+        file_metadata_cache: Arc<dyn FileMetadataCache>,
+    ) -> Self {
+        self.file_metadata_cache = Some(file_metadata_cache);
+        self
     }
 
     /// Apply a [SchemaAdapterFactory] to the inner [ParquetSource]
@@ -424,6 +441,7 @@ impl GeoParquetFileSource {
             inner: parquet_source,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
+            file_metadata_cache: self.file_metadata_cache.clone(),
         }
     }
 
@@ -433,6 +451,7 @@ impl GeoParquetFileSource {
             inner: self.inner.clone().with_metadata_size_hint(hint),
             metadata_size_hint: Some(hint),
             predicate: self.predicate.clone(),
+            file_metadata_cache: self.file_metadata_cache.clone(),
         }
     }
 }
@@ -463,6 +482,7 @@ impl FileSource for GeoParquetFileSource {
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
             self.inner.metrics(),
+            self.file_metadata_cache.clone(),
         ))
     }
 
@@ -474,11 +494,14 @@ impl FileSource for GeoParquetFileSource {
         let inner_result = self.inner.try_pushdown_filters(filters.clone(), config)?;
         match &inner_result.updated_node {
             Some(updated_node) => {
-                let updated_inner = Self::try_from_file_source(
+                let mut updated_inner = Self::try_from_file_source(
                     updated_node.clone(),
                     self.metadata_size_hint,
                     None,
                 )?;
+                if let Some(file_metadata_cache) = self.file_metadata_cache.clone() {
+                    updated_inner = updated_inner.with_file_metadata_cache(file_metadata_cache);
+                }
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),

@@ -23,6 +23,7 @@ use datafusion::datasource::{
 };
 use datafusion_common::Result;
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
+use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
 use object_store::ObjectStore;
@@ -86,6 +87,7 @@ pub struct GeoParquetFileOpener {
     file_schema: SchemaRef,
     enable_pruning: bool,
     metrics: GeoParquetFileOpenerMetrics,
+    file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
 }
 
 impl GeoParquetFileOpener {
@@ -98,6 +100,7 @@ impl GeoParquetFileOpener {
         file_schema: SchemaRef,
         enable_pruning: bool,
         execution_plan_global_metrics: &ExecutionPlanMetricsSet,
+        file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
     ) -> Self {
         Self {
             inner,
@@ -107,6 +110,7 @@ impl GeoParquetFileOpener {
             file_schema,
             enable_pruning,
             metrics: GeoParquetFileOpenerMetrics::new(execution_plan_global_metrics),
+            file_metadata_cache,
         }
     }
 }
@@ -116,9 +120,11 @@ impl FileOpener for GeoParquetFileOpener {
         let self_clone = self.clone();
 
         Ok(Box::pin(async move {
+            let file_metadata_cache = self_clone.file_metadata_cache.or(None);
             let parquet_metadata =
                 DFParquetMetadata::new(&self_clone.object_store, &file_meta.object_meta)
                     .with_metadata_size_hint(self_clone.metadata_size_hint)
+                    .with_file_metadata_cache(file_metadata_cache)
                     .fetch_metadata()
                     .await?;
 
