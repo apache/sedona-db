@@ -49,3 +49,33 @@ test_that("expressions can be printed", {
     print(as_sedonadb_expr("foofy"))
   )
 })
+
+test_that("literal expressions can be translated", {
+  expect_snapshot(sd_eval_expr(quote(1L)))
+})
+
+test_that("column expressions can be translated", {
+  schema <- nanoarrow::na_struct(list(col0 = nanoarrow::na_int32()))
+  expr_ctx <- sd_expr_ctx(schema)
+
+  expect_snapshot(sd_eval_expr(quote(col0), expr_ctx))
+  expect_snapshot(sd_eval_expr(quote(.data$col0), expr_ctx))
+  col_zero <- "col0"
+  expect_snapshot(sd_eval_expr(quote(.data[[col_zero]]), expr_ctx))
+
+  expect_error(
+    sd_eval_expr(quote(col1), expr_ctx),
+    "object 'col1' not found"
+  )
+})
+
+test_that("function calls containing no SedonaDB expressions can be translated", {
+  # Ensure these are evaluated in R (i.e., the resulting expression is a literal)
+  expect_snapshot(sd_eval_expr(quote(abs(-1L))))
+})
+
+test_that("function calls containing SedonaDB expressions can be translated", {
+  schema <- nanoarrow::na_struct(list(col0 = nanoarrow::na_int32()))
+  expr_ctx <- sd_expr_ctx(schema)
+  expect_snapshot(sd_eval_expr(quote(abs(col0)), expr_ctx))
+})
