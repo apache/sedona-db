@@ -90,29 +90,69 @@ print.SedonaDBExpr <- function(x, ...) {
   invisible(x)
 }
 
+#' Expression evaluation context
+#'
+#' A context to use for evaluating a set of related R expressions into
+#' SedonaDB expressions.
+#'
+#' @param schema A schema-like object coerced using
+#'   [nanoarrow::as_nanoarrow_schema()].
+#'
+#' @return An object of class sedonadb_expr_ctx
+#' @noRd
+sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
+  if (is.null(schema)) {
+    schema <- nanoarrow::na_struct()
+  }
 
-sd_eval_expr <- function(expr, expr_type = NULL, expr_ctx = sd_expr_ctx()) {
+  schema <- nanoarrow::as_nanoarrow_schema(schema)
+  data_names <- as.character(names(schema$children))
+  data <- lapply(data_names, SedonaDBExprFactory$column)
+  names(data) <- data_names
+
+  structure(
+    list(
+      factory = SedonaDBExprFactory$new(ctx()),
+      schema = schema,
+      data = rlang::as_data_mask(data),
+      data_names = data_names,
+      env = env,
+      fns = default_fns
+    ),
+    class = "sedonadb_expr_ctx"
+  )
+}
+
+
+#' Evaluate an R expression into a SedonaDB expression
+#'
+#' @param expr An R expression (e.g., the result of `quote()`).
+#' @param expr_ctx An [sd_expr_ctx()]
+#'
+#' @returns A `SedonaDBExpr`
+#' @noRd
+sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx()) {
   if (rlang::is_call(expr)) {
     # If there is no expression anywhere in this call, just evaluate it in R
     # and move on.
     if (!r_expr_contains_sedonadb_expr(expr, expr_ctx)) {
-      return(sd_eval_default(expr, expr_type, expr_ctx))
+      return(sd_eval_default(expr, expr_ctx))
     }
 
     # Handle `pkg::fun` or `fun`
     call_name <- rlang::call_name(expr)
     if (!is.null(call_name) && !is.null(expr_ctx$fns[[call_name]])) {
-      return(sd_eval_translation(call_name, expr, expr_type, expr_ctx))
+      return(sd_eval_translation(call_name, expr, expr_ctx))
     } else {
       # Otherwise we have an inlined function and we just have to evaluate
-      return(sd_eval_default(expr, expr_type, expr_ctx))
+      return(sd_eval_default(expr, expr_ctx))
     }
   }
 
-  sd_eval_default(expr, expr_type, expr_ctx)
+  sd_eval_default(expr, expr_ctx)
 }
 
-sd_eval_translation <- function(fn_key, expr, expr_type, expr_ctx) {
+sd_eval_translation <- function(fn_key, expr, expr_ctx) {
   # Replace the function with the translation in such a way that
   # any error resulting from the call doesn't have an absolute garbage error
   # stack trace
@@ -125,14 +165,20 @@ sd_eval_translation <- function(fn_key, expr, expr_type, expr_ctx) {
   # Recreate the call, injecting the factory as the first argument
   new_call <- rlang::call2(new_fn_expr, expr_ctx$factory, !!!evaluated_args)
 
-  # ...and evaluate it. We may need to catch an error because we've injected
-  # the arguments as atomics instead of the original expression typed by the user.
-  sd_eval_default(new_call, expr_type, expr_ctx)
+  # ...and evaluate it
+  sd_eval_default(new_call, expr_ctx)
 }
 
-sd_eval_default <- function(expr, expr_type, expr_ctx) {
-  r_result <- rlang::eval_tidy(expr, data = expr_ctx$data, env = expr_ctx$env)
-  as_sedonadb_expr(r_result, expr_type = expr_type)
+sd_eval_default <- function(expr, expr_ctx) {
+  rlang::try_fetch({
+    r_result <- rlang::eval_tidy(expr, data = expr_ctx$data, env = expr_ctx$env)
+    as_sedonadb_expr(r_result)
+  }, error = function(e) {
+    rlang::abort(
+      "SedonaDB R evaluation error",
+      parent = e
+    )
+  })
 }
 
 r_expr_contains_sedonadb_expr <- function(expr, expr_ctx) {
@@ -151,50 +197,23 @@ r_expr_contains_sedonadb_expr <- function(expr, expr_ctx) {
 
     FALSE
   } else if(rlang::is_atomic(expr)) {
-    inherits(x, "sedonadb_expr")
+    inherits(expr, "sedonadb_expr")
   } else {
     FALSE
   }
 }
 
-#' Expression evaluation context
+#' Register an R function translation into a SedonaDB expression
 #'
-#' A context to use for evaluating a set of related R expressions into
-#' SedonaDB expressions.
+#' @param qualified_name The name of the function in the form `pkg::fun` or
+#'   `fun` if the package name is not relevant. This allows translations to
+#'   support calls to `fun()` or `pkg::fun()` that appear in an R expression.
+#' @param fn A function. The first argument should always be `.factory`, which
+#'   is the instance of `SedonaDBExprFactory` that may be used to construct
+#'   the required expressions.
 #'
-#' @param schema A schema-like object coerced using
-#'   [nanoarrow::as_nanoarrow_schema()].
-#'
-#' @return An object of class sedonadb_expr_ctx
-#' @export
-#'
-#' @examples
-#' sd_expr_ctx()
-#'
-sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
-  if (is.null(schema)) {
-    schema <- nanoarrow::na_struct()
-  }
-
-  schema <- nanoarrow::as_nanoarrow_schema(schema)
-  data_names <- names(schema$children)
-  data <- lapply(data_names, SedonaDBExprFactory$column)
-  names(data) <- data_names
-
-  structure(
-    list(
-      factory = SedonaDBExprFactory$new(ctx()),
-      schema = schema,
-      data = rlang::as_data_mask(data),
-      data_names = data_names,
-      env = env,
-      fns = default_fns
-    ),
-    class = "sedonadb_expr_ctx"
-  )
-}
-
-
+#' @returns fn, invisibly
+#' @noRd
 sd_register_translation <- function(qualified_name, fn) {
   stopifnot(is.function(fn))
 
@@ -202,6 +221,7 @@ sd_register_translation <- function(qualified_name, fn) {
   unqualified_name <- pieces[[2]]
 
   default_fns[[qualified_name]] <- default_fns[[unqualified_name]] <- fn
+  invisible(fn)
 }
 
 default_fns <- new.env(parent = emptyenv())
