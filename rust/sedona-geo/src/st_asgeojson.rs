@@ -49,9 +49,8 @@ impl SedonaScalarKernel for STAsGeoJSON {
     ) -> Result<ColumnarValue> {
         let executor = GeoTypesExecutor::new(arg_types, args);
 
-        // Estimate the minimum probable memory requirement of the output.
-        // GeoJSON is typically longer than WKT due to JSON formatting.
-        let min_probable_geojson_size = executor.num_iterations() * 50;
+        // Minimal GeoJSON: {"type":"Point","coordinates":[]}
+        let min_probable_geojson_size = executor.num_iterations() * 33;
 
         // Initialize an output builder of the appropriate type
         let mut builder =
