@@ -4,10 +4,15 @@
 #' @param column_name A column name
 #' @param qualifier An optional qualifier (e.g., table reference) that may be
 #'   used to disambiguate a specific reference
-#' @param ... Used to accommodate future expansion of the API. Currently all
-#'   dots must be empty.
+#' @param function_name The name of the function to call. This name is resolved
+#'   from the context associated with `factory`.
+#' @param type A destination type into which `expr` should be cast.
+#' @param expr A SedonaDBExpr or object coercible to one with [as_sd_expr()].
+#' @param alias An alias to apply to `expr`.
 #' @param factory A [sd_expr_factory()]. This factory wraps a SedonaDB context
 #'   and is used to resolve scalar functions and/or retrieve options.
+#' @param ... Used to accommodate future expansion of the API. Currently all
+#'   dots must be empty.
 #'
 #' @returns An object of class SedonaDBExpr
 #' @export
@@ -16,6 +21,8 @@
 #' sd_expr_column("foofy")
 #' sd_expr_literal(1L)
 #' sd_expr_scalar_function("abs", list(1L))
+#' sd_expr_cast(1L, nanoarrow::na_int64())
+#' sd_expr_alias(1L, "foofy")
 #'
 sd_expr_column <- function(column_name, qualifier = NULL, ..., factory = sd_expr_factory()) {
   rlang::check_dots_empty()
@@ -37,6 +44,21 @@ sd_expr_scalar_function <- function(function_name, args, ..., factory = sd_expr_
   # Not sure why we need this exactly (something about savvy)
   args_as_expr_ptr <- lapply(args_as_expr, "[[", ".ptr")
   factory$scalar_function(function_name, args_as_expr_ptr)
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_cast <- function(expr, type, ..., factory = sd_expr_factory()) {
+  expr <- as_sd_expr(expr, factory = factory)
+  type <- nanoarrow::as_nanoarrow_schema(type)
+  expr$cast(type)
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_alias <- function(expr, alias, ..., factory = sd_expr_factory()) {
+  expr <- as_sd_expr(expr, factory = factory)
+  expr$alias(alias)
 }
 
 #' @rdname sd_expr_column

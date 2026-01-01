@@ -15,9 +15,18 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("expressions can be printed", {
-  expect_snapshot(
-    print(as_sedonadb_literal("foofy"))
+test_that("basic expression types can be constructed", {
+  expect_snapshot(sd_expr_column("foofy"))
+  expect_snapshot(sd_expr_literal(1L))
+  expect_snapshot(sd_expr_scalar_function("abs", list(1L)))
+  expect_snapshot(sd_expr_cast(1L, nanoarrow::na_int64()))
+  expect_snapshot(sd_expr_alias(1L, "foofy"))
+})
+
+test_that("casts to a type with extension metadata can't be constructed", {
+  expect_error(
+    sd_expr_cast(1L, geoarrow::geoarrow_wkb()),
+    "Can't cast to Arrow extension type 'geoarrow.wkb'"
   )
 })
 
