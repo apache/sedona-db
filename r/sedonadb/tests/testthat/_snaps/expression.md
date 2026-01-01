@@ -1,7 +1,7 @@
 # expressions can be printed
 
     Code
-      print(as_sedonadb_expr("foofy"))
+      print(as_sedonadb_literal("foofy"))
     Output
       <SedonaDBExpr>
       Literal(Utf8("foofy"), None)
