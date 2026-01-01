@@ -29,7 +29,7 @@ as_sedonadb_dataframe.sf <- function(x, ..., schema = NULL) {
   as_sedonadb_dataframe(new_sedonadb_dataframe(ctx, df), schema = schema)
 }
 
-# dynamically registered in zzz.R
+#' @exportS3Method sf::st_as_sf
 st_as_sf.sedonadb_dataframe <- function(x, ...) {
   stream <- nanoarrow::nanoarrow_allocate_array_stream()
   size <- x$df$collect(stream)

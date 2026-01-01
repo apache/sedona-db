@@ -49,7 +49,7 @@ test_that("sd_parse_crs works for Engineering CRS (no EPSG ID)", {
   expect_null(parsed$authority_code)
   expect_null(parsed$srid)
   expect_identical(parsed$name, "Construction Site Local Grid")
-  expect_true(!is.null(parsed$proj_string))
+  expect_false(is.null(parsed$proj_string))
 })
 
 test_that("sd_parse_crs returns NULL if crs field is missing", {
@@ -71,10 +71,10 @@ test_that("sd_parse_crs works with plain strings if that's what's in 'crs'", {
   # for consistent axis order in WKT/GeoJSON contexts.
   expect_identical(parsed$authority_code, "OGC:CRS84")
   expect_identical(parsed$srid, 4326L)
-  expect_true(!is.null(parsed$proj_string))
+  expect_false(is.null(parsed$proj_string))
 })
 
-# Tests for CRS display in print.sedonadb_dataframe (lines 325-360 of dataframe.R)
+# Tests for CRS display in print.sedonadb_dataframe
 
 test_that("print.sedonadb_dataframe shows CRS info for geometry column with EPSG", {
   df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
@@ -137,9 +137,9 @@ test_that("print.sedonadb_dataframe respects width parameter for geometry line",
   output <- capture.output(print(df, n = 0, width = 60))
 
   geo_line <- grep("^# Geometry:", output, value = TRUE)
-  if (length(geo_line) > 0) {
-    # Line should be truncated with "..."
-    expect_lte(nchar(geo_line), 60)
-    expect_match(geo_line, "\\.\\.\\.$")
-  }
+  expect_length(geo_line, 1)
+
+  # Line should be truncated with "..."
+  expect_lte(nchar(geo_line), 60)
+  expect_match(geo_line, "\\.\\.\\.$")
 })
