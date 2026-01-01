@@ -55,8 +55,22 @@ NULL
 }
 
 
-`configure_proj_shared` <- function(`shared_library_path` = NULL, `database_path` = NULL, `search_path` = NULL) {
-  invisible(.Call(savvy_configure_proj_shared__impl, `shared_library_path`, `database_path`, `search_path`))
+`configure_proj_shared` <- function(
+  `shared_library_path` = NULL,
+  `database_path` = NULL,
+  `search_path` = NULL
+) {
+  invisible(.Call(
+    savvy_configure_proj_shared__impl,
+    `shared_library_path`,
+    `database_path`,
+    `search_path`
+  ))
+}
+
+
+`parse_crs_metadata` <- function(`crs_json`) {
+  .Call(savvy_parse_crs_metadata__impl, `crs_json`)
 }
 
 

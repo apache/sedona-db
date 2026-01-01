@@ -66,3 +66,58 @@ fn configure_proj_shared(
     configure_global_proj_engine(builder)?;
     Ok(())
 }
+
+#[savvy]
+fn parse_crs_metadata(crs_json: &str) -> savvy::Result<savvy::Sexp> {
+    use sedona_schema::crs::deserialize_crs_from_obj;
+
+    // The input is GeoArrow extension metadata, which is a JSON object like:
+    // {"crs": <PROJJSON or string>}
+    // We need to extract the "crs" field first.
+    let metadata: serde_json::Value = serde_json::from_str(crs_json)
+        .map_err(|e| savvy::Error::new(format!("Failed to parse metadata JSON: {e}")))?;
+
+    let crs_value = metadata.get("crs");
+    if crs_value.is_none() || crs_value.unwrap().is_null() {
+        return Ok(savvy::NullSexp.into());
+    }
+
+    let crs = deserialize_crs_from_obj(crs_value.unwrap())?;
+    match crs {
+        Some(crs_obj) => {
+            let auth_code = crs_obj.to_authority_code().ok().flatten();
+            let srid = crs_obj.srid().ok().flatten();
+            let name = crs_value.unwrap().get("name").and_then(|v| v.as_str());
+            let proj_string = crs_obj.to_crs_string();
+
+            let mut out = savvy::OwnedListSexp::new(4, true)?;
+            out.set_name(0, "authority_code")?;
+            out.set_name(1, "srid")?;
+            out.set_name(2, "name")?;
+            out.set_name(3, "proj_string")?;
+
+            if let Some(auth_code) = auth_code {
+                out.set_value(0, savvy::Sexp::try_from(auth_code.as_str())?)?;
+            } else {
+                out.set_value(0, savvy::NullSexp)?;
+            }
+
+            if let Some(srid) = srid {
+                out.set_value(1, savvy::Sexp::try_from(srid as i32)?)?;
+            } else {
+                out.set_value(1, savvy::NullSexp)?;
+            }
+
+            if let Some(name) = name {
+                out.set_value(2, savvy::Sexp::try_from(name)?)?;
+            } else {
+                out.set_value(2, savvy::NullSexp)?;
+            }
+            
+            out.set_value(3, savvy::Sexp::try_from(proj_string.as_str())?)?;
+
+            Ok(out.into())
+        }
+        None => Ok(savvy::NullSexp.into()),
+    }
+}

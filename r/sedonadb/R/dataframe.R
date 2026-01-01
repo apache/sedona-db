@@ -316,6 +316,49 @@ as_nanoarrow_array_stream.sedonadb_dataframe <- function(x, ..., schema = NULL) 
 
 #' @export
 print.sedonadb_dataframe <- function(x, ..., width = NULL, n = NULL) {
+  # Print class header
+  schema <- nanoarrow::infer_nanoarrow_schema(x)
+  ncols <- length(schema$children)
+
+  cat(sprintf("# A sedonadb_dataframe: ? x %d\n", ncols))
+
+  # Print geometry column info
+  # we just use sd_parse_crs() to extract CRS info from ARROW:extension:metadata
+  geo_col_info <- character()
+  for (col_name in names(schema$children)) {
+    child <- schema$children[[col_name]]
+    ext_name <- child$metadata[["ARROW:extension:name"]]
+    if (!is.null(ext_name) && grepl("^geoarrow\\.", ext_name)) {
+      ext_meta <- child$metadata[["ARROW:extension:metadata"]]
+      crs_info <- ""
+      if (!is.null(ext_meta)) {
+        parsed <- sd_parse_crs(ext_meta)
+        if (!is.null(parsed$authority_code)) {
+          crs_info <- sprintf(" (CRS: %s)", parsed$authority_code)
+        } else if (!is.null(parsed$srid)) {
+          crs_info <- sprintf(" (CRS: EPSG:%d)", parsed$srid)
+        } else if (!is.null(parsed$name)) {
+          crs_info <- sprintf(" (CRS: %s)", parsed$name)
+        } else {
+          crs_info <- " (CRS: available)"
+        }
+      }
+      geo_col_info <- c(geo_col_info, sprintf("%s%s", col_name, crs_info))
+    }
+  }
+
+  if (length(geo_col_info) > 0) {
+    if (is.null(width)) {
+      width <- getOption("width")
+    }
+
+    geo_line <- sprintf("# Geometry: %s", paste(geo_col_info, collapse = ", "))
+    if (nchar(geo_line) > width) {
+      geo_line <- paste0(substr(geo_line, 1, width - 3), "...")
+    }
+    cat(paste0(geo_line, "\n"))
+  }
+
   if (isTRUE(getOption("sedonadb.interactive", TRUE))) {
     sd_preview(x, n = n, width = width)
   } else {

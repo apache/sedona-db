@@ -39,5 +39,6 @@ sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }
 sedona-proj = { workspace = true }
 sedona-schema = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

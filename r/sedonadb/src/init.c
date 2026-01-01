@@ -60,6 +60,11 @@ SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
   return handle_result(res);
 }
 
+SEXP savvy_parse_crs_metadata__impl(SEXP c_arg__crs_json) {
+  SEXP res = savvy_parse_crs_metadata__ffi(c_arg__crs_json);
+  return handle_result(res);
+}
+
 SEXP savvy_init_r_runtime__impl(DllInfo *c_arg___dll_info) {
   SEXP res = savvy_init_r_runtime__ffi(c_arg___dll_info);
   return handle_result(res);
@@ -214,6 +219,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
     {"savvy_init_r_runtime_interrupts__impl",
      (DL_FUNC)&savvy_init_r_runtime_interrupts__impl, 2},
+    {"savvy_parse_crs_metadata__impl", (DL_FUNC)&savvy_parse_crs_metadata__impl,
+     1},
     {"savvy_sedonadb_adbc_init_func__impl",
      (DL_FUNC)&savvy_sedonadb_adbc_init_func__impl, 0},
     {"savvy_InternalContext_data_frame_from_array_stream__impl",
