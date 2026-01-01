@@ -73,3 +73,73 @@ test_that("sd_parse_crs works with plain strings if that's what's in 'crs'", {
   expect_identical(parsed$srid, 4326L)
   expect_true(!is.null(parsed$proj_string))
 })
+
+# Tests for CRS display in print.sedonadb_dataframe (lines 325-360 of dataframe.R)
+
+test_that("print.sedonadb_dataframe shows CRS info for geometry column with EPSG", {
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
+  output <- capture.output(print(df, n = 0))
+
+  # Check that the Geometry line is present
+
+  geo_line <- grep("^# Geometry:", output, value = TRUE)
+  expect_length(geo_line, 1)
+
+  # Should show CRS information (OGC:CRS84 or EPSG:4326)
+  expect_match(geo_line, "geom .*(CRS: OGC:CRS84|CRS: EPSG:4326)")
+})
+
+test_that("print.sedonadb_dataframe shows CRS info with different SRID", {
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 5070) as geom")
+  output <- capture.output(print(df, n = 0))
+
+  geo_line <- grep("^# Geometry:", output, value = TRUE)
+  expect_length(geo_line, 1)
+  expect_match(geo_line, "geom .*(CRS: EPSG:5070|CRS:.*5070)")
+})
+
+test_that("print.sedonadb_dataframe shows multiple geometry columns with CRS", {
+  df <- sd_sql(
+    "
+    SELECT
+      ST_SetSRID(ST_Point(1, 2), 4326) as geom1,
+      ST_SetSRID(ST_Point(3, 4), 5070) as geom2
+  "
+  )
+  output <- capture.output(print(df, n = 0))
+
+  geo_line <- grep("^# Geometry:", output, value = TRUE)
+  expect_length(geo_line, 1)
+  # Should contain both geometry columns
+  expect_match(geo_line, "geom1")
+  expect_match(geo_line, "geom2")
+})
+
+test_that("print.sedonadb_dataframe handles geometry without explicit CRS", {
+  # ST_Point without ST_SetSRID may not have CRS metadata
+  df <- sd_sql("SELECT ST_Point(1, 2) as geom")
+  output <- capture.output(print(df, n = 0))
+
+  # May or may not have a Geometry line depending on extension metadata
+  # At least it should not error
+  expect_true(any(grepl("sedonadb_dataframe", output)))
+})
+
+test_that("print.sedonadb_dataframe respects width parameter for geometry line", {
+  df <- sd_sql(
+    "
+    SELECT
+      ST_SetSRID(ST_Point(1, 2), 4326) as very_long_geometry_column_name_1,
+      ST_SetSRID(ST_Point(3, 4), 4326) as very_long_geometry_column_name_2
+  "
+  )
+  # Use a narrow width to trigger truncation
+  output <- capture.output(print(df, n = 0, width = 60))
+
+  geo_line <- grep("^# Geometry:", output, value = TRUE)
+  if (length(geo_line) > 0) {
+    # Line should be truncated with "..."
+    expect_lte(nchar(geo_line), 60)
+    expect_match(geo_line, "\\.\\.\\.$")
+  }
+})
