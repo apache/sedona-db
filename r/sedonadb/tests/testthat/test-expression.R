@@ -17,36 +17,36 @@
 
 test_that("basic literals can be converted to expressions", {
   expect_identical(
-    as_sedonadb_expr("foofy")$debug_string(),
+    as_sedonadb_literal("foofy")$debug_string(),
     'Literal(Utf8("foofy"), None)'
   )
 
   expect_identical(
-    as_sedonadb_expr(1L)$debug_string(),
+    as_sedonadb_literal(1L)$debug_string(),
     'Literal(Int32(1), None)'
   )
 
   expect_identical(
-    as_sedonadb_expr(1.0)$debug_string(),
+    as_sedonadb_literal(1.0)$debug_string(),
     'Literal(Float64(1), None)'
   )
 
   expect_identical(
-    as_sedonadb_expr(as.raw(c(1:3)))$debug_string(),
+    as_sedonadb_literal(as.raw(c(1:3)))$debug_string(),
     'Literal(Binary("1,2,3"), None)'
   )
 })
 
 test_that("non-scalars can't be automatically converted to literals", {
   expect_error(
-    as_sedonadb_expr(1:5)$debug_string(),
+    as_sedonadb_literal(1:5)$debug_string(),
     "Can't convert non-scalar to sedonadb_expr"
   )
 })
 
 test_that("expressions can be printed", {
   expect_snapshot(
-    print(as_sedonadb_expr("foofy"))
+    print(as_sedonadb_literal("foofy"))
   )
 })
 

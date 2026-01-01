@@ -22,7 +22,7 @@
 
 pkg-config geos  2>/dev/null
 if [ $? -eq 0 ]; then
-  PKGCONFIG_LIBS=`pkg-config --libs geos`
+  PKGCONFIG_LIBS=`pkg-config --libs geos --static`
 fi
 
 if [ "$LIB_DIR" ]; then

@@ -15,56 +15,56 @@
 # specific language governing permissions and limitations
 # under the License.
 
-#' Create a SedonaDB Logical Expression
+#' Create a SedonaDB Literal Expression
 #'
-#' @param x An object
+#' @param x An object to convert to a SedonaDB literal
 #' @param ... Passed to/from methods
 #' @param type An optional data type to request for the output
 #' @param factory An expression factory object that should be passed to any
-#'   other calls to `as_sedonadb_expr()`.
+#'   other calls to `as_sedonadb_literal()`.
 #'
 #' @returns An object of class SedonaDBExpr
 #' @export
-as_sedonadb_expr <- function(x, ..., type = NULL, factory = NULL) {
-  UseMethod("as_sedonadb_expr")
+as_sedonadb_literal <- function(x, ..., type = NULL, factory = NULL) {
+  UseMethod("as_sedonadb_literal")
 }
 
 #' @export
-as_sedonadb_expr.SedonaDBExpr <- function(x, ..., type = NULL) {
+as_sedonadb_literal.SedonaDBExpr <- function(x, ..., type = NULL) {
   handle_type_request(x, type)
 }
 
 #' @export
-as_sedonadb_expr.character <- function(x, ..., type = NULL, factory = NULL) {
-  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+as_sedonadb_literal.character <- function(x, ..., type = NULL, factory = NULL) {
+  as_sedonadb_literal_from_nanoarrow(x, ..., type = type)
 }
 
 #' @export
-as_sedonadb_expr.integer <- function(x, ..., type = NULL) {
-  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+as_sedonadb_literal.integer <- function(x, ..., type = NULL) {
+  as_sedonadb_literal_from_nanoarrow(x, ..., type = type)
 }
 
 #' @export
-as_sedonadb_expr.double <- function(x, ..., type = NULL) {
-  as_sedonadb_expr_from_nanoarrow(x, ..., type = type)
+as_sedonadb_literal.double <- function(x, ..., type = NULL) {
+  as_sedonadb_literal_from_nanoarrow(x, ..., type = type)
 }
 
 #' @export
-as_sedonadb_expr.raw <- function(x, ..., type = NULL) {
-  as_sedonadb_expr_from_nanoarrow(list(x), ..., type = type)
+as_sedonadb_literal.raw <- function(x, ..., type = NULL) {
+  as_sedonadb_literal_from_nanoarrow(list(x), ..., type = type)
 }
 
-as_sedonadb_expr_from_nanoarrow <- function(x, ..., type = NULL) {
+as_sedonadb_literal_from_nanoarrow <- function(x, ..., type = NULL) {
   if (length(x) != 1 || is.object(x)) {
     stop("Can't convert non-scalar to sedonadb_expr")
   }
 
   array <- nanoarrow::as_nanoarrow_array(x)
-  as_sedonadb_expr(array, type = type)
+  as_sedonadb_literal(array, type = type)
 }
 
 #' @export
-as_sedonadb_expr.nanoarrow_array <- function(x, ..., type = NULL) {
+as_sedonadb_literal.nanoarrow_array <- function(x, ..., type = NULL) {
   schema <- nanoarrow::infer_nanoarrow_schema(x)
 
   array_export <- nanoarrow::nanoarrow_allocate_array()
@@ -127,7 +127,7 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
 #' Evaluate an R expression into a SedonaDB expression
 #'
 #' @param expr An R expression (e.g., the result of `quote()`).
-#' @param expr_ctx An [sd_expr_ctx()]
+#' @param expr_ctx An `sd_expr_ctx()`
 #'
 #' @returns A `SedonaDBExpr`
 #' @noRd
@@ -172,7 +172,7 @@ sd_eval_translation <- function(fn_key, expr, expr_ctx) {
 sd_eval_default <- function(expr, expr_ctx) {
   rlang::try_fetch({
     r_result <- rlang::eval_tidy(expr, data = expr_ctx$data, env = expr_ctx$env)
-    as_sedonadb_expr(r_result)
+    as_sedonadb_literal(r_result)
   }, error = function(e) {
     rlang::abort(
       "SedonaDB R evaluation error",
