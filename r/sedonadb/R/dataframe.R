@@ -332,8 +332,13 @@ print.sedonadb_dataframe <- function(x, ..., width = NULL, n = NULL) {
       ext_meta <- child$metadata[["ARROW:extension:metadata"]]
       crs_info <- ""
       if (!is.null(ext_meta)) {
-        parsed <- sd_parse_crs(ext_meta)
-        if (!is.null(parsed$authority_code)) {
+        parsed <- tryCatch(
+          sd_parse_crs(ext_meta),
+          error = function(e) NULL
+        )
+        if (is.null(parsed)) {
+          crs_info <- " (CRS: parsing error)"
+        } else if (!is.null(parsed$authority_code)) {
           crs_info <- sprintf(" (CRS: %s)", parsed$authority_code)
         } else if (!is.null(parsed$srid)) {
           crs_info <- sprintf(" (CRS: EPSG:%d)", parsed$srid)
