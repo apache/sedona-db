@@ -75,6 +75,7 @@ test_that("function calls containing no SedonaDB expressions can be translated",
 })
 
 test_that("function calls containing SedonaDB expressions can be translated", {
+  # Ensure these are translated as a function call
   schema <- nanoarrow::na_struct(list(col0 = nanoarrow::na_int32()))
   expr_ctx <- sd_expr_ctx(schema)
   expect_snapshot(sd_eval_expr(quote(abs(col0)), expr_ctx))
