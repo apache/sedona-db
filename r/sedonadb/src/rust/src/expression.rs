@@ -20,12 +20,15 @@ use std::sync::Arc;
 use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{
     expr::{FieldMetadata, ScalarFunction},
-    Expr,
+    Cast, Expr,
 };
 use savvy::{savvy, savvy_err};
 use sedona::context::SedonaContext;
 
-use crate::{context::InternalContext, ffi::import_array};
+use crate::{
+    context::InternalContext,
+    ffi::{import_array, import_field},
+};
 
 #[savvy]
 pub struct SedonaDBExpr {
@@ -34,8 +37,33 @@ pub struct SedonaDBExpr {
 
 #[savvy]
 impl SedonaDBExpr {
+    fn display(&self) -> savvy::Result<savvy::Sexp> {
+        format!("{}", self.inner).try_into()
+    }
+
     fn debug_string(&self) -> savvy::Result<savvy::Sexp> {
         format!("{:?}", self.inner).try_into()
+    }
+
+    fn alias(&self, name: &str) -> savvy::Result<SedonaDBExpr> {
+        let inner = self.inner.clone().alias_if_changed(name.to_string())?;
+        Ok(Self { inner })
+    }
+
+    fn cast(&self, schema_xptr: savvy::Sexp) -> savvy::Result<SedonaDBExpr> {
+        let field = import_field(schema_xptr)?;
+        if let Some(type_name) = field.extension_type_name() {
+            return Err(savvy_err!(
+                "Can't cast to Arrow extension type '{type_name}'"
+            ));
+        }
+
+        let inner = Expr::Cast(Cast::new(
+            self.inner.clone().into(),
+            field.data_type().clone(),
+        ));
+
+        Ok(Self { inner })
     }
 }
 
@@ -65,7 +93,7 @@ impl SedonaDBExprFactory {
         Ok(SedonaDBExpr { inner })
     }
 
-    fn column(name: &str, qualifier: Option<&str>) -> savvy::Result<SedonaDBExpr> {
+    fn column(&self, name: &str, qualifier: Option<&str>) -> savvy::Result<SedonaDBExpr> {
         let inner = Expr::Column(Column::new(qualifier, name));
         Ok(SedonaDBExpr { inner })
     }
