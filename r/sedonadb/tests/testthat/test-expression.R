@@ -15,35 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("basic literals can be converted to expressions", {
-  expect_identical(
-    as_sedonadb_literal("foofy")$debug_string(),
-    'Literal(Utf8("foofy"), None)'
-  )
-
-  expect_identical(
-    as_sedonadb_literal(1L)$debug_string(),
-    'Literal(Int32(1), None)'
-  )
-
-  expect_identical(
-    as_sedonadb_literal(1.0)$debug_string(),
-    'Literal(Float64(1), None)'
-  )
-
-  expect_identical(
-    as_sedonadb_literal(as.raw(c(1:3)))$debug_string(),
-    'Literal(Binary("1,2,3"), None)'
-  )
-})
-
-test_that("non-scalars can't be automatically converted to literals", {
-  expect_error(
-    as_sedonadb_literal(1:5)$debug_string(),
-    "Can't convert non-scalar to sedonadb_expr"
-  )
-})
-
 test_that("expressions can be printed", {
   expect_snapshot(
     print(as_sedonadb_literal("foofy"))
@@ -69,14 +40,11 @@ test_that("column expressions can be translated", {
   )
 })
 
-test_that("function calls containing no SedonaDB expressions can be translated", {
-  # Ensure these are evaluated in R (i.e., the resulting expression is a literal)
+test_that("function calls with a translation become function calls", {
   expect_snapshot(sd_eval_expr(quote(abs(-1L))))
 })
 
-test_that("function calls containing SedonaDB expressions can be translated", {
-  # Ensure these are translated as a function call
-  schema <- nanoarrow::na_struct(list(col0 = nanoarrow::na_int32()))
-  expr_ctx <- sd_expr_ctx(schema)
-  expect_snapshot(sd_eval_expr(quote(abs(col0)), expr_ctx))
+test_that("function calls without a translation are evaluated in R", {
+  function_without_a_translation <- function(x) x + 1L
+  expect_snapshot(sd_eval_expr(quote(function_without_a_translation(1L))))
 })

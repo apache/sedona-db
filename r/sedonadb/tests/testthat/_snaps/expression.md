@@ -4,7 +4,7 @@
       print(as_sedonadb_literal("foofy"))
     Output
       <SedonaDBExpr>
-      Literal(Utf8("foofy"), None)
+      Utf8("foofy")
 
 # literal expressions can be translated
 
@@ -12,7 +12,7 @@
       sd_eval_expr(quote(1L))
     Output
       <SedonaDBExpr>
-      Literal(Int32(1), None)
+      Int32(1)
 
 # column expressions can be translated
 
@@ -20,7 +20,7 @@
       sd_eval_expr(quote(col0), expr_ctx)
     Output
       <SedonaDBExpr>
-      Column(Column { relation: None, name: "col0" })
+      col0
 
 ---
 
@@ -28,7 +28,7 @@
       sd_eval_expr(quote(.data$col0), expr_ctx)
     Output
       <SedonaDBExpr>
-      Column(Column { relation: None, name: "col0" })
+      col0
 
 ---
 
@@ -36,21 +36,21 @@
       sd_eval_expr(quote(.data[[col_zero]]), expr_ctx)
     Output
       <SedonaDBExpr>
-      Column(Column { relation: None, name: "col0" })
+      col0
 
-# function calls containing no SedonaDB expressions can be translated
+# function calls with a translation become function calls
 
     Code
       sd_eval_expr(quote(abs(-1L)))
     Output
       <SedonaDBExpr>
-      Literal(Int32(1), None)
+      abs(Int32(-1))
 
-# function calls containing SedonaDB expressions can be translated
+# function calls without a translation are evaluated in R
 
     Code
-      sd_eval_expr(quote(abs(col0)), expr_ctx)
+      sd_eval_expr(quote(function_without_a_translation(1L)))
     Output
       <SedonaDBExpr>
-      ScalarFunction(ScalarFunction { func: ScalarUDF { inner: AbsFunc { signature: Signature { type_signature: Numeric(1), volatility: Immutable } } }, args: [Column(Column { relation: None, name: "col0" })] })
+      Int32(2)
 

@@ -62,10 +62,13 @@ SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__overwrite);
 
 // methods and associated functions for SedonaDBExpr
+SEXP savvy_SedonaDBExpr_alias__ffi(SEXP self__, SEXP c_arg__name);
+SEXP savvy_SedonaDBExpr_cast__ffi(SEXP self__, SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExpr_debug_string__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_display__ffi(SEXP self__);
 
 // methods and associated functions for SedonaDBExprFactory
-SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP c_arg__name,
+SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP self__, SEXP c_arg__name,
                                            SEXP c_arg__qualifier);
 SEXP savvy_SedonaDBExprFactory_literal__ffi(SEXP c_arg__array_xptr,
                                             SEXP c_arg__schema_xptr);
