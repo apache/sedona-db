@@ -113,7 +113,6 @@ fn parse_crs_metadata(crs_json: &str) -> savvy::Result<savvy::Sexp> {
             } else {
                 out.set_value(2, savvy::NullSexp)?;
             }
-            
             out.set_value(3, savvy::Sexp::try_from(proj_string.as_str())?)?;
 
             Ok(out.into())
