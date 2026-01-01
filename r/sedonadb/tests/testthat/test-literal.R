@@ -42,6 +42,10 @@ test_that("basic literals can be converted to expressions", {
   )
 })
 
+test_that("literals with Arrow extension metadata can be converted to literals", {
+  expect_snapshot(as_sedonadb_literal(wk::as_wkb("POINT (0 1)")))
+})
+
 test_that("non-scalars can't be automatically converted to literals", {
   expect_error(
     as_sedonadb_literal(1:5)$debug_string(),

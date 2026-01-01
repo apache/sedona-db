@@ -64,6 +64,11 @@ as_sedonadb_literal.raw <- function(x, ..., type = NULL) {
   as_sedonadb_literal_from_nanoarrow(list(x), ..., type = type)
 }
 
+#' @export
+as_sedonadb_literal.wk_wkb <- function(x, ..., type = NULL) {
+  as_sedonadb_literal_from_nanoarrow(x, ..., type = type)
+}
+
 as_sedonadb_literal_from_nanoarrow <- function(x, ..., type = NULL) {
   array <- nanoarrow::as_nanoarrow_array(x)
   if (array$length != 1L) {

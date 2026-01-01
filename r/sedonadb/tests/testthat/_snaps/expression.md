@@ -1,10 +1,42 @@
-# expressions can be printed
+# basic expression types can be constructed
 
     Code
-      print(as_sedonadb_literal("foofy"))
+      sd_expr_column("foofy")
     Output
       <SedonaDBExpr>
-      Utf8("foofy")
+      foofy
+
+---
+
+    Code
+      sd_expr_literal(1L)
+    Output
+      <SedonaDBExpr>
+      Int32(1)
+
+---
+
+    Code
+      sd_expr_scalar_function("abs", list(1L))
+    Output
+      <SedonaDBExpr>
+      abs(Int32(1))
+
+---
+
+    Code
+      sd_expr_cast(1L, nanoarrow::na_int64())
+    Output
+      <SedonaDBExpr>
+      CAST(Int32(1) AS Int64)
+
+---
+
+    Code
+      sd_expr_alias(1L, "foofy")
+    Output
+      <SedonaDBExpr>
+      Int32(1) AS foofy
 
 # literal expressions can be translated
 
