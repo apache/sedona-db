@@ -109,8 +109,7 @@ impl SedonaScalarKernel for RsSrid {
                         Some(crs_str) => {
                             let crs = deserialize_crs(crs_str).map_err(|e| {
                                 DataFusionError::Execution(format!(
-                                    "Failed to deserialize CRS: {}",
-                                    e
+                                    "Failed to deserialize CRS: {e}"
                                 ))
                             })?;
 
@@ -118,8 +117,7 @@ impl SedonaScalarKernel for RsSrid {
                                 Some(crs_ref) => {
                                     let srid = crs_ref.srid().map_err(|e| {
                                         DataFusionError::Execution(format!(
-                                            "Failed to get SRID from CRS: {}",
-                                            e
+                                            "Failed to get SRID from CRS: {e}"
                                         ))
                                     })?;
 
@@ -175,7 +173,7 @@ impl SedonaScalarKernel for RsCrs {
                     None => builder.append_null(),
                     Some(crs_str) => {
                         let crs = deserialize_crs(crs_str).map_err(|e| {
-                            DataFusionError::Execution(format!("Failed to deserialize CRS: {}", e))
+                            DataFusionError::Execution(format!("Failed to deserialize CRS: {e}"))
                         })?;
 
                         let crs_string = crs
