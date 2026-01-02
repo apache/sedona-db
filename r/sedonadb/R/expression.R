@@ -176,7 +176,7 @@ sd_eval_translation <- function(fn_key, expr, expr_ctx) {
 
   # Evaluate arguments individually. We may need to allow translations to
   # override this step to have more control over the expression evaluation.
-  evaluated_args <- lapply(expr[-1], sd_eval_expr, expr_ctx = expr_ctx)
+  evaluated_args <- lapply(expr[-1], sd_eval_expr_inner, expr_ctx = expr_ctx)
 
   # Recreate the call, injecting the context as the first argument
   new_call <- rlang::call2(new_fn_expr, expr_ctx, !!!evaluated_args)
@@ -230,7 +230,7 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
 #'   `fun` if the package name is not relevant. This allows translations to
 #'   support calls to `fun()` or `pkg::fun()` that appear in an R expression.
 #' @param fn A function. The first argument must always be `.ctx`, which
-#'   is the instance of [sd_expr_ctx()] that may be used to construct
+#'   is the instance of `sd_expr_ctx()` that may be used to construct
 #'   the required expressions (using `$factory`).
 #'
 #' @returns fn, invisibly
@@ -259,7 +259,7 @@ ensure_translations_registered <- function() {
   })
 
   sd_register_translation("base::sum", function(.ctx, x, ..., na.rm = FALSE) {
-    sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .ctx$.factory)
+    sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .ctx$factory)
   })
 
   sd_register_translation("base::+", function(.ctx, lhs, rhs) {
