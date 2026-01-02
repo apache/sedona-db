@@ -42,6 +42,7 @@ members = [
     "rust/sedona-testing",
     "rust/sedona",
     "sedona-cli",
+    "examples/sedonadb-rust-pointcloud",
 ]
 resolver = "2"
 
