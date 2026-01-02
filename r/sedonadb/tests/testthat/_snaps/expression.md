@@ -38,6 +38,30 @@
       <SedonaDBExpr>
       Int32(1) AS foofy
 
+---
+
+    Code
+      sd_expr_binary("+", 1L, 2L)
+    Output
+      <SedonaDBExpr>
+      Int32(1) + Int32(2)
+
+---
+
+    Code
+      sd_expr_negative(1L)
+    Output
+      <SedonaDBExpr>
+      (- Int32(1))
+
+---
+
+    Code
+      sd_expr_aggregate_function("sum", list(1L))
+    Output
+      <SedonaDBExpr>
+      sum(Int32(1)) RESPECT NULLS
+
 # literal expressions can be translated
 
     Code
@@ -78,6 +102,14 @@
       <SedonaDBExpr>
       abs(Int32(-1))
 
+---
+
+    Code
+      sd_eval_expr(quote(base::abs(-1L)))
+    Output
+      <SedonaDBExpr>
+      abs(Int32(-1))
+
 # function calls without a translation are evaluated in R
 
     Code
@@ -85,4 +117,14 @@
     Output
       <SedonaDBExpr>
       Int32(2)
+
+# errors that occur during evaluation have reasonable context
+
+    Code
+      sd_eval_expr(quote(stop("this will error")))
+    Condition
+      Error in `sd_eval_expr()`:
+      ! Error evaluating translated expression `stop("this will error")`
+      Caused by error:
+      ! this will error
 

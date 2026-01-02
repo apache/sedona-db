@@ -42,6 +42,13 @@ test_that("basic literals can be converted to expressions", {
   )
 })
 
+test_that("literals can request a type", {
+  expect_identical(
+    as_sedonadb_literal(1.0, type = nanoarrow::na_float())$debug_string(),
+    "Cast(Cast { expr: Literal(Float64(1), None), data_type: Float32 })"
+  )
+})
+
 test_that("literals with Arrow extension metadata can be converted to literals", {
   expect_snapshot(as_sedonadb_literal(wk::as_wkb("POINT (0 1)")))
 })

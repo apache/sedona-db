@@ -229,6 +229,28 @@ SEXP savvy_SedonaDBExpr_display__impl(SEXP self__) {
   return handle_result(res);
 }
 
+SEXP savvy_SedonaDBExpr_negate__impl(SEXP self__) {
+  SEXP res = savvy_SedonaDBExpr_negate__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaDBExprFactory_aggregate_function__impl(SEXP self__,
+                                                        SEXP c_arg__name,
+                                                        SEXP c_arg__args,
+                                                        SEXP c_arg__na_rm,
+                                                        SEXP c_arg__distinct) {
+  SEXP res = savvy_SedonaDBExprFactory_aggregate_function__ffi(
+      self__, c_arg__name, c_arg__args, c_arg__na_rm, c_arg__distinct);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaDBExprFactory_binary__impl(SEXP self__, SEXP c_arg__op,
+                                            SEXP c_arg__lhs, SEXP c_arg__rhs) {
+  SEXP res = savvy_SedonaDBExprFactory_binary__ffi(self__, c_arg__op,
+                                                   c_arg__lhs, c_arg__rhs);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExprFactory_column__impl(SEXP self__, SEXP c_arg__name,
                                             SEXP c_arg__qualifier) {
   SEXP res = savvy_SedonaDBExprFactory_column__ffi(self__, c_arg__name,
@@ -313,6 +335,12 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExpr_debug_string__impl, 1},
     {"savvy_SedonaDBExpr_display__impl",
      (DL_FUNC)&savvy_SedonaDBExpr_display__impl, 1},
+    {"savvy_SedonaDBExpr_negate__impl",
+     (DL_FUNC)&savvy_SedonaDBExpr_negate__impl, 1},
+    {"savvy_SedonaDBExprFactory_aggregate_function__impl",
+     (DL_FUNC)&savvy_SedonaDBExprFactory_aggregate_function__impl, 5},
+    {"savvy_SedonaDBExprFactory_binary__impl",
+     (DL_FUNC)&savvy_SedonaDBExprFactory_binary__impl, 4},
     {"savvy_SedonaDBExprFactory_column__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_column__impl, 3},
     {"savvy_SedonaDBExprFactory_literal__impl",

@@ -292,6 +292,12 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
   }
 }
 
+`SedonaDBExpr_negate` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_negate__impl, `self`))
+  }
+}
+
 `.savvy_wrap_SedonaDBExpr` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
@@ -299,6 +305,7 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
   e$`cast` <- `SedonaDBExpr_cast`(ptr)
   e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
   e$`display` <- `SedonaDBExpr_display`(ptr)
+  e$`negate` <- `SedonaDBExpr_negate`(ptr)
 
   class(e) <- c("sedonadb::SedonaDBExpr", "SedonaDBExpr", "savvy_sedonadb__sealed")
   e
@@ -321,6 +328,20 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
 
 ### wrapper functions for SedonaDBExprFactory
 
+`SedonaDBExprFactory_aggregate_function` <- function(self) {
+  function(`name`, `args`, `na_rm` = NULL, `distinct` = NULL) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_aggregate_function__impl, `self`, `name`, `args`, `na_rm`, `distinct`))
+  }
+}
+
+`SedonaDBExprFactory_binary` <- function(self) {
+  function(`op`, `lhs`, `rhs`) {
+    `lhs` <- .savvy_extract_ptr(`lhs`, "sedonadb::SedonaDBExpr")
+    `rhs` <- .savvy_extract_ptr(`rhs`, "sedonadb::SedonaDBExpr")
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_binary__impl, `self`, `op`, `lhs`, `rhs`))
+  }
+}
+
 `SedonaDBExprFactory_column` <- function(self) {
   function(`name`, `qualifier` = NULL) {
     .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_column__impl, `self`, `name`, `qualifier`))
@@ -336,6 +357,8 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
 `.savvy_wrap_SedonaDBExprFactory` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
+  e$`aggregate_function` <- `SedonaDBExprFactory_aggregate_function`(ptr)
+  e$`binary` <- `SedonaDBExprFactory_binary`(ptr)
   e$`column` <- `SedonaDBExprFactory_column`(ptr)
   e$`scalar_function` <- `SedonaDBExprFactory_scalar_function`(ptr)
 

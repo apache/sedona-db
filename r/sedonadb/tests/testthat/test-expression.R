@@ -21,6 +21,9 @@ test_that("basic expression types can be constructed", {
   expect_snapshot(sd_expr_scalar_function("abs", list(1L)))
   expect_snapshot(sd_expr_cast(1L, nanoarrow::na_int64()))
   expect_snapshot(sd_expr_alias(1L, "foofy"))
+  expect_snapshot(sd_expr_binary("+", 1L, 2L))
+  expect_snapshot(sd_expr_negative(1L))
+  expect_snapshot(sd_expr_aggregate_function("sum", list(1L)))
 })
 
 test_that("casts to a type with extension metadata can't be constructed", {
@@ -50,10 +53,17 @@ test_that("column expressions can be translated", {
 })
 
 test_that("function calls with a translation become function calls", {
+  # Should work for the qualified or unqualified versions
   expect_snapshot(sd_eval_expr(quote(abs(-1L))))
+  expect_snapshot(sd_eval_expr(quote(base::abs(-1L))))
 })
 
 test_that("function calls without a translation are evaluated in R", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(function_without_a_translation(1L))))
+})
+
+test_that("errors that occur during evaluation have reasonable context", {
+  function_without_a_translation <- function(x) x + 1L
+  expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
 })
