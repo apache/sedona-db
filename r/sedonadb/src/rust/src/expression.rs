@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{
-    expr::{FieldMetadata, ScalarFunction},
-    Cast, Expr,
+    expr::{AggregateFunction, FieldMetadata, ScalarFunction},
+    sqlparser::ast::NullTreatment,
+    BinaryExpr, Cast, Expr, Operator,
 };
 use savvy::{savvy, savvy_err};
 use sedona::context::SedonaContext;
@@ -65,6 +66,11 @@ impl SedonaDBExpr {
 
         Ok(Self { inner })
     }
+
+    fn negate(&self) -> savvy::Result<SedonaDBExpr> {
+        let inner = Expr::Negative(Box::new(self.inner.clone()));
+        Ok(Self { inner })
+    }
 }
 
 #[savvy]
@@ -98,15 +104,73 @@ impl SedonaDBExprFactory {
         Ok(SedonaDBExpr { inner })
     }
 
+    fn binary(
+        &self,
+        op: &str,
+        lhs: &SedonaDBExpr,
+        rhs: &SedonaDBExpr,
+    ) -> savvy::Result<SedonaDBExpr> {
+        let operator = match op {
+            "==" => Operator::Eq,
+            "!=" => Operator::NotEq,
+            ">" => Operator::Gt,
+            ">=" => Operator::GtEq,
+            "<" => Operator::Lt,
+            "<=" => Operator::LtEq,
+            "+" => Operator::Plus,
+            "-" => Operator::Minus,
+            "*" => Operator::Multiply,
+            "/" => Operator::Divide,
+            "&" => Operator::And,
+            "|" => Operator::Or,
+            other => return Err(savvy_err!("Unimplemented binary operation '{other}'")),
+        };
+
+        let inner = Expr::BinaryExpr(BinaryExpr::new(
+            Box::new(lhs.inner.clone()),
+            operator,
+            Box::new(rhs.inner.clone()),
+        ));
+        Ok(SedonaDBExpr { inner })
+    }
+
     fn scalar_function(&self, name: &str, args: savvy::Sexp) -> savvy::Result<SedonaDBExpr> {
-        if let Some(scalar_udf) = self.ctx.ctx.state().scalar_functions().get(name) {
+        if let Some(udf) = self.ctx.ctx.state().scalar_functions().get(name) {
             let args = Self::exprs(args)?;
-            let inner = ScalarFunction::new_udf(scalar_udf.clone(), args);
-            Ok(SedonaDBExpr {
-                inner: Expr::ScalarFunction(inner),
-            })
+            let inner = Expr::ScalarFunction(ScalarFunction::new_udf(udf.clone(), args));
+            Ok(SedonaDBExpr { inner })
         } else {
             Err(savvy_err!("Scalar UDF '{name}' not found"))
+        }
+    }
+
+    fn aggregate_function(
+        &self,
+        name: &str,
+        args: savvy::Sexp,
+        na_rm: Option<bool>,
+        distinct: Option<bool>,
+    ) -> savvy::Result<SedonaDBExpr> {
+        if let Some(udf) = self.ctx.ctx.state().aggregate_functions().get(name) {
+            let args = Self::exprs(args)?;
+            let null_treatment = if na_rm.unwrap_or(true) {
+                NullTreatment::IgnoreNulls
+            } else {
+                NullTreatment::RespectNulls
+            };
+
+            let inner = Expr::AggregateFunction(AggregateFunction::new_udf(
+                udf.clone(),
+                args,
+                distinct.unwrap_or(false),
+                None,   // filter
+                vec![], // order by
+                Some(null_treatment),
+            ));
+
+            Ok(SedonaDBExpr { inner })
+        } else {
+            Err(savvy_err!("Aggregate UDF '{name}' not found"))
         }
     }
 }

@@ -91,7 +91,7 @@ as_sedonadb_literal.nanoarrow_array <- function(x, ..., type = NULL) {
 
 handle_type_request <- function(x, type) {
   if (!is.null(type)) {
-    x$cast(nanoarrow::as_nanoarrow_schema(x))
+    x$cast(nanoarrow::as_nanoarrow_schema(type))
   } else {
     x
   }

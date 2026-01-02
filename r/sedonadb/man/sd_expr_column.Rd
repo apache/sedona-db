@@ -3,6 +3,8 @@
 \name{sd_expr_column}
 \alias{sd_expr_column}
 \alias{sd_expr_literal}
+\alias{sd_expr_binary}
+\alias{sd_expr_negative}
 \alias{sd_expr_scalar_function}
 \alias{sd_expr_cast}
 \alias{sd_expr_alias}
@@ -11,17 +13,21 @@
 \alias{sd_expr_factory}
 \title{Create SedonaDB logical expressions}
 \usage{
-sd_expr_column(column_name, qualifier = NULL, ..., factory = sd_expr_factory())
+sd_expr_column(column_name, qualifier = NULL, factory = sd_expr_factory())
 
-sd_expr_literal(x, ..., type = NULL, factory = sd_expr_factory())
+sd_expr_literal(x, type = NULL, factory = sd_expr_factory())
 
-sd_expr_scalar_function(function_name, args, ..., factory = sd_expr_factory())
+sd_expr_binary(op, lhs, rhs, factory = sd_expr_factory())
 
-sd_expr_cast(expr, type, ..., factory = sd_expr_factory())
+sd_expr_negative(expr, factory = sd_expr_factory())
 
-sd_expr_alias(expr, alias, ..., factory = sd_expr_factory())
+sd_expr_scalar_function(function_name, args, factory = sd_expr_factory())
 
-as_sd_expr(x, ..., factory = sd_expr_factory())
+sd_expr_cast(expr, type, factory = sd_expr_factory())
+
+sd_expr_alias(expr, alias, factory = sd_expr_factory())
+
+as_sd_expr(x, factory = sd_expr_factory())
 
 is_sd_expr(x)
 
@@ -33,18 +39,20 @@ sd_expr_factory()
 \item{qualifier}{An optional qualifier (e.g., table reference) that may be
 used to disambiguate a specific reference}
 
-\item{...}{Used to accommodate future expansion of the API. Currently all
-dots must be empty.}
-
 \item{factory}{A \code{\link[=sd_expr_factory]{sd_expr_factory()}}. This factory wraps a SedonaDB context
 and is used to resolve scalar functions and/or retrieve options.}
 
 \item{type}{A destination type into which \code{expr} should be cast.}
 
-\item{function_name}{The name of the function to call. This name is resolved
-from the context associated with \code{factory}.}
+\item{op}{Operator name for a binary expression. In general these follow
+R function names (e.g., \code{>}, \code{<}, \code{+}, \code{-}).}
+
+\item{lhs, rhs}{Arguments to a binary expression}
 
 \item{expr}{A SedonaDBExpr or object coercible to one with \code{\link[=as_sd_expr]{as_sd_expr()}}.}
+
+\item{function_name}{The name of the function to call. This name is resolved
+from the context associated with \code{factory}.}
 
 \item{alias}{An alias to apply to \code{expr}.}
 }

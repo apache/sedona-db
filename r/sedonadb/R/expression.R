@@ -25,10 +25,11 @@
 #' @param type A destination type into which `expr` should be cast.
 #' @param expr A SedonaDBExpr or object coercible to one with [as_sd_expr()].
 #' @param alias An alias to apply to `expr`.
+#' @param op Operator name for a binary expression. In general these follow
+#'   R function names (e.g., `>`, `<`, `+`, `-`).
+#' @param lhs,rhs Arguments to a binary expression
 #' @param factory A [sd_expr_factory()]. This factory wraps a SedonaDB context
 #'   and is used to resolve scalar functions and/or retrieve options.
-#' @param ... Used to accommodate future expansion of the API. Currently all
-#'   dots must be empty.
 #'
 #' @returns An object of class SedonaDBExpr
 #' @export
@@ -40,22 +41,31 @@
 #' sd_expr_cast(1L, nanoarrow::na_int64())
 #' sd_expr_alias(1L, "foofy")
 #'
-sd_expr_column <- function(column_name, qualifier = NULL, ..., factory = sd_expr_factory()) {
-  rlang::check_dots_empty()
+sd_expr_column <- function(column_name, qualifier = NULL, factory = sd_expr_factory()) {
   factory$column(column_name, qualifier)
 }
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_literal <- function(x, ..., type = NULL, factory = sd_expr_factory()) {
-  rlang::check_dots_empty()
+sd_expr_literal <- function(x, type = NULL, factory = sd_expr_factory()) {
   as_sedonadb_literal(x, type = type, factory = factory)
 }
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_scalar_function <- function(function_name, args, ..., factory = sd_expr_factory()) {
-  rlang::check_dots_empty()
+sd_expr_binary <- function(op, lhs, rhs, factory = sd_expr_factory()) {
+  factory$binary(op, as_sd_expr(lhs), as_sd_expr(rhs))
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_negative <- function(expr, factory = sd_expr_factory()) {
+  as_sd_expr(expr, factory = factory)$negate()
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_factory()) {
   args_as_expr <- lapply(args, as_sd_expr, factory = factory)
   # Not sure why we need this exactly (something about savvy)
   args_as_expr_ptr <- lapply(args_as_expr, "[[", ".ptr")
@@ -64,7 +74,17 @@ sd_expr_scalar_function <- function(function_name, args, ..., factory = sd_expr_
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_cast <- function(expr, type, ..., factory = sd_expr_factory()) {
+sd_expr_aggregate_function <- function(function_name, args, ...,
+                                       na.rm = FALSE, distinct = FALSE, factory = sd_expr_factory()) {
+  args_as_expr <- lapply(args, as_sd_expr, factory = factory)
+  # Not sure why we need this exactly (something about savvy)
+  args_as_expr_ptr <- lapply(args_as_expr, "[[", ".ptr")
+  factory$aggregate_function(function_name, args_as_expr_ptr, na_rm = na.rm, distinct = distinct)
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_cast <- function(expr, type, factory = sd_expr_factory()) {
   expr <- as_sd_expr(expr, factory = factory)
   type <- nanoarrow::as_nanoarrow_schema(type)
   expr$cast(type)
@@ -72,14 +92,14 @@ sd_expr_cast <- function(expr, type, ..., factory = sd_expr_factory()) {
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_alias <- function(expr, alias, ..., factory = sd_expr_factory()) {
+sd_expr_alias <- function(expr, alias, factory = sd_expr_factory()) {
   expr <- as_sd_expr(expr, factory = factory)
   expr$alias(alias)
 }
 
 #' @rdname sd_expr_column
 #' @export
-as_sd_expr <- function(x, ..., factory = sd_expr_factory()) {
+as_sd_expr <- function(x, factory = sd_expr_factory()) {
   if (inherits(x, "SedonaDBExpr")) {
     x
   } else {
@@ -228,4 +248,8 @@ default_fns <- new.env(parent = emptyenv())
 
 sd_register_translation("base::abs", function(.factory, x) {
   sd_expr_scalar_function("abs", list(x), factory = .factory)
+})
+
+sd_register_translation("base::sum", function(.factory, x, ..., na.rm = FALSE) {
+  sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .factory)
 })
