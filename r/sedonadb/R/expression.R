@@ -135,6 +135,8 @@ print.SedonaDBExpr <- function(x, ...) {
 #' @returns A `SedonaDBExpr`
 #' @noRd
 sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.frame()) {
+  ensure_translations_registered()
+
   rlang::try_fetch({
     result <- sd_eval_expr_inner(expr, expr_ctx)
     as_sd_expr(result, factory = factory)
@@ -246,10 +248,41 @@ sd_register_translation <- function(qualified_name, fn) {
 
 default_fns <- new.env(parent = emptyenv())
 
-sd_register_translation("base::abs", function(.factory, x) {
-  sd_expr_scalar_function("abs", list(x), factory = .factory)
-})
+# Register translations lazily because SQL users don't need them and because
+# we need rlang for this and it is currently in Suggests
+ensure_translations_registered <- function() {
+  if (!is.null(default_fns$abs)) {
+    return()
+  }
 
-sd_register_translation("base::sum", function(.factory, x, ..., na.rm = FALSE) {
-  sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .factory)
-})
+  sd_register_translation("base::abs", function(.factory, x) {
+    sd_expr_scalar_function("abs", list(x), factory = .factory)
+  })
+
+  sd_register_translation("base::sum", function(.factory, x, ..., na.rm = FALSE) {
+    sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .factory)
+  })
+
+  sd_register_translation("base::+", function(.factory, lhs, rhs) {
+    if (missing(rhs)) {
+      # Use a double negative to ensure this fails for non-numeric types
+      sd_expr_negative(sd_expr_negative(lhs))
+    } else {
+      sd_expr_binary("+", lhs, rhs)
+    }
+  })
+
+  sd_register_translation("base::-", function(.factory, lhs, rhs) {
+    if (missing(rhs)) {
+      sd_expr_negative(lhs)
+    } else {
+      sd_expr_binary("-", lhs, rhs)
+    }
+  })
+
+  for (op in c("==", "!=", ">", ">=", "<", "<=", "*", "/", "&", "|")) {
+    sd_register_translation(paste0("base::", op), rlang::inject(function(.factory, lhs, rhs) {
+      sd_expr_binary(!!op, lhs, rhs, factory = .factory)
+    }))
+  }
+}
