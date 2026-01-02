@@ -5610,6 +5610,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedonadb-rust-pointcloud-example"
+version = "0.0.1"
+dependencies = [
+ "datafusion",
+ "sedona",
+ "sedona-pointcloud",
+ "tokio",
+]
+
+[[package]]
 name = "sedonadbr"
 version = "0.3.0"
 dependencies = [
