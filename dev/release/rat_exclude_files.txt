@@ -25,4 +25,5 @@ r/sedonadb/.Rbuildignore
 r/sedonadb/DESCRIPTION
 r/sedonadb/NAMESPACE
 r/sedonadb/src/sedonadb-win.def
+r/sedonadb/tests/testthat/_snaps/*
 submodules/geoarrow-data/*

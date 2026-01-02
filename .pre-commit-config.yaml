@@ -25,6 +25,8 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
+        # R snapshot test files may have arbitrary file endings based on test results
+        exclude: "_snaps"
       - id: fix-byte-order-marker
       - id: trailing-whitespace
 
@@ -34,7 +36,7 @@ repos:
       - id: codespell
         # types_or: [markdown, c, c++, rust, python]
         additional_dependencies: [tomli]
-        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-libgpuspatial/libgpuspatial|sedona-tg/src/tg)/.*|^docs/image/sedonadb-architecture\\.svg$"
+        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-libgpuspatial/libgpuspatial|sedona-tg/src/tg)/.*|^docs/image/sedonadb-architecture\\.svg$|^r/sedonadb/tools/savvy-update.sh$"
         args: ["--ignore-words-list=thirdparty"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
