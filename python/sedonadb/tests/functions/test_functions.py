@@ -124,8 +124,9 @@ def test_st_astext(eng, geom):
     ("geom", "expected"),
     [
         (None, None),
+        ("POINT EMPTY", '{"type":"Point","coordinates":[]}'),
         ("LINESTRING EMPTY", '{"type":"LineString","coordinates":[]}'),
-        ("POLYGON EMPTY", '{"type":"Polygon","coordinates":[[]]}'),
+        ("POLYGON EMPTY", '{"type":"Polygon","coordinates":[]}'),
         ("MULTIPOINT EMPTY", '{"type":"MultiPoint","coordinates":[]}'),
         ("MULTILINESTRING EMPTY", '{"type":"MultiLineString","coordinates":[]}'),
         ("MULTIPOLYGON EMPTY", '{"type":"MultiPolygon","coordinates":[]}'),

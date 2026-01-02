@@ -16,15 +16,19 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::to_geo::GeoTypesExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
+use geo_traits::{GeometryTrait, PointTrait, PolygonTrait};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use wkb::reader::Wkb;
 
-/// ST_AsGeoJSON() kernel implementation using GeoTypesExecutor
+use crate::to_geo::item_to_geometry;
+
+/// ST_AsGeoJSON() kernel implementation using WkbExecutor
 pub fn st_asgeojson_impl() -> ScalarKernelRef {
     Arc::new(STAsGeoJSON {})
 }
@@ -47,24 +51,20 @@ impl SedonaScalarKernel for STAsGeoJSON {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = GeoTypesExecutor::new(arg_types, args);
+        let executor = WkbExecutor::new(arg_types, args);
 
-        // Minimal GeoJSON: {"type":"Point","coordinates":[]}
+        // Estimate the minimum probable memory requirement of the output.
+        // GeoJSON is typically longer than WKT due to JSON formatting.
         let min_probable_geojson_size = executor.num_iterations() * 33;
 
         // Initialize an output builder of the appropriate type
         let mut builder =
             StringBuilder::with_capacity(executor.num_iterations(), min_probable_geojson_size);
 
-        executor.execute_wkb_void(|maybe_geom| {
-            match maybe_geom {
-                Some(geom) => {
-                    // Convert geo_types::Geometry to geojson::Geometry
-                    let geojson_geom: geojson::Geometry = (&geom).into();
-
-                    // Serialize to JSON string
-                    let json_str = serde_json::to_string(&geojson_geom)
-                        .map_err(|err| DataFusionError::External(Box::new(err)))?;
+        executor.execute_wkb_void(|maybe_wkb| {
+            match maybe_wkb {
+                Some(wkb) => {
+                    let json_str = geom_to_geojson(&wkb)?;
                     builder.append_value(&json_str);
                 }
                 None => builder.append_null(),
@@ -75,6 +75,34 @@ impl SedonaScalarKernel for STAsGeoJSON {
 
         executor.finish(Arc::new(builder.finish()))
     }
+}
+
+/// Convert a WKB geometry to GeoJSON string, handling special cases for empty geometries
+fn geom_to_geojson(geom: &Wkb) -> Result<String> {
+    // Special case handling for geometries that geo_types::Geometry cannot represent
+    match geom.as_type() {
+        geo_traits::GeometryType::Point(pt) => {
+            if pt.coord().is_none() {
+                // Empty point - geo_types cannot represent this
+                return Ok(r#"{"type":"Point","coordinates":[]}"#.to_string());
+            }
+        }
+        geo_traits::GeometryType::Polygon(poly) => {
+            if poly.exterior().is_none() {
+                // Empty polygon - to match PostGIS behavior
+                return Ok(r#"{"type":"Polygon","coordinates":[]}"#.to_string());
+            }
+        }
+        _ => {}
+    }
+
+    // For all other geometries (including other empty geometries), convert to geo_types::Geometry
+    let geo_geom = item_to_geometry(geom)?;
+
+    let geojson_value = geojson::Value::from(&geo_geom);
+    let geojson_geom = geojson::Geometry::new(geojson_value);
+
+    serde_json::to_string(&geojson_geom).map_err(|err| DataFusionError::External(Box::new(err)))
 }
 
 #[cfg(test)]
@@ -144,5 +172,25 @@ mod tests {
             result,
             r#"{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1.0,2.0]},{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}]}"#,
         );
+    }
+
+    #[test]
+    fn test_empty_point() {
+        let kernel = st_asgeojson_impl();
+        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
+
+        let result = tester.invoke_wkb_scalar(Some("POINT EMPTY")).unwrap();
+        tester.assert_scalar_result_equals(result, r#"{"type":"Point","coordinates":[]}"#);
+    }
+
+    #[test]
+    fn test_empty_polygon() {
+        let kernel = st_asgeojson_impl();
+        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
+
+        let result = tester.invoke_wkb_scalar(Some("POLYGON EMPTY")).unwrap();
+        tester.assert_scalar_result_equals(result, r#"{"type":"Polygon","coordinates":[]}"#);
     }
 }

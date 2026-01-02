@@ -38,16 +38,10 @@ fn st_asgeojson_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         "Return the GeoJSON representation of a geometry",
-        "ST_AsGeoJSON (A: Geometry [, type: String])",
+        "ST_AsGeoJSON (A: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry")
-    .with_argument(
-        "type",
-        "string (optional): Output type - 'Simple' (default), 'Feature', or 'FeatureCollection'",
-    )
     .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0))")
-    .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0), 'Feature')")
-    .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0), 'FeatureCollection')")
     .with_related_udf("ST_GeomFromGeoJSON")
     .build()
 }
