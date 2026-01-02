@@ -55,8 +55,8 @@ impl SedonaScalarKernel for STUnaryUnion {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    let result_wkb = invoke_scalar(&wkb)?;
-                    builder.append_value(&result_wkb);
+                    invoke_scalar(&wkb, &mut builder)?;
+                    builder.append_value([]);
                 }
                 _ => builder.append_null(),
             }
@@ -68,7 +68,7 @@ impl SedonaScalarKernel for STUnaryUnion {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<Vec<u8>> {
+fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -> Result<()> {
     let geometry = geos_geom
         .unary_union()
         .map_err(|e| DataFusionError::Execution(format!("Failed to perform unary union: {e}")))?;
@@ -77,7 +77,8 @@ fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<Vec<u8>> {
         .to_wkb()
         .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
 
-    Ok(wkb)
+    writer.write_all(wkb.as_ref())?;
+    Ok(())
 }
 
 #[cfg(test)]
