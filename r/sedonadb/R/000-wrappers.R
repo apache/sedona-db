@@ -365,4 +365,3 @@ class(`SedonaDBExprFactory`) <- c("sedonadb::SedonaDBExprFactory__bundle", "savv
 `print.sedonadb::SedonaDBExprFactory__bundle` <- function(x, ...) {
   cat('sedonadb::SedonaDBExprFactory\n')
 }
-
