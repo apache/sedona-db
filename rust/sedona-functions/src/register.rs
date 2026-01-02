@@ -64,6 +64,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::sd_order::sd_order_udf,
         crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
+        crate::st_asgeojson::st_asgeojson_udf,
         crate::st_astext::st_astext_udf,
         crate::st_azimuth::st_azimuth_udf,
         crate::st_buffer::st_buffer_udf,

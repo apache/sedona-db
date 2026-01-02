@@ -121,6 +121,53 @@ def test_st_astext(eng, geom):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        # Note: Using coordinates with decimal values instead of integers
+        # because PostGIS returns integer coordinates in GeoJSON when the geometry has integer
+        # coordinates, while SedonaDB always returns floats. See issue #472.
+        (None, None),
+        ("POINT EMPTY", '{"type":"Point","coordinates":[]}'),
+        ("LINESTRING EMPTY", '{"type":"LineString","coordinates":[]}'),
+        ("POLYGON EMPTY", '{"type":"Polygon","coordinates":[]}'),
+        ("MULTIPOINT EMPTY", '{"type":"MultiPoint","coordinates":[]}'),
+        ("MULTILINESTRING EMPTY", '{"type":"MultiLineString","coordinates":[]}'),
+        ("MULTIPOLYGON EMPTY", '{"type":"MultiPolygon","coordinates":[]}'),
+        ("GEOMETRYCOLLECTION EMPTY", '{"type":"GeometryCollection","geometries":[]}'),
+        ("POINT (1.5 2.5)", '{"type":"Point","coordinates":[1.5,2.5]}'),
+        (
+            "LINESTRING (0.5 0.5, 1.5 1.5)",
+            '{"type":"LineString","coordinates":[[0.5,0.5],[1.5,1.5]]}',
+        ),
+        (
+            "POLYGON ((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))",
+            '{"type":"Polygon","coordinates":[[[0.5,0.5],[1.5,0.5],[1.5,1.5],[0.5,1.5],[0.5,0.5]]]}',
+        ),
+        (
+            "MULTIPOINT ((0.5 0.5), (1.5 1.5))",
+            '{"type":"MultiPoint","coordinates":[[0.5,0.5],[1.5,1.5]]}',
+        ),
+        (
+            "MULTILINESTRING ((0.5 0.5, 1.5 1.5), (2.5 2.5, 3.5 3.5))",
+            '{"type":"MultiLineString","coordinates":[[[0.5,0.5],[1.5,1.5]],[[2.5,2.5],[3.5,3.5]]]}',
+        ),
+        (
+            "MULTIPOLYGON (((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5)), ((2.5 2.5, 3.5 2.5, 3.5 3.5, 2.5 3.5, 2.5 2.5)))",
+            '{"type":"MultiPolygon","coordinates":[[[[0.5,0.5],[1.5,0.5],[1.5,1.5],[0.5,1.5],[0.5,0.5]]],[[[2.5,2.5],[3.5,2.5],[3.5,3.5],[2.5,3.5],[2.5,2.5]]]]}',
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (0.5 0.5), LINESTRING (1.5 1.5, 2.5 2.5))",
+            '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.5,0.5]},{"type":"LineString","coordinates":[[1.5,1.5],[2.5,2.5]]}]}',
+        ),
+    ],
+)
+def test_st_asgeojson(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_AsGeoJSON({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
         # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
