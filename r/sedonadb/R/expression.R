@@ -229,9 +229,9 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
 #' @param qualified_name The name of the function in the form `pkg::fun` or
 #'   `fun` if the package name is not relevant. This allows translations to
 #'   support calls to `fun()` or `pkg::fun()` that appear in an R expression.
-#' @param fn A function. The first argument must always be `.factory`, which
-#'   is the instance of `SedonaDBExprFactory` that may be used to construct
-#'   the required expressions.
+#' @param fn A function. The first argument must always be `.ctx`, which
+#'   is the instance of [sd_expr_ctx()] that may be used to construct
+#'   the required expressions (using `$factory`).
 #'
 #' @returns fn, invisibly
 #' @noRd
