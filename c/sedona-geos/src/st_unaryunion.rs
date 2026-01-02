@@ -74,31 +74,6 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -
         .unary_union()
         .map_err(|e| DataFusionError::Execution(format!("Failed to perform unary union: {e}")))?;
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    // writer.write_all(wkb.as_ref())?;
-
-    // proper z and m values
-    let (has_z, has_m) = (geometry.has_z().unwrap(), geometry.has_m().unwrap());
-    println!("before to_wkb: has_z: {:?}, has_m: {:?}", has_z, has_m);
-
-    // results when using .to_wkb(): drops z and m values
-    let tmp_geom = geos::Geometry::new_from_wkb(&wkb).unwrap();
-    let (has_z, has_m) = (tmp_geom.has_z().unwrap(), tmp_geom.has_m().unwrap());
-    println!("after to_wkb(): has_z: {:?}, has_m: {:?}", has_z, has_m);  // dropped z and m values
-
-    // wkb_writer method maintains proper z and m values
-    use geos::WKBWriter;
-    let mut wkb_writer = WKBWriter::new().unwrap();
-    // use geos::OutputDimension;
-    // wkb_writer.set_output_dimension(if has_z && has_m { OutputDimension::FourD } else if has_z { OutputDimension::ThreeD } else if has_m { OutputDimension::ThreeD } else { OutputDimension::TwoD });
-    let wkb = wkb_writer.write_wkb(&geometry).unwrap();
-    let tmp_geom = geos::Geometry::new_from_wkb(&wkb).unwrap();
-    let (has_z, has_m) = (tmp_geom.has_z().unwrap(), tmp_geom.has_m().unwrap());
-    println!("after write_wkb(): has_z: {:?}, has_m: {:?}", has_z, has_m);  // proper z and m values
-
     write_geos_geometry(&geometry, writer)?;
 
     Ok(())
