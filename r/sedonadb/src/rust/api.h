@@ -21,6 +21,7 @@ SEXP savvy_configure_proj_shared__ffi(SEXP c_arg__shared_library_path,
 SEXP savvy_init_r_runtime__ffi(DllInfo *c_arg___dll_info);
 SEXP savvy_init_r_runtime_interrupts__ffi(SEXP c_arg__interrupts_call,
                                           SEXP c_arg__pkg_env);
+SEXP savvy_parse_crs_metadata__ffi(SEXP c_arg__crs_json);
 SEXP savvy_sedonadb_adbc_init_func__ffi(void);
 
 // methods and associated functions for InternalContext
