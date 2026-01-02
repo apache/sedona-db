@@ -33,6 +33,7 @@ categories.workspace = true
 async-stream = "0.3.6"
 async-trait = { workspace = true }
 arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
@@ -42,6 +43,8 @@ datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-pruning = { workspace = true }
 futures = { workspace = true }
+geoarrow-array = { version = "0.6.2" }
+geoarrow-schema = { version = "0.6.2" }
 las = { version = "0.9.8", features = ["laz"] }
 laz = "0.11.1"
 object_store = { workspace = true }

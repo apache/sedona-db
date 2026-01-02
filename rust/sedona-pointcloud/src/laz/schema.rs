@@ -15,17 +15,42 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::Arc;
+
 use arrow_schema::{DataType, Field, Schema};
+use geoarrow_schema::{CoordType, Crs, Dimension, Metadata, PointType, WkbType};
 use las::Header;
 
-use crate::laz::options::LasExtraBytes;
+use crate::laz::options::{LasExtraBytes, LasPointEncoding};
 
 // Arrow schema for LAS points
-pub fn schema_from_header(header: &Header, extra_bytes: LasExtraBytes) -> Schema {
-    let mut fields = vec![
-        Field::new("x", DataType::Float64, false),
-        Field::new("y", DataType::Float64, false),
-        Field::new("z", DataType::Float64, false),
+pub fn schema_from_header(
+    header: &Header,
+    point_encoding: LasPointEncoding,
+    extra_bytes: LasExtraBytes,
+) -> Schema {
+    let crs = header
+        .get_wkt_crs_bytes()
+        .and_then(|b| String::from_utf8(b.to_vec()).ok().map(Crs::from_wkt2_2019))
+        .unwrap_or_default();
+
+    let mut fields = match point_encoding {
+        LasPointEncoding::Plain => vec![
+            Field::new("x", DataType::Float64, false),
+            Field::new("y", DataType::Float64, false),
+            Field::new("z", DataType::Float64, false),
+        ],
+        LasPointEncoding::Wkb => {
+            let point_type = WkbType::new(Arc::new(Metadata::new(crs, None)));
+            vec![Field::new("geometry", DataType::Binary, false).with_extension_type(point_type)]
+        }
+        LasPointEncoding::Nativ => {
+            let point_type = PointType::new(Dimension::XYZ, Arc::new(Metadata::new(crs, None)))
+                .with_coord_type(CoordType::Separated);
+            vec![point_type.to_field("geometry", false)]
+        }
+    };
+    fields.extend_from_slice(&[
         Field::new("intensity", DataType::UInt16, true),
         Field::new("return_number", DataType::UInt8, false),
         Field::new("number_of_returns", DataType::UInt8, false),
@@ -40,7 +65,7 @@ pub fn schema_from_header(header: &Header, extra_bytes: LasExtraBytes) -> Schema
         Field::new("user_data", DataType::UInt8, false),
         Field::new("scan_angle", DataType::Float32, false),
         Field::new("point_source_id", DataType::UInt16, false),
-    ];
+    ]);
     if header.point_format().has_gps_time {
         fields.push(Field::new("gps_time", DataType::Float64, false));
     }

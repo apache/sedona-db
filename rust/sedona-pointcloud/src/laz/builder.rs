@@ -19,17 +19,29 @@ use std::{fmt::Debug, sync::Arc};
 
 use arrow_array::{
     builder::{
-        BooleanBuilder, FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder,
-        Int32Builder, Int64Builder, Int8Builder, UInt16Builder, UInt32Builder, UInt64Builder,
-        UInt8Builder,
+        ArrayBuilder, BooleanBuilder, FixedSizeBinaryBuilder, Float32Builder, Float64Builder,
+        Int16Builder, Int32Builder, Int64Builder, Int8Builder, UInt16Builder, UInt32Builder,
+        UInt64Builder, UInt8Builder,
     },
     Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array, StructArray,
     UInt16Array, UInt8Array,
 };
+use arrow_buffer::ScalarBuffer;
 use arrow_schema::DataType;
+use geoarrow_array::{
+    array::{CoordBuffer, PointArray, SeparatedCoordBuffer},
+    builder::WkbBuilder,
+    capacity::WkbCapacity,
+    GeoArrowArray,
+};
+use geoarrow_schema::{Dimension, WkbType};
 use las::{Header, Point};
 
-use crate::laz::{metadata::ExtraAttribute, options::LasExtraBytes, schema::schema_from_header};
+use crate::laz::{
+    metadata::ExtraAttribute,
+    options::{LasExtraBytes, LasPointEncoding},
+    schema::schema_from_header,
+};
 
 #[derive(Debug)]
 pub struct RowBuilder {
@@ -55,13 +67,15 @@ pub struct RowBuilder {
     green: UInt16Builder,
     blue: UInt16Builder,
     nir: UInt16Builder,
-    extra_bytes: FixedSizeBinaryBuilder,
-    extra_attributes: Arc<Vec<ExtraAttribute>>,
+    extra: FixedSizeBinaryBuilder,
     header: Arc<Header>,
+    point_encoding: LasPointEncoding,
+    extra_bytes: LasExtraBytes,
+    extra_attributes: Arc<Vec<ExtraAttribute>>,
 }
 
 impl RowBuilder {
-    pub fn new(capacity: usize, header: Arc<Header>, attributes: Arc<Vec<ExtraAttribute>>) -> Self {
+    pub fn new(capacity: usize, header: Arc<Header>) -> Self {
         Self {
             x: Float64Array::builder(capacity),
             y: Float64Array::builder(capacity),
@@ -85,13 +99,31 @@ impl RowBuilder {
             green: UInt16Array::builder(capacity),
             blue: UInt16Array::builder(capacity),
             nir: UInt16Array::builder(capacity),
-            extra_bytes: FixedSizeBinaryBuilder::with_capacity(
+            extra: FixedSizeBinaryBuilder::with_capacity(
                 capacity,
                 header.point_format().extra_bytes as i32,
             ),
-            extra_attributes: attributes,
+
             header,
+            point_encoding: Default::default(),
+            extra_bytes: Default::default(),
+            extra_attributes: Arc::new(Vec::new()),
         }
+    }
+
+    pub fn with_point_encoding(mut self, point_encoding: LasPointEncoding) -> Self {
+        self.point_encoding = point_encoding;
+        self
+    }
+
+    pub fn with_extra_attributes(
+        mut self,
+        attributes: Arc<Vec<ExtraAttribute>>,
+        extra_bytes: LasExtraBytes,
+    ) -> Self {
+        self.extra_attributes = attributes;
+        self.extra_bytes = extra_bytes;
+        self
     }
 
     pub fn append(&mut self, p: Point) {
@@ -126,17 +158,64 @@ impl RowBuilder {
             self.nir.append_value(p.nir.unwrap());
         }
         if self.header.point_format().extra_bytes > 0 {
-            self.extra_bytes.append_value(p.extra_bytes).unwrap();
+            self.extra.append_value(p.extra_bytes).unwrap();
         }
     }
 
     /// Note: returns StructArray to allow nesting within another array if desired
-    pub fn finish(&mut self, extra: LasExtraBytes) -> StructArray {
-        let mut columns = vec![
-            Arc::new(self.x.finish()) as ArrayRef,
-            Arc::new(self.y.finish()) as ArrayRef,
-            Arc::new(self.z.finish()) as ArrayRef,
-        ];
+    pub fn finish(&mut self) -> StructArray {
+        let schema = schema_from_header(&self.header, self.point_encoding, self.extra_bytes);
+
+        let mut columns = match self.point_encoding {
+            LasPointEncoding::Plain => vec![
+                Arc::new(self.x.finish()) as ArrayRef,
+                Arc::new(self.y.finish()) as ArrayRef,
+                Arc::new(self.z.finish()) as ArrayRef,
+            ],
+            LasPointEncoding::Wkb => {
+                const POINT_SIZE: usize = 29;
+
+                let n: usize = self.x.len();
+
+                let capacity = WkbCapacity::new(POINT_SIZE * n, 4 * n);
+                let mut builder = WkbBuilder::<i32>::with_capacity(WkbType::default(), capacity);
+
+                let x = self.x.finish();
+                let y = self.y.finish();
+                let z = self.z.finish();
+
+                let mut wkb_bytes = [0_u8; POINT_SIZE];
+                wkb_bytes[0] = 0x01; // Little-endian
+                wkb_bytes[1..5].copy_from_slice(&[0xE9, 0x03, 0x00, 0x00]); // Point Z type (1001)
+
+                for i in 0..n {
+                    let x = unsafe { x.value_unchecked(i) };
+                    let y = unsafe { y.value_unchecked(i) };
+                    let z = unsafe { z.value_unchecked(i) };
+
+                    wkb_bytes[5..13].copy_from_slice(x.to_le_bytes().as_slice());
+                    wkb_bytes[13..21].copy_from_slice(y.to_le_bytes().as_slice());
+                    wkb_bytes[21..29].copy_from_slice(z.to_le_bytes().as_slice());
+
+                    unsafe { builder.push_wkb_unchecked(Some(&wkb_bytes)) };
+                }
+
+                vec![builder.finish().to_array_ref()]
+            }
+            LasPointEncoding::Nativ => {
+                let buffers = [
+                    self.x.finish().into_parts().1,
+                    self.y.finish().into_parts().1,
+                    self.z.finish().into_parts().1,
+                    ScalarBuffer::from(vec![]),
+                ];
+                let coords = CoordBuffer::Separated(
+                    SeparatedCoordBuffer::from_array(buffers, Dimension::XYZ).unwrap(),
+                );
+                let points = PointArray::new(coords, None, Default::default());
+                vec![points.to_array_ref()]
+            }
+        };
 
         columns.extend([
             Arc::new(self.intensity.finish()) as ArrayRef,
@@ -171,37 +250,29 @@ impl RowBuilder {
         // extra bytes
         let num_extra_bytes = self.header.point_format().extra_bytes as usize;
         if num_extra_bytes > 0 {
-            match extra {
+            match self.extra_bytes {
                 LasExtraBytes::Typed => {
-                    let extra_bytes = self.extra_bytes.finish();
+                    let extra = self.extra.finish();
 
                     let mut pos = 0;
 
                     for attribute in self.extra_attributes.iter() {
-                        pos += build_attribute(
-                            attribute,
-                            num_extra_bytes,
-                            pos,
-                            &extra_bytes,
-                            &mut columns,
-                        );
+                        pos += build_attribute(attribute, pos, &extra, &mut columns);
                     }
                 }
-                LasExtraBytes::Blob => columns.push(Arc::new(self.extra_bytes.finish())),
+                LasExtraBytes::Blob => columns.push(Arc::new(self.extra.finish())),
                 LasExtraBytes::Ignore => (),
             }
         }
 
-        let schema = schema_from_header(&self.header, extra);
         StructArray::new(schema.fields.to_owned(), columns, None)
     }
 }
 
 fn build_attribute(
     attribute: &ExtraAttribute,
-    num_extra_bytes: usize,
     pos: usize,
-    extra_bytes: &FixedSizeBinaryArray,
+    extra: &FixedSizeBinaryArray,
     columns: &mut Vec<ArrayRef>,
 ) -> usize {
     let scale = attribute.scale.unwrap_or(1.0);
@@ -213,10 +284,7 @@ fn build_attribute(
         attribute.data_type.primitive_width().unwrap()
     };
 
-    let iter = extra_bytes
-        .value_data()
-        .chunks(num_extra_bytes)
-        .map(|b| &b[pos..pos + width]);
+    let iter = extra.iter().map(|b| &b.unwrap()[pos..pos + width]);
 
     match &attribute.data_type {
         DataType::FixedSizeBinary(_) => {
@@ -237,13 +305,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Int8Builder::with_capacity(extra_bytes.len());
+                let mut builder = Int8Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -264,13 +332,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Int16Builder::with_capacity(extra_bytes.len());
+                let mut builder = Int16Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -291,13 +359,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Int32Builder::with_capacity(extra_bytes.len());
+                let mut builder = Int32Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -318,13 +386,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Int64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Int64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -345,13 +413,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = UInt8Builder::with_capacity(extra_bytes.len());
+                let mut builder = UInt8Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -372,13 +440,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = UInt16Builder::with_capacity(extra_bytes.len());
+                let mut builder = UInt16Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -399,13 +467,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = UInt32Builder::with_capacity(extra_bytes.len());
+                let mut builder = UInt32Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -426,13 +494,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = UInt64Builder::with_capacity(extra_bytes.len());
+                let mut builder = UInt64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -453,13 +521,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v as f64 * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Float32Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float32Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }
@@ -480,13 +548,13 @@ fn build_attribute(
             });
 
             if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v.map(|v| v * scale + offset));
                 }
                 columns.push(Arc::new(builder.finish()) as ArrayRef)
             } else {
-                let mut builder = Float64Builder::with_capacity(extra_bytes.len());
+                let mut builder = Float64Builder::with_capacity(extra.len());
                 for v in iter {
                     builder.append_option(v);
                 }

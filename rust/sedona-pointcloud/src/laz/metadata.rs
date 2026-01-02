@@ -29,7 +29,10 @@ use las::{
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::laz::{options::LasExtraBytes, schema::schema_from_header};
+use crate::laz::{
+    options::{LasExtraBytes, LasPointEncoding},
+    schema::schema_from_header,
+};
 
 /// Laz chunk metadata
 #[derive(Debug, Clone)]
@@ -67,6 +70,7 @@ pub struct LazMetadataReader<'a> {
     store: &'a dyn ObjectStore,
     object_meta: &'a ObjectMeta,
     file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    point_encoding: LasPointEncoding,
     extra_bytes: LasExtraBytes,
 }
 
@@ -76,6 +80,7 @@ impl<'a> LazMetadataReader<'a> {
             store,
             object_meta,
             file_metadata_cache: None,
+            point_encoding: Default::default(),
             extra_bytes: Default::default(),
         }
     }
@@ -86,6 +91,12 @@ impl<'a> LazMetadataReader<'a> {
         file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
     ) -> Self {
         self.file_metadata_cache = file_metadata_cache;
+        self
+    }
+
+    /// set point encoding
+    pub fn with_point_encoding(mut self, point_encoding: LasPointEncoding) -> Self {
+        self.point_encoding = point_encoding;
         self
     }
 
@@ -108,6 +119,7 @@ impl<'a> LazMetadataReader<'a> {
             store,
             object_meta,
             file_metadata_cache,
+            point_encoding: _,
             extra_bytes: _,
         } = self;
 
@@ -145,7 +157,7 @@ impl<'a> LazMetadataReader<'a> {
     pub async fn fetch_schema(&mut self) -> Result<Schema, DataFusionError> {
         let metadata = self.fetch_metadata().await?;
 
-        let schema = schema_from_header(&metadata.header, self.extra_bytes);
+        let schema = schema_from_header(&metadata.header, self.point_encoding, self.extra_bytes);
 
         Ok(schema)
     }
