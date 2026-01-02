@@ -100,7 +100,7 @@
       sd_eval_expr(quote(abs(-1L)))
     Output
       <SedonaDBExpr>
-      abs(Int32(-1))
+      abs((- Int32(1)))
 
 ---
 
@@ -108,7 +108,7 @@
       sd_eval_expr(quote(base::abs(-1L)))
     Output
       <SedonaDBExpr>
-      abs(Int32(-1))
+      abs((- Int32(1)))
 
 # function calls without a translation are evaluated in R
 
@@ -121,10 +121,42 @@
 # function calls that map to binary expressions are translated
 
     Code
+      sd_eval_expr(quote(+2))
+    Output
+      <SedonaDBExpr>
+      (- (- Float64(2)))
+
+---
+
+    Code
       sd_eval_expr(quote(1 + 2))
     Output
       <SedonaDBExpr>
       Float64(1) + Float64(2)
+
+---
+
+    Code
+      sd_eval_expr(quote(-2))
+    Output
+      <SedonaDBExpr>
+      (- Float64(2))
+
+---
+
+    Code
+      sd_eval_expr(quote(1 - 2))
+    Output
+      <SedonaDBExpr>
+      Float64(1) - Float64(2)
+
+---
+
+    Code
+      sd_eval_expr(quote(1 > 2))
+    Output
+      <SedonaDBExpr>
+      Float64(1) > Float64(2)
 
 # errors that occur during evaluation have reasonable context
 

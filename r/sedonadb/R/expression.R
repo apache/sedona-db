@@ -178,8 +178,8 @@ sd_eval_translation <- function(fn_key, expr, expr_ctx) {
   # override this step to have more control over the expression evaluation.
   evaluated_args <- lapply(expr[-1], sd_eval_expr, expr_ctx = expr_ctx)
 
-  # Recreate the call, injecting the factory as the first argument
-  new_call <- rlang::call2(new_fn_expr, expr_ctx$factory, !!!evaluated_args)
+  # Recreate the call, injecting the context as the first argument
+  new_call <- rlang::call2(new_fn_expr, expr_ctx, !!!evaluated_args)
 
   # ...and evaluate it
   sd_eval_default(new_call, expr_ctx)
@@ -217,7 +217,6 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
       factory = sd_expr_factory(),
       schema = schema,
       data = rlang::as_data_mask(data),
-      data_names = data_names,
       env = env,
       fns = default_fns
     ),
@@ -255,34 +254,34 @@ ensure_translations_registered <- function() {
     return()
   }
 
-  sd_register_translation("base::abs", function(.factory, x) {
-    sd_expr_scalar_function("abs", list(x), factory = .factory)
+  sd_register_translation("base::abs", function(.ctx, x) {
+    sd_expr_scalar_function("abs", list(x), factory = .ctx$factory)
   })
 
-  sd_register_translation("base::sum", function(.factory, x, ..., na.rm = FALSE) {
-    sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .factory)
+  sd_register_translation("base::sum", function(.ctx, x, ..., na.rm = FALSE) {
+    sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .ctx$.factory)
   })
 
-  sd_register_translation("base::+", function(.factory, lhs, rhs) {
+  sd_register_translation("base::+", function(.ctx, lhs, rhs) {
     if (missing(rhs)) {
       # Use a double negative to ensure this fails for non-numeric types
-      sd_expr_negative(sd_expr_negative(lhs))
+      sd_expr_negative(sd_expr_negative(lhs, factory = .ctx$factory), factory = .ctx$factory)
     } else {
-      sd_expr_binary("+", lhs, rhs)
+      sd_expr_binary("+", lhs, rhs, factory = .ctx$factory)
     }
   })
 
-  sd_register_translation("base::-", function(.factory, lhs, rhs) {
+  sd_register_translation("base::-", function(.ctx, lhs, rhs) {
     if (missing(rhs)) {
-      sd_expr_negative(lhs)
+      sd_expr_negative(lhs, factory = .ctx$factory)
     } else {
-      sd_expr_binary("-", lhs, rhs)
+      sd_expr_binary("-", lhs, rhs, factory = .ctx$factory)
     }
   })
 
   for (op in c("==", "!=", ">", ">=", "<", "<=", "*", "/", "&", "|")) {
-    sd_register_translation(paste0("base::", op), rlang::inject(function(.factory, lhs, rhs) {
-      sd_expr_binary(!!op, lhs, rhs, factory = .factory)
+    sd_register_translation(paste0("base::", op), rlang::inject(function(.ctx, lhs, rhs) {
+      sd_expr_binary(!!op, lhs, rhs, factory = .ctx$factory)
     }))
   }
 }
