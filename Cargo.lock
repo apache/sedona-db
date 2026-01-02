@@ -5026,6 +5026,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-geos",
+ "sedona-pointcloud",
  "sedona-proj",
  "sedona-raster-functions",
  "sedona-s2geography",
