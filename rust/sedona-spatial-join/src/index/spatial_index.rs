@@ -31,7 +31,7 @@ use geo_types::{Point, Rect};
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
-use sedona_geo_generic_alg::algorithm::Centroid;
+use sedona_geo_generic_alg::Centroid;
 use wkb::reader::Wkb;
 
 use crate::{
@@ -1226,8 +1226,8 @@ mod tests {
         assert!(result.count > 0);
         assert!(result.count <= 3);
 
-        println!("KNN Geometry test - found {} results", result.count);
-        println!("Result positions: {build_positions:?}");
+        log::debug!("KNN Geometry test - found {} results", result.count);
+        log::debug!("Result positions: {build_positions:?}");
     }
 
     #[test]
@@ -1309,7 +1309,7 @@ mod tests {
         // Should return results
         assert!(!build_positions.is_empty());
 
-        println!("KNN with mixed geometries: {build_positions:?}");
+        log::debug!("KNN with mixed geometries: {build_positions:?}");
 
         // Should work with mixed geometry types
         assert!(result.count > 0);
