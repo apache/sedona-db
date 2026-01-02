@@ -118,6 +118,14 @@
       <SedonaDBExpr>
       Int32(2)
 
+# function calls that map to binary expressions are translated
+
+    Code
+      sd_eval_expr(quote(1 + 2))
+    Output
+      <SedonaDBExpr>
+      Float64(1) + Float64(2)
+
 # errors that occur during evaluation have reasonable context
 
     Code

@@ -63,6 +63,17 @@ test_that("function calls without a translation are evaluated in R", {
   expect_snapshot(sd_eval_expr(quote(function_without_a_translation(1L))))
 })
 
+test_that("function calls that map to binary expressions are translated", {
+  # + and - are special-cased because in R the unary function calls are valid
+  expect_snapshot(sd_eval_expr(quote(+2)))
+  expect_snapshot(sd_eval_expr(quote(1 + 2)))
+  expect_snapshot(sd_eval_expr(quote(-2)))
+  expect_snapshot(sd_eval_expr(quote(1 - 2)))
+
+  # normal translation
+  expect_snapshot(sd_eval_expr(quote(1 > 2)))
+})
+
 test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
