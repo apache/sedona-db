@@ -52,6 +52,8 @@ use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
 };
+#[cfg(feature = "pointcloud")]
+use sedona_pointcloud::laz::format::LazFormatFactory;
 
 /// Sedona SessionContext wrapper
 ///
@@ -101,6 +103,8 @@ impl SedonaContext {
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
+        #[cfg(feature = "pointcloud")]
+        state.register_file_format(Arc::new(LazFormatFactory::new()), false)?;
 
         // Enable dynamic file query (i.e., select * from 'filename')
         let ctx = SessionContext::new_with_state(state).enable_url_table();
