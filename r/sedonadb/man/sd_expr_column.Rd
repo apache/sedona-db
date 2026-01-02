@@ -6,6 +6,7 @@
 \alias{sd_expr_binary}
 \alias{sd_expr_negative}
 \alias{sd_expr_scalar_function}
+\alias{sd_expr_aggregate_function}
 \alias{sd_expr_cast}
 \alias{sd_expr_alias}
 \alias{as_sd_expr}
@@ -22,6 +23,15 @@ sd_expr_binary(op, lhs, rhs, factory = sd_expr_factory())
 sd_expr_negative(expr, factory = sd_expr_factory())
 
 sd_expr_scalar_function(function_name, args, factory = sd_expr_factory())
+
+sd_expr_aggregate_function(
+  function_name,
+  args,
+  ...,
+  na.rm = FALSE,
+  distinct = FALSE,
+  factory = sd_expr_factory()
+)
 
 sd_expr_cast(expr, type, factory = sd_expr_factory())
 
