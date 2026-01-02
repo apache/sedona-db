@@ -123,6 +123,9 @@ def test_st_astext(eng, geom):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        # Note: Using coordinates with decimal values instead of integers
+        # because PostGIS returns integer coordinates in GeoJSON when the geometry has integer
+        # coordinates, while SedonaDB always returns floats. See issue #472.
         (None, None),
         ("POINT EMPTY", '{"type":"Point","coordinates":[]}'),
         ("LINESTRING EMPTY", '{"type":"LineString","coordinates":[]}'),
@@ -131,30 +134,30 @@ def test_st_astext(eng, geom):
         ("MULTILINESTRING EMPTY", '{"type":"MultiLineString","coordinates":[]}'),
         ("MULTIPOLYGON EMPTY", '{"type":"MultiPolygon","coordinates":[]}'),
         ("GEOMETRYCOLLECTION EMPTY", '{"type":"GeometryCollection","geometries":[]}'),
-        ("POINT (1 2)", '{"type":"Point","coordinates":[1.0,2.0]}'),
+        ("POINT (1.5 2.5)", '{"type":"Point","coordinates":[1.5,2.5]}'),
         (
-            "LINESTRING (0 0, 1 1)",
-            '{"type":"LineString","coordinates":[[0.0,0.0],[1.0,1.0]]}',
+            "LINESTRING (0.5 0.5, 1.5 1.5)",
+            '{"type":"LineString","coordinates":[[0.5,0.5],[1.5,1.5]]}',
         ),
         (
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-            '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}',
+            "POLYGON ((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))",
+            '{"type":"Polygon","coordinates":[[[0.5,0.5],[1.5,0.5],[1.5,1.5],[0.5,1.5],[0.5,0.5]]]}',
         ),
         (
-            "MULTIPOINT ((0 0), (1 1))",
-            '{"type":"MultiPoint","coordinates":[[0.0,0.0],[1.0,1.0]]}',
+            "MULTIPOINT ((0.5 0.5), (1.5 1.5))",
+            '{"type":"MultiPoint","coordinates":[[0.5,0.5],[1.5,1.5]]}',
         ),
         (
-            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
-            '{"type":"MultiLineString","coordinates":[[[0.0,0.0],[1.0,1.0]],[[2.0,2.0],[3.0,3.0]]]}',
+            "MULTILINESTRING ((0.5 0.5, 1.5 1.5), (2.5 2.5, 3.5 3.5))",
+            '{"type":"MultiLineString","coordinates":[[[0.5,0.5],[1.5,1.5]],[[2.5,2.5],[3.5,3.5]]]}',
         ),
         (
-            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
-            '{"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]],[[[2.0,2.0],[3.0,2.0],[3.0,3.0],[2.0,3.0],[2.0,2.0]]]]}',
+            "MULTIPOLYGON (((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5)), ((2.5 2.5, 3.5 2.5, 3.5 3.5, 2.5 3.5, 2.5 2.5)))",
+            '{"type":"MultiPolygon","coordinates":[[[[0.5,0.5],[1.5,0.5],[1.5,1.5],[0.5,1.5],[0.5,0.5]]],[[[2.5,2.5],[3.5,2.5],[3.5,3.5],[2.5,3.5],[2.5,2.5]]]]}',
         ),
         (
-            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (1 1, 2 2))",
-            '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.0,0.0]},{"type":"LineString","coordinates":[[1.0,1.0],[2.0,2.0]]}]}',
+            "GEOMETRYCOLLECTION (POINT (0.5 0.5), LINESTRING (1.5 1.5, 2.5 2.5))",
+            '{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[0.5,0.5]},{"type":"LineString","coordinates":[[1.5,1.5],[2.5,2.5]]}]}',
         ),
     ],
 )
