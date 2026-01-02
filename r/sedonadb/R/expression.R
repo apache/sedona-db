@@ -139,7 +139,7 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
 
   rlang::try_fetch({
     result <- sd_eval_expr_inner(expr, expr_ctx)
-    as_sd_expr(result, factory = factory)
+    as_sd_expr(result, factory = expr_ctx$factory)
   }, error = function(e) {
     rlang::abort(
       sprintf("Error evaluating translated expression %s", rlang::expr_label(expr)),
