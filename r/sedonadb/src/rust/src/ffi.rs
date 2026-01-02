@@ -49,8 +49,9 @@ pub fn import_array(
 ) -> savvy::Result<(Field, ArrayRef)> {
     let field = import_field(schema_xptr)?;
     let ffi_array_ref: &mut FFI_ArrowArray = import_xptr(&mut xptr, "nanoarrow_array")?;
-    let ffi_array = unsafe { FFI_ArrowArray::from_raw(ffi_array_ref as _) };
-    let array_data = unsafe { from_ffi_and_data_type(ffi_array as _, field.data_type().clone())? };
+    let ffi_array_owned = unsafe { FFI_ArrowArray::from_raw(ffi_array_ref as _) };
+    let array_data =
+        unsafe { from_ffi_and_data_type(ffi_array_owned as _, field.data_type().clone())? };
     let array_ref = make_array(array_data);
     Ok((field, array_ref))
 }
