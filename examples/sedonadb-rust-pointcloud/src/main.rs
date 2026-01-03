@@ -25,6 +25,9 @@ use sedona::context::{SedonaContext, SedonaDataFrame};
 async fn main() -> Result<()> {
     let ctx = SedonaContext::new_local_interactive().await?;
     let url = "https://basisdata.nl/hwh-ahn/ahn4/01_LAZ/C_69AZ1.LAZ";
+
+    // let _ = ctx.sql(&format!("SET laz.point_encoding = 'plain'")).await.unwrap();
+    // let df = ctx.sql(&format!("SELECT x, y, z FROM \"{url}\"")).await.unwrap();
     let df = ctx.sql(&format!("SELECT geometry FROM \"{url}\"")).await?;
     let output = df.show_sedona(&ctx, Some(5), Default::default()).await?;
     println!("{output}");

@@ -37,7 +37,7 @@ use object_store::ObjectStore;
 use crate::laz::{
     builder::RowBuilder,
     metadata::{ChunkMeta, LazMetadata, LazMetadataReader},
-    options::{LasExtraBytes, LasPointEncoding},
+    options::LazTableOptions,
 };
 
 /// Laz file reader factory
@@ -62,15 +62,13 @@ impl LazFileReaderFactory {
     pub fn create_reader(
         &self,
         partitioned_file: PartitionedFile,
-        point_encoding: LasPointEncoding,
-        extra_bytes: LasExtraBytes,
+        options: LazTableOptions,
     ) -> Result<Box<LazFileReader>, DataFusionError> {
         Ok(Box::new(LazFileReader {
             partitioned_file,
             store: self.store.clone(),
             metadata_cache: self.metadata_cache.clone(),
-            point_encoding,
-            extra_bytes,
+            options,
         }))
     }
 }
@@ -80,8 +78,7 @@ pub struct LazFileReader {
     partitioned_file: PartitionedFile,
     store: Arc<dyn ObjectStore>,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    point_encoding: LasPointEncoding,
-    extra_bytes: LasExtraBytes,
+    pub options: LazTableOptions,
 }
 
 impl LazFileReader {
@@ -92,7 +89,7 @@ impl LazFileReader {
         async move {
             LazMetadataReader::new(&self.store, &object_meta)
                 .with_file_metadata_cache(metadata_cache)
-                .with_extra_bytes(self.extra_bytes)
+                .with_options(self.options.clone())
                 .fetch_metadata()
                 .await
         }
@@ -121,8 +118,8 @@ impl LazFileReader {
         // record batch builder
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
-            .with_point_encoding(self.point_encoding)
-            .with_extra_attributes(metadata.extra_attributes.clone(), self.extra_bytes);
+            .with_point_encoding(self.options.point_encoding)
+            .with_extra_attributes(metadata.extra_attributes.clone(), self.options.extra_bytes);
 
         // transform
         let format = header.point_format();

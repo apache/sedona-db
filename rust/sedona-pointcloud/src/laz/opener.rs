@@ -28,7 +28,7 @@ use datafusion_pruning::PruningPredicate;
 use futures::StreamExt;
 
 use crate::laz::{
-    options::{LasExtraBytes, LasPointEncoding},
+    options::LazTableOptions,
     reader::{LazFileReader, LazFileReaderFactory},
     schema::schema_from_header,
 };
@@ -39,12 +39,10 @@ pub struct LazOpener {
     /// Optional limit on the number of rows to read
     pub limit: Option<usize>,
     pub predicate: Option<Arc<dyn PhysicalExpr>>,
-    /// Factory for instantiating parquet reader
+    /// Factory for instantiating laz reader
     pub laz_file_reader_factory: Arc<LazFileReaderFactory>,
-    /// Point encoding
-    pub point_encoding: LasPointEncoding,
-    /// LAZ extra bytes option
-    pub extra_bytes: LasExtraBytes,
+    /// Table options
+    pub options: LazTableOptions,
 }
 
 impl FileOpener for LazOpener {
@@ -56,23 +54,18 @@ impl FileOpener for LazOpener {
         let projection = self.projection.clone();
         let limit = self.limit;
 
-        let point_encoding = self.point_encoding;
-        let extra_bytes = self.extra_bytes;
-
         let predicate = self.predicate.clone();
 
-        let async_file_reader: Box<LazFileReader> = self.laz_file_reader_factory.create_reader(
-            file.clone(),
-            self.point_encoding,
-            self.extra_bytes,
-        )?;
+        let laz_reader: Box<LazFileReader> = self
+            .laz_file_reader_factory
+            .create_reader(file.clone(), self.options.clone())?;
 
         Ok(Box::pin(async move {
-            let metadata = async_file_reader.get_metadata().await?;
+            let metadata = laz_reader.get_metadata().await?;
             let schema = Arc::new(schema_from_header(
                 &metadata.header,
-                point_encoding,
-                extra_bytes,
+                laz_reader.options.point_encoding,
+                laz_reader.options.extra_bytes,
             ));
 
             let pruning_predicate = predicate.and_then(|physical_expr| {
@@ -116,7 +109,7 @@ impl FileOpener for LazOpener {
                     }
 
                     // fetch batch
-                    let record_batch = async_file_reader.get_batch(&chunk_meta).await?;
+                    let record_batch = laz_reader.get_batch(&chunk_meta).await?;
                     row_count += record_batch.num_rows();
 
                     // project
