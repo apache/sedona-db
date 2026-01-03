@@ -515,6 +515,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1146,8 +1168,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -2708,6 +2732,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "geoarrow-array"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d1884b17253d8572e88833c282fcbb442365e4ae5f9052ced2831608253436c"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-schema",
+ "geo-traits",
+ "geoarrow-schema",
+ "num-traits",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "geoarrow-schema"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02f1b18b1c9a44ecd72be02e53d6e63bbccfdc8d1765206226af227327e2be6e"
+dependencies = [
+ "arrow-schema",
+ "geo-traits",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "geographiclib-rs"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3323,6 +3376,31 @@ checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "las"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5fc2ade5beaea800d3e615ce9886abb8d325be0c2bf2c94553fa88677d1b30"
+dependencies = [
+ "byteorder",
+ "chrono",
+ "laz",
+ "log",
+ "num-traits",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
+name = "laz"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d5b7251e6d7aee8f4263f35d61e5e40d22bb189ecfc4f9fbd550806fed98cce"
+dependencies = [
+ "byteorder",
+ "num-traits",
 ]
 
 [[package]]
@@ -4787,6 +4865,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-geos",
+ "sedona-pointcloud",
  "sedona-proj",
  "sedona-raster-functions",
  "sedona-s2geography",
@@ -5103,6 +5182,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-pointcloud"
+version = "0.3.0"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-schema",
+ "async-stream",
+ "async-trait",
+ "datafusion-catalog",
+ "datafusion-common",
+ "datafusion-datasource",
+ "datafusion-execution",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "datafusion-pruning",
+ "futures",
+ "geoarrow-array",
+ "geoarrow-schema",
+ "las",
+ "laz",
+ "object_store",
+]
+
+[[package]]
 name = "sedona-proj"
 version = "0.3.0"
 dependencies = [
@@ -5312,6 +5415,16 @@ dependencies = [
  "sedona-schema",
  "sedona-tg",
  "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "sedonadb-rust-pointcloud-example"
+version = "0.0.1"
+dependencies = [
+ "datafusion",
+ "sedona",
+ "sedona-pointcloud",
  "tokio",
 ]
 
