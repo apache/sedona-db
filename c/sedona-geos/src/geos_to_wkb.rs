@@ -448,56 +448,9 @@ fn write_coord_seq(
         .as_buffer(Some(dims))
         .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq buffer: {e}")))?;
 
-    // TODO: I guess we could compute the exact size buffer we expect here and check it. Should we do it or just assume geos correct?
-    // TODO: do we need to consider endianness??
-
     // Cast Vec<f64> to &[u8] so we can write the bytes directly to the writer buffer
     let byte_slice: &[u8] = bytemuck::cast_slice(&coords);
     writer.write_all(byte_slice)?;
 
     Ok(())
-
-    // OLD Approach with get_x, get_y, get_z, get_m functions
-
-    // let actual_size = coord_seq
-    //     .size()
-    //     .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq size: {e}")))?;
-
-    // let coords_to_write = if num_coords == 0 { actual_size } else { num_coords };
-
-    // TODO: check size in advance to avoid conditions inside of the loop to leverage SIMD
-
-    // #[inline(always)]
-    // fn write_xy_coord(i: usize, coord_seq: &geos::CoordSeq, writer: &mut dyn Write) -> Result<()> {
-    //     let x = coord_seq.get_x(i).unwrap();
-    //     let y = coord_seq.get_y(i).unwrap();
-    //     writer.write_f64::<LittleEndian>(x)?;
-    //     writer.write_f64::<LittleEndian>(y)?;
-    //     Ok(())
-    // }
-
-    // #[inline(always)]
-    // fn write_xyz_coord(
-    //     i: usize,
-    //     coord_seq: &geos::CoordSeq,
-    //     writer: &mut dyn Write,
-    // ) -> Result<()> {
-    //     write_xy_coord(i, coord_seq, writer)?;
-    //     let z = coord_seq.get_z(i).unwrap();
-    //     writer.write_f64::<LittleEndian>(z)?;
-    //     Ok(())
-    // }
-
-    // fn write_xyzm_coord()  // not possible bc geos-rust doesn't support .get_m() yet
-
-    // // TODO: use it
-    // let write_coord: fn(usize, &geos::CoordSeq, &mut dyn Write) -> Result<()> = if has_z {
-    //     write_xyz_coord
-    // } else {
-    //     write_xy_coord
-    // };
-
-    // for i in 0..coords_to_write {
-    //
-    // }
 }
