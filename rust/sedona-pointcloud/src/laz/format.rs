@@ -20,7 +20,8 @@ use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 use arrow_schema::{Schema, SchemaRef};
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{
-    error::DataFusionError, internal_err, parsers::CompressionTypeVariant, GetExt, Statistics,
+    config::ExtensionOptions, error::DataFusionError, internal_err,
+    parsers::CompressionTypeVariant, GetExt, Statistics,
 };
 use datafusion_datasource::{
     file::FileSource,
@@ -32,28 +33,21 @@ use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::laz::{metadata::LazMetadataReader, options::LasExtraBytes, source::LazSource};
+use crate::laz::{metadata::LazMetadataReader, options::LazTableOptions, source::LazSource};
 
 const DEFAULT_LAZ_EXTENSION: &str = ".laz";
-
-/// LAZ table options
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LazTableOptions {
-    pub extra_bytes: LasExtraBytes,
-}
 
 /// Factory struct used to create [LazFormat]
 #[derive(Default)]
 pub struct LazFormatFactory {
-    // inner options for laz
+    // inner options for LAZ
     pub options: Option<LazTableOptions>,
 }
 
 impl LazFormatFactory {
     /// Creates an instance of [LazFormatFactory]
     pub fn new() -> Self {
-        let options = LazTableOptions::default();
-        Self::new_with(options)
+        Self { options: None }
     }
 
     /// Creates an instance of [LazFormatFactory] with customized default options
@@ -67,11 +61,23 @@ impl LazFormatFactory {
 impl FileFormatFactory for LazFormatFactory {
     fn create(
         &self,
-        _state: &dyn Session,
-        _format_options: &HashMap<String, String>,
+        state: &dyn Session,
+        format_options: &HashMap<String, String>,
     ) -> Result<Arc<dyn FileFormat>, DataFusionError> {
-        // TODO: handle format options
-        Ok(Arc::new(LazFormat::default()))
+        let mut laz_options = state
+            .config_options()
+            .extensions
+            .get::<LazTableOptions>()
+            .or_else(|| state.table_options().extensions.get::<LazTableOptions>())
+            .cloned()
+            .or(self.options.clone())
+            .unwrap_or_default();
+
+        for (k, v) in format_options {
+            laz_options.set(k, v)?;
+        }
+
+        Ok(Arc::new(LazFormat::default().with_options(laz_options)))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
@@ -93,7 +99,7 @@ impl GetExt for LazFormatFactory {
 impl fmt::Debug for LazFormatFactory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LazFormatFactory")
-            // .field("LazFormatFactory", &self.options)
+            .field("LazFormatFactory", &self.options)
             .finish()
     }
 }
@@ -105,8 +111,8 @@ pub struct LazFormat {
 }
 
 impl LazFormat {
-    pub fn with_extra_bytes(mut self, extra_bytes: LasExtraBytes) -> Self {
-        self.options.extra_bytes = extra_bytes;
+    pub fn with_options(mut self, options: LazTableOptions) -> Self {
+        self.options = options;
         self
     }
 }
@@ -151,7 +157,7 @@ impl FileFormat for LazFormat {
 
                 let schema = LazMetadataReader::new(store, object_meta)
                     .with_file_metadata_cache(Some(Arc::clone(&file_metadata_cache)))
-                    .with_extra_bytes(self.options.extra_bytes)
+                    .with_options(self.options.clone())
                     .fetch_schema()
                     .await?;
 
@@ -184,6 +190,7 @@ impl FileFormat for LazFormat {
     ) -> Result<Statistics, DataFusionError> {
         let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
         LazMetadataReader::new(store, object)
+            .with_options(self.options.clone())
             .with_file_metadata_cache(Some(Arc::clone(&file_metadata_cache)))
             .fetch_statistics(&table_schema)
             .await
@@ -198,6 +205,6 @@ impl FileFormat for LazFormat {
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(LazSource::default().with_extra_bytes(self.options.extra_bytes))
+        Arc::new(LazSource::default().with_options(self.options.clone()))
     }
 }

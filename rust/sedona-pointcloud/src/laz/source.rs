@@ -29,11 +29,7 @@ use datafusion_physical_plan::{
 };
 use object_store::ObjectStore;
 
-use crate::laz::{
-    opener::LazOpener,
-    options::{LasExtraBytes, LasPointEncoding},
-    reader::LazFileReaderFactory,
-};
+use crate::laz::{opener::LazOpener, options::LazTableOptions, reader::LazFileReaderFactory};
 
 #[derive(Clone, Default, Debug)]
 pub struct LazSource {
@@ -48,13 +44,12 @@ pub struct LazSource {
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
-    pub(crate) point_encoding: LasPointEncoding,
-    pub(crate) extra_bytes: LasExtraBytes,
+    pub(crate) options: LazTableOptions,
 }
 
 impl LazSource {
-    pub fn with_extra_bytes(mut self, extra_bytes: LasExtraBytes) -> Self {
-        self.extra_bytes = extra_bytes;
+    pub fn with_options(mut self, options: LazTableOptions) -> Self {
+        self.options = options;
         self
     }
 }
@@ -80,8 +75,7 @@ impl FileSource for LazSource {
             limit: base_config.limit,
             predicate: self.predicate.clone(),
             laz_file_reader_factory,
-            point_encoding: self.point_encoding,
-            extra_bytes: self.extra_bytes,
+            options: self.options.clone(),
         })
     }
 

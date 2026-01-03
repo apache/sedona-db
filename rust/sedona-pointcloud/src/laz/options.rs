@@ -19,7 +19,6 @@ use std::{fmt::Display, str::FromStr};
 
 use datafusion_common::{
     config::{ConfigExtension, ConfigField, Visit},
-    config_err,
     error::DataFusionError,
     extensions_options,
 };
@@ -27,9 +26,8 @@ use datafusion_common::{
 /// Geometry representation
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum LasPointEncoding {
-    // #[default]
-    Plain,
     #[default]
+    Plain,
     Wkb,
     Nativ,
 }
@@ -66,14 +64,8 @@ impl ConfigField for LasPointEncoding {
         );
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Result<(), DataFusionError> {
-        // let (key, rem) = key.split_once('.').unwrap_or((key, ""));
-        match key {
-            "point_encoding" => {
-                *self = value.parse().map_err(DataFusionError::Configuration)?;
-            }
-            _ => return config_err!("Config value \"{}\" not found on LasExtraBytes", key),
-        }
+    fn set(&mut self, _key: &str, value: &str) -> Result<(), DataFusionError> {
+        *self = value.parse().map_err(DataFusionError::Configuration)?;
         Ok(())
     }
 }
@@ -122,14 +114,8 @@ impl ConfigField for LasExtraBytes {
         );
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Result<(), DataFusionError> {
-        // let (key, rem) = key.split_once('.').unwrap_or((key, ""));
-        match key {
-            "extra_bytes" => {
-                *self = value.parse().map_err(DataFusionError::Configuration)?;
-            }
-            _ => return config_err!("Config value \"{}\" not found on LasExtraBytes", key),
-        }
+    fn set(&mut self, _key: &str, value: &str) -> Result<(), DataFusionError> {
+        *self = value.parse().map_err(DataFusionError::Configuration)?;
         Ok(())
     }
 }
@@ -137,13 +123,25 @@ impl ConfigField for LasExtraBytes {
 // Define a new configuration struct using the `extensions_options` macro
 extensions_options! {
     /// The LAZ config options
-    pub struct LazConfig {
-        pub point_encoding: LasPointEncoding, default = LasPointEncoding::Plain
-        pub extra_bytes: LasExtraBytes, default = LasExtraBytes::Ignore
+    pub struct LazTableOptions {
+        pub point_encoding: LasPointEncoding, default = LasPointEncoding::Nativ
+        pub extra_bytes: LasExtraBytes, default = LasExtraBytes::Typed
     }
 
 }
 
-impl ConfigExtension for LazConfig {
+impl ConfigExtension for LazTableOptions {
     const PREFIX: &'static str = "laz";
+}
+
+impl LazTableOptions {
+    pub fn with_point_encoding(mut self, point_encoding: LasPointEncoding) -> Self {
+        self.point_encoding = point_encoding;
+        self
+    }
+
+    pub fn with_extra_bytes(mut self, extra_bytes: LasExtraBytes) -> Self {
+        self.extra_bytes = extra_bytes;
+        self
+    }
 }

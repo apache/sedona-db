@@ -29,10 +29,7 @@ use las::{
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::laz::{
-    options::{LasExtraBytes, LasPointEncoding},
-    schema::schema_from_header,
-};
+use crate::laz::{options::LazTableOptions, schema::schema_from_header};
 
 /// Laz chunk metadata
 #[derive(Debug, Clone)]
@@ -70,8 +67,7 @@ pub struct LazMetadataReader<'a> {
     store: &'a dyn ObjectStore,
     object_meta: &'a ObjectMeta,
     file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    point_encoding: LasPointEncoding,
-    extra_bytes: LasExtraBytes,
+    options: LazTableOptions,
 }
 
 impl<'a> LazMetadataReader<'a> {
@@ -80,8 +76,7 @@ impl<'a> LazMetadataReader<'a> {
             store,
             object_meta,
             file_metadata_cache: None,
-            point_encoding: Default::default(),
-            extra_bytes: Default::default(),
+            options: Default::default(),
         }
     }
 
@@ -94,15 +89,9 @@ impl<'a> LazMetadataReader<'a> {
         self
     }
 
-    /// set point encoding
-    pub fn with_point_encoding(mut self, point_encoding: LasPointEncoding) -> Self {
-        self.point_encoding = point_encoding;
-        self
-    }
-
-    /// set extra bytes parsing strategy
-    pub fn with_extra_bytes(mut self, extra_bytes: LasExtraBytes) -> Self {
-        self.extra_bytes = extra_bytes;
+    /// set table options
+    pub fn with_options(mut self, options: LazTableOptions) -> Self {
+        self.options = options;
         self
     }
 
@@ -119,8 +108,7 @@ impl<'a> LazMetadataReader<'a> {
             store,
             object_meta,
             file_metadata_cache,
-            point_encoding: _,
-            extra_bytes: _,
+            options: _,
         } = self;
 
         if let Some(las_file_metadata) = file_metadata_cache
@@ -157,7 +145,11 @@ impl<'a> LazMetadataReader<'a> {
     pub async fn fetch_schema(&mut self) -> Result<Schema, DataFusionError> {
         let metadata = self.fetch_metadata().await?;
 
-        let schema = schema_from_header(&metadata.header, self.point_encoding, self.extra_bytes);
+        let schema = schema_from_header(
+            &metadata.header,
+            self.options.point_encoding,
+            self.options.extra_bytes,
+        );
 
         Ok(schema)
     }
