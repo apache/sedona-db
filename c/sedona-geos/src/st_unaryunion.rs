@@ -27,6 +27,7 @@ use sedona_schema::datatypes::SedonaType;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_UnaryUnion() implementation using the geos crate
 pub fn st_unary_union_impl() -> ScalarKernelRef {
@@ -55,8 +56,8 @@ impl SedonaScalarKernel for STUnaryUnion {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    let result_wkb = invoke_scalar(&wkb)?;
-                    builder.append_value(&result_wkb);
+                    invoke_scalar(&wkb, &mut builder)?;
+                    builder.append_value([]);
                 }
                 _ => builder.append_null(),
             }
@@ -68,16 +69,14 @@ impl SedonaScalarKernel for STUnaryUnion {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry) -> Result<Vec<u8>> {
+fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -> Result<()> {
     let geometry = geos_geom
         .unary_union()
         .map_err(|e| DataFusionError::Execution(format!("Failed to perform unary union: {e}")))?;
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
+    write_geos_geometry(&geometry, writer)?;
 
-    Ok(wkb)
+    Ok(())
 }
 
 #[cfg(test)]

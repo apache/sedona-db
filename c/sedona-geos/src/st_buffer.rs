@@ -31,6 +31,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Buffer() implementation using the geos crate
 ///
@@ -149,11 +150,7 @@ fn invoke_scalar(
         .buffer_with_params(distance, params)
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 

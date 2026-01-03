@@ -38,6 +38,7 @@ geo-types = { workspace = true }
 [dependencies]
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+bytemuck = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geos = { workspace = true }

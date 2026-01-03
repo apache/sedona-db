@@ -18,6 +18,7 @@ mod binary_predicates;
 mod distance;
 mod executor;
 mod geos;
+mod geos_to_wkb;
 mod overlay;
 pub mod register;
 mod st_area;
