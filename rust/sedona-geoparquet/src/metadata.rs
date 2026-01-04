@@ -329,6 +329,7 @@ pub struct GeoParquetColumnMetadata {
     /// and multipolygons, it is not sufficient to specify `["MultiPolygon"]`, but it is expected
     /// to specify `["Polygon", "MultiPolygon"]`. Or if having 3D points, it is not sufficient to
     /// specify `["Point"]`, but it is expected to list `["Point Z"]`.
+    #[serde(default)]
     pub geometry_types: GeometryTypeAndDimensionsSet,
 
     /// [PROJJSON](https://proj.org/specifications/projjson.html) object representing the
