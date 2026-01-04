@@ -48,7 +48,12 @@ use sedona_schema::{
 pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_collect_agg",
-        vec![Arc::new(STCollectAggr {})],
+        vec![
+            Arc::new(STCollectAggr {
+                is_geography: false,
+            }),
+            Arc::new(STCollectAggr { is_geography: true }),
+        ],
         Volatility::Immutable,
         Some(st_collect_agg_doc()),
     )
@@ -66,18 +71,17 @@ fn st_collect_agg_doc() -> Documentation {
 }
 
 #[derive(Debug)]
-struct STCollectAggr {}
+struct STCollectAggr {
+    is_geography: bool,
+}
 
 impl SedonaAccumulator for STCollectAggr {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let geom_matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-        let geog_matcher = ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY);
-        for matcher in [geom_matcher, geog_matcher] {
-            if let result @ Ok(Some(_)) = matcher.match_args(args) {
-                return result;
-            }
-        }
-        Ok(None)
+        let matcher = match self.is_geography {
+            true => ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+            false => ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+        };
+        matcher.match_args(args)
     }
 
     fn accumulator(
