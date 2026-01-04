@@ -18,8 +18,8 @@ use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 
 use crate::{
-    st_area::st_area_impl, st_buffer::st_buffer_impl, st_centroid::st_centroid_impl,
-    st_distance::st_distance_impl, st_dwithin::st_dwithin_impl,
+    st_area::st_area_impl, st_asgeojson::st_asgeojson_impl, st_buffer::st_buffer_impl,
+    st_centroid::st_centroid_impl, st_distance::st_distance_impl, st_dwithin::st_dwithin_impl,
     st_intersection_agg::st_intersection_agg_impl, st_intersects::st_intersects_impl,
     st_length::st_length_impl, st_line_interpolate_point::st_line_interpolate_point_impl,
     st_perimeter::st_perimeter_impl, st_union_agg::st_union_agg_impl,
@@ -29,6 +29,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
     vec![
         ("st_intersects", st_intersects_impl()),
         ("st_area", st_area_impl()),
+        ("st_asgeojson", st_asgeojson_impl()),
         ("st_buffer", st_buffer_impl()),
         ("st_centroid", st_centroid_impl()),
         ("st_distance", st_distance_impl()),
