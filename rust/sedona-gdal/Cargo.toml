@@ -31,7 +31,7 @@ result_large_err = "allow"
 [dev-dependencies]
 approx = { workspace = true }
 rstest = { workspace = true }
-sedona-testing = { path = "../../rust/sedona-testing", features = ["criterion"] }
+sedona-testing = { workspace = true, features = ["criterion"] }
 criterion = { workspace = true}
 tempfile = { workspace = true }
 
@@ -43,5 +43,5 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 gdal = {workspace = true}
 gdal-sys = {workspace = true}
-sedona-raster = { path = "../sedona-raster" }
-sedona-schema = { path = "../sedona-schema" }
+sedona-raster = { workspace = true }
+sedona-schema = { workspace = true }
