@@ -92,7 +92,7 @@ impl RasterSchema {
 /// In future versions, consider support for complex types used in
 /// radar and other wave-based data.
 #[repr(u16)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BandDataType {
     UInt8 = 0,
     UInt16 = 1,
