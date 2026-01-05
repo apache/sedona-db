@@ -19,8 +19,7 @@ use std::sync::Arc;
 
 use datafusion_common::{Column, ScalarValue};
 use datafusion_expr::{
-    expr::{AggregateFunction, FieldMetadata, ScalarFunction},
-    sqlparser::ast::NullTreatment,
+    expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
 };
 use savvy::{savvy, savvy_err};
