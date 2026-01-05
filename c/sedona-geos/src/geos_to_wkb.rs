@@ -17,10 +17,14 @@
 use std::io::Write;
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use datafusion_common::{error::Result, exec_err, DataFusionError};
+use datafusion_common::{error::Result, DataFusionError};
+use geo_traits::Dimensions;
 use geos::{Geom, Geometry, GeometryTypes};
-
-const ENDIANNESS: u8 = 1;
+use sedona_geometry::wkb_factory::{
+    write_wkb_geometrycollection_header, write_wkb_linestring_header,
+    write_wkb_multilinestring_header, write_wkb_multipoint_header, write_wkb_multipolygon_header,
+    write_wkb_point_header, write_wkb_polygon_header,
+};
 
 /// Write a GEOS geometry to WKB format.
 ///
@@ -35,24 +39,6 @@ fn write_geometry(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
         .geometry_type()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
 
-    match geom_type {
-        GeometryTypes::Point => write_point(geom, writer),
-        GeometryTypes::LineString => write_line_string(geom, writer),
-        GeometryTypes::Polygon => write_polygon(geom, writer),
-        GeometryTypes::MultiPoint => write_multi_point(geom, writer),
-        GeometryTypes::MultiLineString => write_multi_line_string(geom, writer),
-        GeometryTypes::MultiPolygon => write_multi_polygon(geom, writer),
-        GeometryTypes::GeometryCollection => write_geometry_collection(geom, writer),
-        _ => Err(DataFusionError::Execution(format!(
-            "Unsupported geometry type: {geom_type:?}"
-        ))),
-    }
-}
-
-fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    // Write byte order
-    writer.write_u8(ENDIANNESS)?;
-
     let has_z = geom
         .has_z()
         .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
@@ -60,14 +46,29 @@ fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
         .has_m()
         .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
 
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 1,   // Point
-        (true, false) => 1001, // Point Z
-        (false, true) => 2001, // Point M
-        (true, true) => 3001,  // Point ZM
+    let dim = match (has_z, has_m) {
+        (false, false) => Dimensions::Xy,
+        (true, false) => Dimensions::Xyz,
+        (false, true) => Dimensions::Xym,
+        (true, true) => Dimensions::Xyzm,
     };
+    match geom_type {
+        GeometryTypes::Point => write_point(geom, dim, writer),
+        GeometryTypes::LineString => write_line_string(geom, dim, writer),
+        GeometryTypes::Polygon => write_polygon(geom, dim, writer),
+        GeometryTypes::MultiPoint => write_multi_point(geom, dim, writer),
+        GeometryTypes::MultiLineString => write_multi_line_string(geom, dim, writer),
+        GeometryTypes::MultiPolygon => write_multi_polygon(geom, dim, writer),
+        GeometryTypes::GeometryCollection => write_geometry_collection(geom, dim, writer),
+        _ => Err(DataFusionError::Execution(format!(
+            "Unsupported geometry type: {geom_type:?}"
+        ))),
+    }
+}
 
-    writer.write_u32::<LittleEndian>(wkb_type)?;
+fn write_point(geom: &impl Geom, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
+    write_wkb_point_header(writer, dim)
+        .map_err(|e| DataFusionError::Execution(format!("Failed to write point header: {e}")))?;
 
     let is_empty = geom
         .is_empty()
@@ -77,10 +78,10 @@ fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
         // Write NaN coordinates for empty point
         writer.write_f64::<LittleEndian>(f64::NAN)?; // x
         writer.write_f64::<LittleEndian>(f64::NAN)?; // y
-        if has_z {
+        if matches!(dim, Dimensions::Xyz | Dimensions::Xyzm) {
             writer.write_f64::<LittleEndian>(f64::NAN)?; // z
         }
-        if has_m {
+        if matches!(dim, Dimensions::Xym | Dimensions::Xyzm) {
             writer.write_f64::<LittleEndian>(f64::NAN)?; // m
         }
     } else {
@@ -88,89 +89,51 @@ fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
             .get_coord_seq()
             .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq: {e}")))?;
 
-        let num_coords = coord_seq.size().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get coord seq size: {e}"))
-        })?;
-
-        if num_coords == 0 {
-            return exec_err!("Point has no coordinates");
-        }
-
-        write_coord_seq(&coord_seq, writer, has_z, has_m)?;
+        write_coord_seq(&coord_seq, dim, writer)?;
     }
 
     Ok(())
 }
 
-fn write_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
+fn write_line_string(geom: &impl Geom, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
+    let num_points = geom
+        .get_num_points()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get num points: {e}")))?;
 
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
+    write_wkb_linestring_header(writer, dim, num_points).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to write linestring header: {e}"))
+    })?;
 
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 2,   // LineString
-        (true, false) => 1002, // LineString Z
-        (false, true) => 2002, // LineString M
-        (true, true) => 3002,  // LineString ZM
-    };
-
-    writer.write_u32::<LittleEndian>(wkb_type)?;
-
-    let is_empty = geom
-        .is_empty()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check if empty: {e}")))?;
-
-    if is_empty {
-        writer.write_u32::<LittleEndian>(0)?; // 0 points
-    } else {
+    if num_points > 0 {
         let coord_seq = geom
             .get_coord_seq()
             .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq: {e}")))?;
 
-        let num_points = coord_seq.size().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get coord seq size: {e}"))
-        })?;
-
-        writer.write_u32::<LittleEndian>(num_points as u32)?;
-
-        write_coord_seq(&coord_seq, writer, has_z, has_m)?;
+        write_coord_seq(&coord_seq, dim, writer)?;
     }
 
     Ok(())
 }
 
-fn write_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
-
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 3,   // Polygon
-        (true, false) => 1003, // Polygon Z
-        (false, true) => 2003, // Polygon M
-        (true, true) => 3003,  // Polygon ZM
-    };
-
-    writer.write_u32::<LittleEndian>(wkb_type)?;
-
+fn write_polygon(geom: &impl Geom, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
     let is_empty = geom
         .is_empty()
         .map_err(|e| DataFusionError::Execution(format!("Failed to check if empty: {e}")))?;
 
-    if is_empty {
-        writer.write_u32::<LittleEndian>(0)?; // 0 rings
-    } else {
+    let num_interior_rings = geom.get_num_interior_rings().map_err(|e| {
+        DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
+    })?;
+
+    let num_rings = match (is_empty, num_interior_rings) {
+        (true, _) => 0,
+        (false, 0) => 1,
+        (false, _) => num_interior_rings + 1,
+    };
+
+    write_wkb_polygon_header(writer, dim, num_rings)
+        .map_err(|e| DataFusionError::Execution(format!("Failed to write polygon header: {e}")))?;
+
+    if num_rings > 0 {
         let exterior = geom
             .get_exterior_ring()
             .map_err(|e| DataFusionError::Execution(format!("Failed to get exterior ring: {e}")))?;
@@ -179,20 +142,13 @@ fn write_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
             DataFusionError::Execution(format!("Failed to get exterior coord seq: {e}"))
         })?;
 
-        let num_interior_rings = geom.get_num_interior_rings().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num interior rings: {e}"))
-        })?;
-
-        // Number of rings (interior rings + 1 exterior ring)
-        writer.write_u32::<LittleEndian>((num_interior_rings + 1) as u32)?;
-
         let exterior_size = exterior_coord_seq
             .size()
             .map_err(|e| DataFusionError::Execution(format!("Failed to get exterior size: {e}")))?;
 
         // Number of points in exterior ring
         writer.write_u32::<LittleEndian>(exterior_size as u32)?;
-        write_coord_seq(&exterior_coord_seq, writer, has_z, has_m)?;
+        write_coord_seq(&exterior_coord_seq, dim, writer)?;
 
         // Write interior rings
         for i in 0..num_interior_rings {
@@ -209,168 +165,89 @@ fn write_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
             })?;
 
             writer.write_u32::<LittleEndian>(interior_size as u32)?;
-            write_coord_seq(&interior_coord_seq, writer, has_z, has_m)?;
+            write_coord_seq(&interior_coord_seq, dim, writer)?;
         }
     }
 
     Ok(())
 }
 
-fn write_multi_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
+fn write_multi_point(geom: &impl Geom, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
+    let num_points = geom
+        .get_num_geometries()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get num geometries: {e}")))?;
 
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
+    write_wkb_multipoint_header(writer, dim, num_points).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to write multipoint header: {e}"))
+    })?;
 
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 4,   // MultiPoint
-        (true, false) => 1004, // MultiPoint Z
-        (false, true) => 2004, // MultiPoint M
-        (true, true) => 3004,  // MultiPoint ZM
-    };
+    for i in 0..num_points {
+        let point = geom
+            .get_geometry_n(i)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to get point {i}: {e}")))?;
 
-    writer.write_u32::<LittleEndian>(wkb_type)?;
+        write_point(&point, dim, writer)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to write point: {e}")))?;
+    }
 
-    let is_empty = geom
-        .is_empty()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check if empty: {e}")))?;
+    Ok(())
+}
 
-    if is_empty {
-        writer.write_u32::<LittleEndian>(0)?; // 0 points
-    } else {
-        let num_points = geom.get_num_geometries().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num geometries: {e}"))
+fn write_multi_line_string(
+    geom: &impl Geom,
+    dim: Dimensions,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let num_line_strings = geom
+        .get_num_geometries()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get num geometries: {e}")))?;
+
+    write_wkb_multilinestring_header(writer, dim, num_line_strings).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to write multilinestring header: {e}"))
+    })?;
+
+    for i in 0..num_line_strings {
+        let line_string = geom.get_geometry_n(i).map_err(|e| {
+            DataFusionError::Execution(format!("Failed to get line string {i}: {e}"))
         })?;
-
-        writer.write_u32::<LittleEndian>(num_points as u32)?;
-
-        for i in 0..num_points {
-            let point = geom
-                .get_geometry_n(i)
-                .map_err(|e| DataFusionError::Execution(format!("Failed to get point {i}: {e}")))?;
-
-            write_point(&point, writer)?;
-        }
+        write_line_string(&line_string, dim, writer)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to write line string: {e}")))?;
     }
 
     Ok(())
 }
 
-fn write_multi_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
+fn write_multi_polygon(geom: &impl Geom, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
+    let num_polygons = geom
+        .get_num_geometries()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get num geometries: {e}")))?;
 
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
+    write_wkb_multipolygon_header(writer, dim, num_polygons).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to write multipolygon header: {e}"))
+    })?;
 
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 5,   // MultiLineString
-        (true, false) => 1005, // MultiLineString Z
-        (false, true) => 2005, // MultiLineString M
-        (true, true) => 3005,  // MultiLineString ZM
-    };
+    for i in 0..num_polygons {
+        let poly = geom
+            .get_geometry_n(i)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to get polygon {i}: {e}")))?;
 
-    writer.write_u32::<LittleEndian>(wkb_type)?;
-
-    let is_empty = geom
-        .is_empty()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check if empty: {e}")))?;
-
-    if is_empty {
-        writer.write_u32::<LittleEndian>(0)?; // 0 line strings
-    } else {
-        let num_line_strings = geom.get_num_geometries().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num geometries: {e}"))
-        })?;
-
-        writer.write_u32::<LittleEndian>(num_line_strings as u32)?;
-
-        for i in 0..num_line_strings {
-            let ls = geom.get_geometry_n(i).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to get line string {i}: {e}"))
-            })?;
-
-            write_line_string(&ls, writer)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn write_multi_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
-
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 6,   // MultiPolygon
-        (true, false) => 1006, // MultiPolygon Z
-        (false, true) => 2006, // MultiPolygon M
-        (true, true) => 3006,  // MultiPolygon ZM
-    };
-
-    writer.write_u32::<LittleEndian>(wkb_type)?;
-
-    let is_empty = geom
-        .is_empty()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check if empty: {e}")))?;
-
-    if is_empty {
-        writer.write_u32::<LittleEndian>(0)?; // 0 polygons
-    } else {
-        let num_polygons = geom.get_num_geometries().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get num geometries: {e}"))
-        })?;
-
-        writer.write_u32::<LittleEndian>(num_polygons as u32)?;
-
-        for i in 0..num_polygons {
-            let poly = geom.get_geometry_n(i).map_err(|e| {
-                DataFusionError::Execution(format!("Failed to get polygon {i}: {e}"))
-            })?;
-
-            write_polygon(&poly, writer)?;
-        }
+        write_polygon(&poly, dim, writer)?;
     }
     Ok(())
 }
 
-fn write_geometry_collection(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(ENDIANNESS)?;
-
-    let has_z = geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 7,   // GeometryCollection
-        (true, false) => 1007, // GeometryCollection Z
-        (false, true) => 2007, // GeometryCollection M
-        (true, true) => 3007,  // GeometryCollection ZM
-    };
-
-    writer.write_u32::<LittleEndian>(wkb_type)?;
-
+fn write_geometry_collection(
+    geom: &impl Geom,
+    dim: Dimensions,
+    writer: &mut impl Write,
+) -> Result<()> {
     let num_geometries = geom
         .get_num_geometries()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get num geometries: {e}")))?;
 
-    writer.write_u32::<LittleEndian>(num_geometries as u32)?;
+    write_wkb_geometrycollection_header(writer, dim, num_geometries).map_err(|e| {
+        DataFusionError::Execution(format!("Failed to write geometry collection header: {e}"))
+    })?;
 
     for i in 0..num_geometries {
         let sub_geom = geom
@@ -385,18 +262,11 @@ fn write_geometry_collection(geom: &impl Geom, writer: &mut impl Write) -> Resul
 
 fn write_coord_seq(
     coord_seq: &geos::CoordSeq,
+    dim: Dimensions,
     writer: &mut impl Write,
-    has_z: bool,
-    has_m: bool,
 ) -> Result<()> {
-    let dims = match (has_z, has_m) {
-        (true, true) => 4,
-        (true, false) | (false, true) => 3,
-        (false, false) => 2,
-    };
-
     let coords = coord_seq
-        .as_buffer(Some(dims))
+        .as_buffer(Some(dim.size()))
         .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq buffer: {e}")))?;
 
     // Cast Vec<f64> to &[u8] so we can write the bytes directly to the writer buffer
