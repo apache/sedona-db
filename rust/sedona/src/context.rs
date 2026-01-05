@@ -515,7 +515,7 @@ impl ThreadSafeDialect {
                 inner: box_dialect.into(),
             })
         } else {
-            plan_err!("Unexpected dialect: {dialect}")
+            plan_err!("Unsupported SQL dialect: {dialect}")
         }
     }
 
