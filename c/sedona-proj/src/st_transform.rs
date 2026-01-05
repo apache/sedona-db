@@ -159,7 +159,7 @@ impl SedonaScalarKernel for STTransform {
     ) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![
-                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_geometry(),
                 ArgMatcher::or(vec![ArgMatcher::is_numeric(), ArgMatcher::is_string()]),
                 ArgMatcher::optional(ArgMatcher::or(vec![
                     ArgMatcher::is_numeric(),

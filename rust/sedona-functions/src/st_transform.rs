@@ -18,10 +18,7 @@ use std::vec;
 
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::SedonaScalarUDF;
-use sedona_schema::{
-    datatypes::{Edges, SedonaType},
-    matchers::ArgMatcher,
-};
+use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 /// St_Transform() UDF implementation
 ///
@@ -31,7 +28,7 @@ pub fn st_transform_udf() -> SedonaScalarUDF {
         "st_transform",
         ArgMatcher::new(
             vec![
-                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_geometry(),
                 ArgMatcher::or(vec![ArgMatcher::is_string(), ArgMatcher::is_numeric()]),
                 ArgMatcher::optional(ArgMatcher::or(vec![
                     ArgMatcher::is_string(),
@@ -39,7 +36,7 @@ pub fn st_transform_udf() -> SedonaScalarUDF {
                 ])),
                 ArgMatcher::optional(ArgMatcher::is_boolean()),
             ],
-            SedonaType::Wkb(Edges::Planar, None),
+            WKB_GEOMETRY,
         ),
         Volatility::Immutable,
         Some(st_transform_doc()),
@@ -68,7 +65,7 @@ CRS format
 
 You can use any string accepted by PROJ to specify a CRS (e.g., PROJJSON, WKT1/2, authority/code in the form authority:code).
 ","ST_Transform (A: Geometry, SourceCRS: String, TargetCRS: String)")
-        .with_argument("geom", "geometry: Input geometry or geography")
+        .with_argument("geom", "geometry: Input geometry")
         .with_argument("source_crs", "string: Source CRS code or WKT")
         .with_argument("target_crs", "string: Target CRS code or WKT")
         .with_argument("lenient", "boolean: If true, assumes the geometry uses EPSG:4326 when source_crs is not specified. Defaults to true.")
