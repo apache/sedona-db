@@ -5227,6 +5227,7 @@ version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "bytemuck",
  "byteorder",
  "criterion",
  "datafusion-common",
