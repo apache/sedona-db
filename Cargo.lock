@@ -4966,6 +4966,7 @@ dependencies = [
  "gdal",
  "gdal-sys",
  "rstest",
+ "sedona-common",
  "sedona-raster",
  "sedona-schema",
  "sedona-testing",
