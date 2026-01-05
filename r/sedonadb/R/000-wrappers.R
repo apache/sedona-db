@@ -265,3 +265,126 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
 `print.sedonadb::InternalDataFrame__bundle` <- function(x, ...) {
   cat('sedonadb::InternalDataFrame\n')
 }
+
+### wrapper functions for SedonaDBExpr
+
+`SedonaDBExpr_alias` <- function(self) {
+  function(`name`) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_alias__impl, `self`, `name`))
+  }
+}
+
+`SedonaDBExpr_cast` <- function(self) {
+  function(`schema_xptr`) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_cast__impl, `self`, `schema_xptr`))
+  }
+}
+
+`SedonaDBExpr_debug_string` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_debug_string__impl, `self`)
+  }
+}
+
+`SedonaDBExpr_display` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_display__impl, `self`)
+  }
+}
+
+`SedonaDBExpr_negate` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_negate__impl, `self`))
+  }
+}
+
+`.savvy_wrap_SedonaDBExpr` <- function(ptr) {
+  e <- new.env(parent = emptyenv())
+  e$.ptr <- ptr
+  e$`alias` <- `SedonaDBExpr_alias`(ptr)
+  e$`cast` <- `SedonaDBExpr_cast`(ptr)
+  e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
+  e$`display` <- `SedonaDBExpr_display`(ptr)
+  e$`negate` <- `SedonaDBExpr_negate`(ptr)
+
+  class(e) <- c("sedonadb::SedonaDBExpr", "SedonaDBExpr", "savvy_sedonadb__sealed")
+  e
+}
+
+
+
+`SedonaDBExpr` <- new.env(parent = emptyenv())
+
+### associated functions for SedonaDBExpr
+
+
+
+class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__sealed")
+
+#' @export
+`print.sedonadb::SedonaDBExpr__bundle` <- function(x, ...) {
+  cat('sedonadb::SedonaDBExpr\n')
+}
+
+### wrapper functions for SedonaDBExprFactory
+
+`SedonaDBExprFactory_aggregate_function` <- function(self) {
+  function(`name`, `args`, `na_rm` = NULL, `distinct` = NULL) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_aggregate_function__impl, `self`, `name`, `args`, `na_rm`, `distinct`))
+  }
+}
+
+`SedonaDBExprFactory_binary` <- function(self) {
+  function(`op`, `lhs`, `rhs`) {
+    `lhs` <- .savvy_extract_ptr(`lhs`, "sedonadb::SedonaDBExpr")
+    `rhs` <- .savvy_extract_ptr(`rhs`, "sedonadb::SedonaDBExpr")
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_binary__impl, `self`, `op`, `lhs`, `rhs`))
+  }
+}
+
+`SedonaDBExprFactory_column` <- function(self) {
+  function(`name`, `qualifier` = NULL) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_column__impl, `self`, `name`, `qualifier`))
+  }
+}
+
+`SedonaDBExprFactory_scalar_function` <- function(self) {
+  function(`name`, `args`) {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_scalar_function__impl, `self`, `name`, `args`))
+  }
+}
+
+`.savvy_wrap_SedonaDBExprFactory` <- function(ptr) {
+  e <- new.env(parent = emptyenv())
+  e$.ptr <- ptr
+  e$`aggregate_function` <- `SedonaDBExprFactory_aggregate_function`(ptr)
+  e$`binary` <- `SedonaDBExprFactory_binary`(ptr)
+  e$`column` <- `SedonaDBExprFactory_column`(ptr)
+  e$`scalar_function` <- `SedonaDBExprFactory_scalar_function`(ptr)
+
+  class(e) <- c("sedonadb::SedonaDBExprFactory", "SedonaDBExprFactory", "savvy_sedonadb__sealed")
+  e
+}
+
+
+
+`SedonaDBExprFactory` <- new.env(parent = emptyenv())
+
+### associated functions for SedonaDBExprFactory
+
+`SedonaDBExprFactory`$`literal` <- function(`array_xptr`, `schema_xptr`) {
+  .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExprFactory_literal__impl, `array_xptr`, `schema_xptr`))
+}
+
+`SedonaDBExprFactory`$`new` <- function(`ctx`) {
+  `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
+  .savvy_wrap_SedonaDBExprFactory(.Call(savvy_SedonaDBExprFactory_new__impl, `ctx`))
+}
+
+
+class(`SedonaDBExprFactory`) <- c("sedonadb::SedonaDBExprFactory__bundle", "savvy_sedonadb__sealed")
+
+#' @export
+`print.sedonadb::SedonaDBExprFactory__bundle` <- function(x, ...) {
+  cat('sedonadb::SedonaDBExprFactory\n')
+}
