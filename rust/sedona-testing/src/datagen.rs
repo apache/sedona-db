@@ -581,7 +581,7 @@ fn generate_random_linestring<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .unwrap();
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
         let coords =
@@ -602,7 +602,7 @@ fn generate_random_polygon<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .unwrap();
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
         let coords =
