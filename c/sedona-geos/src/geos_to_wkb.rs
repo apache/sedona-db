@@ -20,8 +20,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use datafusion_common::{error::Result, exec_err, DataFusionError};
 use geos::{Geom, Geometry, GeometryTypes};
 
-// TODO:
-const NATIVE_ENDIANNESS: u8 = 1;
+const ENDIANNESS: u8 = 1;
 
 /// Write a GEOS geometry to WKB format.
 ///
@@ -65,7 +64,7 @@ fn write_geometry(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
 
 fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
     // Write byte order
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -117,7 +116,7 @@ fn write_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
 }
 
 fn write_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -160,7 +159,7 @@ fn write_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
 }
 
 fn write_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -231,7 +230,7 @@ fn write_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
 }
 
 fn write_multi_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -275,7 +274,7 @@ fn write_multi_point(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
 }
 
 fn write_multi_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -319,7 +318,7 @@ fn write_multi_line_string(geom: &impl Geom, writer: &mut impl Write) -> Result<
 }
 
 fn write_multi_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
@@ -362,7 +361,7 @@ fn write_multi_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> 
 }
 
 fn write_geometry_collection(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
-    writer.write_u8(NATIVE_ENDIANNESS)?;
+    writer.write_u8(ENDIANNESS)?;
 
     let has_z = geom
         .has_z()
