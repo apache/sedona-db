@@ -423,11 +423,6 @@ fn write_coord_seq(
 #[cfg(test)]
 mod tests {
     use super::*;
-    // use geo_traits::to_geo::ToGeoGeometry;
-    // use std::str::FromStr;
-    // use wkb::reader::read_wkb;
-    // use wkt::Wkt;
-    // use crate::wkb_to_geos::GEOSWkbFactory;
 
     /// Helper function to test WKB round-trip: create geometry from WKT, write to WKB, read back, verify
     fn test_wkb_round_trip(wkt: &str) {

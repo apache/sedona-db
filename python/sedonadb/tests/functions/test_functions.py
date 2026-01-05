@@ -849,29 +849,23 @@ def test_st_unaryunion(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        # Skip M tests because geos rust isn't capable of writing XYM geometries yet
+        # https://github.com/apache/sedona-db/issues/481
         ("POINT Z EMPTY", "POINT Z EMPTY"),
-        # ("POINT M EMPTY", "POINT M EMPTY"),
         ("POINT ZM EMPTY", "POINT ZM EMPTY"),
         ("POINT Z (0 0 0)", "POINT Z(0 0 0)"),
-        # ("POINT M (1 2 3)", "POINT M(1 2 3)"),
         ("POINT ZM (1 2 3 4)", "POINT ZM(1 2 3 4)"),
         ("LINESTRING Z (0 0 0, 1 1 1)", "LINESTRING Z(0 0 0,1 1 1)"),
-        # ("LINESTRING M (0 0 1, 1 1 2)", "LINESTRING M(0 0 1,1 1 2)"),
         ("LINESTRING ZM (0 0 1 2, 1 1 3 4)", "LINESTRING ZM(0 0 1 2,1 1 3 4)"),
         (
             "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))",
             "POLYGON Z((0 0 10,4 0 10,4 4 10,0 4 10,0 0 10))",
         ),
-        # (
-        #     "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))",
-        #     "POLYGON M((0 0 1,4 0 2,4 4 3,0 4 4,0 0 5))",
-        # ),
         (
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))",
             "POLYGON ZM((0 0 10 1,4 0 10 2,4 4 10 3,0 4 10 4,0 0 10 5))",
         ),
         ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z((0 0 0),(1 1 1))"),
-        # ("MULTIPOINT M ((0 0 1), (1 1 2))", "MULTIPOINT M((0 0 1),(1 1 2))"),
         ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM((0 0 1 2),(1 1 3 4))"),
         # Polygons overlap, so it's reduced to a single one
         (
@@ -879,9 +873,7 @@ def test_st_unaryunion(eng, geom, expected):
             "POLYGON Z((0 4 10,4 4 10,4 0 10,0 0 10,0 4 10))",
         ),
         ("GEOMETRYCOLLECTION Z EMPTY", "GEOMETRYCOLLECTION Z EMPTY"),
-        # ("GEOMETRYCOLLECTION M EMPTY", "GEOMETRYCOLLECTION M EMPTY"),
         ("GEOMETRYCOLLECTION ZM EMPTY", "GEOMETRYCOLLECTION ZM EMPTY"),
-        # Skipping M and ZM tests because library is not smart enough for M dimensions yet. (specifies NaN instead)
         (
             "GEOMETRYCOLLECTION Z(POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
             "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
@@ -891,7 +883,7 @@ def test_st_unaryunion(eng, geom, expected):
             "GEOMETRYCOLLECTION (POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
             "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
         ),
-        # Skipping M and ZM tests because library is not smart enough for GeometryCollection M yet , specifies NaN instead)
+        # Skipping GeometryCollection ZM tests because geos unary_union() doesn't seem to work properly for them yet.
     ],
 )
 def test_st_unaryunion_zm(eng, geom, expected):
@@ -904,6 +896,8 @@ def test_st_unaryunion_zm(eng, geom, expected):
     elif is_postgis and ("M(" in expected or "M (" in expected):
         pytest.skip("PostGIS doesn't support M dimensions")
     else:
+        # Test for exact string equality
+        # Remove all spaces from both the actual and expected results to ignore formatting differences
         eng.assert_query_result(
             f"SELECT replace(ST_AsText(ST_UnaryUnion({geom_or_null(geom)})), ' ', '')",
             expected.replace(" ", ""),
