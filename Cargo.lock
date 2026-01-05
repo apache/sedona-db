@@ -5448,7 +5448,7 @@ dependencies = [
  "object_store",
  "parking_lot",
  "parquet",
- "rand 0.8.5",
+ "rand",
  "sedona-common",
  "sedona-expr",
  "sedona-geos",
