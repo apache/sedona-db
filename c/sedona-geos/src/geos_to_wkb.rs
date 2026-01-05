@@ -31,6 +31,19 @@ pub fn write_geos_geometry(geom: &Geometry, writer: &mut impl Write) -> Result<(
     write_geometry(geom, writer)
 }
 
+// actually this is for geo-traits, not geos
+// use geo_traits::GeometryTrait;
+// use wkb::{writer::{WriteOptions, write_geometry}, Endianness};
+
+// const WRITE_OPTIONS: WriteOptions = WriteOptions {
+//     endianness: Endianness::LittleEndian,
+// };
+
+// pub fn write_geos_geometry(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) -> Result<()> {
+//     write_geometry(writer, geom, &WRITE_OPTIONS).map_err(|e| DataFusionError::Execution(format!("Failed to write geometry: {e}")))?;
+//     Ok(())
+// }
+
 fn write_geometry(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
     let geom_type = geom
         .geometry_type()
@@ -453,4 +466,248 @@ fn write_coord_seq(
     writer.write_all(byte_slice)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // use geo_traits::to_geo::ToGeoGeometry;
+    // use std::str::FromStr;
+    // use wkb::reader::read_wkb;
+    // use wkt::Wkt;
+    // use crate::wkb_to_geos::GEOSWkbFactory;
+
+    /// Helper function to test WKB round-trip: create geometry from WKT, write to WKB, read back, verify
+    fn test_wkb_round_trip(wkt: &str) {
+        let geos_geom = geos::Geometry::new_from_wkt(wkt).unwrap();
+        let expected_wkt = geos_geom.to_wkt().unwrap();
+
+        // Write to WKB from Geos object using our method
+        let mut wkb_buf = Vec::new();
+        write_geos_geometry(&geos_geom, &mut wkb_buf).unwrap();
+        let geos_from_wkb = geos::Geometry::new_from_wkb(&wkb_buf).unwrap();
+
+        // Compare them as WKT
+        let geos_from_wkb_wkt = geos_from_wkb.to_wkt().unwrap();
+        assert_eq!(geos_from_wkb_wkt, expected_wkt);
+    }
+
+    // Point tests
+    #[test]
+    fn test_write_point_xy() {
+        test_wkb_round_trip("POINT (0 1)");
+        test_wkb_round_trip("POINT (1.5 2.5)");
+        test_wkb_round_trip("POINT (-10.5 -20.5)");
+    }
+
+    #[test]
+    fn test_write_point_xyz() {
+        test_wkb_round_trip("POINT Z (0 1 10)");
+        test_wkb_round_trip("POINT Z (1.5 2.5 3.5)");
+        test_wkb_round_trip("POINT Z (-10.5 -20.5 -30.5)");
+    }
+
+    #[test]
+    fn test_write_point_xyzm() {
+        test_wkb_round_trip("POINT ZM (0 1 10 100)");
+        test_wkb_round_trip("POINT ZM (1.5 2.5 3.5 4.5)");
+        test_wkb_round_trip("POINT ZM (-10.5 -20.5 -30.5 -40.5)");
+    }
+
+    #[test]
+    fn test_write_point_empty() {
+        test_wkb_round_trip("POINT EMPTY");
+        test_wkb_round_trip("POINT Z EMPTY");
+        test_wkb_round_trip("POINT ZM EMPTY");
+    }
+
+    // LineString tests
+    #[test]
+    fn test_write_linestring_xy() {
+        test_wkb_round_trip("LINESTRING (0 0, 1 1)");
+        test_wkb_round_trip("LINESTRING (0 0, 1 1, 2 2)");
+        test_wkb_round_trip("LINESTRING (0 0, 1 1, 2 2, 3 3)");
+    }
+
+    #[test]
+    fn test_write_linestring_xyz() {
+        test_wkb_round_trip("LINESTRING Z (0 0 0, 1 1 1)");
+        test_wkb_round_trip("LINESTRING Z (0 0 0, 1 1 1, 2 2 2)");
+        test_wkb_round_trip("LINESTRING Z (0 0 10, 1 1 11, 2 2 12)");
+    }
+
+    #[test]
+    fn test_write_linestring_xyzm() {
+        test_wkb_round_trip("LINESTRING ZM (0 0 1 2, 1 1 3 4)");
+        test_wkb_round_trip("LINESTRING ZM (0 0 1 2, 1 1 3 4, 2 2 5 6)");
+        test_wkb_round_trip("LINESTRING ZM (0 0 10 20, 1 1 11 21, 2 2 12 22)");
+    }
+
+    #[test]
+    fn test_write_linestring_empty() {
+        test_wkb_round_trip("LINESTRING EMPTY");
+        test_wkb_round_trip("LINESTRING Z EMPTY");
+        test_wkb_round_trip("LINESTRING ZM EMPTY");
+    }
+
+    // Polygon tests
+    #[test]
+    fn test_write_polygon_xy() {
+        test_wkb_round_trip("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))");
+        test_wkb_round_trip("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))");
+    }
+
+    #[test]
+    fn test_write_polygon_xyz() {
+        test_wkb_round_trip("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))");
+        test_wkb_round_trip("POLYGON Z ((0 0 0, 1 0 0, 0 1 0, 0 0 0))");
+        test_wkb_round_trip(
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
+        );
+    }
+
+    #[test]
+    fn test_write_polygon_xyzm() {
+        test_wkb_round_trip("POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))");
+        test_wkb_round_trip(
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 10, 1 2 5 11, 2 2 5 12, 2 1 5 13, 1 1 5 10))",
+        );
+    }
+
+    #[test]
+    fn test_write_polygon_empty() {
+        test_wkb_round_trip("POLYGON EMPTY");
+        test_wkb_round_trip("POLYGON Z EMPTY");
+        test_wkb_round_trip("POLYGON ZM EMPTY");
+    }
+
+    // MultiPoint tests
+    #[test]
+    fn test_write_multipoint_xy() {
+        test_wkb_round_trip("MULTIPOINT ((0 0), (1 1))");
+        test_wkb_round_trip("MULTIPOINT ((0 0), (1 1), (2 2))");
+    }
+
+    #[test]
+    fn test_write_multipoint_xyz() {
+        test_wkb_round_trip("MULTIPOINT Z ((0 0 0), (1 1 1))");
+        test_wkb_round_trip("MULTIPOINT Z ((0 0 0), (1 1 1), (2 2 2))");
+    }
+
+    #[test]
+    fn test_write_multipoint_xyzm() {
+        test_wkb_round_trip("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))");
+        test_wkb_round_trip("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4), (2 2 5 6))");
+    }
+
+    #[test]
+    fn test_write_multipoint_empty() {
+        test_wkb_round_trip("MULTIPOINT EMPTY");
+        test_wkb_round_trip("MULTIPOINT Z EMPTY");
+        test_wkb_round_trip("MULTIPOINT ZM EMPTY");
+    }
+
+    // MultiLineString tests
+    #[test]
+    fn test_write_multilinestring_xy() {
+        test_wkb_round_trip("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))");
+        test_wkb_round_trip("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3), (4 4, 5 5))");
+    }
+
+    #[test]
+    fn test_write_multilinestring_xyz() {
+        test_wkb_round_trip("MULTILINESTRING Z ((0 0 0, 1 1 1), (2 2 2, 3 3 3))");
+        test_wkb_round_trip("MULTILINESTRING Z ((0 0 0, 1 1 1), (2 2 2, 3 3 3), (4 4 4, 5 5 5))");
+    }
+
+    #[test]
+    fn test_write_multilinestring_xyzm() {
+        test_wkb_round_trip("MULTILINESTRING ZM ((0 0 1 2, 1 1 3 4), (2 2 5 6, 3 3 7 8))");
+    }
+
+    #[test]
+    fn test_write_multilinestring_empty() {
+        test_wkb_round_trip("MULTILINESTRING EMPTY");
+        test_wkb_round_trip("MULTILINESTRING Z EMPTY");
+        test_wkb_round_trip("MULTILINESTRING ZM EMPTY");
+    }
+
+    // MultiPolygon tests
+    #[test]
+    fn test_write_multipolygon_xy() {
+        test_wkb_round_trip(
+            "MULTIPOLYGON (((0 0, 4 0, 4 4, 0 4, 0 0)), ((5 5, 6 5, 6 6, 5 6, 5 5)))",
+        );
+    }
+
+    #[test]
+    fn test_write_multipolygon_xyz() {
+        test_wkb_round_trip(
+            "MULTIPOLYGON Z (((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)), ((5 5 20, 6 5 20, 6 6 20, 5 6 20, 5 5 20)))",
+        );
+    }
+
+    #[test]
+    fn test_write_multipolygon_xyzm() {
+        test_wkb_round_trip(
+            "MULTIPOLYGON ZM (((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5)), ((5 5 20 10, 6 5 20 11, 6 6 20 12, 5 6 20 13, 5 5 20 10)))",
+        );
+    }
+
+    #[test]
+    fn test_write_multipolygon_empty() {
+        test_wkb_round_trip("MULTIPOLYGON EMPTY");
+        test_wkb_round_trip("MULTIPOLYGON Z EMPTY");
+        test_wkb_round_trip("MULTIPOLYGON ZM EMPTY");
+    }
+
+    // GeometryCollection tests
+    #[test]
+    fn test_write_geometrycollection_xy() {
+        test_wkb_round_trip("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1))");
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 0 1, 0 0)))",
+        );
+    }
+
+    #[test]
+    fn test_write_geometrycollection_xyz() {
+        test_wkb_round_trip("GEOMETRYCOLLECTION Z (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))");
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION Z (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1), POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)))",
+        );
+    }
+
+    #[test]
+    fn test_write_geometrycollection_xyzm() {
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4), LINESTRING ZM (0 0 1 2, 1 1 3 4))",
+        );
+    }
+
+    #[test]
+    fn test_write_geometrycollection_mixed_dimensions() {
+        // Test that dimension is inferred from nested geometries when not specified on collection
+        test_wkb_round_trip("GEOMETRYCOLLECTION (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))");
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION (POINT ZM (1 2 3 4), LINESTRING ZM (0 0 1 2, 1 1 3 4))",
+        );
+    }
+
+    #[test]
+    fn test_write_geometrycollection_empty() {
+        test_wkb_round_trip("GEOMETRYCOLLECTION EMPTY");
+        test_wkb_round_trip("GEOMETRYCOLLECTION Z EMPTY");
+        test_wkb_round_trip("GEOMETRYCOLLECTION ZM EMPTY");
+    }
+
+    #[test]
+    fn test_write_geometrycollection_nested() {
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT (1 2), POINT (3 4)), POINT (5 6))",
+        );
+        test_wkb_round_trip(
+            "GEOMETRYCOLLECTION Z (GEOMETRYCOLLECTION Z (POINT Z (1 2 3), POINT Z (4 5 6)), POINT Z (7 8 9))",
+        );
+    }
 }
