@@ -22,7 +22,7 @@ use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
 };
-use savvy::{savvy, savvy_err};
+use savvy::{savvy, savvy_err, EnvironmentSexp};
 use sedona::context::SedonaContext;
 
 use crate::{
@@ -179,11 +179,21 @@ impl SedonaDBExprFactory {
         savvy::ListSexp::try_from(exprs_sexp)?
             .iter()
             .map(|(_, item)| -> savvy::Result<Expr> {
-                // This seems to require $.ptr from the list() input (can't just
-                // use list of R SedonaDBExpr objects)
-                let expr_wrapper: &SedonaDBExpr = item.try_into()?;
+                // item here is the Environment wrapper around the external pointer
+                let expr_wrapper: &SedonaDBExpr = EnvironmentSexp::try_from(item)?.try_into()?;
                 Ok(expr_wrapper.inner.clone())
             })
             .collect()
+    }
+}
+
+impl TryFrom<EnvironmentSexp> for &SedonaDBExpr {
+    type Error = savvy::Error;
+
+    fn try_from(env: EnvironmentSexp) -> Result<Self, Self::Error> {
+        env.get(".ptr")?
+            .map(<&SedonaDBExpr>::try_from)
+            .transpose()?
+            .ok_or(savvy_err!("Invalid SedonaDBExpr object."))
     }
 }

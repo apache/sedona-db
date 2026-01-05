@@ -67,9 +67,7 @@ sd_expr_negative <- function(expr, factory = sd_expr_factory()) {
 #' @export
 sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_factory()) {
   args_as_expr <- lapply(args, as_sd_expr, factory = factory)
-  # Not sure why we need this exactly (something about savvy)
-  args_as_expr_ptr <- lapply(args_as_expr, "[[", ".ptr")
-  factory$scalar_function(function_name, args_as_expr_ptr)
+  factory$scalar_function(function_name, args_as_expr)
 }
 
 #' @rdname sd_expr_column
@@ -77,9 +75,7 @@ sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_facto
 sd_expr_aggregate_function <- function(function_name, args, ...,
                                        na.rm = FALSE, distinct = FALSE, factory = sd_expr_factory()) {
   args_as_expr <- lapply(args, as_sd_expr, factory = factory)
-  # Not sure why we need this exactly (something about savvy)
-  args_as_expr_ptr <- lapply(args_as_expr, "[[", ".ptr")
-  factory$aggregate_function(function_name, args_as_expr_ptr, na_rm = na.rm, distinct = distinct)
+  factory$aggregate_function(function_name, args_as_expr, na_rm = na.rm, distinct = distinct)
 }
 
 #' @rdname sd_expr_column
