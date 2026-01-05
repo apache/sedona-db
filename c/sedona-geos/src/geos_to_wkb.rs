@@ -30,19 +30,6 @@ pub fn write_geos_geometry(geom: &Geometry, writer: &mut impl Write) -> Result<(
     write_geometry(geom, writer)
 }
 
-// actually this is for geo-traits, not geos
-// use geo_traits::GeometryTrait;
-// use wkb::{writer::{WriteOptions, write_geometry}, Endianness};
-
-// const WRITE_OPTIONS: WriteOptions = WriteOptions {
-//     endianness: Endianness::LittleEndian,
-// };
-
-// pub fn write_geos_geometry(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) -> Result<()> {
-//     write_geometry(writer, geom, &WRITE_OPTIONS).map_err(|e| DataFusionError::Execution(format!("Failed to write geometry: {e}")))?;
-//     Ok(())
-// }
-
 fn write_geometry(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
     let geom_type = geom
         .geometry_type()
