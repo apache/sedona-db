@@ -86,7 +86,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "r-v3"
+          prefix-key: "r-v4"
           # The R package uses its own target directory
           workspaces: ". -> r/sedonadb/src/rust/target"
 

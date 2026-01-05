@@ -195,7 +195,7 @@ impl STDumpBuilder {
                 DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
                 true,
             ),
-            Field::new("geom", DataType::Binary, true),
+            WKB_GEOMETRY.to_storage_field("geom", true).unwrap(),
         ]);
         let struct_array = StructArray::try_new(
             fields.clone(),
