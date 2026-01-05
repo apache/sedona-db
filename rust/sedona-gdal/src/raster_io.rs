@@ -17,7 +17,7 @@
 
 use crate::dataset::{geotransform_components, tile_size, to_banddatatype};
 use arrow::array::StructArray;
-use arrow::error::ArrowError;
+use datafusion_common::{DataFusionError, Result};
 use gdal::raster::RasterBand;
 use gdal::Dataset;
 use sedona_raster::builder::RasterBuilder;
@@ -40,11 +40,11 @@ use std::sync::Arc;
 pub fn read_geotiff(
     filepath: &str,
     tile_size_opt: Option<(usize, usize)>,
-) -> Result<Arc<StructArray>, ArrowError> {
+) -> Result<Arc<StructArray>, DataFusionError> {
     // Check that the filepath has a GeoTIFF extension
     let filepath_lower = filepath.to_lowercase();
     if !filepath_lower.ends_with(".tif") && !filepath_lower.ends_with(".tiff") {
-        return Err(ArrowError::InvalidArgumentError(format!(
+        return Err(DataFusionError::Execution(format!(
             "Expected GeoTIFF file with .tif or .tiff extension, got: {}",
             filepath
         )));
@@ -59,11 +59,11 @@ pub fn read_geotiff(
 /// # Arguments
 /// * `raster_array` - The raster struct array to write
 /// * `filepath` - Path to the output GeoTIFF file
-pub fn write_geotiff(raster_array: &StructArray, filepath: &str) -> Result<(), ArrowError> {
+pub fn write_geotiff(raster_array: &StructArray, filepath: &str) -> Result<(), DataFusionError> {
     // Check that the filepath has a GeoTIFF extension
     let filepath_lower = filepath.to_lowercase();
     if !filepath_lower.ends_with(".tif") && !filepath_lower.ends_with(".tiff") {
-        return Err(ArrowError::InvalidArgumentError(format!(
+        return Err(DataFusionError::Execution(format!(
             "Expected GeoTIFF file with .tif or .tiff extension, got: {}",
             filepath
         )));
@@ -82,8 +82,8 @@ pub fn write_geotiff(raster_array: &StructArray, filepath: &str) -> Result<(), A
 pub fn read_raster(
     filepath: &str,
     tile_size_opt: Option<(usize, usize)>,
-) -> Result<Arc<StructArray>, ArrowError> {
-    let dataset = Dataset::open(filepath).map_err(|err| ArrowError::ParseError(err.to_string()))?;
+) -> Result<Arc<StructArray>, DataFusionError> {
+    let dataset = Dataset::open(filepath).map_err(|err| DataFusionError::Internal(err.to_string()))?;
 
     // Extract geotransform components
     let (origin_upperleft_x, origin_upperleft_y, scale_x, scale_y, skew_x, skew_y) =
@@ -198,13 +198,13 @@ fn read_band_data_into(
     window_size: (usize, usize),
     data_type: &BandDataType,
     output: &mut [u8],
-) -> Result<(), ArrowError> {
+) -> Result<(), DataFusionError> {
     let pixel_count = window_size.0 * window_size.1;
 
     match data_type {
         BandDataType::UInt8 => {
             band.read_into_slice(window_origin, window_size, window_size, output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::UInt16 => {
@@ -212,7 +212,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut u16, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::Int16 => {
@@ -220,7 +220,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut i16, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::UInt32 => {
@@ -228,7 +228,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut u32, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::Int32 => {
@@ -236,7 +236,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut i32, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::Float32 => {
@@ -244,7 +244,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut f32, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
         BandDataType::Float64 => {
@@ -252,7 +252,7 @@ fn read_band_data_into(
                 std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut f64, pixel_count)
             };
             band.read_into_slice(window_origin, window_size, window_size, typed_output, None)
-                .map_err(|e| ArrowError::ParseError(format!("Failed to read band data: {e}")))?;
+                .map_err(|e| DataFusionError::Internal(format!("Failed to read band data: {e}")))?;
             Ok(())
         }
     }
@@ -272,7 +272,7 @@ fn write_raster(
     raster_array: &StructArray,
     filepath: &str,
     driver_name: &str,
-) -> Result<(), ArrowError> {
+) -> Result<(), DataFusionError> {
     use gdal::{DriverManager, Metadata};
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
@@ -280,7 +280,7 @@ fn write_raster(
     let raster_struct_array = RasterStructArray::new(raster_array);
 
     if raster_struct_array.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(
+        return Err(DataFusionError::Execution(
             "Cannot write empty raster array".to_string(),
         ));
     }
@@ -291,7 +291,7 @@ fn write_raster(
     let band_count = first_raster.bands().len();
 
     if band_count == 0 {
-        return Err(ArrowError::InvalidArgumentError(
+        return Err(DataFusionError::Execution(
             "Raster has no bands".to_string(),
         ));
     }
@@ -326,7 +326,7 @@ fn write_raster(
 
     // Get GDAL driver by name
     let driver = DriverManager::get_driver_by_name(driver_name).map_err(|e| {
-        ArrowError::ParseError(format!("Failed to get {} driver: {e}", driver_name))
+        DataFusionError::Internal(format!("Failed to get {} driver: {e}", driver_name))
     })?;
 
     // Create dataset based on data type
@@ -353,7 +353,7 @@ fn write_raster(
             driver.create_with_band_type::<f64, _>(filepath, total_width, total_height, band_count)
         }
     }
-    .map_err(|e| ArrowError::ParseError(format!("Failed to create GeoTIFF: {e}")))?;
+    .map_err(|e| DataFusionError::Internal(format!("Failed to create GeoTIFF: {e}")))?;
 
     // Set geotransform
     dataset
@@ -365,17 +365,17 @@ fn write_raster(
             first_metadata.skew_y(),
             scale_y,
         ])
-        .map_err(|e| ArrowError::ParseError(format!("Failed to set geotransform: {e}")))?;
+        .map_err(|e| DataFusionError::Internal(format!("Failed to set geotransform: {e}")))?;
 
     // Set tile size metadata if tiles are being used
     let tile_width = first_metadata.width();
     let tile_height = first_metadata.height();
     dataset
         .set_metadata_item("TILEWIDTH", &tile_width.to_string(), "")
-        .map_err(|e| ArrowError::ParseError(format!("Failed to set TILEWIDTH metadata: {e}")))?;
+        .map_err(|e| DataFusionError::Internal(format!("Failed to set TILEWIDTH metadata: {e}")))?;
     dataset
         .set_metadata_item("TILEHEIGHT", &tile_height.to_string(), "")
-        .map_err(|e| ArrowError::ParseError(format!("Failed to set TILEHEIGHT metadata: {e}")))?;
+        .map_err(|e| DataFusionError::Internal(format!("Failed to set TILEHEIGHT metadata: {e}")))?;
 
     // Write each tile to the dataset
     for i in 0..raster_struct_array.len() {
@@ -395,14 +395,14 @@ fn write_raster(
 
             // Check that storage type is InDb
             if band.metadata().storage_type() != StorageType::InDb {
-                return Err(ArrowError::NotYetImplemented(
+                return Err(DataFusionError::Internal(
                     format!("Writing rasters with storage type {:?} is not yet implemented. Only InDb storage is currently supported.",
                         band.metadata().storage_type())
                 ));
             }
 
             let mut gdal_band = dataset.rasterband(band_index + 1).map_err(|e| {
-                ArrowError::ParseError(format!("Failed to get GDAL band {}: {e}", band_index + 1))
+                DataFusionError::Internal(format!("Failed to get GDAL band {}: {e}", band_index + 1))
             })?;
 
             let band_data = band.data();
@@ -430,7 +430,7 @@ fn write_raster(
 
     // Flush the dataset
     dataset.flush_cache().map_err(|e| {
-        ArrowError::ParseError(format!("Failed to flush cache when writing GeoTIFF: {e}"))
+        DataFusionError::Internal(format!("Failed to flush cache when writing GeoTIFF: {e}"))
     })?;
 
     Ok(())
@@ -443,7 +443,7 @@ fn write_band_data(
     window_size: (usize, usize),
     band_data: &[u8],
     data_type: BandDataType,
-) -> Result<(), ArrowError> {
+) -> Result<(), DataFusionError> {
     use gdal::raster::Buffer;
 
     let (width, height) = window_size;
@@ -506,7 +506,7 @@ fn write_band_data(
             gdal_band.write(window_origin, window_size, &mut buffer)
         }
     }
-    .map_err(|e| ArrowError::ParseError(format!("Failed to write band data: {e}")))
+    .map_err(|e| DataFusionError::Internal(format!("Failed to write band data: {e}")))
 }
 
 /// Convert nodata value bytes back to f64
