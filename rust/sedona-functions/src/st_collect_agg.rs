@@ -38,7 +38,7 @@ use sedona_geometry::{
     },
 };
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -48,7 +48,12 @@ use sedona_schema::{
 pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_collect_agg",
-        vec![Arc::new(STCollectAggr {})],
+        vec![
+            Arc::new(STCollectAggr {
+                is_geography: false,
+            }),
+            Arc::new(STCollectAggr { is_geography: true }),
+        ],
         Volatility::Immutable,
         Some(st_collect_agg_doc()),
     )
@@ -66,11 +71,16 @@ fn st_collect_agg_doc() -> Documentation {
 }
 
 #[derive(Debug)]
-struct STCollectAggr {}
+struct STCollectAggr {
+    is_geography: bool,
+}
 
 impl SedonaAccumulator for STCollectAggr {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry_or_geography()], WKB_GEOMETRY);
+        let matcher = match self.is_geography {
+            true => ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+            false => ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+        };
         matcher.match_args(args)
     }
 
@@ -299,7 +309,7 @@ impl Accumulator for CollectionAccumulator {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
     use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
 
     use super::*;
@@ -370,5 +380,12 @@ mod test {
             err.message(),
             "Can't ST_Collect_Agg() mixed dimension geometries"
         );
+    }
+
+    #[rstest]
+    fn udf_geog(#[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType) {
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), WKB_GEOGRAPHY);
     }
 }
