@@ -364,9 +364,21 @@ fn write_multi_polygon(geom: &impl Geom, writer: &mut impl Write) -> Result<()> 
 fn write_geometry_collection(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
     writer.write_u8(NATIVE_ENDIANNESS)?;
 
-    // GeometryCollection's dimension might be specified on the child geometries only
-    let dimension = get_geomcol_dimension(geom)?;
-    writer.write_u32::<LittleEndian>(dimension)?;
+    let has_z = geom
+        .has_z()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
+    let has_m = geom
+        .has_m()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
+
+    let wkb_type = match (has_z, has_m) {
+        (false, false) => 7,   // GeometryCollection
+        (true, false) => 1007, // GeometryCollection Z
+        (false, true) => 2007, // GeometryCollection M
+        (true, true) => 3007,  // GeometryCollection ZM
+    };
+
+    writer.write_u32::<LittleEndian>(wkb_type)?;
 
     let num_geometries = geom
         .get_num_geometries()
@@ -383,66 +395,6 @@ fn write_geometry_collection(geom: &impl Geom, writer: &mut impl Write) -> Resul
     }
 
     Ok(())
-}
-
-// TBH. um not sure this is needed for geos
-fn get_geomcol_dimension(geomcol: &impl Geom) -> Result<u32> {
-    let has_z = geomcol
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-
-    let has_m = geomcol
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-
-    let wkb_type = match (has_z, has_m) {
-        (true, false) => Some(1007), // GeometryCollection Z
-        (false, true) => Some(2007), // GeometryCollection M
-        (true, true) => Some(3007),  // GeometryCollection ZM
-        (false, false) => None,      // GeometryCollection
-    };
-
-    // If found non-xy dimension, use it
-    if let Some(wkb_type) = wkb_type {
-        return Ok(wkb_type);
-    }
-
-    // Try inferring from first nested geom
-    let num_geometries = geomcol
-        .get_num_geometries()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to get num geometries: {e}")))?;
-
-    if num_geometries == 0 {
-        // Guaranteed to be XY only
-        return Ok(7);
-    }
-
-    // Check the first geom's type
-    let sub_geom = geomcol.get_geometry_n(0).map_err(|e| {
-        DataFusionError::Execution(format!("Failed to get first nested geometry: {e}"))
-    })?;
-    let sub_geom_type = sub_geom
-        .geometry_type()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
-
-    // If it's a nested geom collection, recurse into that
-    if sub_geom_type == GeometryTypes::GeometryCollection {
-        return get_geomcol_dimension(&sub_geom);
-    }
-
-    let has_z = sub_geom
-        .has_z()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_z: {e}")))?;
-    let has_m = sub_geom
-        .has_m()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to check has_m: {e}")))?;
-    let wkb_type = match (has_z, has_m) {
-        (false, false) => 7,   // GeometryCollection
-        (true, false) => 1007, // GeometryCollection Z
-        (false, true) => 2007, // GeometryCollection M
-        (true, true) => 3007,  // GeometryCollection ZM
-    };
-    Ok(wkb_type)
 }
 
 fn write_coord_seq(
