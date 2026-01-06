@@ -30,6 +30,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Simplify() implementation using the geos crate
 pub fn st_simplify_impl() -> ScalarKernelRef {
@@ -124,11 +125,7 @@ fn invoke_scalar(
         _ => geometry,
     };
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 
