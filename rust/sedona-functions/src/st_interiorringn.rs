@@ -127,8 +127,9 @@ fn invoke_scalar(geom: &Wkb, index: usize, writer: &mut impl std::io::Write) -> 
 
 #[cfg(test)]
 mod tests {
+    use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -392,5 +393,20 @@ mod tests {
             &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
             &expected,
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_interiorringn_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+            ],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar_scalar("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 5, 5 5, 5 1, 1 1))", ScalarValue::Int64(Some(1))).unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (1 1, 1 5, 5 5, 5 1, 1 1)");
     }
 }

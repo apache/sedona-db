@@ -46,7 +46,7 @@ use crate::executor::WkbExecutor;
 pub fn st_start_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_startpoint",
-        vec![Arc::new(STStartOrEndPoint::new(true))],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STStartOrEndPoint::new(true))]),
         Volatility::Immutable,
         Some(st_start_point_doc()),
     )
@@ -197,7 +197,7 @@ fn extract_start_or_end_coord<'a>(
 mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -299,5 +299,14 @@ mod tests {
 
         let result_end_point = tester_end_point.invoke_array(input).unwrap();
         assert_array_equal(&result_end_point, &expected_end_point);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(st_start_point_udf().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar("LINESTRING (1 2, 3 4, 5 6)").unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }
 }

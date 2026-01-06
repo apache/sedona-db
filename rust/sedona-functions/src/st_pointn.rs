@@ -144,7 +144,7 @@ fn write_wkb_point_from_coord(
 mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -279,5 +279,19 @@ mod tests {
             .invoke_array_scalar(input_others.clone(), ScalarValue::Int64(Some(2)))
             .unwrap();
         assert_array_equal(&result_others, &expected_others);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester_pointn = ScalarUdfTester::new(
+            st_pointn_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Int64)],
+        );
+        tester_pointn.assert_return_type(sedona_type);
+
+        let result = tester_pointn
+            .invoke_scalar_scalar("LINESTRING (11 12, 21 22, 31 32, 41 42)", ScalarValue::Int64(Some(1)))
+            .unwrap();
+        tester_pointn.assert_scalar_result_equals(result, "POINT (11 12)");
     }
 }

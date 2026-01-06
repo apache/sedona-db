@@ -196,7 +196,7 @@ where
 mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -439,5 +439,14 @@ mod tests {
         );
 
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar("LINESTRING (30 10, 10 30, 40 40)").unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (40 40, 10 30, 30 10)");
     }
 }
