@@ -24,6 +24,7 @@ use datafusion_expr::ColumnarValue;
 use geo::{ConcaveHull, CoordsIter, Geometry, GeometryCollection, Point, Polygon};
 use geo_traits::to_geo::{ToGeoGeometry, ToGeoPoint};
 use geo_traits::{GeometryCollectionTrait, GeometryTrait, MultiPointTrait, PointTrait};
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::is_empty;
@@ -40,8 +41,8 @@ use crate::to_geo::item_to_geometry;
 /// Geo returns a Polygon for every concave hull computation
 /// whereas the Geos implementation returns a MultiPolygon for
 /// certain geometries concave hull computation.
-pub fn st_concavehull_impl() -> ScalarKernelRef {
-    Arc::new(STConcaveHull {})
+pub fn st_concavehull_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STConcaveHull {})
 }
 
 #[derive(Debug)]
@@ -224,7 +225,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal_wkb_geometry_topologically},
         create::create_array,
@@ -458,5 +459,18 @@ mod tests {
             let result = tester.invoke_scalar_scalar(wkt, pctconvex).unwrap();
             assert_scalar_equal_wkb_geometry_topologically(&result, Some(expected));
         }
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_concavehull", st_concavehull_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar_scalar("POINT (2.5 3.1)", 0.1).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (2.5 3.1)");
     }
 }
