@@ -20,15 +20,18 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::Intersects;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Intersects() implementation using [Intersects]
-pub fn st_intersects_impl() -> ScalarKernelRef {
-    Arc::new(STIntersects {})
+pub fn st_intersects_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STIntersects {})
 }
 
 #[derive(Debug)]
