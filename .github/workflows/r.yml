@@ -32,6 +32,19 @@ on:
       - 'c/**'
       - 'r/**'
 jobs:
+  lint:
+    runs-on: ubuntu/latest
+    steps:
+      # Run air format
+      - uses: posit-dev/setup-air@v1
+      - run: cd r/sedonab && air format . --check
+
+      # Run lintr
+      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: lintr
+      - run: cd r/sedonab && R -e 'lintr::lint_package()'
 
   test:
     runs-on: ${{ matrix.config.os }}
