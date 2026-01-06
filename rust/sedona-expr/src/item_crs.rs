@@ -70,7 +70,7 @@ impl ItemCrsKernel {
     /// Wrap a vector of kernels by appending all ItemCrs versions followed by
     /// the contents of inner
     ///
-    /// This is the reccomended way to add kernels when all of them should support
+    /// This is the recommended way to add kernels when all of them should support
     /// ItemCrs inputs.
     pub fn wrap_vec(inner: Vec<ScalarKernelRef>) -> Vec<ScalarKernelRef> {
         let mut out = Vec::new();
@@ -413,7 +413,7 @@ mod test {
     use rstest::rstest;
     use sedona_schema::{
         crs::lnglat,
-        datatypes::{Edges, SedonaType, WKB_GEOMETRY},
+        datatypes::{Edges, SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS},
     };
     use sedona_testing::{
         create::create_array_item_crs, create::create_scalar_item_crs, testers::ScalarUdfTester,
@@ -437,10 +437,6 @@ mod test {
         SedonaScalarUDF::from_kernel("fun", crsified_kernel.clone()).into()
     }
 
-    fn basic_item_crs_type() -> SedonaType {
-        SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()
-    }
-
     #[test]
     fn item_crs_kernel_no_match() {
         // A call with geometry + geometry should fail (this case would be handled by the
@@ -456,15 +452,15 @@ mod test {
     #[rstest]
     fn item_crs_kernel_basic(
         #[values(
-            (WKB_GEOMETRY, basic_item_crs_type()),
-            (basic_item_crs_type(), WKB_GEOMETRY),
-            (basic_item_crs_type(), basic_item_crs_type())
+            (WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone()),
+            (WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOMETRY),
+            (WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOMETRY_ITEM_CRS.clone())
         )]
         arg_types: (SedonaType, SedonaType),
     ) {
         // A call with geometry + item_crs or both item_crs should return item_crs
         let tester = ScalarUdfTester::new(test_udf(WKB_GEOMETRY), vec![arg_types.0, arg_types.1]);
-        tester.assert_return_type(basic_item_crs_type());
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
         let result = tester
             .invoke_scalar_scalar("POINT (0 1)", "POINT (1 2)")
             .unwrap();
@@ -478,9 +474,9 @@ mod test {
     fn item_crs_kernel_crs_values() {
         let tester = ScalarUdfTester::new(
             test_udf(WKB_GEOMETRY),
-            vec![basic_item_crs_type(), basic_item_crs_type()],
+            vec![WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOMETRY_ITEM_CRS.clone()],
         );
-        tester.assert_return_type(basic_item_crs_type());
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
         let scalar_item_crs_4326 =
             create_scalar_item_crs(Some("POINT (0 1)"), Some("EPSG:4326"), &WKB_GEOMETRY);
@@ -518,9 +514,9 @@ mod test {
         let sedona_type_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
         let tester = ScalarUdfTester::new(
             test_udf(WKB_GEOMETRY),
-            vec![basic_item_crs_type(), sedona_type_lnglat.clone()],
+            vec![WKB_GEOMETRY_ITEM_CRS.clone(), sedona_type_lnglat.clone()],
         );
-        tester.assert_return_type(basic_item_crs_type());
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
         // We should be able to execute item_crs + geometry when the crs compares equal
         let result = tester
@@ -547,7 +543,7 @@ mod test {
     fn item_crs_kernel_arrays() {
         let tester = ScalarUdfTester::new(
             test_udf(WKB_GEOMETRY),
-            vec![basic_item_crs_type(), basic_item_crs_type()],
+            vec![WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOMETRY_ITEM_CRS.clone()],
         );
 
         let array_item_crs_lnglat = create_array_item_crs(
@@ -587,7 +583,10 @@ mod test {
 
         let tester = ScalarUdfTester::new(
             test_udf(SedonaType::Arrow(DataType::Int32)),
-            vec![SedonaType::Arrow(DataType::Int32), basic_item_crs_type()],
+            vec![
+                SedonaType::Arrow(DataType::Int32),
+                WKB_GEOMETRY_ITEM_CRS.clone(),
+            ],
         );
         tester.assert_return_type(DataType::Int32);
 

@@ -525,7 +525,7 @@ mod test {
     use sedona_geometry::{error::SedonaGeometryError, transform::CrsTransform};
     use sedona_schema::{
         crs::lnglat,
-        datatypes::{Edges, WKB_GEOMETRY},
+        datatypes::{Edges, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS},
     };
     use sedona_testing::{
         compare::assert_value_equal,
@@ -645,7 +645,7 @@ mod test {
             st_set_srid_udf().into(),
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)],
         );
-        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
         let geometry_array = create_array(
             &[
@@ -691,7 +691,7 @@ mod test {
             st_set_crs_udf().into(),
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
         );
-        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
         let geometry_array = create_array(
             &[
