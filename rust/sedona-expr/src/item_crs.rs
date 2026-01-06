@@ -58,8 +58,33 @@ pub struct ItemCrsKernel {
 }
 
 impl ItemCrsKernel {
+    /// Create a new [ScalarKernelRef] wrapping the input
+    ///
+    /// The resulting kernel matches arguments of the input with ItemCrs inputs
+    /// but not those of the original kernel (i.e., a function needs both kernels
+    /// to support both type-level and item-level CRSes).
     pub fn new_ref(inner: ScalarKernelRef) -> ScalarKernelRef {
         Arc::new(Self { inner })
+    }
+
+    /// Wrap a vector of kernels by appending all ItemCrs versions followed by
+    /// the contents of inner
+    ///
+    /// This is the reccomended way to add kernels when all of them should support
+    /// ItemCrs inputs.
+    pub fn wrap_vec(inner: Vec<ScalarKernelRef>) -> Vec<ScalarKernelRef> {
+        let mut out = Vec::new();
+
+        // Add ItemCrsKernels first (so they will be resolved last)
+        for inner_kernel in &inner {
+            out.push(ItemCrsKernel::new_ref(inner_kernel.clone()));
+        }
+
+        for inner_kernel in inner {
+            out.push(inner_kernel);
+        }
+
+        out
     }
 }
 

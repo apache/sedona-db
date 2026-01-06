@@ -21,7 +21,10 @@ use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_AsBinary() scalar UDF implementation
@@ -30,7 +33,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_asbinary_udf() -> SedonaScalarUDF {
     let udf = SedonaScalarUDF::new(
         "st_asbinary",
-        vec![Arc::new(STAsBinary {})],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STAsBinary {})]),
         Volatility::Immutable,
         Some(st_asbinary_doc()),
     );
@@ -100,7 +103,15 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_geometry_input(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
+    fn udf_geometry_input(
+        #[values(
+            WKB_GEOMETRY,
+            WKB_GEOGRAPHY,
+            SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap(),
+            SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap()
+        )]
+        sedona_type: SedonaType,
+    ) {
         let udf = st_asbinary_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
