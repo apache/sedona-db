@@ -25,14 +25,17 @@ use datafusion_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::wkb_header::WkbHeader;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 pub fn st_zmflag_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_zmflag",
-        vec![Arc::new(STZmFlag {})],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STZmFlag {})]),
         Volatility::Immutable,
         Some(st_zmflag_doc()),
     )
@@ -55,7 +58,7 @@ struct STZmFlag {}
 impl SedonaScalarKernel for STZmFlag {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry()],
+            vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Arrow(DataType::Int8),
         );
 
@@ -113,7 +116,10 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::{
         fixtures::MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB, testers::ScalarUdfTester,
     };
@@ -128,7 +134,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(st_zmflag_udf().into(), vec![sedona_type.clone()]);
 
         tester.assert_return_type(DataType::Int8);
