@@ -76,6 +76,15 @@ jobs:
       - name: Build and run examples/sedonadb-rust
         shell: bash
         run: |
-          rm -rf Cargo.toml
           cd examples/sedonadb-rust
+          # Use current PR/branch commit instead of main branch
+          if [ -n "${{ github.event.pull_request.head.sha }}" ]; then
+            REV="${{ github.event.pull_request.head.sha }}"
+            REPO="${{ github.event.pull_request.head.repo.full_name }}"
+          else
+            REV="${{ github.sha }}"
+            REPO="apache/sedona-db"
+          fi
+          sed -i "s|git = \"https://github.com/apache/sedona-db.git\"|git = \"https://github.com/${REPO}.git\", rev = \"${REV}\"|" Cargo.toml
+          cat Cargo.toml
           cargo run
