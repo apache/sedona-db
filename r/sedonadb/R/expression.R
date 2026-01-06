@@ -72,10 +72,21 @@ sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_facto
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_aggregate_function <- function(function_name, args, ...,
-                                       na.rm = FALSE, distinct = FALSE, factory = sd_expr_factory()) {
+sd_expr_aggregate_function <- function(
+  function_name,
+  args,
+  ...,
+  na.rm = FALSE, # nolint: object_name_linter
+  distinct = FALSE,
+  factory = sd_expr_factory()
+) {
   args_as_expr <- lapply(args, as_sd_expr, factory = factory)
-  factory$aggregate_function(function_name, args_as_expr, na_rm = na.rm, distinct = distinct)
+  factory$aggregate_function(
+    function_name,
+    args_as_expr,
+    na_rm = na.rm,
+    distinct = distinct
+  )
 }
 
 #' @rdname sd_expr_column
@@ -133,15 +144,18 @@ print.SedonaDBExpr <- function(x, ...) {
 sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.frame()) {
   ensure_translations_registered()
 
-  rlang::try_fetch({
-    result <- sd_eval_expr_inner(expr, expr_ctx)
-    as_sd_expr(result, factory = expr_ctx$factory)
-  }, error = function(e) {
-    rlang::abort(
-      sprintf("Error evaluating translated expression %s", rlang::expr_label(expr)),
-      parent = e
-    )
-  })
+  rlang::try_fetch(
+    {
+      result <- sd_eval_expr_inner(expr, expr_ctx)
+      as_sd_expr(result, factory = expr_ctx$factory)
+    },
+    error = function(e) {
+      rlang::abort(
+        sprintf("Error evaluating translated expression %s", rlang::expr_label(expr)),
+        parent = e
+      )
+    }
+  )
 }
 
 sd_eval_expr_inner <- function(expr, expr_ctx) {
@@ -254,14 +268,19 @@ ensure_translations_registered <- function() {
     sd_expr_scalar_function("abs", list(x), factory = .ctx$factory)
   })
 
+  # nolint start: object_name_linter
   sd_register_translation("base::sum", function(.ctx, x, ..., na.rm = FALSE) {
     sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .ctx$factory)
   })
+  # nolint end
 
   sd_register_translation("base::+", function(.ctx, lhs, rhs) {
     if (missing(rhs)) {
       # Use a double negative to ensure this fails for non-numeric types
-      sd_expr_negative(sd_expr_negative(lhs, factory = .ctx$factory), factory = .ctx$factory)
+      sd_expr_negative(
+        sd_expr_negative(lhs, factory = .ctx$factory),
+        factory = .ctx$factory
+      )
     } else {
       sd_expr_binary("+", lhs, rhs, factory = .ctx$factory)
     }
@@ -276,8 +295,11 @@ ensure_translations_registered <- function() {
   })
 
   for (op in c("==", "!=", ">", ">=", "<", "<=", "*", "/", "&", "|")) {
-    sd_register_translation(paste0("base::", op), rlang::inject(function(.ctx, lhs, rhs) {
-      sd_expr_binary(!!op, lhs, rhs, factory = .ctx$factory)
-    }))
+    sd_register_translation(
+      paste0("base::", op),
+      rlang::inject(function(.ctx, lhs, rhs) {
+        sd_expr_binary(!!op, lhs, rhs, factory = .ctx$factory)
+      })
+    )
   }
 }
