@@ -40,9 +40,7 @@ main() {
 
     # Add license header, put includes on their own lines, and fix a typo in init.c
     echo "${LICENSE_C}" > "${init_c}"
-    sed 's/#include/\n#include/g' "${init_c}.tmp" | \
-        sed '1s/^\n//' | \
-        sed 's/initialzation/initialization/g' >> "${init_c}"
+    cat "${init_c}.tmp" >> "${init_c}"
 
     # Add license header to 000-wrappers.R
     echo "${LICENSE_R}" > "${wrappers_r}"
