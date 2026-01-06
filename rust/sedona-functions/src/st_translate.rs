@@ -237,7 +237,13 @@ mod tests {
         );
         tester.assert_return_type(sedona_type);
 
-        let result = tester.invoke_scalar_scalar_scalar("POINT (0 1)", ScalarValue::Float64(Some(1.0)), ScalarValue::Float64(Some(2.0))).unwrap();
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "POINT (0 1)",
+                ScalarValue::Float64(Some(1.0)),
+                ScalarValue::Float64(Some(2.0)),
+            )
+            .unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 3)");
     }
 }

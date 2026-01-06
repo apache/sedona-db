@@ -290,7 +290,12 @@ mod tests {
         );
         tester.assert_return_type(sedona_type);
 
-        let result = tester.invoke_scalar_scalar("MULTIPOINT((1 1), (2 2), (3 3))", ScalarValue::Int64(Some(2))).unwrap();
+        let result = tester
+            .invoke_scalar_scalar(
+                "MULTIPOINT((1 1), (2 2), (3 3))",
+                ScalarValue::Int64(Some(2)),
+            )
+            .unwrap();
         tester.assert_scalar_result_equals(result, "POINT (2 2)");
     }
 }

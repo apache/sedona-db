@@ -220,7 +220,8 @@ mod tests {
 
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
+        let tester =
+            ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();

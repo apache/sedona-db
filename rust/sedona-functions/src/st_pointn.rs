@@ -290,7 +290,10 @@ mod tests {
         tester_pointn.assert_return_type(sedona_type);
 
         let result = tester_pointn
-            .invoke_scalar_scalar("LINESTRING (11 12, 21 22, 31 32, 41 42)", ScalarValue::Int64(Some(1)))
+            .invoke_scalar_scalar(
+                "LINESTRING (11 12, 21 22, 31 32, 41 42)",
+                ScalarValue::Int64(Some(1)),
+            )
             .unwrap();
         tester_pointn.assert_scalar_result_equals(result, "POINT (11 12)");
     }
