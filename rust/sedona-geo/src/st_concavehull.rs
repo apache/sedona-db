@@ -233,7 +233,7 @@ mod tests {
 
     /// Helper to initialize the UDF tester to avoid boilerplate in every test.
     fn create_tester(sedona_type: SedonaType) -> ScalarUdfTester {
-        let udf = SedonaScalarUDF::from_kernel("st_concavehull", st_concavehull_impl());
+        let udf = SedonaScalarUDF::from_impl("st_concavehull", st_concavehull_impl());
         ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type, SedonaType::Arrow(DataType::Float64)],
@@ -257,7 +257,7 @@ mod tests {
 
     #[rstest]
     fn test_empty_geometries(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_concavehull", st_concavehull_impl());
+        let udf = SedonaScalarUDF::from_impl("st_concavehull", st_concavehull_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],

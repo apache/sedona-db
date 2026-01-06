@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_simple_geojson() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         // Test with a simple point
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_linestring() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_polygon() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_geometry_collection() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_empty_point() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester.invoke_wkb_scalar(Some("POINT EMPTY")).unwrap();
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn test_empty_polygon() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester.invoke_wkb_scalar(Some("POLYGON EMPTY")).unwrap();

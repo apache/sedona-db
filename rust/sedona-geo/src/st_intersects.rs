@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn scalar_scalar() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point = create_scalar(Some("POINT (0.25 0.25)"), &WKB_GEOMETRY);
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn scalar_array() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point_array = create_array(
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn array_array() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point_array = create_array(

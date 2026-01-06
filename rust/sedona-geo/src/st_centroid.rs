@@ -115,7 +115,7 @@ mod tests {
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let mut udf = st_centroid_udf();
-        udf.add_kernel(st_centroid_impl());
+        udf.add_kernels(st_centroid_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);

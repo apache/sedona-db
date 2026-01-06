@@ -28,7 +28,7 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 fn criterion_benchmark(c: &mut Criterion) {
     let mut f = FunctionSet::new();
     for (name, kernel) in sedona_s2geography::register::scalar_kernels() {
-        f.add_scalar_udf_kernel(name, kernel).unwrap();
+        f.add_scalar_udf_impl(name, kernel).unwrap();
     }
 
     // Single geometry functions
@@ -159,7 +159,7 @@ fn to_geography() -> ScalarUDF {
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOGRAPHY),
         Arc::new(move |_, args| args[0].cast_to(WKB_GEOGRAPHY.storage_type(), None)),
     );
-    SedonaScalarUDF::from_kernel("geog", kernel).into()
+    SedonaScalarUDF::from_impl("geog", kernel).into()
 }
 
 criterion_group! {

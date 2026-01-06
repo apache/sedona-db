@@ -85,7 +85,7 @@ mod tests {
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let mut udf = st_length_udf();
-        udf.add_kernel(st_length_impl());
+        udf.add_kernels(st_length_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(

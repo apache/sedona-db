@@ -97,7 +97,7 @@ mod tests {
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_dwithin", st_dwithin_impl());
+        let udf = SedonaScalarUDF::from_impl("st_dwithin", st_dwithin_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![

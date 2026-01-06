@@ -146,7 +146,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -249,7 +249,7 @@ mod tests {
 
     #[rstest]
     fn simplify_collapsed(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -346,7 +346,7 @@ mod tests {
 
     #[rstest]
     fn simplify_edge_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -374,7 +374,7 @@ mod tests {
     fn simplify_polygon_with_holes(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -414,7 +414,7 @@ mod tests {
     fn simplify_multi_geometries_mixed(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -468,7 +468,7 @@ mod tests {
     fn simplify_geometry_collection_complex(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -537,7 +537,7 @@ mod tests {
     fn simplify_collinear_points(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -560,7 +560,7 @@ mod tests {
     fn simplify_self_intersecting(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -584,7 +584,7 @@ mod tests {
     fn simplify_very_small_geometries(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -608,7 +608,7 @@ mod tests {
 
     #[rstest]
     fn simplify_closed_rings(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_simplify", st_simplify_impl());
+        let udf = SedonaScalarUDF::from_impl("st_simplify", st_simplify_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],

@@ -25,7 +25,31 @@ use datafusion_expr::{
 use sedona_common::sedona_internal_err;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel + Send + Sync>;
+/// Shorthand for a [SedonaScalarKernel] reference
+pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel>;
+
+/// Helper to resolve an iterable of kernels
+pub trait IntoScalarKernelRefs {
+    fn into_kernel_refs(self) -> Vec<ScalarKernelRef>;
+}
+
+impl IntoScalarKernelRefs for ScalarKernelRef {
+    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+        vec![self]
+    }
+}
+
+impl IntoScalarKernelRefs for Vec<ScalarKernelRef> {
+    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+        self
+    }
+}
+
+impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for T {
+    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+        vec![Arc::new(self)]
+    }
+}
 
 /// Top-level scalar user-defined function
 ///
@@ -61,7 +85,7 @@ impl std::hash::Hash for SedonaScalarUDF {
 /// the first whose return_type returns `Some()`. Whereas a SeondaScalarUdf represents
 /// a logical operation (e.g., ST_Intersects()), a kernel wraps the logic around a specific
 /// implementation.
-pub trait SedonaScalarKernel: Debug {
+pub trait SedonaScalarKernel: Debug + Send + Sync {
     /// Calculate a return type given input types
     ///
     /// Returns Some(physical_type) if this kernel applies to the input types or
@@ -201,16 +225,23 @@ impl SedonaScalarUDF {
     ///
     /// This constructor creates a [Volatility::Immutable] function with no documentation
     /// consisting of only the implementation provided.
-    pub fn from_kernel(name: &str, kernel: ScalarKernelRef) -> SedonaScalarUDF {
-        Self::new(name, vec![kernel], Volatility::Immutable, None)
+    pub fn from_impl(name: &str, kernels: impl IntoScalarKernelRefs) -> SedonaScalarUDF {
+        Self::new(
+            name,
+            kernels.into_kernel_refs(),
+            Volatility::Immutable,
+            None,
+        )
     }
 
     /// Add a new kernel to a Scalar UDF
     ///
     /// Because kernels are resolved in reverse order, the new kernel will take
     /// precedence over any previously added kernels that apply to the same types.
-    pub fn add_kernel(&mut self, kernel: ScalarKernelRef) {
-        self.kernels.push(kernel);
+    pub fn add_kernels(&mut self, kernels: impl IntoScalarKernelRefs) {
+        for kernel in kernels.into_kernel_refs() {
+            self.kernels.push(kernel);
+        }
     }
 
     fn return_type_impl(
@@ -374,7 +405,7 @@ mod tests {
 
         // Adding a new kernel should result in that kernel getting picked first
         let mut udf = udf.clone();
-        udf.add_kernel(SimpleSedonaScalarKernel::new_ref(
+        udf.add_kernels(SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_arrow(DataType::Boolean)],
                 SedonaType::Arrow(DataType::Utf8),
@@ -463,8 +494,7 @@ mod tests {
 
     #[test]
     fn return_type_from_scalar_arg() {
-        let udf: ScalarUDF =
-            SedonaScalarUDF::from_kernel("simple_cast", Arc::new(SimpleCast {})).into();
+        let udf: ScalarUDF = SedonaScalarUDF::from_impl("simple_cast", SimpleCast {}).into();
         let call = udf.call(vec![lit(10), lit("float32")]);
         let schema = DFSchema::empty();
         assert_eq!(

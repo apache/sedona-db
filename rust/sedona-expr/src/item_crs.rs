@@ -434,7 +434,7 @@ mod test {
         );
 
         let crsified_kernel = ItemCrsKernel::new_ref(geom_to_geom_kernel);
-        SedonaScalarUDF::from_kernel("fun", crsified_kernel.clone()).into()
+        SedonaScalarUDF::from_impl("fun", crsified_kernel.clone()).into()
     }
 
     #[test]

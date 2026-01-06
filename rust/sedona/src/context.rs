@@ -199,7 +199,7 @@ impl SedonaContext {
         kernels: impl Iterator<Item = (&'a str, ScalarKernelRef)>,
     ) -> Result<()> {
         for (name, kernel) in kernels {
-            let udf = self.functions.add_scalar_udf_kernel(name, kernel)?;
+            let udf = self.functions.add_scalar_udf_impl(name, kernel)?;
             self.ctx.register_udf(udf.clone().into());
         }
 

@@ -16,7 +16,7 @@
 // under the License.
 use crate::{
     aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF},
-    scalar_udf::{ScalarKernelRef, SedonaScalarUDF},
+    scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF},
 };
 use datafusion_common::error::Result;
 use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
@@ -99,15 +99,15 @@ impl FunctionSet {
     /// This adds a scalar UDF with immutable output and no documentation if a
     /// function of that name does not exist in this set. A reference to the
     /// matching function is returned.
-    pub fn add_scalar_udf_kernel(
+    pub fn add_scalar_udf_impl(
         &mut self,
         name: &str,
-        kernel: ScalarKernelRef,
+        kernels: impl IntoScalarKernelRefs,
     ) -> Result<&SedonaScalarUDF> {
         if let Some(function) = self.scalar_udf_mut(name) {
-            function.add_kernel(kernel);
+            function.add_kernels(kernels);
         } else {
-            let function = SedonaScalarUDF::from_kernel(name, kernel);
+            let function = SedonaScalarUDF::from_impl(name, kernels);
             self.insert_scalar_udf(function);
         }
 
@@ -180,13 +180,13 @@ mod tests {
         assert!(functions.scalar_udf_mut("simple_udf").is_some());
         assert_eq!(
             functions
-                .add_scalar_udf_kernel("simple_udf", kernel.clone())
+                .add_scalar_udf_impl("simple_udf", kernel.clone())
                 .unwrap()
                 .name(),
             "simple_udf"
         );
         let inserted_udf = functions
-            .add_scalar_udf_kernel("function that does not yet exist", kernel.clone())
+            .add_scalar_udf_impl("function that does not yet exist", kernel.clone())
             .unwrap();
         assert_eq!(inserted_udf.name(), "function that does not yet exist");
 
