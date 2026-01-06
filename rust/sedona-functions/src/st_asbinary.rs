@@ -33,7 +33,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_asbinary_udf() -> SedonaScalarUDF {
     let udf = SedonaScalarUDF::new(
         "st_asbinary",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STAsBinary {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STAsBinary {})]),
         Volatility::Immutable,
         Some(st_asbinary_doc()),
     );

@@ -47,7 +47,7 @@ use crate::executor::WkbExecutor;
 pub fn st_reverse_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_reverse",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STReverse)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STReverse)]),
         Volatility::Immutable,
         Some(st_reverse_doc()),
     )

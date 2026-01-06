@@ -46,7 +46,7 @@ use crate::executor::WkbExecutor;
 pub fn st_start_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_startpoint",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STStartOrEndPoint::new(true))]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(true))]),
         Volatility::Immutable,
         Some(st_start_point_doc()),
     )
@@ -69,7 +69,7 @@ fn st_start_point_doc() -> Documentation {
 pub fn st_end_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_endpoint",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STStartOrEndPoint::new(false))]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(false))]),
         Volatility::Immutable,
         Some(st_end_point_doc()),
     )

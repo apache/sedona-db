@@ -42,7 +42,7 @@ use crate::executor::WkbExecutor;
 pub fn st_translate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_translate",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STTranslate)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STTranslate)]),
         Volatility::Immutable,
         Some(st_translate_doc()),
     )

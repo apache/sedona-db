@@ -28,7 +28,7 @@ use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use crate::scalar_udf::{IntoScalarKernelRefs, ScalarKernelRef, SedonaScalarKernel};
 
 /// Wrap a [SedonaScalarKernel] to provide Item CRS type support
 ///
@@ -72,15 +72,17 @@ impl ItemCrsKernel {
     ///
     /// This is the recommended way to add kernels when all of them should support
     /// ItemCrs inputs.
-    pub fn wrap_vec(inner: Vec<ScalarKernelRef>) -> Vec<ScalarKernelRef> {
+    pub fn wrap_impl(inner: impl IntoScalarKernelRefs) -> Vec<ScalarKernelRef> {
+        let kernels = inner.into_scalar_kernel_refs();
+
         let mut out = Vec::new();
 
         // Add ItemCrsKernels first (so they will be resolved last)
-        for inner_kernel in &inner {
+        for inner_kernel in &kernels {
             out.push(ItemCrsKernel::new_ref(inner_kernel.clone()));
         }
 
-        for inner_kernel in inner {
+        for inner_kernel in kernels {
             out.push(inner_kernel);
         }
 

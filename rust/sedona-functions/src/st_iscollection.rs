@@ -35,7 +35,7 @@ use crate::executor::WkbBytesExecutor;
 pub fn st_iscollection_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_iscollection",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STIsCollection {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STIsCollection {})]),
         Volatility::Immutable,
         Some(st_iscollection_doc()),
     )

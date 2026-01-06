@@ -34,7 +34,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_hasz_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_hasz",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STHasZm { dim: "z" })]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "z" })]),
         Volatility::Immutable,
         Some(st_geometry_type_doc("z")),
     )
@@ -43,7 +43,7 @@ pub fn st_hasz_udf() -> SedonaScalarUDF {
 pub fn st_hasm_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_hasm",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STHasZm { dim: "m" })]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "m" })]),
         Volatility::Immutable,
         Some(st_geometry_type_doc("m")),
     )

@@ -43,7 +43,7 @@ use crate::executor::WkbExecutor;
 pub fn st_makeline_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_makeline",
-        ItemCrsKernel::wrap_vec(vec![
+        ItemCrsKernel::wrap_impl(vec![
             Arc::new(STMakeLine {
                 out_type: WKB_GEOMETRY,
             }),

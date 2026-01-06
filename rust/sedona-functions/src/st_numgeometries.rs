@@ -35,7 +35,7 @@ use crate::executor::WkbBytesExecutor;
 pub fn st_numgeometries_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_numgeometries",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STNumGeometries {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STNumGeometries {})]),
         Volatility::Immutable,
         Some(st_numgeometries_doc()),
     )

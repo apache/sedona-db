@@ -38,7 +38,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_xmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_xmin",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "x",
             is_max: false,
         })]),
@@ -50,7 +50,7 @@ pub fn st_xmin_udf() -> SedonaScalarUDF {
 pub fn st_xmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_xmax",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "x",
             is_max: true,
         })]),
@@ -62,7 +62,7 @@ pub fn st_xmax_udf() -> SedonaScalarUDF {
 pub fn st_ymin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_ymin",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "y",
             is_max: false,
         })]),
@@ -74,7 +74,7 @@ pub fn st_ymin_udf() -> SedonaScalarUDF {
 pub fn st_ymax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_ymax",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "y",
             is_max: true,
         })]),
@@ -86,7 +86,7 @@ pub fn st_ymax_udf() -> SedonaScalarUDF {
 pub fn st_zmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_zmin",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "z",
             is_max: false,
         })]),
@@ -98,7 +98,7 @@ pub fn st_zmin_udf() -> SedonaScalarUDF {
 pub fn st_zmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_zmax",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "z",
             is_max: true,
         })]),
@@ -110,7 +110,7 @@ pub fn st_zmax_udf() -> SedonaScalarUDF {
 pub fn st_mmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_mmin",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "m",
             is_max: false,
         })]),
@@ -122,7 +122,7 @@ pub fn st_mmin_udf() -> SedonaScalarUDF {
 pub fn st_mmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_mmax",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "m",
             is_max: true,
         })]),

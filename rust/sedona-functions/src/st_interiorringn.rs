@@ -39,7 +39,7 @@ use crate::executor::WkbExecutor;
 pub fn st_interiorringn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_interiorringn",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STInteriorRingN)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STInteriorRingN)]),
         datafusion_expr::Volatility::Immutable,
         Some(st_interiorringn_doc()),
     )

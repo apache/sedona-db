@@ -45,7 +45,7 @@ use wkb::reader::Wkb;
 pub fn st_flipcoordinates_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_flipcoordinates",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STFlipCoordinates {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STFlipCoordinates {})]),
         Volatility::Immutable,
         Some(st_flipcoordinates_doc()),
     )

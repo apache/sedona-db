@@ -37,7 +37,7 @@ use crate::executor::WkbExecutor;
 pub fn st_azimuth_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_azimuth",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STAzimuth {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STAzimuth {})]),
         Volatility::Immutable,
         Some(st_azimuth_doc()),
     )

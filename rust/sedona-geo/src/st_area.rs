@@ -20,15 +20,18 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::Area;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Area() implementation using [Area]
-pub fn st_area_impl() -> ScalarKernelRef {
-    Arc::new(STArea {})
+pub fn st_area_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STArea {})
 }
 
 #[derive(Debug)]
@@ -76,13 +79,16 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_functions::register::stubs::st_area_udf;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let mut udf = st_area_udf();
         udf.add_kernels(st_area_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);

@@ -50,7 +50,7 @@ use crate::executor::WkbExecutor;
 pub fn st_points_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_points",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STPoints)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STPoints)]),
         Volatility::Immutable,
         Some(st_points_doc()),
     )
@@ -119,7 +119,7 @@ impl SedonaScalarKernel for STPoints {
 pub fn st_npoints_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_npoints",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STNPoints)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
         Some(st_npoints_doc()),
     )

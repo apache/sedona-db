@@ -35,7 +35,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_astext_udf() -> SedonaScalarUDF {
     let udf = SedonaScalarUDF::new(
         "st_astext",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STAsText {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STAsText {})]),
         Volatility::Immutable,
         Some(st_astext_doc()),
     );

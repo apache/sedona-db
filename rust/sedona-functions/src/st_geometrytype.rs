@@ -33,7 +33,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_geometry_type_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometrytype",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STGeometryType {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryType {})]),
         Volatility::Immutable,
         Some(st_geometry_type_doc()),
     )

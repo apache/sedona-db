@@ -34,7 +34,7 @@ use wkb::reader::Wkb;
 pub fn st_isempty_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_isempty",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STIsEmpty {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STIsEmpty {})]),
         Volatility::Immutable,
         Some(st_is_empty_doc()),
     )

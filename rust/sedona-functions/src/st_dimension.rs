@@ -35,7 +35,7 @@ use wkb::reader::Wkb;
 pub fn st_dimension_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_dimension",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STDimension {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STDimension {})]),
         Volatility::Immutable,
         Some(st_dimension_doc()),
     )

@@ -43,7 +43,7 @@ use wkb::reader::Wkb;
 pub fn st_geometryn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometryn",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STGeometryN)]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryN)]),
         Volatility::Immutable,
         Some(st_geometryn_doc()),
     )

@@ -38,7 +38,7 @@ use crate::executor::WkbExecutor;
 pub fn st_isclosed_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_isclosed",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STIsClosed {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STIsClosed {})]),
         Volatility::Immutable,
         Some(st_is_closed_doc()),
     )

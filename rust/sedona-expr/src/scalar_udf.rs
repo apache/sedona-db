@@ -51,6 +51,14 @@ impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for T {
     }
 }
 
+impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for Vec<Arc<T>> {
+    fn into_scalar_kernel_refs(self) -> Vec<ScalarKernelRef> {
+        self.into_iter()
+            .map(|item| item as ScalarKernelRef)
+            .collect()
+    }
+}
+
 /// Top-level scalar user-defined function
 ///
 /// This struct implements datafusion's ScalarUDF and implements kernel dispatch

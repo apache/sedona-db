@@ -49,7 +49,7 @@ use wkb::reader::Wkb;
 pub fn st_envelope_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_envelope",
-        ItemCrsKernel::wrap_vec(vec![Arc::new(STEnvelope {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope {})]),
         Volatility::Immutable,
         Some(st_envelope_doc()),
     )
