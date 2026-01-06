@@ -26,6 +26,7 @@ use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
@@ -46,7 +47,7 @@ use crate::executor::WkbExecutor;
 pub fn st_reverse_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_reverse",
-        vec![Arc::new(STReverse)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STReverse)]),
         Volatility::Immutable,
         Some(st_reverse_doc()),
     )

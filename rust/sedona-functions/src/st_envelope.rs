@@ -23,7 +23,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::GeometryTrait;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     bounds::geo_traits_bounds_xy,
     interval::{Interval, IntervalTrait, WraparoundInterval},
@@ -46,7 +49,7 @@ use wkb::reader::Wkb;
 pub fn st_envelope_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_envelope",
-        vec![Arc::new(STEnvelope {})],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STEnvelope {})]),
         Volatility::Immutable,
         Some(st_envelope_doc()),
     )

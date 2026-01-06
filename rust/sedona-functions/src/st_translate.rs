@@ -21,7 +21,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     transform::{transform, CrsTransform},
@@ -39,7 +42,7 @@ use crate::executor::WkbExecutor;
 pub fn st_translate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_translate",
-        vec![Arc::new(STTranslate)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STTranslate)]),
         Volatility::Immutable,
         Some(st_translate_doc()),
     )

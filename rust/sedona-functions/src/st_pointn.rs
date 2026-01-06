@@ -22,7 +22,10 @@ use datafusion_expr::{
 };
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{write_wkb_coord_trait, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
@@ -41,7 +44,7 @@ use crate::executor::WkbExecutor;
 pub fn st_pointn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_pointn",
-        vec![Arc::new(STPointN)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STPointN)]),
         Volatility::Immutable,
         Some(st_pointn_doc()),
     )

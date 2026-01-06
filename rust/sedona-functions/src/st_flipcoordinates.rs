@@ -22,7 +22,10 @@ use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     transform::{transform, CrsTransform},
@@ -42,7 +45,7 @@ use wkb::reader::Wkb;
 pub fn st_flipcoordinates_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_flipcoordinates",
-        vec![Arc::new(STFlipCoordinates {})],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STFlipCoordinates {})]),
         Volatility::Immutable,
         Some(st_flipcoordinates_doc()),
     )

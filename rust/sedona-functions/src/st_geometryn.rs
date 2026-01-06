@@ -28,6 +28,7 @@ use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, MultiLineStringTrait, MultiPointTrait,
     MultiPolygonTrait,
 };
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -42,7 +43,7 @@ use wkb::reader::Wkb;
 pub fn st_geometryn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometryn",
-        vec![Arc::new(STGeometryN)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STGeometryN)]),
         Volatility::Immutable,
         Some(st_geometryn_doc()),
     )

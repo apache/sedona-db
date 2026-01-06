@@ -25,6 +25,7 @@ use datafusion_expr::{
 };
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
 use sedona_common::sedona_internal_err;
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::write_wkb_linestring_header;
 use sedona_schema::datatypes::WKB_GEOGRAPHY;
@@ -42,14 +43,14 @@ use crate::executor::WkbExecutor;
 pub fn st_makeline_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_makeline",
-        vec![
+        ItemCrsKernel::wrap_vec(vec![
             Arc::new(STMakeLine {
                 out_type: WKB_GEOMETRY,
             }),
             Arc::new(STMakeLine {
                 out_type: WKB_GEOGRAPHY,
             }),
-        ],
+        ]),
         Volatility::Immutable,
         Some(doc()),
     )

@@ -25,7 +25,10 @@ use geo_traits::{
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
@@ -47,7 +50,7 @@ use crate::executor::WkbExecutor;
 pub fn st_points_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_points",
-        vec![Arc::new(STPoints)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STPoints)]),
         Volatility::Immutable,
         Some(st_points_doc()),
     )
@@ -116,7 +119,7 @@ impl SedonaScalarKernel for STPoints {
 pub fn st_npoints_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_npoints",
-        vec![Arc::new(STNPoints)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
         Some(st_npoints_doc()),
     )

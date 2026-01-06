@@ -24,7 +24,10 @@ use geo_traits::{
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{write_wkb_coord_trait, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
@@ -66,7 +69,7 @@ fn st_start_point_doc() -> Documentation {
 pub fn st_end_point_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_endpoint",
-        vec![Arc::new(STStartOrEndPoint::new(false))],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STStartOrEndPoint::new(false))]),
         Volatility::Immutable,
         Some(st_end_point_doc()),
     )

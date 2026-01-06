@@ -22,6 +22,7 @@ use datafusion_common::cast::as_int64_array;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation};
 use geo_traits::{GeometryTrait, LineStringTrait, PolygonTrait};
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_linestring_header, WKB_MIN_PROBABLE_BYTES,
@@ -38,7 +39,7 @@ use crate::executor::WkbExecutor;
 pub fn st_interiorringn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_interiorringn",
-        vec![Arc::new(STInteriorRingN)],
+        ItemCrsKernel::wrap_vec(vec![Arc::new(STInteriorRingN)]),
         datafusion_expr::Volatility::Immutable,
         Some(st_interiorringn_doc()),
     )
