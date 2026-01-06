@@ -2913,6 +2913,9 @@ def test_st_isvalidreason(eng, geom, expected):
     ],
 )
 def test_st_simplify(eng, geom, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and geom == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Simplify({geom_or_null(geom)}, {val_or_null(tolerance)})",
