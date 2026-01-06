@@ -30,23 +30,23 @@ pub type ScalarKernelRef = Arc<dyn SedonaScalarKernel>;
 
 /// Helper to resolve an iterable of kernels
 pub trait IntoScalarKernelRefs {
-    fn into_kernel_refs(self) -> Vec<ScalarKernelRef>;
+    fn into_scalar_kernel_refs(self) -> Vec<ScalarKernelRef>;
 }
 
 impl IntoScalarKernelRefs for ScalarKernelRef {
-    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+    fn into_scalar_kernel_refs(self) -> Vec<ScalarKernelRef> {
         vec![self]
     }
 }
 
 impl IntoScalarKernelRefs for Vec<ScalarKernelRef> {
-    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+    fn into_scalar_kernel_refs(self) -> Vec<ScalarKernelRef> {
         self
     }
 }
 
 impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for T {
-    fn into_kernel_refs(self) -> Vec<ScalarKernelRef> {
+    fn into_scalar_kernel_refs(self) -> Vec<ScalarKernelRef> {
         vec![Arc::new(self)]
     }
 }
@@ -228,7 +228,7 @@ impl SedonaScalarUDF {
     pub fn from_impl(name: &str, kernels: impl IntoScalarKernelRefs) -> SedonaScalarUDF {
         Self::new(
             name,
-            kernels.into_kernel_refs(),
+            kernels.into_scalar_kernel_refs(),
             Volatility::Immutable,
             None,
         )
@@ -239,7 +239,7 @@ impl SedonaScalarUDF {
     /// Because kernels are resolved in reverse order, the new kernel will take
     /// precedence over any previously added kernels that apply to the same types.
     pub fn add_kernels(&mut self, kernels: impl IntoScalarKernelRefs) {
-        for kernel in kernels.into_kernel_refs() {
+        for kernel in kernels.into_scalar_kernel_refs() {
             self.kernels.push(kernel);
         }
     }
