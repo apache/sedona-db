@@ -32,7 +32,7 @@ on:
       - 'c/**'
       - 'r/**'
 jobs:
-  lint:
+  format:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -40,13 +40,6 @@ jobs:
       # Run air format
       - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh
       - run: cd r/sedonadb && air format . --check
-
-      # Run lintr
-      - uses: r-lib/actions/setup-r@v2
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          packages: lintr
-      - run: cd r/sedonadb && R -e 'lintr::lint_package()'
 
   test:
     runs-on: ${{ matrix.config.os }}
