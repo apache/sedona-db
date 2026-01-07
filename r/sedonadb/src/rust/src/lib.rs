@@ -196,7 +196,7 @@ impl SedonaTypeR {
     fn new(schema_xptr: savvy::Sexp) -> savvy::Result<SedonaTypeR> {
         use sedona_schema::datatypes::SedonaType;
 
-        let field = crate::ffi::import_arrow_field(schema_xptr)?;
+        let field = crate::ffi::import_field(schema_xptr)?;
         let name = field.name().clone();
 
         // Use existing SedonaType infrastructure to parse the field

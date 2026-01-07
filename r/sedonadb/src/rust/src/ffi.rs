@@ -78,11 +78,6 @@ pub fn import_scalar_udf(mut scalar_udf_xptr: savvy::Sexp) -> savvy::Result<Scal
     Ok(scalar_udf_impl.into())
 }
 
-pub fn import_arrow_field(mut xptr: savvy::Sexp) -> savvy::Result<arrow_schema::Field> {
-    let ffi_schema: &FFI_ArrowSchema = import_xptr(&mut xptr, "nanoarrow_schema")?;
-    arrow_schema::Field::try_from(ffi_schema).map_err(|e| savvy_err!("{e}"))
-}
-
 fn import_xptr<'a, T>(xptr: &'a mut savvy::Sexp, cls: &str) -> savvy::Result<&'a mut T> {
     if !xptr.is_external_pointer() {
         return Err(savvy_err!(
