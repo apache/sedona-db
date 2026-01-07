@@ -17,10 +17,13 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{Column, ScalarValue};
+use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
+use arrow_schema::{FieldRef, Schema};
+use datafusion::physical_plan::PhysicalExpr;
+use datafusion_common::{Column, DFSchema, ScalarValue};
 use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
-    BinaryExpr, Cast, Expr, Operator,
+    BinaryExpr, Cast, ColumnarValue, Expr, Operator,
 };
 use savvy::{savvy, savvy_err, EnvironmentSexp};
 use sedona::context::SedonaContext;
@@ -171,6 +174,45 @@ impl SedonaDBExprFactory {
         } else {
             Err(savvy_err!("Aggregate UDF '{name}' not found"))
         }
+    }
+
+    fn evaluate(
+        &self,
+        exprs_sexp: savvy::Sexp,
+        stream_in: savvy::Sexp,
+        stream_out: savvy::Sexp,
+    ) -> savvy::Result<savvy::Sexp> {
+        let exprs = Self::exprs(exprs_sexp)?;
+        let reader_in = crate::ffi::import_array_stream(stream_in)?;
+
+        let physical_exprs = exprs
+            .into_iter()
+            .map(|e| {
+                self.ctx.ctx.create_physical_expr(
+                    e,
+                    &DFSchema::try_from(reader_in.schema().as_ref().clone())?,
+                )
+            })
+            .collect::<datafusion_common::Result<Vec<Arc<dyn PhysicalExpr>>>>()?;
+
+        let out_fields = physical_exprs
+            .iter()
+            .map(|e| e.return_field(&reader_in.schema()))
+            .collect::<datafusion_common::Result<Vec<FieldRef>>>()?;
+        let out_schema = Arc::new(Schema::new(out_fields));
+
+        let mut out_batches = Vec::new();
+        for batch in reader_in {
+            let batch = batch?;
+            let columns = physical_exprs
+                .iter()
+                .map(|e| e.evaluate(&batch))
+                .collect::<datafusion_common::Result<Vec<ColumnarValue>>>()?;
+            let out_batch = RecordBatch::try_new(out_schema.clone(), ColumnarValue::values_to_arrays(&columns)?)?;
+            out_batches.push(out_batch);
+        }
+
+        todo!()
     }
 }
 
