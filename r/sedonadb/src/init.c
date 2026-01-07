@@ -217,6 +217,36 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
   return handle_result(res);
 }
 
+SEXP savvy_SedonaCrsR_authority_code__impl(SEXP self__) {
+  SEXP res = savvy_SedonaCrsR_authority_code__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaCrsR_display__impl(SEXP self__) {
+  SEXP res = savvy_SedonaCrsR_display__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaCrsR_srid__impl(SEXP self__) {
+  SEXP res = savvy_SedonaCrsR_srid__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaCrsR_to_crs_string__impl(SEXP self__) {
+  SEXP res = savvy_SedonaCrsR_to_crs_string__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaCrsR_to_json__impl(SEXP self__) {
+  SEXP res = savvy_SedonaCrsR_to_json__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaTypeR_crs__impl(SEXP self__) {
+  SEXP res = savvy_SedonaTypeR_crs__ffi(self__);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaTypeR_crs_display__impl(SEXP self__) {
   SEXP res = savvy_SedonaTypeR_crs_display__ffi(self__);
   return handle_result(res);
@@ -288,6 +318,16 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_SedonaCrsR_authority_code__impl",
+     (DL_FUNC)&savvy_SedonaCrsR_authority_code__impl, 1},
+    {"savvy_SedonaCrsR_display__impl", (DL_FUNC)&savvy_SedonaCrsR_display__impl,
+     1},
+    {"savvy_SedonaCrsR_srid__impl", (DL_FUNC)&savvy_SedonaCrsR_srid__impl, 1},
+    {"savvy_SedonaCrsR_to_crs_string__impl",
+     (DL_FUNC)&savvy_SedonaCrsR_to_crs_string__impl, 1},
+    {"savvy_SedonaCrsR_to_json__impl", (DL_FUNC)&savvy_SedonaCrsR_to_json__impl,
+     1},
+    {"savvy_SedonaTypeR_crs__impl", (DL_FUNC)&savvy_SedonaTypeR_crs__impl, 1},
     {"savvy_SedonaTypeR_crs_display__impl",
      (DL_FUNC)&savvy_SedonaTypeR_crs_display__impl, 1},
     {"savvy_SedonaTypeR_logical_type_name__impl",

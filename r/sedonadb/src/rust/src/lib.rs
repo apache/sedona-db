@@ -17,12 +17,14 @@
 // Example functions
 
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use savvy::savvy;
 
 use savvy_ffi::R_NilValue;
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
+use sedona_schema::crs::CoordinateReferenceSystem;
 
 mod context;
 mod dataframe;
@@ -124,6 +126,51 @@ fn parse_crs_metadata(crs_json: &str) -> savvy::Result<savvy::Sexp> {
     }
 }
 
+/// R-exposed wrapper for CRS (Coordinate Reference System) introspection
+///
+/// This wraps an Arc<dyn CoordinateReferenceSystem> and exposes its methods to R.
+#[savvy]
+pub struct SedonaCrsR {
+    inner: Arc<dyn CoordinateReferenceSystem + Send + Sync>,
+}
+
+#[savvy]
+impl SedonaCrsR {
+    /// Get the SRID (e.g., 4326 for WGS84) or NULL if not an EPSG code
+    fn srid(&self) -> savvy::Result<savvy::Sexp> {
+        match self.inner.srid() {
+            Ok(Some(srid)) => savvy::Sexp::try_from(srid as i32),
+            Ok(None) => Ok(savvy::NullSexp.into()),
+            Err(e) => Err(savvy::Error::new(format!("Failed to get SRID: {e}"))),
+        }
+    }
+
+    /// Get the authority code (e.g., "EPSG:4326") or NULL if not available
+    fn authority_code(&self) -> savvy::Result<savvy::Sexp> {
+        match self.inner.to_authority_code() {
+            Ok(Some(code)) => savvy::Sexp::try_from(code.as_str()),
+            Ok(None) => Ok(savvy::NullSexp.into()),
+            Err(e) => Err(savvy::Error::new(format!("Failed to get authority code: {e}"))),
+        }
+    }
+
+    /// Get the JSON representation of the CRS
+    fn to_json(&self) -> savvy::Result<savvy::Sexp> {
+        savvy::Sexp::try_from(self.inner.to_json().as_str())
+    }
+
+    /// Get the PROJ-compatible CRS string representation
+    fn to_crs_string(&self) -> savvy::Result<savvy::Sexp> {
+        savvy::Sexp::try_from(self.inner.to_crs_string().as_str())
+    }
+
+    /// Get a formatted display string (e.g., "epsg:4326" or "{...}")
+    fn display(&self) -> savvy::Result<savvy::Sexp> {
+        let display = format!("{}", self.inner.as_ref());
+        savvy::Sexp::try_from(display.as_str())
+    }
+}
+
 
 /// R-exposed wrapper for SedonaType introspection
 ///
@@ -161,6 +208,24 @@ impl SedonaTypeR {
     /// Get the column name
     fn name(&self) -> savvy::Result<savvy::Sexp> {
         savvy::Sexp::try_from(self.name.as_str())
+    }
+
+    /// Get the CRS wrapper object, or NULL if no CRS is present
+    ///
+    /// This returns a SedonaCrsR object that can be used to inspect the CRS.
+    fn crs(&self) -> savvy::Result<SedonaCrsR> {
+        use sedona_schema::datatypes::SedonaType;
+
+        match &self.inner {
+            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+                if let Some(crs_arc) = crs {
+                    Ok(SedonaCrsR { inner: crs_arc.clone() })
+                } else {
+                    Err(savvy::Error::new("No CRS available for this geometry type"))
+                }
+            }
+            _ => Err(savvy::Error::new("No CRS available for non-geometry types")),
+        }
     }
 
     /// Get a formatted CRS display string like " (CRS: EPSG:4326)" or empty string
