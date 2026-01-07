@@ -2913,6 +2913,9 @@ def test_st_isvalidreason(eng, geom, expected):
     ],
 )
 def test_st_simplify(eng, geom, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and geom == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Simplify({geom_or_null(geom)}, {val_or_null(tolerance)})",
@@ -2970,6 +2973,40 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
 @pytest.mark.parametrize(
     ("input", "reference", "tolerance", "expected"),
     [
+        (None, None, None, None),
+        (None, "POINT (1 2)", 0.5, None),
+        ("POINT (1 2)", None, 0.5, None),
+        ("POINT (1 2)", "POINT (1 2)", None, None),
+        (
+            "POINT EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "POINT (nan nan)",
+        ),
+        (
+            "LINESTRING EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "LINESTRING EMPTY",
+        ),
+        (
+            "POLYGON EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "POLYGON EMPTY",
+        ),
+        (
+            "MULTIPOLYGON EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "MULTIPOLYGON EMPTY",
+        ),
+        (
+            "GEOMETRYCOLLECTION EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "GEOMETRYCOLLECTION EMPTY",
+        ),
         (
             "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
             "LINESTRING (5 107, 54 84, 101 100)",
@@ -3082,6 +3119,9 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
     ],
 )
 def test_st_snap(eng, input, reference, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and input == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Snap({geom_or_null(input)}, {geom_or_null(reference)}, {val_or_null(tolerance)})",

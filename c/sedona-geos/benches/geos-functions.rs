@@ -53,6 +53,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "geos",
+        "st_concavehull",
+        ArrayScalar(Polygon(10), Float64(0.0, 1.0)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
         "st_contains",
         ArrayScalar(Polygon(10), Polygon(10)),
     );
@@ -259,6 +267,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "geos",
+        "st_simplify",
+        ArrayScalar(Polygon(10), Float64(1.0, 10.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_simplify",
+        ArrayScalar(Polygon(500), Float64(1.0, 10.0)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
         "st_snap",
         ArrayArrayScalar(Polygon(10), Polygon(10), Float64(1.0, 10.0)),
     );
@@ -267,7 +290,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "geos",
         "st_snap",
-        ArrayArrayScalar(Polygon(10), Polygon(500), Float64(1.0, 10.0)),
+        ArrayArrayScalar(Polygon(10), Polygon(50), Float64(1.0, 10.0)),
     );
 
     benchmark::scalar(
