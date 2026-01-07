@@ -15,11 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// clang-format sorts includes unless SortIncludes: Never. However, the ordering
+// does matter here. So, we need to disable clang-format for safety.
+
+// clang-format off
 #include <stdint.h>
-
 #include <Rinternals.h>
-
 #include <R_ext/Parse.h>
+// clang-format on
 
 #include "rust/api.h"
 
