@@ -217,6 +217,26 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
   return handle_result(res);
 }
 
+SEXP savvy_SedonaTypeR_crs_display__impl(SEXP self__) {
+  SEXP res = savvy_SedonaTypeR_crs_display__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaTypeR_logical_type_name__impl(SEXP self__) {
+  SEXP res = savvy_SedonaTypeR_logical_type_name__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaTypeR_name__impl(SEXP self__) {
+  SEXP res = savvy_SedonaTypeR_name__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaTypeR_new__impl(SEXP c_arg__schema_xptr) {
+  SEXP res = savvy_SedonaTypeR_new__ffi(c_arg__schema_xptr);
+  return handle_result(res);
+}
+
 static const R_CallMethodDef CallEntries[] = {
     {"savvy_configure_proj_shared__impl",
      (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
@@ -268,6 +288,12 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_SedonaTypeR_crs_display__impl",
+     (DL_FUNC)&savvy_SedonaTypeR_crs_display__impl, 1},
+    {"savvy_SedonaTypeR_logical_type_name__impl",
+     (DL_FUNC)&savvy_SedonaTypeR_logical_type_name__impl, 1},
+    {"savvy_SedonaTypeR_name__impl", (DL_FUNC)&savvy_SedonaTypeR_name__impl, 1},
+    {"savvy_SedonaTypeR_new__impl", (DL_FUNC)&savvy_SedonaTypeR_new__impl, 1},
     {NULL, NULL, 0}};
 
 void R_init_sedonadb(DllInfo *dll) {

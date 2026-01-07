@@ -271,3 +271,55 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
   cat('sedonadb::InternalDataFrame\n')
 }
 
+### wrapper functions for SedonaTypeR
+
+`SedonaTypeR_crs_display` <- function(self) {
+  function() {
+    .Call(savvy_SedonaTypeR_crs_display__impl, `self`)
+  }
+}
+
+`SedonaTypeR_logical_type_name` <- function(self) {
+  function() {
+    .Call(savvy_SedonaTypeR_logical_type_name__impl, `self`)
+  }
+}
+
+`SedonaTypeR_name` <- function(self) {
+  function() {
+    .Call(savvy_SedonaTypeR_name__impl, `self`)
+  }
+}
+
+`.savvy_wrap_SedonaTypeR` <- function(ptr) {
+  e <- new.env(parent = emptyenv())
+  e$.ptr <- ptr
+  e$`crs_display` <- `SedonaTypeR_crs_display`(ptr)
+  e$`logical_type_name` <- `SedonaTypeR_logical_type_name`(ptr)
+  e$`name` <- `SedonaTypeR_name`(ptr)
+
+  class(e) <- c("sedonadb::SedonaTypeR", "SedonaTypeR", "savvy_sedonadb__sealed")
+  e
+}
+
+
+#' R-exposed wrapper for SedonaType introspection
+#'
+#' This allows R code to inspect Arrow schema fields and determine
+#' if they are geometry types with CRS information.
+`SedonaTypeR` <- new.env(parent = emptyenv())
+
+### associated functions for SedonaTypeR
+
+`SedonaTypeR`$`new` <- function(`schema_xptr`) {
+  .savvy_wrap_SedonaTypeR(.Call(savvy_SedonaTypeR_new__impl, `schema_xptr`))
+}
+
+
+class(`SedonaTypeR`) <- c("sedonadb::SedonaTypeR__bundle", "savvy_sedonadb__sealed")
+
+#' @export
+`print.sedonadb::SedonaTypeR__bundle` <- function(x, ...) {
+  cat('sedonadb::SedonaTypeR\n')
+}
+

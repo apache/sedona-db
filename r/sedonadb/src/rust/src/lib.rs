@@ -123,3 +123,61 @@ fn parse_crs_metadata(crs_json: &str) -> savvy::Result<savvy::Sexp> {
         Ok(savvy::NullSexp.into())
     }
 }
+
+
+/// R-exposed wrapper for SedonaType introspection
+///
+/// This allows R code to inspect Arrow schema fields and determine
+/// if they are geometry types with CRS information.
+#[savvy]
+pub struct SedonaTypeR {
+    inner: sedona_schema::datatypes::SedonaType,
+    name: String,
+}
+
+#[savvy]
+impl SedonaTypeR {
+    /// Create a SedonaTypeR from a nanoarrow schema (external pointer)
+    ///
+    /// The schema should be a single field (column) schema, not a struct schema.
+    fn new(schema_xptr: savvy::Sexp) -> savvy::Result<SedonaTypeR> {
+        use sedona_schema::datatypes::SedonaType;
+
+        let field = crate::ffi::import_arrow_field(schema_xptr)?;
+        let name = field.name().clone();
+
+        // Use existing SedonaType infrastructure to parse the field
+        let inner = SedonaType::from_storage_field(&field)
+            .map_err(|e| savvy::Error::new(format!("Failed to create SedonaType: {e}")))?;
+
+        Ok(SedonaTypeR { inner, name })
+    }
+
+    /// Get the logical type name ("geometry", "geography", "utf8", etc.)
+    fn logical_type_name(&self) -> savvy::Result<savvy::Sexp> {
+        savvy::Sexp::try_from(self.inner.logical_type_name().as_str())
+    }
+
+    /// Get the column name
+    fn name(&self) -> savvy::Result<savvy::Sexp> {
+        savvy::Sexp::try_from(self.name.as_str())
+    }
+
+    /// Get a formatted CRS display string like " (CRS: EPSG:4326)" or empty string
+    fn crs_display(&self) -> savvy::Result<savvy::Sexp> {
+        use sedona_schema::datatypes::SedonaType;
+
+        match &self.inner {
+            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+                if let Some(crs_ref) = crs {
+                    // Use the Display impl which gives us nice formatted output
+                    let display = format!(" (CRS: {})", crs_ref);
+                    savvy::Sexp::try_from(display.as_str())
+                } else {
+                    savvy::Sexp::try_from("")
+                }
+            }
+            _ => savvy::Sexp::try_from(""),
+        }
+    }
+}

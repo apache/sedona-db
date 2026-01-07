@@ -322,33 +322,20 @@ print.sedonadb_dataframe <- function(x, ..., width = NULL, n = NULL) {
 
   cat(sprintf("# A sedonadb_dataframe: ? x %d\n", ncols))
 
-  # Print geometry column info
-  # we just use sd_parse_crs() to extract CRS info from ARROW:extension:metadata
+  # Print geometry column info using SedonaTypeR wrapper
   geo_col_info <- character()
   for (col_name in names(schema$children)) {
     child <- schema$children[[col_name]]
-    ext_name <- child$metadata[["ARROW:extension:name"]]
-    if (!is.null(ext_name) && grepl("^geoarrow\\.", ext_name)) {
-      ext_meta <- child$metadata[["ARROW:extension:metadata"]]
-      crs_info <- ""
-      if (!is.null(ext_meta)) {
-        parsed <- tryCatch(
-          sd_parse_crs(ext_meta),
+    sd_type <- tryCatch(
+      SedonaTypeR$new(child),
           error = function(e) NULL
         )
-        if (is.null(parsed)) {
-          crs_info <- " (CRS: parsing error)"
-        } else if (!is.null(parsed$authority_code)) {
-          crs_info <- sprintf(" (CRS: %s)", parsed$authority_code)
-        } else if (!is.null(parsed$srid)) {
-          crs_info <- sprintf(" (CRS: EPSG:%d)", parsed$srid)
-        } else if (!is.null(parsed$name)) {
-          crs_info <- sprintf(" (CRS: %s)", parsed$name)
-        } else {
-          crs_info <- " (CRS: available)"
-        }
+    if (!is.null(sd_type)) {
+      logical_type <- sd_type$logical_type_name()
+      if (logical_type == "geometry" || logical_type == "geography") {
+        crs_display <- sd_type$crs_display()
+        geo_col_info <- c(geo_col_info, sprintf("%s%s", col_name, crs_display))
       }
-      geo_col_info <- c(geo_col_info, sprintf("%s%s", col_name, crs_info))
     }
   }
 
