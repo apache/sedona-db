@@ -80,7 +80,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 1
-      # Geometry: geom (CRS: OGC:CRS84)
+      # Geometry: geom (CRS: ogc:crs84)
       +----------+
       |   geom   |
       | geometry |
@@ -94,7 +94,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 1
-      # Geometry: geom (CRS: EPSG:5070)
+      # Geometry: geom (CRS: epsg:5070)
       +----------+
       |   geom   |
       | geometry |
@@ -108,7 +108,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 2
-      # Geometry: geom1 (CRS: OGC:CRS84), geom2 (CRS: EPSG:5070)
+      # Geometry: geom1 (CRS: ogc:crs84), geom2 (CRS: epsg:5070)
       +----------+----------+
       |   geom1  |   geom2  |
       | geometry | geometry |
@@ -122,7 +122,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 1
-      # Geometry: geom (CRS: parsing error)
+      # Geometry: geom
       +----------+
       |   geom   |
       | geometry |
@@ -136,11 +136,55 @@
       print(df, n = 0, width = 60)
     Output
       # A sedonadb_dataframe: ? x 2
-      # Geometry: very_long_geometry_column_name_1 (CRS: OGC:CR...
+      # Geometry: very_long_geometry_column_name_1 (CRS: ogc:cr...
       +-----------------------------+----------------------------+
       | very_long_geometry_column_n | very_long_geometry_column_ |
       |           ame_1...          |          name_2...         |
       +-----------------------------+----------------------------+
       +-----------------------------+----------------------------+
       Preview of up to 0 row(s)
+
+# sd_parse_crs handles empty string
+
+    Code
+      sedonadb:::sd_parse_crs("")
+    Condition
+      Error:
+      ! Failed to parse metadata JSON: EOF while parsing a value at line 1 column 0
+
+# sd_parse_crs handles CRS with only name, no ID
+
+    Code
+      sedonadb:::sd_parse_crs(meta)
+    Output
+      $authority_code
+      NULL
+      
+      $srid
+      NULL
+      
+      $name
+      [1] "Custom Geographic CRS"
+      
+      $proj_string
+      [1] "{\"name\":\"Custom Geographic CRS\",\"type\":\"GeographicCRS\"}"
+      
+
+# sd_parse_crs handles OGC:CRS84
+
+    Code
+      sedonadb:::sd_parse_crs(meta)
+    Output
+      $authority_code
+      [1] "OGC:CRS84"
+      
+      $srid
+      [1] 4326
+      
+      $name
+      NULL
+      
+      $proj_string
+      [1] "OGC:CRS84"
+      
 

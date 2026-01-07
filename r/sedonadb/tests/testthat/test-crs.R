@@ -99,3 +99,148 @@ test_that("print.sedonadb_dataframe respects width parameter for geometry line",
   # Use a narrow width to trigger truncation
   expect_snapshot(print(df, n = 0, width = 60))
 })
+
+# Additional edge cases for sd_parse_crs
+
+test_that("sd_parse_crs handles NULL input", {
+  expect_error(
+    sedonadb:::sd_parse_crs(NULL),
+    "must be character"
+  )
+})
+
+test_that("sd_parse_crs handles empty string", {
+  expect_snapshot(
+    sedonadb:::sd_parse_crs(""),
+    error = TRUE
+  )
+})
+
+test_that("sd_parse_crs handles CRS with only name, no ID", {
+  meta <- '{
+    "crs": {
+      "type": "GeographicCRS",
+      "name": "Custom Geographic CRS"
+    }
+  }'
+  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+})
+
+test_that("sd_parse_crs handles OGC:CRS84", {
+  # Common case in GeoParquet/GeoArrow
+
+  meta <- '{"crs": "OGC:CRS84"}'
+  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+})
+
+# CRS preservation through data creation paths
+
+test_that("CRS is preserved when creating from data.frame with geometry", {
+  df <- as_sedonadb_dataframe(
+    data.frame(
+      geom = wk::as_wkb(wk::wkt("POINT (0 1)", crs = "EPSG:32620"))
+    )
+  )
+
+  re_df <- sd_collect(df)
+  crs <- wk::wk_crs(re_df$geom)
+  expect_false(is.null(crs))
+  # Check that the CRS contains EPSG:32620 info
+  expect_true(
+    grepl("32620", as.character(crs)) ||
+      grepl("32620", jsonlite::toJSON(crs, auto_unbox = TRUE))
+  )
+})
+
+test_that("CRS is preserved through nanoarrow stream roundtrip", {
+  r_df <- data.frame(
+    geom = wk::as_wkb(wk::wkt("POINT (0 1)", crs = "EPSG:4326"))
+  )
+
+  stream <- nanoarrow::as_nanoarrow_array_stream(r_df)
+  df <- as_sedonadb_dataframe(stream, lazy = FALSE)
+  re_df <- sd_collect(df)
+
+  crs <- wk::wk_crs(re_df$geom)
+  expect_false(is.null(crs))
+})
+
+test_that("Different CRS values are preserved independently", {
+  # Create geometry with non-default CRS
+  df <- sd_sql(
+    "
+    SELECT
+      ST_SetSRID(ST_Point(1, 2), 4326) as geom_wgs84,
+      ST_SetSRID(ST_Point(3, 4), 32632) as geom_utm
+  "
+  )
+
+  re_df <- sd_collect(df)
+
+  # Both geometries should have CRS metadata
+  crs1 <- wk::wk_crs(re_df$geom_wgs84)
+  crs2 <- wk::wk_crs(re_df$geom_utm)
+
+  expect_false(is.null(crs1))
+  expect_false(is.null(crs2))
+})
+
+# Parquet roundtrip with CRS
+
+test_that("CRS is preserved through parquet write/read", {
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
+
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  on.exit(unlink(tmp_parquet_file))
+
+  sd_write_parquet(df, tmp_parquet_file)
+  df_roundtrip <- sd_read_parquet(tmp_parquet_file)
+  re_df <- sd_collect(df_roundtrip)
+
+  # Verify geometry has CRS
+  crs <- wk::wk_crs(re_df$geom)
+  expect_false(is.null(crs))
+})
+
+test_that("Non-standard CRS is preserved through parquet roundtrip", {
+  # Use a less common SRID (NAD83 / Conus Albers)
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 5070) as geom")
+
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  on.exit(unlink(tmp_parquet_file))
+
+  sd_write_parquet(df, tmp_parquet_file)
+  df_roundtrip <- sd_read_parquet(tmp_parquet_file)
+  re_df <- sd_collect(df_roundtrip)
+
+  crs <- wk::wk_crs(re_df$geom)
+  expect_false(is.null(crs))
+  # Check CRS info contains 5070
+  crs_str <- jsonlite::toJSON(crs, auto_unbox = TRUE)
+  expect_true(grepl("5070", crs_str) || grepl("Albers", crs_str))
+})
+
+# Multiple geometry columns with different CRS through operations
+
+test_that("Multiple geometry columns preserve their CRS after operations", {
+  df <- sd_sql(
+    "
+    SELECT
+      ST_SetSRID(ST_Point(1, 2), 4326) as point_a,
+      ST_SetSRID(ST_Point(3, 4), 5070) as point_b,
+      'test' as name
+  "
+  )
+
+  # Collect and check both CRS are preserved
+
+  re_df <- sd_collect(df)
+
+  crs_a <- wk::wk_crs(re_df$point_a)
+  crs_b <- wk::wk_crs(re_df$point_b)
+
+  expect_false(is.null(crs_a))
+  expect_false(is.null(crs_b))
+  # They should be different
+  expect_false(identical(crs_a, crs_b))
+})
