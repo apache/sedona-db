@@ -55,27 +55,18 @@ NULL
 }
 
 
-`configure_proj_shared` <- function(
-  `shared_library_path` = NULL,
-  `database_path` = NULL,
-  `search_path` = NULL
-) {
-  invisible(.Call(
-    savvy_configure_proj_shared__impl,
-    `shared_library_path`,
-    `database_path`,
-    `search_path`
-  ))
-}
-
-
-`parse_crs_metadata` <- function(`crs_json`) {
-  .Call(savvy_parse_crs_metadata__impl, `crs_json`)
+`configure_proj_shared` <- function(`shared_library_path` = NULL, `database_path` = NULL, `search_path` = NULL) {
+  invisible(.Call(savvy_configure_proj_shared__impl, `shared_library_path`, `database_path`, `search_path`))
 }
 
 
 `init_r_runtime_interrupts` <- function(`interrupts_call`, `pkg_env`) {
   invisible(.Call(savvy_init_r_runtime_interrupts__impl, `interrupts_call`, `pkg_env`))
+}
+
+
+`parse_crs_metadata` <- function(`crs_json`) {
+  .Call(savvy_parse_crs_metadata__impl, `crs_json`)
 }
 
 
@@ -279,3 +270,4 @@ class(`InternalDataFrame`) <- c("sedonadb::InternalDataFrame__bundle", "savvy_se
 `print.sedonadb::InternalDataFrame__bundle` <- function(x, ...) {
   cat('sedonadb::InternalDataFrame\n')
 }
+

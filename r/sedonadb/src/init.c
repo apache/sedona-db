@@ -15,11 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// clang-format sorts includes unless SortIncludes: Never. However, the ordering
+// does matter here. So, we need to disable clang-format for safety.
+
+// clang-format off
 #include <stdint.h>
-
 #include <Rinternals.h>
-
 #include <R_ext/Parse.h>
+// clang-format on
 
 #include "rust/api.h"
 
@@ -60,11 +63,6 @@ SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
   return handle_result(res);
 }
 
-SEXP savvy_parse_crs_metadata__impl(SEXP c_arg__crs_json) {
-  SEXP res = savvy_parse_crs_metadata__ffi(c_arg__crs_json);
-  return handle_result(res);
-}
-
 SEXP savvy_init_r_runtime__impl(DllInfo *c_arg___dll_info) {
   SEXP res = savvy_init_r_runtime__ffi(c_arg___dll_info);
   return handle_result(res);
@@ -74,6 +72,11 @@ SEXP savvy_init_r_runtime_interrupts__impl(SEXP c_arg__interrupts_call,
                                            SEXP c_arg__pkg_env) {
   SEXP res = savvy_init_r_runtime_interrupts__ffi(c_arg__interrupts_call,
                                                   c_arg__pkg_env);
+  return handle_result(res);
+}
+
+SEXP savvy_parse_crs_metadata__impl(SEXP c_arg__crs_json) {
+  SEXP res = savvy_parse_crs_metadata__ffi(c_arg__crs_json);
   return handle_result(res);
 }
 
