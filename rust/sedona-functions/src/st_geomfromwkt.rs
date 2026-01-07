@@ -20,7 +20,6 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -74,18 +73,6 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
         Some(doc("ST_GeogFromWKT", "Geography")),
     );
     udf.with_aliases(vec!["st_geogfromtext".to_string()])
-}
-
-/// ST_GeomFromWKT() UDF implementation
-///
-/// An implementation of WKT reading using GeoRust's wkt crate.
-pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "st_geomfromewkt",
-        vec![Arc::new(STGeoFromEWKT {})],
-        Volatility::Immutable,
-        Some(doc("ST_GeomFromEWKT", "Geometry")),
-    )
 }
 
 fn doc(name: &str, out_type_name: &str) -> Documentation {
@@ -159,6 +146,30 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
         },
     )
     .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
+}
+
+/// ST_GeomFromEWKT() UDF implementation
+///
+/// An implementation of EWKT reading using GeoRust's wkt crate.
+pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
+    let doc = Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Construct a Geometry from EWKT",
+        "ST_GeomFromEWKT (Ewkt: String)",
+    )
+    .with_argument(
+        "EWKT",
+        "string: Extended well-known text representation of the geometry",
+    )
+    .with_sql_example("SELECT ST_GeomFromEWKT('SRID=4326;POINT(40.7128 -74.0060)')")
+    .build();
+
+    SedonaScalarUDF::new(
+        "st_geomfromewkt",
+        vec![Arc::new(STGeoFromEWKT {})],
+        Volatility::Immutable,
+        Some(doc),
+    )
 }
 
 #[derive(Debug)]
