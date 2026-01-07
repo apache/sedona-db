@@ -1,7 +1,0 @@
-linters: linters_with_defaults(
-    line_length_linter(90),
-    object_length_linter = NULL
-  )
-exclusions: list(
-    "R/000-wrappers.R"
-  )

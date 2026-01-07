@@ -11,3 +11,4 @@
 ^\.vscode$
 ^README\.Rmd$
 ^bootstrap\.R$
+^\.lintr\.R$
