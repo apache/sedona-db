@@ -33,7 +33,7 @@ on:
       - 'r/**'
 jobs:
   lint:
-    runs-on: ubuntu/latest
+    runs-on: ubuntu-latest
     steps:
       # Run air format
       - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh

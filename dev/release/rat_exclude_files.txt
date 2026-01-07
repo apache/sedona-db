@@ -21,6 +21,7 @@ c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/windows/Cargo.lock
 dev/release/rat_exclude_files.txt
+r/sedonadb/.lintr
 r/sedonadb/.Rbuildignore
 r/sedonadb/DESCRIPTION
 r/sedonadb/NAMESPACE
