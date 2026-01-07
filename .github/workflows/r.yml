@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu/latest
     steps:
       # Run air format
-      - uses: posit-dev/setup-air@v1
+      - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh
       - run: cd r/sedonab && air format . --check
 
       # Run lintr
