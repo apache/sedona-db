@@ -3119,6 +3119,9 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
     ],
 )
 def test_st_snap(eng, input, reference, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and input == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Snap({geom_or_null(input)}, {geom_or_null(reference)}, {val_or_null(tolerance)})",
