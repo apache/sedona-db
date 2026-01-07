@@ -108,7 +108,7 @@ mod tests {
             WKB_GEOMETRY,
             WKB_GEOGRAPHY,
             WKB_GEOMETRY_ITEM_CRS.clone(),
-            WKB_GEOMETRY_ITEM_CRS.clone(),
+            WKB_GEOGRAPHY_ITEM_CRS.clone(),
         )]
         sedona_type: SedonaType,
     ) {
