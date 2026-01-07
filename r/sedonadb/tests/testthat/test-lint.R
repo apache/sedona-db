@@ -16,5 +16,6 @@
 # under the License.
 
 test_that("package is lint-free", {
+  skip_if_not_installed("lintr")
   lintr::expect_lint_free()
 })
