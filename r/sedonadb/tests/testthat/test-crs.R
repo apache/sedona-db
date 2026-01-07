@@ -17,7 +17,7 @@
 
 test_that("sd_parse_crs works for GeoArrow metadata with EPSG", {
   meta <- '{"crs": {"id": {"authority": "EPSG", "code": 5070}, "name": "NAD83 / Conus Albers"}}'
-  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+  expect_snapshot(sd_parse_crs(meta))
 })
 
 test_that("sd_parse_crs works for Engineering CRS (no EPSG ID)", {
@@ -39,24 +39,24 @@ test_that("sd_parse_crs works for Engineering CRS (no EPSG ID)", {
       }
     }
   }'
-  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+  expect_snapshot(sd_parse_crs(meta))
 })
 
 test_that("sd_parse_crs returns NULL if crs field is missing", {
-  expect_snapshot(sedonadb:::sd_parse_crs('{"something_else": 123}'))
-  expect_snapshot(sedonadb:::sd_parse_crs('{}'))
+  expect_snapshot(sd_parse_crs('{"something_else": 123}'))
+  expect_snapshot(sd_parse_crs('{}'))
 })
 
 test_that("sd_parse_crs handles invalid JSON gracefully", {
   expect_snapshot(
-    sedonadb:::sd_parse_crs('invalid json'),
+    sd_parse_crs('invalid json'),
     error = TRUE
   )
 })
 
 test_that("sd_parse_crs works with plain strings if that's what's in 'crs'", {
   meta <- '{"crs": "EPSG:4326"}'
-  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+  expect_snapshot(sd_parse_crs(meta))
 })
 
 # Tests for CRS display in print.sedonadb_dataframe
@@ -104,14 +104,14 @@ test_that("print.sedonadb_dataframe respects width parameter for geometry line",
 
 test_that("sd_parse_crs handles NULL input", {
   expect_error(
-    sedonadb:::sd_parse_crs(NULL),
+    sd_parse_crs(NULL),
     "must be character"
   )
 })
 
 test_that("sd_parse_crs handles empty string", {
   expect_snapshot(
-    sedonadb:::sd_parse_crs(""),
+    sd_parse_crs(""),
     error = TRUE
   )
 })
@@ -123,14 +123,14 @@ test_that("sd_parse_crs handles CRS with only name, no ID", {
       "name": "Custom Geographic CRS"
     }
   }'
-  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+  expect_snapshot(sd_parse_crs(meta))
 })
 
 test_that("sd_parse_crs handles OGC:CRS84", {
   # Common case in GeoParquet/GeoArrow
 
   meta <- '{"crs": "OGC:CRS84"}'
-  expect_snapshot(sedonadb:::sd_parse_crs(meta))
+  expect_snapshot(sd_parse_crs(meta))
 })
 
 # Explicit tests for Rust wrappers to ensure uppercase casing
@@ -138,11 +138,11 @@ test_that("sd_parse_crs handles OGC:CRS84", {
 test_that("SedonaTypeR$crs_display() uses uppercase authority codes", {
   df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
   schema <- nanoarrow::infer_nanoarrow_schema(df)
-  sd_type <- sedonadb:::SedonaTypeR$new(schema$children$geom)
+  sd_type <- SedonaTypeR$new(schema$children$geom)
   expect_snapshot(sd_type$crs_display())
 
   df5070 <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 5070) as geom")
-  sd_type5070 <- sedonadb:::SedonaTypeR$new(
+  sd_type5070 <- SedonaTypeR$new(
     nanoarrow::infer_nanoarrow_schema(df5070)$children$geom
   )
   expect_snapshot(sd_type5070$crs_display())
@@ -150,7 +150,7 @@ test_that("SedonaTypeR$crs_display() uses uppercase authority codes", {
 
 test_that("SedonaCrsR$display() uses uppercase authority codes", {
   df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
-  sd_type <- sedonadb:::SedonaTypeR$new(
+  sd_type <- SedonaTypeR$new(
     nanoarrow::infer_nanoarrow_schema(df)$children$geom
   )
   crs <- sd_type$crs()
