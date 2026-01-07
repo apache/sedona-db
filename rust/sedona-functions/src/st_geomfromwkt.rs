@@ -20,6 +20,7 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -235,7 +236,11 @@ impl SedonaScalarKernel for STGeoFromEWKT {
         let item_result = executor.finish(Arc::new(new_geom_array))?;
 
         let new_srid_array = srid_builder.finish();
-        let crs_value = ColumnarValue::Array(Arc::new(new_srid_array));
+        let crs_value = if matches!(&item_result, ColumnarValue::Scalar(_)) {
+            ColumnarValue::Scalar(ScalarValue::try_from_array(&new_srid_array, 0)?)
+        } else {
+            ColumnarValue::Array(Arc::new(new_srid_array))
+        };
 
         make_item_crs(&WKB_GEOMETRY, item_result, &crs_value, None)
     }
@@ -276,6 +281,7 @@ fn invoke_scalar_with_srid(
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::ArrayRef;
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::{Literal, ScalarUDF};
@@ -284,7 +290,7 @@ mod tests {
     use sedona_schema::datatypes::Edges;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
-        create::{create_array, create_scalar},
+        create::{create_array, create_array_item_crs, create_scalar, create_scalar_item_crs},
         testers::ScalarUdfTester,
     };
 
@@ -304,7 +310,7 @@ mod tests {
     #[rstest]
     fn udf(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
         let udf = st_geomfromwkt_udf();
-        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type)]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         // Scalar non-null
@@ -358,6 +364,64 @@ mod tests {
                 .unwrap(),
             Some("POINT (1 2)"),
         );
+    }
+
+    #[rstest]
+    fn ewkt(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
+        let udf = st_geomfromewkt_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
+        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("SRID=4326;POINT (1 2)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (1 2)"), Some("OGC:CRS84"), &WKB_GEOMETRY),
+        );
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("SRID=3857;POINT (1 2)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (1 2)"), Some("EPSG:3857"), &WKB_GEOMETRY),
+        );
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("POINT (3 4)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (3 4)"), None, &WKB_GEOMETRY),
+        );
+
+        let array_in: ArrayRef = match data_type {
+            DataType::Utf8 => arrow_array::create_array!(
+                Utf8,
+                [
+                    Some("SRID=4326;POINT (1 2)"),
+                    Some("SRID=3857;POINT (1 2)"),
+                    None,
+                    Some("POINT (3 4)"),
+                    Some("SRID=0;POINT (5 6)")
+                ]
+            ) as ArrayRef,
+            DataType::Utf8View => arrow_array::create_array!(
+                Utf8View,
+                [
+                    Some("SRID=4326;POINT (1 2)"),
+                    Some("SRID=3857;POINT (1 2)"),
+                    None,
+                    Some("POINT (3 4)"),
+                    Some("SRID=0;POINT (5 6)")
+                ]
+            ) as ArrayRef,
+            _ => unreachable!("unexpected data type for EWKT test"),
+        };
+        let expected = create_array_item_crs(
+            &[
+                Some("POINT (1 2)"),
+                Some("POINT (1 2)"),
+                None,
+                Some("POINT (3 4)"),
+                Some("POINT (5 6)"),
+            ],
+            [Some("OGC:CRS84"), Some("EPSG:3857"), None, None, None],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&tester.invoke_array(array_in).unwrap(), &expected);
     }
 
     #[test]
