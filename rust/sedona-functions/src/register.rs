@@ -81,6 +81,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geomfromwkb::st_geomfromwkb_udf,
         crate::st_geomfromwkt::st_geogfromwkt_udf,
         crate::st_geomfromwkt::st_geomfromwkt_udf,
+        crate::st_geomfromwkt::st_geomfromewkt_udf,
         crate::st_haszm::st_hasm_udf,
         crate::st_haszm::st_hasz_udf,
         crate::st_interiorringn::st_interiorringn_udf,

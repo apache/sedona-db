@@ -16,13 +16,14 @@
 // under the License.
 use std::{str::FromStr, sync::Arc, vec};
 
-use arrow_array::builder::BinaryBuilder;
+use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -72,6 +73,18 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
         Some(doc("ST_GeogFromWKT", "Geography")),
     );
     udf.with_aliases(vec!["st_geogfromtext".to_string()])
+}
+
+/// ST_GeomFromWKT() UDF implementation
+///
+/// An implementation of WKT reading using GeoRust's wkt crate.
+pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_geomfromewkt",
+        vec![Arc::new(STGeoFromEWKT {})],
+        Volatility::Immutable,
+        Some(doc("ST_GeomFromEWKT", "Geometry")),
+    )
 }
 
 fn doc(name: &str, out_type_name: &str) -> Documentation {
@@ -133,6 +146,89 @@ impl SedonaScalarKernel for STGeoFromWKT {
     }
 }
 
+#[derive(Debug)]
+struct STGeoFromEWKT {}
+
+impl SedonaScalarKernel for STGeoFromEWKT {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_string()],
+            SedonaType::new_item_crs(&args[0])?,
+        );
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let arg_array = args[0]
+            .cast_to(&DataType::Utf8View, None)?
+            .to_array(executor.num_iterations())?;
+
+        let mut geom_builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+        let mut srid_builder = StringViewBuilder::with_capacity(executor.num_iterations());
+
+        for item in as_string_view_array(&arg_array)? {
+            if let Some(ewkt_bytes) = item {
+                match ewkt_bytes.split_once(";") {
+                    Some((maybe_srid, wkt_bytes)) => {
+                        let srid = parse_maybe_srid(maybe_srid);
+                        invoke_scalar_with_srid(
+                            wkt_bytes,
+                            srid,
+                            &mut geom_builder,
+                            &mut srid_builder,
+                        )?;
+                    }
+                    None => {
+                        invoke_scalar_with_srid(
+                            ewkt_bytes,
+                            None,
+                            &mut geom_builder,
+                            &mut srid_builder,
+                        )?;
+                    }
+                }
+                geom_builder.append_value(vec![]);
+            } else {
+                geom_builder.append_null();
+            }
+        }
+
+        let new_geom_array = geom_builder.finish();
+        let new_srid_array = srid_builder.finish();
+        executor.finish(Arc::new(new_geom_array))
+    }
+}
+
+fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
+    if !maybe_srid.starts_with("SRID=") {
+        return None;
+    }
+    let srid_str = &maybe_srid[5..];
+    let srid: u16 = match srid_str.parse() {
+        Ok(srid) => srid,
+        Err(_) => return None,
+    };
+
+    let auth_code = match srid {
+        0 => return None,
+        4326 => "OGC:CRS84".to_string(),
+        _ => format!("EPSG:{srid}"),
+    };
+
+    // TODO: validate CRS
+    // validate_crs(&auth_code, maybe_engine)?;
+
+    Some(auth_code)
+}
+
 fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
     let geometry: Wkt<f64> = Wkt::from_str(wkt_bytes)
         .map_err(|err| DataFusionError::Internal(format!("WKT parse error: {err}")))?;
@@ -145,6 +241,17 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
         },
     )
     .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
+}
+
+fn invoke_scalar_with_srid(
+    wkt_bytes: &str,
+    srid: Option<String>,
+    geom_builder: &mut BinaryBuilder,
+    srid_builder: &mut StringViewBuilder,
+) -> Result<()> {
+    invoke_scalar(wkt_bytes, geom_builder)?;
+    srid_builder.append_option(srid);
+    Ok(())
 }
 
 #[cfg(test)]
