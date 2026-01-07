@@ -80,7 +80,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 1
-      # Geometry: geom (CRS: ogc:crs84)
+      # Geometry: geom (CRS: OGC:CRS84)
       +----------+
       |   geom   |
       | geometry |
@@ -94,7 +94,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 1
-      # Geometry: geom (CRS: epsg:5070)
+      # Geometry: geom (CRS: EPSG:5070)
       +----------+
       |   geom   |
       | geometry |
@@ -108,7 +108,7 @@
       print(df, n = 0)
     Output
       # A sedonadb_dataframe: ? x 2
-      # Geometry: geom1 (CRS: ogc:crs84), geom2 (CRS: epsg:5070)
+      # Geometry: geom1 (CRS: OGC:CRS84), geom2 (CRS: EPSG:5070)
       +----------+----------+
       |   geom1  |   geom2  |
       | geometry | geometry |
@@ -136,7 +136,7 @@
       print(df, n = 0, width = 60)
     Output
       # A sedonadb_dataframe: ? x 2
-      # Geometry: very_long_geometry_column_name_1 (CRS: ogc:cr...
+      # Geometry: very_long_geometry_column_name_1 (CRS: OGC:CR...
       +-----------------------------+----------------------------+
       | very_long_geometry_column_n | very_long_geometry_column_ |
       |           ame_1...          |          name_2...         |
@@ -187,4 +187,25 @@
       $proj_string
       [1] "OGC:CRS84"
       
+
+# SedonaTypeR$crs_display() uses uppercase authority codes
+
+    Code
+      sd_type$crs_display()
+    Output
+      [1] " (CRS: OGC:CRS84)"
+
+---
+
+    Code
+      sd_type5070$crs_display()
+    Output
+      [1] " (CRS: EPSG:5070)"
+
+# SedonaCrsR$display() uses uppercase authority codes
+
+    Code
+      crs$display()
+    Output
+      [1] "OGC:CRS84"
 

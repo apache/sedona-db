@@ -133,6 +133,26 @@ test_that("sd_parse_crs handles OGC:CRS84", {
   expect_snapshot(sedonadb:::sd_parse_crs(meta))
 })
 
+# Explicit tests for Rust wrappers to ensure uppercase casing
+
+test_that("SedonaTypeR$crs_display() uses uppercase authority codes", {
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
+  schema <- nanoarrow::infer_nanoarrow_schema(df)
+  sd_type <- sedonadb:::SedonaTypeR$new(schema$children$geom)
+  expect_snapshot(sd_type$crs_display())
+
+  df5070 <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 5070) as geom")
+  sd_type5070 <- sedonadb:::SedonaTypeR$new(nanoarrow::infer_nanoarrow_schema(df5070)$children$geom)
+  expect_snapshot(sd_type5070$crs_display())
+})
+
+test_that("SedonaCrsR$display() uses uppercase authority codes", {
+  df <- sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom")
+  sd_type <- sedonadb:::SedonaTypeR$new(nanoarrow::infer_nanoarrow_schema(df)$children$geom)
+  crs <- sd_type$crs()
+  expect_snapshot(crs$display())
+})
+
 # CRS preservation through data creation paths
 
 test_that("CRS is preserved when creating from data.frame with geometry", {

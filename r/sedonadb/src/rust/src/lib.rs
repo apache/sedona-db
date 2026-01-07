@@ -164,9 +164,13 @@ impl SedonaCrsR {
         savvy::Sexp::try_from(self.inner.to_crs_string().as_str())
     }
 
-    /// Get a formatted display string (e.g., "epsg:4326" or "{...}")
+    /// Get a formatted display string (e.g., "EPSG:4326" or "{...}")
     fn display(&self) -> savvy::Result<savvy::Sexp> {
-        let display = format!("{}", self.inner.as_ref());
+        let display = if let Ok(Some(auth)) = self.inner.to_authority_code() {
+            auth
+        } else {
+            format!("{}", self.inner.as_ref())
+        };
         savvy::Sexp::try_from(display.as_str())
     }
 }
@@ -235,8 +239,14 @@ impl SedonaTypeR {
         match &self.inner {
             SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
                 if let Some(crs_ref) = crs {
-                    // Use the Display impl which gives us nice formatted output
-                    let display = format!(" (CRS: {})", crs_ref);
+                    // Try to get authority code first (usually EPSG:XXXX)
+                    let auth = crs_ref.to_authority_code().ok().flatten();
+                    let display = if let Some(auth) = auth {
+                        format!(" (CRS: {})", auth)
+                    } else {
+                        // Fallback to the Display impl which might be lowercase or PROJJSON
+                        format!(" (CRS: {})", crs_ref)
+                    };
                     savvy::Sexp::try_from(display.as_str())
                 } else {
                     savvy::Sexp::try_from("")
