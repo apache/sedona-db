@@ -125,7 +125,8 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -140,7 +141,7 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOMETRY_ITEM_CRS.clone())]
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
         let udf: ScalarUDF = st_geometry_type_udf().into();
