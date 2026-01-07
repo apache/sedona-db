@@ -31,8 +31,11 @@ fi
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
 
+# Default to arm64 but allow override to x86_64
+SEDONADB_MACOS_ARCH=${SEDONADB_MACOS_ARCH:-arm64}
+
 # Ensure we have our VCPKG_ROOT set and bootstrapped
-export VCPKG_DEFAULT_TRIPLET=arm64-osx-dynamic-release
+export VCPKG_DEFAULT_TRIPLET="${SEDONADB_MACOS_ARCH}-osx-dynamic-release"
 source ./wheels-bootstrap-vcpkg.sh
 
 # Set environment variables for vcpkg dependencies on MacOS. This is required because
@@ -43,7 +46,7 @@ source ./wheels-bootstrap-vcpkg.sh
 export CIBW_REPAIR_WHEEL_COMMAND_MACOS="DYLD_LIBRARY_PATH=$VCPKG_INSTALL_NAME_DIR delocate-listdeps {wheel} && DYLD_LIBRARY_PATH=$VCPKG_INSTALL_NAME_DIR delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}"
 
 # Pass on environment variables specifically for the build
-export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS _PYTHON_HOST_PLATFORM=macosx-12.0-arm64 MACOSX_DEPLOYMENT_TARGET=12.0 CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'"
+export CIBW_ENVIRONMENT_MACOS="$CIBW_ENVIRONMENT_MACOS _PYTHON_HOST_PLATFORM=macosx-12.0-${SEDONADB_MACOS_ARCH} MACOSX_DEPLOYMENT_TARGET=12.0 CMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE} MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'"
 
 pushd "${SEDONADB_DIR}"
 python -m cibuildwheel --output-dir python/$1/dist python/$1
