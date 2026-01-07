@@ -333,8 +333,8 @@ print.sedonadb_dataframe <- function(x, ..., width = NULL, n = NULL) {
     child <- schema$children[[col_name]]
     sd_type <- tryCatch(
       SedonaTypeR$new(child),
-          error = function(e) NULL
-        )
+      error = function(e) NULL
+    )
     if (!is.null(sd_type)) {
       logical_type <- sd_type$logical_type_name()
       if (logical_type == "geometry" || logical_type == "geography") {
