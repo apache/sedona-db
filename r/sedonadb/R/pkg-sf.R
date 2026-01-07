@@ -30,8 +30,13 @@ as_sedonadb_dataframe.sf <- function(x, ..., schema = NULL) {
 }
 
 #' @exportS3Method sf::st_as_sf
+# nolint start: object_name_linter
 st_as_sf.sedonadb_dataframe <- function(x, ...) {
   stream <- nanoarrow::nanoarrow_allocate_array_stream()
   size <- x$df$collect(stream)
-  sf::st_as_sf(stream)
+  df <- nanoarrow::convert_array_stream(stream, size = size)
+  is_geom <- vapply(df, inherits, logical(1), "geoarrow_vctr")
+  df[is_geom] <- lapply(df[is_geom], sf::st_as_sfc)
+  sf::st_as_sf(df, ...)
 }
+# nolint end

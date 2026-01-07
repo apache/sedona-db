@@ -19,7 +19,7 @@ use std::{collections::HashMap, sync::Arc};
 use arrow_schema::SchemaRef;
 use datafusion::datasource::{
     listing::PartitionedFile,
-    physical_plan::{parquet::ParquetAccessPlan, FileMeta, FileOpenFuture, FileOpener},
+    physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
 };
 use datafusion_common::Result;
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
@@ -112,12 +112,12 @@ impl GeoParquetFileOpener {
 }
 
 impl FileOpener for GeoParquetFileOpener {
-    fn open(&self, file_meta: FileMeta, file: PartitionedFile) -> Result<FileOpenFuture> {
+    fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
         let self_clone = self.clone();
 
         Ok(Box::pin(async move {
             let parquet_metadata =
-                DFParquetMetadata::new(&self_clone.object_store, &file_meta.object_meta)
+                DFParquetMetadata::new(&self_clone.object_store, &file.object_meta)
                     .with_metadata_size_hint(self_clone.metadata_size_hint)
                     .fetch_metadata()
                     .await?;
@@ -154,15 +154,9 @@ impl FileOpener for GeoParquetFileOpener {
 
             // We could also consider filtering using null_count here in the future (i.e.,
             // skip row groups that are all null)
+            let file = file.with_extensions(Arc::new(access_plan));
 
-            let file_meta = FileMeta {
-                object_meta: file_meta.object_meta,
-                range: file_meta.range,
-                extensions: Some(Arc::new(access_plan)),
-                metadata_size_hint: self_clone.metadata_size_hint,
-            };
-
-            self_clone.inner.open(file_meta, file)?.await
+            self_clone.inner.open(file)?.await
         }))
     }
 }

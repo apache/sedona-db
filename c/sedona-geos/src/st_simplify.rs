@@ -30,6 +30,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Simplify() implementation using the geos crate
 pub fn st_simplify_impl() -> ScalarKernelRef {
@@ -87,6 +88,17 @@ fn invoke_scalar(
     tolerance: f64,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
+    let is_empty = geos_geom.is_empty().map_err(|e| {
+        DataFusionError::Execution(format!("Failed to check if geometry is empty: {e}"))
+    })?;
+
+    if is_empty {
+        // There's a bug in GEOS where simplify() adds a Z coordinate when processing POINT EMPTY or LINESTRING EMPTY.
+        // See https://github.com/apache/sedona-db/pull/493.
+        // As a workaround, we handle it separately and write the input geometry as-is
+        write_geos_geometry(geos_geom, writer)?;
+        return Ok(());
+    }
     let initial_type = geos_geom
         .geometry_type()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
@@ -124,11 +136,7 @@ fn invoke_scalar(
         _ => geometry,
     };
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 

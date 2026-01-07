@@ -26,3 +26,5 @@ Imports:
     nanoarrow
 Config/testthat/edition: 3
 Config/build/bootstrap: TRUE
+Config/Needs/check:
+    lintr

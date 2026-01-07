@@ -30,6 +30,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Snap() implementation using the geos crate
 pub fn st_snap_impl() -> ScalarKernelRef {
@@ -93,15 +94,20 @@ fn invoke_scalar(
     tolerance: f64,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let geometry = geom_input
-        .snap(geom_reference, tolerance)
-        .map_err(|e| DataFusionError::Execution(format!("Failed to snap geometry: {e}")))?;
-
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    let is_empty = geom_input.is_empty().map_err(|e| {
+        DataFusionError::Execution(format!("Failed to check if geometry is empty: {e}"))
+    })?;
+    if is_empty {
+        // There's a bug in GEOS where snap() adds a Z coordinate when processing POINT EMPTY or LINESTRING EMPTY.
+        // See https://github.com/apache/sedona-db/pull/493.
+        // As a workaround, we handle it separately and write the input geometry as-is
+        write_geos_geometry(geom_input, writer)?;
+    } else {
+        let geometry = geom_input
+            .snap(geom_reference, tolerance)
+            .map_err(|e| DataFusionError::Execution(format!("Failed to snap geometry: {e}")))?;
+        write_geos_geometry(&geometry, writer)?;
+    }
     Ok(())
 }
 

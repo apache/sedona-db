@@ -29,6 +29,7 @@ use sedona_schema::crs::CoordinateReferenceSystem;
 mod context;
 mod dataframe;
 mod error;
+mod expression;
 mod ffi;
 mod runtime;
 

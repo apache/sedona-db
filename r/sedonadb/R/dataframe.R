@@ -57,8 +57,12 @@ as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL) {
 }
 
 #' @export
-as_sedonadb_dataframe.nanoarrow_array_stream <- function(x, ..., schema = NULL,
-                                                         lazy = TRUE) {
+as_sedonadb_dataframe.nanoarrow_array_stream <- function(
+  x,
+  ...,
+  schema = NULL,
+  lazy = TRUE
+) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
   ctx <- ctx()
   df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
@@ -233,14 +237,15 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #' sd_read_parquet(tmp_parquet)
 #' unlink(tmp_parquet)
 #'
-sd_write_parquet <- function(.data,
-                             path,
-                             partition_by = character(0),
-                             sort_by = character(0),
-                             single_file_output = NULL,
-                             geoparquet_version = "1.0",
-                             overwrite_bbox_columns = FALSE) {
-
+sd_write_parquet <- function(
+  .data,
+  path,
+  partition_by = character(0),
+  sort_by = character(0),
+  single_file_output = NULL,
+  geoparquet_version = "1.0",
+  overwrite_bbox_columns = FALSE
+) {
   # Determine single_file_output default based on path and partition_by
   if (is.null(single_file_output)) {
     single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)

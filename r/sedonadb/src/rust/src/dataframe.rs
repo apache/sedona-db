@@ -139,7 +139,10 @@ impl InternalDataFrame {
         let schema = self.inner.schema();
         let batches =
             wait_for_future_captured_r(&self.runtime, self.inner.clone().collect_partitioned())??;
-        let provider = Arc::new(MemTable::try_new(schema.clone().into(), batches)?);
+        let provider = Arc::new(MemTable::try_new(
+            schema.as_arrow().clone().into(),
+            batches,
+        )?);
         let inner = ctx.inner.ctx.read_table(provider)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }

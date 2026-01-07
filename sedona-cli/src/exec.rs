@@ -125,7 +125,7 @@ pub async fn exec_from_repl(
 ) -> rustyline::Result<()> {
     let mut rl = Editor::new()?;
     rl.set_helper(Some(CliHelper::new(
-        &ctx.ctx
+        ctx.ctx
             .task_ctx()
             .session_config()
             .options()

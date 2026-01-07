@@ -89,7 +89,7 @@ impl SedonaScalarKernel for Barrier {
 
         // Remaining arguments should be pairs of (string, any_type)
         let remaining_args = &args[1..];
-        if remaining_args.len() % 2 != 0 {
+        if !remaining_args.len().is_multiple_of(2) {
             return exec_err!(
                 "Arguments after expression must be pairs of (column_name, column_value)"
             );

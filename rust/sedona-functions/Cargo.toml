@@ -35,7 +35,7 @@ arrow-json = { workspace = true }
 criterion = { workspace = true }
 rstest = { workspace = true }
 sedona-testing = { workspace = true, features = ["criterion"] }
-datafusion = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dependencies]
