@@ -32,6 +32,14 @@ on:
       - 'c/**'
       - 'r/**'
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Run air format
+      - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh
+      - run: cd r/sedonadb && air format . --check
 
   test:
     runs-on: ${{ matrix.config.os }}

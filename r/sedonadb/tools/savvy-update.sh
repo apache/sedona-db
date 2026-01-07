@@ -50,6 +50,9 @@ main() {
     clang-format -i "${api_h}"
     clang-format -i "${init_c}"
 
+    # Run air-format for the generated R file
+    air format "${wrappers_r}"
+
     # Remove .tmp files
     rm "${api_h}.tmp" "${init_c}.tmp" "${wrappers_r}.tmp"
 }
