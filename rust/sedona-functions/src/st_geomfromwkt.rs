@@ -20,6 +20,7 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -146,14 +147,31 @@ impl SedonaScalarKernel for STGeoFromWKT {
     }
 }
 
+fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
+    let geometry: Wkt<f64> = Wkt::from_str(wkt_bytes)
+        .map_err(|err| DataFusionError::Internal(format!("WKT parse error: {err}")))?;
+
+    write_geometry(
+        builder,
+        &geometry,
+        &WriteOptions {
+            endianness: Endianness::LittleEndian,
+        },
+    )
+    .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
+}
+
 #[derive(Debug)]
-struct STGeoFromEWKT {}
+struct STGeoFromEWKT {
+    // TODO
+    // engine: Option<Arc<dyn CrsEngine + Send + Sync>>,
+}
 
 impl SedonaScalarKernel for STGeoFromEWKT {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_string()],
-            SedonaType::new_item_crs(&args[0])?,
+            SedonaType::new_item_crs(&WKB_GEOMETRY)?,
         );
         matcher.match_args(args)
     }
@@ -198,12 +216,17 @@ impl SedonaScalarKernel for STGeoFromEWKT {
                 geom_builder.append_value(vec![]);
             } else {
                 geom_builder.append_null();
+                srid_builder.append_null();
             }
         }
 
         let new_geom_array = geom_builder.finish();
+        let item_result = executor.finish(Arc::new(new_geom_array))?;
+
         let new_srid_array = srid_builder.finish();
-        executor.finish(Arc::new(new_geom_array))
+        let crs_value = ColumnarValue::Array(Arc::new(new_srid_array));
+
+        make_item_crs(&WKB_GEOMETRY, item_result, &crs_value, None)
     }
 }
 
@@ -227,20 +250,6 @@ fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
     // validate_crs(&auth_code, maybe_engine)?;
 
     Some(auth_code)
-}
-
-fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
-    let geometry: Wkt<f64> = Wkt::from_str(wkt_bytes)
-        .map_err(|err| DataFusionError::Internal(format!("WKT parse error: {err}")))?;
-
-    write_geometry(
-        builder,
-        &geometry,
-        &WriteOptions {
-            endianness: Endianness::LittleEndian,
-        },
-    )
-    .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
 }
 
 fn invoke_scalar_with_srid(
