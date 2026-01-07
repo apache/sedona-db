@@ -14,7 +14,6 @@ Depends: R (>= 4.1.0)
 Suggests:
     adbcdrivermanager,
     dplyr,
-    lintr,
     rlang,
     tibble,
     sf,
