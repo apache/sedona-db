@@ -391,4 +391,3 @@ class(`SedonaTypeR`) <- c("sedonadb::SedonaTypeR__bundle", "savvy_sedonadb__seal
 `print.sedonadb::SedonaTypeR__bundle` <- function(x, ...) {
   cat('sedonadb::SedonaTypeR\n')
 }
-

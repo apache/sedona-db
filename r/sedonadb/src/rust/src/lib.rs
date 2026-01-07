@@ -150,7 +150,9 @@ impl SedonaCrsR {
         match self.inner.to_authority_code() {
             Ok(Some(code)) => savvy::Sexp::try_from(code.as_str()),
             Ok(None) => Ok(savvy::NullSexp.into()),
-            Err(e) => Err(savvy::Error::new(format!("Failed to get authority code: {e}"))),
+            Err(e) => Err(savvy::Error::new(format!(
+                "Failed to get authority code: {e}"
+            ))),
         }
     }
 
@@ -174,7 +176,6 @@ impl SedonaCrsR {
         savvy::Sexp::try_from(display.as_str())
     }
 }
-
 
 /// R-exposed wrapper for SedonaType introspection
 ///
@@ -223,7 +224,9 @@ impl SedonaTypeR {
         match &self.inner {
             SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
                 if let Some(crs_arc) = crs {
-                    Ok(SedonaCrsR { inner: crs_arc.clone() })
+                    Ok(SedonaCrsR {
+                        inner: crs_arc.clone(),
+                    })
                 } else {
                     Err(savvy::Error::new("No CRS available for this geometry type"))
                 }
