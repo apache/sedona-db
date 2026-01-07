@@ -62,7 +62,7 @@ categories = ["science::geo", "database"]
 approx = "0.5"
 adbc_core = ">=0.21.0"
 adbc_ffi = ">=0.21.0"
-lru = "0.12"
+lru = "0.16"
 arrow = { version = "57.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "57.0.0" }
 arrow-cast = { version = "57.0.0" }
