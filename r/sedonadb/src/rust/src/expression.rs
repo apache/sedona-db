@@ -22,10 +22,15 @@ use arrow_array::{
 };
 use arrow_schema::{FieldRef, Schema};
 use datafusion::physical_plan::PhysicalExpr;
-use datafusion_common::{Column, DFSchema, ScalarValue};
+use datafusion_common::{
+    tree_node::{Transformed, TreeNode},
+    Column, DFSchema, Result, ScalarValue,
+};
 use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
-    BinaryExpr, Cast, ColumnarValue, Expr, Operator,
+    utils::{expr_as_column_expr, find_aggregate_exprs, find_window_exprs},
+    BinaryExpr, Cast, ColumnarValue, Expr, LogicalPlan, LogicalPlanBuilder,
+    LogicalPlanBuilderOptions, Operator,
 };
 use savvy::{savvy, savvy_err, EnvironmentSexp};
 use sedona::context::SedonaContext;
@@ -244,7 +249,7 @@ impl SedonaDBExprFactory {
 }
 
 impl SedonaDBExprFactory {
-    fn exprs(exprs_sexp: savvy::Sexp) -> savvy::Result<Vec<Expr>> {
+    pub fn exprs(exprs_sexp: savvy::Sexp) -> savvy::Result<Vec<Expr>> {
         savvy::ListSexp::try_from(exprs_sexp)?
             .iter()
             .map(|(_, item)| -> savvy::Result<Expr> {
@@ -253,6 +258,123 @@ impl SedonaDBExprFactory {
                 Ok(expr_wrapper.inner.clone())
             })
             .collect()
+    }
+
+    pub fn select(
+        base_plan: LogicalPlan,
+        exprs: Vec<Expr>,
+        group_by_exprs: Vec<Expr>,
+    ) -> datafusion_common::Result<LogicalPlan> {
+        // Translated from DataFusion's SQL SELECT -> LogicalPlan constructor
+        // https://github.com/apache/datafusion/blob/102caeb2261c5ae006c201546cf74769d80ceff8/datafusion/sql/src/select.rs#L890-L1098
+
+        // First, find aggregates in SELECT
+        let aggr_exprs = find_aggregate_exprs(&exprs);
+
+        // Process group by, aggregation or having
+        let AggregatePlanResult {
+            plan,
+            select_exprs: select_exprs_post_aggr,
+        } = if !aggr_exprs.is_empty() {
+            // We have aggregates, create aggregate plan
+            Self::aggregate(
+                &base_plan,
+                &exprs,
+                group_by_exprs, // empty group by
+                &aggr_exprs,
+            )?
+        } else {
+            // No aggregation needed
+            AggregatePlanResult {
+                plan: base_plan,
+                select_exprs: exprs.clone(),
+            }
+        };
+
+        // All of the window expressions
+        let window_func_exprs = find_window_exprs(&select_exprs_post_aggr);
+
+        // Process window functions after aggregation
+        let plan = if window_func_exprs.is_empty() {
+            plan
+        } else {
+            let plan = LogicalPlanBuilder::window_plan(plan, window_func_exprs.clone())?;
+
+            // Re-write the projection
+            let select_exprs_post_aggr = select_exprs_post_aggr
+                .iter()
+                .map(|expr| Self::rebase_expr(expr, &window_func_exprs, &plan))
+                .collect::<Result<Vec<Expr>>>()?;
+
+            // Final projection
+            LogicalPlanBuilder::from(plan)
+                .project(select_exprs_post_aggr)?
+                .build()?
+        };
+
+        // Final projection if no windows
+        if window_func_exprs.is_empty() {
+            LogicalPlanBuilder::from(plan)
+                .project(select_exprs_post_aggr)?
+                .build()
+        } else {
+            Ok(plan)
+        }
+    }
+
+    /// Helper function to rebase expressions to reference columns from the plan.
+    /// Simplified version of datafusion-sql's rebase_expr (which is pub(crate)).
+    fn rebase_expr(expr: &Expr, base_exprs: &[Expr], plan: &LogicalPlan) -> Result<Expr> {
+        let result = expr.clone().transform_down(|nested_expr| {
+            if base_exprs.contains(&nested_expr) {
+                Ok(Transformed::yes(expr_as_column_expr(&nested_expr, plan)?))
+            } else {
+                Ok(Transformed::no(nested_expr))
+            }
+        })?;
+        Ok(result.data)
+    }
+
+    /// Create an aggregate plan from the given input, group by, and aggregate expressions.
+    /// Based on DataFusion's aggregate() method.
+    /// https://github.com/apache/datafusion/blob/102caeb2261c5ae006c201546cf74769d80ceff8/datafusion/sql/src/select.rs#L652-L764
+    fn aggregate(
+        input: &LogicalPlan,
+        select_exprs: &[Expr],
+        group_by_exprs: Vec<Expr>,
+        aggr_exprs: &[Expr],
+    ) -> Result<AggregatePlanResult> {
+        // Create the aggregate plan
+        let options = LogicalPlanBuilderOptions::new().with_add_implicit_group_by_exprs(true);
+        let plan = LogicalPlanBuilder::from(input.clone())
+            .with_options(options)
+            .aggregate(group_by_exprs, aggr_exprs.to_vec())?
+            .build()?;
+
+        // Get the group_by_exprs from the constructed plan
+        let group_by_exprs = if let LogicalPlan::Aggregate(agg) = &plan {
+            &agg.group_expr
+        } else {
+            unreachable!();
+        };
+
+        // Combine the original grouping and aggregate expressions into one list
+        let mut aggr_projection_exprs = vec![];
+        for expr in group_by_exprs {
+            aggr_projection_exprs.push(expr.clone());
+        }
+        aggr_projection_exprs.extend_from_slice(aggr_exprs);
+
+        // Re-write the projection
+        let select_exprs_post_aggr = select_exprs
+            .iter()
+            .map(|expr| Self::rebase_expr(expr, &aggr_projection_exprs, input))
+            .collect::<Result<Vec<Expr>>>()?;
+
+        Ok(AggregatePlanResult {
+            plan,
+            select_exprs: select_exprs_post_aggr,
+        })
     }
 }
 
@@ -265,4 +387,14 @@ impl TryFrom<EnvironmentSexp> for &SedonaDBExpr {
             .transpose()?
             .ok_or(savvy_err!("Invalid SedonaDBExpr object."))
     }
+}
+
+/// Result of the `aggregate` function, containing the aggregate plan and
+/// rewritten expressions that reference the aggregate output columns.
+/// https://github.com/apache/datafusion/blob/102caeb2261c5ae006c201546cf74769d80ceff8/datafusion/sql/src/select.rs#L55-L68
+struct AggregatePlanResult {
+    /// The aggregate logical plan
+    plan: LogicalPlan,
+    /// SELECT expressions rewritten to reference aggregate output columns
+    select_exprs: Vec<Expr>,
 }
