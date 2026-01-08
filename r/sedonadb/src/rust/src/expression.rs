@@ -384,20 +384,22 @@ impl SedonaDBExprFactory {
         exprs
             .iter()
             .map(|expr| {
-                expr.clone().transform_up(|nested_expr| {
-                    match nested_expr {
-                        Expr::AggregateFunction(agg) => {
-                            // Convert to window function with empty OVER ()
-                            let window_func = Expr::WindowFunction(Box::new(WindowFunction::new(
-                                WindowFunctionDefinition::AggregateUDF(agg.func.clone()),
-                                agg.params.args,
-                            )));
-                            Ok(Transformed::yes(window_func))
+                expr.clone()
+                    .transform_up(|nested_expr| {
+                        match nested_expr {
+                            Expr::AggregateFunction(agg) => {
+                                // Convert to window function with empty OVER ()
+                                let window_func =
+                                    Expr::WindowFunction(Box::new(WindowFunction::new(
+                                        WindowFunctionDefinition::AggregateUDF(agg.func.clone()),
+                                        agg.params.args,
+                                    )));
+                                Ok(Transformed::yes(window_func))
+                            }
+                            _ => Ok(Transformed::no(nested_expr)),
                         }
-                        _ => Ok(Transformed::no(nested_expr)),
-                    }
-                })
-                .map(|t| t.data)
+                    })
+                    .map(|t| t.data)
             })
             .collect()
     }
