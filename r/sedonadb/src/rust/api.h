@@ -78,6 +78,10 @@ SEXP savvy_SedonaDBExprFactory_binary__ffi(SEXP self__, SEXP c_arg__op,
                                            SEXP c_arg__lhs, SEXP c_arg__rhs);
 SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP self__, SEXP c_arg__name,
                                            SEXP c_arg__qualifier);
+SEXP savvy_SedonaDBExprFactory_evaluate_scalar__ffi(SEXP self__,
+                                                    SEXP c_arg__exprs_sexp,
+                                                    SEXP c_arg__stream_in,
+                                                    SEXP c_arg__stream_out);
 SEXP savvy_SedonaDBExprFactory_literal__ffi(SEXP c_arg__array_xptr,
                                             SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExprFactory_new__ffi(SEXP c_arg__ctx);
