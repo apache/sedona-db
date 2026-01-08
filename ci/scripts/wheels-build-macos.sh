@@ -35,7 +35,8 @@ SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
 SEDONADB_MACOS_ARCH=${SEDONADB_MACOS_ARCH:-arm64}
 
 # Ensure we have our VCPKG_ROOT set and bootstrapped
-export VCPKG_DEFAULT_TRIPLET="${SEDONADB_MACOS_ARCH}-osx-dynamic-release"
+SEDONADB_MACOS_ARCH_TRIPLET="${SEDONADB_MACOS_ARCH//_/-}"
+export VCPKG_DEFAULT_TRIPLET="${SEDONADB_MACOS_ARCH_TRIPLET}-osx-dynamic-release"
 source ./wheels-bootstrap-vcpkg.sh
 
 # Set environment variables for vcpkg dependencies on MacOS. This is required because
