@@ -1026,6 +1026,56 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "azure")]
+    #[tokio::test]
+    async fn azure_object_store_builder() -> Result<()> {
+        use object_store::azure::AzureConfigKey;
+
+        let account_name = "fake_account_name";
+        let account_key = "fake_account_key";
+        let client_id = "fake_client_id";
+        let client_secret = "fake_client_secret";
+        let tenant_id = "fake_tenant_id";
+        let location = "az://container/path/file.parquet";
+
+        let table_url = ListingTableUrl::parse(location)?;
+        let scheme = table_url.scheme();
+        let sql = format!(
+            "CREATE EXTERNAL TABLE test STORED AS PARQUET OPTIONS(\
+            'azure.account_name' '{account_name}', \
+            'azure.account_key' '{account_key}', \
+            'azure.client_id' '{client_id}', \
+            'azure.client_secret' '{client_secret}', \
+            'azure.tenant_id' '{tenant_id}'\
+            ) LOCATION '{location}'"
+        );
+
+        let ctx = SedonaContext::new();
+        let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
+
+        if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
+            register_table_options_extension_from_scheme(&ctx, scheme);
+            let mut table_options = ctx.ctx.state().default_table_options();
+            table_options.alter_with_string_hash_map(&cmd.options)?;
+            let azure_options = table_options.extensions.get::<AzureOptions>().unwrap();
+            let builder = get_azure_object_store_builder(table_url.as_ref(), azure_options)?;
+            let config = [
+                (AzureConfigKey::AccountName, account_name),
+                (AzureConfigKey::AccessKey, account_key),
+                (AzureConfigKey::ClientId, client_id),
+                (AzureConfigKey::ClientSecret, client_secret),
+                (AzureConfigKey::AuthorityId, tenant_id),
+            ];
+            for (key, value) in config {
+                assert_eq!(value, builder.get_config_value(&key).unwrap());
+            }
+        } else {
+            return plan_err!("LogicalPlan is not a CreateExternalTable");
+        }
+
+        Ok(())
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_substitute_tilde() {

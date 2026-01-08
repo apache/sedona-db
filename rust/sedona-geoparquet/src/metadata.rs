@@ -329,6 +329,10 @@ pub struct GeoParquetColumnMetadata {
     /// and multipolygons, it is not sufficient to specify `["MultiPolygon"]`, but it is expected
     /// to specify `["Polygon", "MultiPolygon"]`. Or if having 3D points, it is not sufficient to
     /// specify `["Point"]`, but it is expected to list `["Point Z"]`.
+    ///
+    /// Note: While the GeoParquet spec requires this field, some datasets in the wild (e.g.,
+    /// Microsoft Building Footprints on Planetary Computer) omit it. We use `#[serde(default)]`
+    /// to handle these out-of-spec files gracefully by defaulting to an empty set.
     #[serde(default)]
     pub geometry_types: GeometryTypeAndDimensionsSet,
 
