@@ -212,6 +212,13 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_transmute__impl(SEXP self__, SEXP c_arg__ctx,
+                                             SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_transmute__ffi(self__, c_arg__ctx,
+                                                    c_arg__exprs_sexp);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExpr_alias__impl(SEXP self__, SEXP c_arg__name) {
   SEXP res = savvy_SedonaDBExpr_alias__ffi(self__, c_arg__name);
   return handle_result(res);
@@ -339,6 +346,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_InternalDataFrame_transmute__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_transmute__impl, 3},
     {"savvy_SedonaDBExpr_alias__impl", (DL_FUNC)&savvy_SedonaDBExpr_alias__impl,
      2},
     {"savvy_SedonaDBExpr_cast__impl", (DL_FUNC)&savvy_SedonaDBExpr_cast__impl,

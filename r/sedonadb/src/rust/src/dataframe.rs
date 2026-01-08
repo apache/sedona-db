@@ -33,6 +33,7 @@ use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
+use crate::expression::SedonaDBExprFactory;
 use crate::ffi::{import_schema, FFITableProviderR};
 use crate::runtime::wait_for_future_captured_r;
 
@@ -309,6 +310,19 @@ impl InternalDataFrame {
             .collect::<Result<Vec<_>>>()?;
 
         let inner = self.inner.clone().select(exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn transmute(
+        &self,
+        ctx: &InternalContext,
+        exprs_sexp: savvy::Sexp,
+    ) -> savvy::Result<InternalDataFrame> {
+        let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
+
+        let plan =
+            SedonaDBExprFactory::select(self.inner.clone().into_unoptimized_plan(), exprs, vec![])?;
+        let inner = DataFrame::new(ctx.inner.ctx.state(), plan);
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 }
