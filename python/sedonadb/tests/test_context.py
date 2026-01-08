@@ -131,3 +131,20 @@ def test_read_parquet_invalid_aws_option():
         match="Unknown AWS option.*aws.unknown_option.*Valid options are",
     ):
         con.read_parquet(url, options={"aws.unknown_option": "value"})
+
+
+def test_read_parquet_invalid_azure_option():
+    con = sedonadb.connect()
+    url = "az://container/path/file.parquet"
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match=r"Unknown Azure option 'azure\.acc_name'\..*azure\.account_name",
+    ):
+        con.read_parquet(url, options={"azure.acc_name": "test"})
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="Unknown Azure option.*azure.unknown_option.*Valid options are",
+    ):
+        con.read_parquet(url, options={"azure.unknown_option": "value"})
