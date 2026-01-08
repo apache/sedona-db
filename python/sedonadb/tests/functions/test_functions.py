@@ -3248,12 +3248,6 @@ def test_st_numpoints(eng, geom, expected):
         ("MULTIPOINT EMPTY", 0),
         ("LINESTRING EMPTY", 0),
         ("MULTILINESTRING EMPTY", 0),
-        ("MULTIPOINT ((0 0), (1 1))", 0),
-        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 0),
-        ("POINT EMPTY", 0),
-        ("MULTIPOINT EMPTY", 0),
-        ("LINESTRING EMPTY", 0),
-        ("MULTILINESTRING EMPTY", 0),
         ("GEOMETRYCOLLECTION EMPTY", 0),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1),
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2),
@@ -3279,3 +3273,32 @@ def test_st_NRings(eng, geom, expected):
         f"SELECT ST_NRings({geom_or_null(geom)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT (1 2)", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", None),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)"),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            "LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 20 10, 20 20, 10 20, 10 10)))",
+            None,
+        ),
+        ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", None),
+        (
+            "POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))",
+            "LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)",
+        ),
+    ],
+)
+def test_st_exteriorRing(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ExteriorRing({geom_or_null(geom)})", expected)

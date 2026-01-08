@@ -28,6 +28,7 @@ mod st_centroid;
 mod st_concavehull;
 mod st_convexhull;
 mod st_dwithin;
+mod st_exteriorring;
 mod st_isring;
 mod st_issimple;
 mod st_isvalid;
