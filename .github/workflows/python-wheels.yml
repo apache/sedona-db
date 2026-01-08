@@ -252,7 +252,7 @@ jobs:
           path: python/sedonadb/dist/*.whl
 
   upload_nightly:
-    needs: ["wheels-linux", "macOS-arm64", "windows-x86_64"]
+    needs: ["wheels-linux", "macOS-arm64", "macOS-amd64", "windows-x86_64"]
     name: Upload nightly packages
     runs-on: "macos-latest"
     steps:
