@@ -335,6 +335,26 @@ impl SedonaDBExprFactory {
         Ok(result.data)
     }
 
+    /// Helper function to resolve column references to fully qualified columns.
+    /// Simplified version of datafusion-sql's resolve_columns (which is pub(crate)).
+    fn resolve_columns(expr: &Expr, plan: &LogicalPlan) -> Result<Expr> {
+        let result = expr.clone().transform_up(|nested_expr| {
+            match nested_expr {
+                Expr::Column(col) => {
+                    let (qualifier, field) = plan.schema().qualified_field_from_column(&col)?;
+                    Ok(Transformed::yes(Expr::Column(Column::from((
+                        qualifier, field,
+                    )))))
+                }
+                _ => {
+                    // keep recursing
+                    Ok(Transformed::no(nested_expr))
+                }
+            }
+        })?;
+        Ok(result.data)
+    }
+
     /// Create an aggregate plan from the given input, group by, and aggregate expressions.
     /// Based on DataFusion's aggregate() method.
     /// https://github.com/apache/datafusion/blob/102caeb2261c5ae006c201546cf74769d80ceff8/datafusion/sql/src/select.rs#L652-L764
@@ -364,6 +384,12 @@ impl SedonaDBExprFactory {
             aggr_projection_exprs.push(expr.clone());
         }
         aggr_projection_exprs.extend_from_slice(aggr_exprs);
+
+        // Now attempt to resolve columns and replace with fully-qualified columns
+        let aggr_projection_exprs = aggr_projection_exprs
+            .iter()
+            .map(|expr| Self::resolve_columns(expr, input))
+            .collect::<Result<Vec<Expr>>>()?;
 
         // Re-write the projection
         let select_exprs_post_aggr = select_exprs
