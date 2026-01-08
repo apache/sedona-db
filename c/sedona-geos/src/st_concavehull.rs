@@ -31,6 +31,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_ConcaveHull() implementation using the geos crate
 pub fn st_concave_hull_allow_holes_impl() -> ScalarKernelRef {
@@ -140,11 +141,7 @@ fn invoke_scalar<W: std::io::Write>(
             DataFusionError::Execution(format!("Failed to calculate concave hull: {e}"))
         })?;
 
-    let geo_wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to WKB: {e}")))?;
-
-    writer.write_all(&geo_wkb)?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 

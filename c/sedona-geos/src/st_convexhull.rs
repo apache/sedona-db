@@ -28,6 +28,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_ConvexHull() implementation using the geos crate
 pub fn st_convex_hull_impl() -> ScalarKernelRef {
@@ -75,11 +76,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -
         .convex_hull()
         .map_err(|e| DataFusionError::Execution(format!("Failed to calculate convex_hull: {e}")))?;
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 

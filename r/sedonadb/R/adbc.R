@@ -32,6 +32,6 @@
 #'   as.data.frame()
 #'
 sedonadb_adbc <- function() {
-    init_func <- structure(sedonadb_adbc_init_func(), class = "adbc_driver_init_func")
-    adbcdrivermanager::adbc_driver(init_func, subclass = "sedonadb_driver_sedonadb")
+  init_func <- structure(sedonadb_adbc_init_func(), class = "adbc_driver_init_func")
+  adbcdrivermanager::adbc_driver(init_func, subclass = "sedonadb_driver_sedonadb")
 }

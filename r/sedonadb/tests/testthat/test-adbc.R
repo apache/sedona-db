@@ -20,7 +20,7 @@ test_that("adbc driver works", {
     adbcdrivermanager::adbc_database_init() |>
     adbcdrivermanager::adbc_connection_init()
 
-  df <-  con |>
+  df <- con |>
     adbcdrivermanager::read_adbc("SELECT ST_Point(0, 1) as geometry") |>
     as.data.frame()
 

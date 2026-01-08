@@ -135,14 +135,14 @@ fn main() {
 
         // Detect CUDA library path from CUDA_HOME or default locations
         let cuda_lib_path = if let Ok(cuda_home) = env::var("CUDA_HOME") {
-            format!("{}/lib64", cuda_home)
+            format!("{cuda_home}/lib64")
         } else if std::path::Path::new("/usr/local/cuda/lib64").exists() {
             "/usr/local/cuda/lib64".to_string()
         } else {
             panic!("CUDA lib is not found. Neither CUDA_HOME is set nor the default path /usr/local/cuda/lib64 exists.");
         };
 
-        println!("cargo:rustc-link-search=native={}", cuda_lib_path); // CUDA runtime
+        println!("cargo:rustc-link-search=native={cuda_lib_path}"); // CUDA runtime
 
         if let Some(driver_lib_path) = find_cuda_driver_path() {
             println!(

@@ -32,6 +32,14 @@ on:
       - 'c/**'
       - 'r/**'
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Run air format
+      - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh
+      - run: cd r/sedonadb && air format . --check
 
   test:
     runs-on: ${{ matrix.config.os }}
@@ -86,7 +94,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "r-v3"
+          prefix-key: "r-v4"
           # The R package uses its own target directory
           workspaces: ". -> r/sedonadb/src/rust/target"
 

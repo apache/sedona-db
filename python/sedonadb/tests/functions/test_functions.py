@@ -893,6 +893,65 @@ def test_st_unaryunion(eng, geom, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        # Skip M tests because geos rust isn't capable of writing XYM geometries yet
+        # https://github.com/apache/sedona-db/issues/481
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("POINT Z (0 0 0)", "POINT Z(0 0 0)"),
+        ("POINT ZM (1 2 3 4)", "POINT ZM(1 2 3 4)"),
+        ("LINESTRING Z (0 0 0, 1 1 1)", "LINESTRING Z(0 0 0,1 1 1)"),
+        ("LINESTRING ZM (0 0 1 2, 1 1 3 4)", "LINESTRING ZM(0 0 1 2,1 1 3 4)"),
+        (
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))",
+            "POLYGON Z((0 0 10,4 0 10,4 4 10,0 4 10,0 0 10))",
+        ),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))",
+            "POLYGON ZM((0 0 10 1,4 0 10 2,4 4 10 3,0 4 10 4,0 0 10 5))",
+        ),
+        ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z((0 0 0),(1 1 1))"),
+        ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM((0 0 1 2),(1 1 3 4))"),
+        # Polygons overlap, so it's reduced to a single one
+        (
+            "MULTIPOLYGON Z (((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)), ((1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)))",
+            "POLYGON Z((0 4 10,4 4 10,4 0 10,0 0 10,0 4 10))",
+        ),
+        ("GEOMETRYCOLLECTION Z EMPTY", "GEOMETRYCOLLECTION Z EMPTY"),
+        ("GEOMETRYCOLLECTION ZM EMPTY", "GEOMETRYCOLLECTION ZM EMPTY"),
+        (
+            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
+            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
+        ),
+        # dimension specified on nested geometries, but not outer geometrycollection
+        (
+            "GEOMETRYCOLLECTION (POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
+            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
+        ),
+        # Skipping GeometryCollection ZM tests because geos unary_union() doesn't seem to work properly for them yet.
+    ],
+)
+def test_st_unaryunion_zm(eng, geom, expected):
+    is_postgis = eng == PostGIS
+    eng = eng.create_or_skip()
+    if "EMPTY" in expected.upper():
+        eng.assert_query_result(
+            f"SELECT ST_IsEmpty(ST_UnaryUnion({geom_or_null(geom)}))", True
+        )
+    elif is_postgis and ("M(" in expected or "M (" in expected):
+        pytest.skip("PostGIS doesn't support M dimensions")
+    else:
+        # Test for exact string equality
+        # Remove all spaces from both the actual and expected results to ignore formatting differences
+        eng.assert_query_result(
+            f"SELECT replace(ST_AsText(ST_UnaryUnion({geom_or_null(geom)})), ' ', '')",
+            expected.replace(" ", ""),
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_makeline(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
@@ -2854,6 +2913,9 @@ def test_st_isvalidreason(eng, geom, expected):
     ],
 )
 def test_st_simplify(eng, geom, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and geom == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Simplify({geom_or_null(geom)}, {val_or_null(tolerance)})",
@@ -2911,6 +2973,40 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
 @pytest.mark.parametrize(
     ("input", "reference", "tolerance", "expected"),
     [
+        (None, None, None, None),
+        (None, "POINT (1 2)", 0.5, None),
+        ("POINT (1 2)", None, 0.5, None),
+        ("POINT (1 2)", "POINT (1 2)", None, None),
+        (
+            "POINT EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "POINT (nan nan)",
+        ),
+        (
+            "LINESTRING EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "LINESTRING EMPTY",
+        ),
+        (
+            "POLYGON EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "POLYGON EMPTY",
+        ),
+        (
+            "MULTIPOLYGON EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "MULTIPOLYGON EMPTY",
+        ),
+        (
+            "GEOMETRYCOLLECTION EMPTY",
+            "POINT (1 2)",
+            0.5,
+            "GEOMETRYCOLLECTION EMPTY",
+        ),
         (
             "MULTIPOLYGON(((26 125, 26 200, 126 200, 126 125, 26 125 ),( 51 150, 101 150, 76 175, 51 150 )),(( 151 100, 151 200, 176 175, 151 100 )))",
             "LINESTRING (5 107, 54 84, 101 100)",
@@ -3023,6 +3119,9 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
     ],
 )
 def test_st_snap(eng, input, reference, tolerance, expected):
+    # PostGIS incorrectly returns LINESTRING EMPTY here, so we skip this case for PostGIS.
+    if eng == PostGIS and input == "POLYGON EMPTY":
+        pytest.skip("PostGIS's result for POLYGON EMPTY is incorrect")
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Snap({geom_or_null(input)}, {geom_or_null(reference)}, {val_or_null(tolerance)})",

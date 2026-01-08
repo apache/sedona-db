@@ -29,6 +29,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Boundary() implementation using the geos crate
 pub fn st_boundary_impl() -> ScalarKernelRef {
@@ -74,11 +75,7 @@ impl SedonaScalarKernel for STBoundary {
 fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut BinaryBuilder) -> Result<()> {
     let result_geom = geos_boundary(geos_geom)?;
 
-    let wkb = result_geom
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.append_value(&wkb);
+    write_geos_geometry(&result_geom, writer)?;
     Ok(())
 }
 
