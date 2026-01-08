@@ -103,7 +103,7 @@ geos = { git="https://github.com/georust/geos.git", rev="47afbad2483e489911ddb45
 
 geo-types = "0.7.17"
 geo-traits = "0.3.0"
-geo = "0.31.0"
+geo = "0.32.0"
 geojson = "0.24.2"
 
 geo-index = { version = "0.3.2", features = ["use-geo_0_31"] }
