@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
+use std::{ptr::swap_nonoverlapping, sync::Arc};
 
-use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
+use arrow_array::{
+    ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchIterator, RecordBatchReader,
+};
 use arrow_schema::{FieldRef, Schema};
 use datafusion::physical_plan::PhysicalExpr;
 use datafusion_common::{Column, DFSchema, ScalarValue};
@@ -176,12 +178,17 @@ impl SedonaDBExprFactory {
         }
     }
 
-    fn evaluate(
+    fn evaluate_scalar(
         &self,
         exprs_sexp: savvy::Sexp,
         stream_in: savvy::Sexp,
         stream_out: savvy::Sexp,
     ) -> savvy::Result<savvy::Sexp> {
+        let out_void = unsafe { savvy_ffi::R_ExternalPtrAddr(stream_out.0) };
+        if out_void.is_null() {
+            return Err(savvy_err!("external pointer to null in evaluate()"));
+        }
+
         let exprs = Self::exprs(exprs_sexp)?;
         let reader_in = crate::ffi::import_array_stream(stream_in)?;
 
@@ -202,17 +209,30 @@ impl SedonaDBExprFactory {
         let out_schema = Arc::new(Schema::new(out_fields));
 
         let mut out_batches = Vec::new();
+        let mut size = 0;
         for batch in reader_in {
             let batch = batch?;
+            size += batch.num_rows();
             let columns = physical_exprs
                 .iter()
                 .map(|e| e.evaluate(&batch))
                 .collect::<datafusion_common::Result<Vec<ColumnarValue>>>()?;
-            let out_batch = RecordBatch::try_new(out_schema.clone(), ColumnarValue::values_to_arrays(&columns)?)?;
+            let out_batch = RecordBatch::try_new(
+                out_schema.clone(),
+                ColumnarValue::values_to_arrays(&columns)?,
+            )?;
             out_batches.push(out_batch);
         }
 
-        todo!()
+        let reader = Box::new(RecordBatchIterator::new(
+            out_batches.into_iter().map(Ok),
+            out_schema,
+        ));
+        let mut ffi_stream = FFI_ArrowArrayStream::new(reader);
+        let ffi_out = out_void as *mut FFI_ArrowArrayStream;
+        unsafe { swap_nonoverlapping(&mut ffi_stream, ffi_out, 1) };
+
+        savvy::Sexp::try_from(size as f64)
     }
 }
 
