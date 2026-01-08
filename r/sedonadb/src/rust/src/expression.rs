@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{ptr::swap_nonoverlapping, sync::Arc};
+use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 
 use arrow_array::{
     ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchIterator, RecordBatchReader,
@@ -190,6 +190,10 @@ impl SedonaDBExprFactory {
         }
 
         let exprs = Self::exprs(exprs_sexp)?;
+        let expr_names = exprs
+            .iter()
+            .map(|e| e.schema_name().to_string())
+            .collect::<Vec<_>>();
         let reader_in = crate::ffi::import_array_stream(stream_in)?;
 
         let physical_exprs = exprs
@@ -206,7 +210,10 @@ impl SedonaDBExprFactory {
             .iter()
             .map(|e| e.return_field(&reader_in.schema()))
             .collect::<datafusion_common::Result<Vec<FieldRef>>>()?;
-        let out_schema = Arc::new(Schema::new(out_fields));
+        let out_fields_named = zip(out_fields, expr_names)
+            .map(|(f, name)| f.as_ref().clone().with_name(name))
+            .collect::<Vec<_>>();
+        let out_schema = Arc::new(Schema::new(out_fields_named));
 
         let mut out_batches = Vec::new();
         let mut size = 0;
