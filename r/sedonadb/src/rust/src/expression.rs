@@ -27,10 +27,10 @@ use datafusion_common::{
     Column, DFSchema, Result, ScalarValue,
 };
 use datafusion_expr::{
-    expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
-    utils::{expr_as_column_expr, find_aggregate_exprs, find_window_exprs},
+    expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction, WindowFunction},
+    utils::{expr_as_column_expr, find_aggregate_exprs, find_column_exprs, find_window_exprs},
     BinaryExpr, Cast, ColumnarValue, Expr, LogicalPlan, LogicalPlanBuilder,
-    LogicalPlanBuilderOptions, Operator,
+    LogicalPlanBuilderOptions, Operator, WindowFunctionDefinition,
 };
 use savvy::{savvy, savvy_err, EnvironmentSexp};
 use sedona::context::SedonaContext;
@@ -271,33 +271,57 @@ impl SedonaDBExprFactory {
         // First, find aggregates in SELECT
         let aggr_exprs = find_aggregate_exprs(&exprs);
 
-        // Process group by, aggregation or having
-        let AggregatePlanResult {
-            plan,
-            select_exprs: select_exprs_post_aggr,
-        } = if !aggr_exprs.is_empty() {
-            // We have aggregates, create aggregate plan
-            Self::aggregate(
-                &base_plan,
-                &exprs,
-                group_by_exprs, // empty group by
-                &aggr_exprs,
-            )?
+        // Determine if we should use aggregation or window functions
+        // If we have an explicit GROUP BY or can infer one, use aggregation
+        // Otherwise, treat aggregates as window functions
+        let use_aggregation = if !group_by_exprs.is_empty() {
+            true
+        } else if !aggr_exprs.is_empty() {
+            // Try to infer GROUP BY from columns outside aggregates
+            let all_columns = find_column_exprs(&exprs);
+            let agg_columns = find_column_exprs(&aggr_exprs);
+            let non_agg_columns: Vec<_> = all_columns
+                .into_iter()
+                .filter(|col| !agg_columns.contains(col))
+                .collect();
+            !non_agg_columns.is_empty()
         } else {
-            // No aggregation needed
-            AggregatePlanResult {
-                plan: base_plan,
-                select_exprs: exprs.clone(),
-            }
+            false
         };
 
-        // All of the window expressions
+        // Process aggregation if appropriate
+        let (plan, select_exprs_post_aggr) = if use_aggregation && !aggr_exprs.is_empty() {
+            // We have aggregates with a valid GROUP BY, create aggregate plan
+            let result = Self::aggregate(&base_plan, &exprs, group_by_exprs, &aggr_exprs)?;
+            (result.plan, result.select_exprs)
+        } else if !aggr_exprs.is_empty() {
+            // We have aggregates but no valid GROUP BY - convert to window functions
+            // First resolve column references to be fully qualified
+            let exprs_resolved: Vec<Expr> = exprs
+                .iter()
+                .map(|expr| Self::resolve_columns(expr, &base_plan))
+                .collect::<Result<Vec<_>>>()?;
+
+            let exprs_with_windows = Self::aggregates_to_window_functions(&exprs_resolved)?;
+            (base_plan, exprs_with_windows)
+        } else {
+            // No aggregation
+            (base_plan, exprs.clone())
+        };
+
+        // All of the window expressions (includes aggregates converted to windows)
         let window_func_exprs = find_window_exprs(&select_exprs_post_aggr);
 
         // Process window functions after aggregation
         let plan = if window_func_exprs.is_empty() {
             plan
         } else {
+            // Resolve columns in window expressions to be fully qualified
+            let window_func_exprs: Vec<Expr> = window_func_exprs
+                .iter()
+                .map(|expr| Self::resolve_columns(expr, &plan))
+                .collect::<Result<Vec<_>>>()?;
+
             let plan = LogicalPlanBuilder::window_plan(plan, window_func_exprs.clone())?;
 
             // Re-write the projection
@@ -355,6 +379,29 @@ impl SedonaDBExprFactory {
         Ok(result.data)
     }
 
+    /// Convert aggregate functions to window functions with empty OVER clause
+    fn aggregates_to_window_functions(exprs: &[Expr]) -> Result<Vec<Expr>> {
+        exprs
+            .iter()
+            .map(|expr| {
+                expr.clone().transform_up(|nested_expr| {
+                    match nested_expr {
+                        Expr::AggregateFunction(agg) => {
+                            // Convert to window function with empty OVER ()
+                            let window_func = Expr::WindowFunction(Box::new(WindowFunction::new(
+                                WindowFunctionDefinition::AggregateUDF(agg.func.clone()),
+                                agg.params.args,
+                            )));
+                            Ok(Transformed::yes(window_func))
+                        }
+                        _ => Ok(Transformed::no(nested_expr)),
+                    }
+                })
+                .map(|t| t.data)
+            })
+            .collect()
+    }
+
     /// Create an aggregate plan from the given input, group by, and aggregate expressions.
     /// Based on DataFusion's aggregate() method.
     /// https://github.com/apache/datafusion/blob/102caeb2261c5ae006c201546cf74769d80ceff8/datafusion/sql/src/select.rs#L652-L764
@@ -364,6 +411,24 @@ impl SedonaDBExprFactory {
         group_by_exprs: Vec<Expr>,
         aggr_exprs: &[Expr],
     ) -> Result<AggregatePlanResult> {
+        // If group_by_exprs is empty, we need to extract column references from
+        // select_exprs that are NOT inside aggregate functions
+        let group_by_exprs = if group_by_exprs.is_empty() {
+            // Find all columns referenced in select expressions
+            let all_columns = find_column_exprs(select_exprs);
+
+            // Find columns that are inside aggregate expressions
+            let agg_columns = find_column_exprs(aggr_exprs);
+
+            // Keep only columns that are NOT inside aggregates
+            all_columns
+                .into_iter()
+                .filter(|col| !agg_columns.contains(col))
+                .collect::<Vec<_>>()
+        } else {
+            group_by_exprs
+        };
+
         // Create the aggregate plan
         let options = LogicalPlanBuilderOptions::new().with_add_implicit_group_by_exprs(true);
         let plan = LogicalPlanBuilder::from(input.clone())
@@ -371,9 +436,10 @@ impl SedonaDBExprFactory {
             .aggregate(group_by_exprs, aggr_exprs.to_vec())?
             .build()?;
 
-        // Get the group_by_exprs from the constructed plan
-        let group_by_exprs = if let LogicalPlan::Aggregate(agg) = &plan {
-            &agg.group_expr
+        // Get the group_by_exprs and aggr_exprs from the constructed plan
+        // (they may have been modified by implicit group by logic)
+        let (group_by_exprs, aggr_exprs_from_plan) = if let LogicalPlan::Aggregate(agg) = &plan {
+            (&agg.group_expr, &agg.aggr_expr)
         } else {
             unreachable!();
         };
@@ -383,7 +449,7 @@ impl SedonaDBExprFactory {
         for expr in group_by_exprs {
             aggr_projection_exprs.push(expr.clone());
         }
-        aggr_projection_exprs.extend_from_slice(aggr_exprs);
+        aggr_projection_exprs.extend_from_slice(aggr_exprs_from_plan);
 
         // Now attempt to resolve columns and replace with fully-qualified columns
         let aggr_projection_exprs = aggr_projection_exprs
@@ -391,8 +457,14 @@ impl SedonaDBExprFactory {
             .map(|expr| Self::resolve_columns(expr, input))
             .collect::<Result<Vec<Expr>>>()?;
 
+        // Resolve columns in select expressions too, so qualifiers match when rebasing
+        let select_exprs_resolved = select_exprs
+            .iter()
+            .map(|expr| Self::resolve_columns(expr, input))
+            .collect::<Result<Vec<Expr>>>()?;
+
         // Re-write the projection
-        let select_exprs_post_aggr = select_exprs
+        let select_exprs_post_aggr = select_exprs_resolved
             .iter()
             .map(|expr| Self::rebase_expr(expr, &aggr_projection_exprs, input))
             .collect::<Result<Vec<Expr>>>()?;
