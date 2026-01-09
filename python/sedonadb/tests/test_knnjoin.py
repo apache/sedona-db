@@ -128,8 +128,8 @@ def test_knn_join_with_polygons():
             {
                 "geom_type": "Polygon",
                 "target_rows": 30,
-                "vertices_per_linestring_range": [4, 8],
-                "size_range": [0.001, 0.01],
+                "num_vertices": [4, 8],
+                "size": [0.001, 0.01],
                 "seed": 101,
             }
         )

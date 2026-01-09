@@ -41,9 +41,9 @@ def test_spatial_join(join_type, on):
         options = json.dumps(
             {
                 "geom_type": "Point",
-                "polygon_hole_rate": 0.5,
-                "num_parts_range": [2, 10],
-                "vertices_per_linestring_range": [2, 10],
+                "hole_rate": 0.5,
+                "num_parts": [2, 10],
+                "num_vertices": [2, 10],
                 "seed": 42,
             }
         )
@@ -53,9 +53,9 @@ def test_spatial_join(join_type, on):
         options = json.dumps(
             {
                 "geom_type": "Polygon",
-                "polygon_hole_rate": 0.5,
-                "num_parts_range": [2, 10],
-                "vertices_per_linestring_range": [2, 10],
+                "hole_rate": 0.5,
+                "num_parts": [2, 10],
+                "num_vertices": [2, 10],
                 "seed": 43,
             }
         )
@@ -102,8 +102,8 @@ def test_spatial_join_geography(join_type, on):
         options = json.dumps(
             {
                 "geom_type": "Point",
-                "num_parts_range": [2, 10],
-                "vertices_per_linestring_range": [2, 10],
+                "num_parts": [2, 10],
+                "num_vertices": [2, 10],
                 "bounds": west_most_bound,
                 "size_range": [0.1, 5],
                 "seed": 958,
@@ -115,9 +115,9 @@ def test_spatial_join_geography(join_type, on):
         options = json.dumps(
             {
                 "geom_type": "Polygon",
-                "polygon_hole_rate": 0.5,
-                "num_parts_range": [2, 10],
-                "vertices_per_linestring_range": [2, 10],
+                "hole_rate": 0.5,
+                "num_parts": [2, 10],
+                "num_vertices": [2, 10],
                 "bounds": east_most_bound,
                 "size_range": [0.1, 5],
                 "seed": 44,
@@ -159,9 +159,9 @@ def test_query_window_in_subquery():
         options = json.dumps(
             {
                 "geom_type": "Polygon",
-                "polygon_hole_rate": 0.5,
-                "num_parts_range": [2, 10],
-                "vertices_per_linestring_range": [2, 10],
+                "hole_rate": 0.5,
+                "num_parts": [2, 10],
+                "num_vertices": [2, 10],
                 "size_range": [50, 60],
                 "seed": 43,
             }

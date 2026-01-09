@@ -17,7 +17,7 @@
 import json
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import SedonaDB, PostGIS, DuckDB
+from sedonadb.testing import SedonaDB, PostGIS, DuckDB, random_geometry
 
 
 class TestBenchKNN(TestBenchBase):
@@ -31,8 +31,8 @@ class TestBenchKNN(TestBenchBase):
         building_options = {
             "geom_type": "Polygon",
             "target_rows": 2_000,
-            "vertices_per_linestring_range": [4, 8],
-            "size_range": [0.001, 0.01],
+            "num_vertices": [4, 8],
+            "size": [0.001, 0.01],
             "seed": 42,
         }
 
