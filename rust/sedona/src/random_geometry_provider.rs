@@ -140,19 +140,19 @@ impl RandomGeometryProvider {
                 let bounds = Rect::new((bounds.0, bounds.1), (bounds.2, bounds.3));
                 builder = builder.bounds(bounds);
             }
-            if let Some(size_range) = options.size_range {
+            if let Some(size_range) = options.size {
                 builder = builder.size_range(size_range);
             }
-            if let Some(vertices_range) = options.vertices_per_linestring_range {
+            if let Some(vertices_range) = options.num_vertices {
                 builder = builder.vertices_per_linestring_range(vertices_range);
             }
             if let Some(empty_rate) = options.empty_rate {
                 builder = builder.empty_rate(empty_rate);
             }
-            if let Some(hole_rate) = options.polygon_hole_rate {
+            if let Some(hole_rate) = options.hole_rate {
                 builder = builder.polygon_hole_rate(hole_rate);
             }
-            if let Some(parts_range) = options.num_parts_range {
+            if let Some(parts_range) = options.num_parts {
                 builder = builder.num_parts_range(parts_range);
             }
         }
@@ -293,7 +293,9 @@ impl ExecutionPlan for RandomGeometryExec {
 /// These options only exist as a mechanism to deserialize JSON options
 ///
 /// See the [RandomPartitionedDataBuilder] for definitive documentation of these
-/// values.
+/// values. Compared to the lower-level class, these have slightly more compact
+/// argument names (whereas the lower level class has more descriptive names
+/// for Rust where autocomplete is available to help).
 #[derive(Serialize, Deserialize, Default)]
 struct RandomGeometryFunctionOptions {
     num_partitions: Option<usize>,
@@ -303,14 +305,14 @@ struct RandomGeometryFunctionOptions {
     null_rate: Option<f64>,
     geom_type: Option<GeometryTypeId>,
     bounds: Option<(f64, f64, f64, f64)>,
-    #[serde(deserialize_with = "deserialize_scalar_or_range")]
-    size_range: Option<(f64, f64)>,
-    #[serde(deserialize_with = "deserialize_scalar_or_range")]
-    vertices_per_linestring_range: Option<(usize, usize)>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    size: Option<(f64, f64)>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    num_vertices: Option<(usize, usize)>,
     empty_rate: Option<f64>,
-    polygon_hole_rate: Option<f64>,
-    #[serde(deserialize_with = "deserialize_scalar_or_range")]
-    num_parts_range: Option<(usize, usize)>,
+    hole_rate: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    num_parts: Option<(usize, usize)>,
 }
 
 fn builder_with_partition_sizes(
@@ -435,27 +437,23 @@ mod test {
     }
 
     #[tokio::test]
-    async fn provider_with_scalar_size_range() {
+    async fn provider_with_scalar_size() {
         let ctx = SessionContext::new();
 
-        // Test that a scalar value for size_range works (gets converted to (value, value))
+        // Test that a scalar value for size works (gets converted to (value, value))
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 1024, "size_range": 0.5}"#.to_string(),
-            ),
+            Some(r#"{"target_rows": 1024, "size": 0.5}"#.to_string()),
         )
         .unwrap();
 
         let df = ctx.read_table(Arc::new(provider)).unwrap();
         assert_eq!(df.count().await.unwrap(), 1024);
 
-        // Test that a range value for size_range still works
+        // Test that a range value for size still works
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 1024, "size_range": [0.1, 0.5]}"#.to_string(),
-            ),
+            Some(r#"{"target_rows": 1024, "size": [0.1, 0.5]}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 def random_geometry(
     n: int = 1024,
-    geometry_type: Literal[
+    geom_type: Literal[
         "Point",
         "LineString",
         "Polygon",
@@ -55,21 +55,6 @@ def random_geometry(
 
     import sedonadb
 
-    if isinstance(num_vertices, tuple):
-        num_vertices_min, num_vertices_max = num_vertices
-    else:
-        num_vertices_min = num_vertices_max = num_vertices, num_vertices
-
-    if isinstance(num_parts, tuple):
-        num_parts_min, num_parts_max = num_parts
-    else:
-        num_parts_min = num_parts_max = num_parts, num_parts
-
-    if isinstance(size, tuple):
-        size_min, size_max = size
-    else:
-        size_min, size_max = size, size
-
     bounds = [float(b) for b in bounds]
     if len(bounds) != 4:
         raise ValueError(
@@ -79,14 +64,14 @@ def random_geometry(
     args = {
         "bounds": bounds,
         "empty_rate": empty_rate,
-        "geom_type": geometry_type,
+        "geom_type": geom_type,
         "null_rate": null_rate,
-        "num_parts_range": [num_parts_min, num_parts_max],
+        "num_parts": num_parts,
         "polygon_hole_rate": hole_rate,
         "seed": int(seed) if seed is not None else round(time.time() * 1000),
-        "size_range": [size_min, size_max],
+        "size": size,
         "target_rows": int(n),
-        "vertices_per_linestring_range": [num_vertices_min, num_vertices_max],
+        "num_vertices": num_vertices,
     }
 
     sd = sedonadb.connect()
