@@ -248,15 +248,11 @@ fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
         return None;
     }
     let srid_str = &maybe_srid[5..];
-    let srid: u32 = match srid_str.parse() {
-        Ok(srid) => srid,
+    let auth_code = match srid_str.parse::<u32>() {
+        Ok(0) => return None,
+        Ok(4326) => "OGC:CRS84".to_string(),
+        Ok(srid) => format!("EPSG:{srid}"),
         Err(_) => return None,
-    };
-
-    let auth_code = match srid {
-        0 => return None,
-        4326 => "OGC:CRS84".to_string(),
-        _ => format!("EPSG:{srid}"),
     };
 
     // TODO: the CRS should be validated
