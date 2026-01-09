@@ -255,8 +255,8 @@ fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
         Err(_) => return None,
     };
 
-    // TODO: the CRS should be validated
-    // validate_crs(&auth_code, maybe_engine)?;
+    // CRS could be validated here
+    // https://github.com/apache/sedona-db/issues/501
 
     Some(auth_code)
 }
