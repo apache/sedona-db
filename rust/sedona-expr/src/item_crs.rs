@@ -75,7 +75,7 @@ impl ItemCrsKernel {
     pub fn wrap_impl(inner: impl IntoScalarKernelRefs) -> Vec<ScalarKernelRef> {
         let kernels = inner.into_scalar_kernel_refs();
 
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(kernels.len() * 2);
 
         // Add ItemCrsKernels first (so they will be resolved last)
         for inner_kernel in &kernels {
