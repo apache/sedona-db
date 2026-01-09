@@ -104,7 +104,7 @@ impl RandomGeometryProvider {
             match serde_json::from_str::<RandomGeometryFunctionOptions>(&options_str) {
                 Ok(options) => Some(options),
                 Err(e) => {
-                    return plan_err!("Failed to parse options: {e}\nOption were: {options_str}")
+                    return plan_err!("Failed to parse options: {e}\nOptions were: {options_str}")
                 }
             }
         } else {
@@ -303,10 +303,13 @@ struct RandomGeometryFunctionOptions {
     null_rate: Option<f64>,
     geom_type: Option<GeometryTypeId>,
     bounds: Option<(f64, f64, f64, f64)>,
+    #[serde(deserialize_with = "deserialize_scalar_or_range")]
     size_range: Option<(f64, f64)>,
+    #[serde(deserialize_with = "deserialize_scalar_or_range")]
     vertices_per_linestring_range: Option<(usize, usize)>,
     empty_rate: Option<f64>,
     polygon_hole_rate: Option<f64>,
+    #[serde(deserialize_with = "deserialize_scalar_or_range")]
     num_parts_range: Option<(usize, usize)>,
 }
 
@@ -327,6 +330,28 @@ fn builder_with_partition_sizes(
         .rows_per_batch(batch_size)
         .num_partitions(partitions)
         .batches_per_partition(batches_per_partition)
+}
+
+/// Helper to make specifying scalar ranges more concise when only one value is needed
+fn deserialize_scalar_or_range<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<(T, T)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Copy,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ScalarOrRange<T> {
+        Scalar(T),
+        Range((T, T)),
+    }
+
+    match Option::<ScalarOrRange<T>>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(ScalarOrRange::Scalar(val)) => Ok(Some((val, val))),
+        Some(ScalarOrRange::Range(range)) => Ok(Some(range)),
+    }
 }
 
 #[cfg(test)]
@@ -407,5 +432,33 @@ mod test {
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
         assert_eq!(df.count().await.unwrap(), 8192 + (2 * 1024));
+    }
+
+    #[tokio::test]
+    async fn provider_with_scalar_size_range() {
+        let ctx = SessionContext::new();
+
+        // Test that a scalar value for size_range works (gets converted to (value, value))
+        let provider = RandomGeometryProvider::try_new(
+            RandomPartitionedDataBuilder::new(),
+            Some(
+                r#"{"target_rows": 1024, "size_range": 0.5}"#.to_string(),
+            ),
+        )
+        .unwrap();
+
+        let df = ctx.read_table(Arc::new(provider)).unwrap();
+        assert_eq!(df.count().await.unwrap(), 1024);
+
+        // Test that a range value for size_range still works
+        let provider = RandomGeometryProvider::try_new(
+            RandomPartitionedDataBuilder::new(),
+            Some(
+                r#"{"target_rows": 1024, "size_range": [0.1, 0.5]}"#.to_string(),
+            ),
+        )
+        .unwrap();
+        let df = ctx.read_table(Arc::new(provider)).unwrap();
+        assert_eq!(df.count().await.unwrap(), 1024);
     }
 }
