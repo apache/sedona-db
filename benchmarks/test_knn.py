@@ -17,7 +17,7 @@
 import json
 import pytest
 from test_bench_base import TestBenchBase
-from sedonadb.testing import SedonaDB, PostGIS, DuckDB, random_geometry
+from sedonadb.testing import SedonaDB, PostGIS, DuckDB
 
 
 class TestBenchKNN(TestBenchBase):

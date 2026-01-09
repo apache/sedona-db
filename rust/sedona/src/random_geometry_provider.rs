@@ -127,8 +127,19 @@ impl RandomGeometryProvider {
             if let Some(opt_target_rows) = options.target_rows {
                 target_rows = opt_target_rows;
             }
+
+            // Unlike the Rust version, where we almost always want a set seed by default,
+            // in SQL, Python, and R we want this to behave like random() be non-deterministic.
             if let Some(seed) = options.seed {
                 builder = builder.seed(seed);
+            } else {
+                builder = builder.seed(
+                    (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        % u32::MAX as u128) as u64,
+                );
             }
             if let Some(null_rate) = options.null_rate {
                 builder = builder.null_rate(null_rate);
