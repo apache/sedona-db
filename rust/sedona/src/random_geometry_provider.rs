@@ -382,6 +382,7 @@ mod test {
         let builder = RandomPartitionedDataBuilder::new()
             .num_partitions(4)
             .batches_per_partition(2)
+            .seed(3840)
             .rows_per_batch(1024);
         let (expected_schema, expected_results) = builder.build().unwrap();
         assert_eq!(expected_results.len(), 4);
@@ -392,7 +393,7 @@ mod test {
         let provider = RandomGeometryProvider::try_new(
             builder,
             Some(
-                r#"{"target_rows": 8192, "num_partitions": 4, "rows_per_batch": 1024}"#.to_string(),
+                r#"{"target_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}"#.to_string(),
             ),
         )
         .unwrap();
@@ -408,7 +409,7 @@ mod test {
         ctx.register_udtf("sd_random_geometry", Arc::new(RandomGeometryFunction {}));
         let df = ctx
             .sql(r#"
-        SELECT * FROM sd_random_geometry('{"target_rows": 8192, "num_partitions": 4, "rows_per_batch": 1024}')
+        SELECT * FROM sd_random_geometry('{"target_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}')
             "#)
             .await
             .unwrap();
