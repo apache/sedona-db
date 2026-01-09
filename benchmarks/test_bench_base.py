@@ -51,7 +51,7 @@ class TestBenchBase:
                 {
                     "geom_type": "LineString",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [2, 10],
+                    "num_vertices": [2, 10],
                 },
             ),
             (
@@ -59,7 +59,7 @@ class TestBenchBase:
                 {
                     "geom_type": "Polygon",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [10, 10],
+                    "num_vertices": [10, 10],
                 },
             ),
             (
@@ -67,7 +67,7 @@ class TestBenchBase:
                 {
                     "geom_type": "Polygon",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [500, 500],
+                    "num_vertices": [500, 500],
                 },
             ),
             (
@@ -75,7 +75,7 @@ class TestBenchBase:
                 {
                     "geom_type": "GeometryCollection",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [10, 10],
+                    "num_vertices": [10, 10],
                 },
             ),
             (
@@ -83,7 +83,7 @@ class TestBenchBase:
                 {
                     "geom_type": "GeometryCollection",
                     "target_rows": num_geoms,
-                    "vertices_per_linestring_range": [500, 500],
+                    "num_vertices": [500, 500],
                 },
             ),
         ]:
@@ -97,7 +97,7 @@ class TestBenchBase:
                 {
                     "seed": 42,
                     "bounds": [0.0, 0.0, 80.0, 100.0],  # Slightly left-leaning
-                    "size_range": [
+                    "size": [
                         1.0,
                         15.0,
                     ],  # Medium-sized geometries for good intersection chance
@@ -110,7 +110,7 @@ class TestBenchBase:
                 {
                     "seed": 43,
                     "bounds": [20.0, 0.0, 100.0, 100.0],  # Slightly right-leaning
-                    "size_range": [1.0, 15.0],  # Same size range for fair comparison
+                    "size": [1.0, 15.0],  # Same size range for fair comparison
                 }
             )
 

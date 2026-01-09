@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 
 def random_geometry(
-    n: int = 1024,
+    target_rows: int = 1024,
     geom_type: Literal[
         "Point",
         "LineString",
@@ -70,14 +70,14 @@ def random_geometry(
         "polygon_hole_rate": hole_rate,
         "seed": int(seed) if seed is not None else round(time.time() * 1000),
         "size": size,
-        "target_rows": int(n),
+        "target_rows": int(target_rows),
         "num_vertices": num_vertices,
     }
 
     sd = sedonadb.connect()
     return sd.sql(
         f"SELECT id, geometry FROM sd_random_geometry('{json.dumps(args)}')"
-    ).limit(int(n))
+    ).limit(int(target_rows))
 
 
 def skip_if_not_exists(path: Path):
