@@ -27,7 +27,7 @@ use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
 use arrow_array::{BinaryArray, BinaryViewArray};
 use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
-use datafusion_common::{DataFusionError, Result, exec_datafusion_err};
+use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
 use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
@@ -395,9 +395,7 @@ impl RandomPartitionedDataBuilder {
         // Generate random geometries based on the geometry type
         let wkb_geometries = (0..self.rows_per_batch)
             .map(|_| -> Result<Option<Vec<u8>>> {
-                if rng.sample(Uniform::new(0.0, 1.0).expect("valid input to Uniform::new()"))
-                    < self.null_rate
-                {
+                if rng.random_bool(self.null_rate) {
                     Ok(None)
                 } else {
                     Ok(Some(generate_random_wkb(rng, &self.options)?))
@@ -584,8 +582,10 @@ fn generate_random_linestring<R: rand::Rng>(
         .map_err(|e| exec_datafusion_err!("Invalid vertex count range for linestring: {e}"))?;
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
+        // Randomize starting angle (0 to 2 * PI)
+        let angle = rng.random_range(0.0..(2.0 * PI));
         let coords =
-            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, false)?;
+            generate_circular_vertices(angle, center_x, center_y, half_size, num_vertices, false)?;
         Ok(LineString::from(coords))
     }
 }
@@ -605,19 +605,28 @@ fn generate_random_polygon<R: rand::Rng>(
         .map_err(|e| exec_datafusion_err!("Invalid vertex count range for polygon: {e}"))?;
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
+
+        // Randomize starting angle (but use the same starting angle for both the shell
+        // and the hole to ensure a non-intersecting interior)
+        let angle = rng.random_range(0.0..=(2.0 * PI));
         let coords =
-            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, true)?;
+            generate_circular_vertices(angle, center_x, center_y, half_size, num_vertices, true)?;
         let shell = LineString::from(coords);
         let mut holes = Vec::new();
 
         // Potentially add a hole based on probability
         let add_hole = rng.random_bool(options.polygon_hole_rate);
-        let hole_scale_factor_dist = Uniform::new(0.1, 0.5).expect("Valid input range");
-        let hole_scale_factor = rng.sample(hole_scale_factor_dist);
+        let hole_scale_factor = rng.random_range(0.1..0.5);
         if add_hole {
             let new_size = half_size * hole_scale_factor;
-            let mut coords =
-                generate_circular_vertices(rng, center_x, center_y, new_size, num_vertices, true)?;
+            let mut coords = generate_circular_vertices(
+                angle,
+                center_x,
+                center_y,
+                new_size,
+                num_vertices,
+                true,
+            )?;
             coords.reverse();
             holes.push(LineString::from(coords));
         }
@@ -766,7 +775,11 @@ fn generate_random_circle<R: rand::Rng>(
         options.bounds.min().y + height / 2.0
     };
 
-    Ok((center_x, center_y, half_size.min(height / 2.0).min(width / 2.0)))
+    Ok((
+        center_x,
+        center_y,
+        half_size.min(height / 2.0).min(width / 2.0),
+    ))
 }
 
 fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> Vec<Rect> {
@@ -798,8 +811,8 @@ fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> V
     tiles
 }
 
-fn generate_circular_vertices<R: rand::Rng>(
-    rng: &mut R,
+fn generate_circular_vertices(
+    mut angle: f64,
     center_x: f64,
     center_y: f64,
     radius: f64,
@@ -807,11 +820,6 @@ fn generate_circular_vertices<R: rand::Rng>(
     closed: bool,
 ) -> Result<Vec<Coord>> {
     let mut out = Vec::new();
-
-    // Randomize starting angle (0 to 2 * PI)
-    let start_angle_dist =
-        Uniform::new(0.0, 2.0 * PI).map_err(|e| exec_datafusion_err!("Invalid angle range: {e}"))?;
-    let mut angle: f64 = rng.sample(start_angle_dist);
 
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
     for _ in 0..num_vertices {
