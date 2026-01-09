@@ -33,6 +33,7 @@ def random_geometry(
     target_rows: Optional[int] = None,
     geom_type: Optional[
         Literal[
+            "Geometry",
             "Point",
             "LineString",
             "Polygon",
@@ -52,6 +53,49 @@ def random_geometry(
     null_rate: Optional[float] = None,
     seed: Optional[int] = None,
 ) -> "sedonadb.dataframe.DataFrame":
+    """
+    Generate a DataFrame with random geometries for testing purposes.
+    This function creates a DataFrame containing randomly generated geometries with
+    configurable parameters for geometry type, size, complexity, and spatial distribution.
+
+    Parameters
+    ----------
+    target_rows : int, default 1024
+        Target number of rows to generate. The actual number may be more than
+        this (use `limit()` to constrain this number exactly).
+    geom_type : str, default "Point"
+        The type of geometry to generate. One of "Geometry",
+        "Point", "LineString",  "Polygon", "MultiPoint", "MultiLineString",
+        "MultiPolygon", or "GeometryCollection".
+    num_vertices : int or tuple of (int, int), default 4
+        Number of vertices per geometry. If a tuple, specifies (min, max) range.
+    num_parts : int or tuple of (int, int), default (1, 3)
+        Number of parts for multi-geometries. If a tuple, specifies (min, max) range.
+    size : float or tuple of (float, float), default (1.0, 10.0)
+        Spatial size of geometries. If a tuple, specifies (min, max) range.
+    bounds : iterable of float, default [0.0, 0.0, 100.0, 100.0]
+        Spatial bounds as [xmin, ymin, xmax, ymax] to constrain generated geometries.
+    hole_rate : float, default 0.0
+        Rate of polygons with holes, between 0.0 and 1.0.
+    empty_rate : float, default 0.0
+        Rate of empty geometries, between 0.0 and 1.0.
+    null_rate : float, default 0.0
+        Rate of null geometries, between 0.0 and 1.0.
+    seed : int, optional
+        Random seed for reproducible geometry generation. If omitted, the result is
+        non-deterministic.
+
+    Returns
+    -------
+    sedonadb.dataframe.DataFrame
+        A DataFrame with columns 'id' and 'geometry' containing randomly generated geometries.
+
+    Examples
+    --------
+    >>> df = random_geometry(target_rows=100, geom_type="Point")
+    >>> df = random_geometry(target_rows=50, geom_type="Polygon", num_vertices=(4, 10))
+    >>> df = random_geometry(bounds=[-180, -90, 180, 90], seed=4837)
+    """
     import json
 
     import sedonadb
