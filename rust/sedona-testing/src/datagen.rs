@@ -379,6 +379,9 @@ impl RandomPartitionedDataBuilder {
         partition_idx: usize,
         batch_idx: usize,
     ) -> Result<RecordBatch> {
+        // Check options
+        self.options.validate()?;
+
         // Generate IDs - make them unique across partitions and batches
         let id_start =
             (partition_idx * self.batches_per_partition + batch_idx) * self.rows_per_batch;
@@ -490,6 +493,26 @@ impl RandomGeometryOptions {
             num_parts_range: (1, 3),
         }
     }
+
+    fn is_valid(&self) -> bool {
+        self.bounds.width() > 0.0
+            && self.bounds.height() > 0.0
+            && self.size_range.0 <= self.size_range.1
+            && self.vertices_per_linestring_range.0 <= self.vertices_per_linestring_range.1
+            && self.num_parts_range.0 <= self.num_parts_range.1
+            && self.empty_rate >= 0.0
+            && self.empty_rate <= 1.0
+            && self.polygon_hole_rate >= 0.0
+            && self.polygon_hole_rate <= 1.0
+    }
+
+    fn validate(&self) -> Result<()> {
+        if !self.is_valid() {
+            return sedona_internal_err!("Invalid RandomGeometryOptions: {self:?}");
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for RandomGeometryOptions {
@@ -559,12 +582,12 @@ fn generate_random_point<R: rand::Rng>(
         Ok(Point::new(f64::NAN, f64::NAN))
     } else {
         // Generate random points within the specified bounds
-        let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let x = rng.sample(x_dist);
-        let y = rng.sample(y_dist);
+        if options.bounds.width() <= 0.0 || options.bounds.height() <= 0.0 {
+            return sedona_internal_err!("Invalid position bounds: {:?}", options.bounds);
+        }
+
+        let x = rng.random_range(options.bounds.min().x..options.bounds.max().x);
+        let y = rng.random_range(options.bounds.min().y..options.bounds.max().y);
         Ok(Point::new(x, y))
     }
 }
@@ -577,11 +600,13 @@ fn generate_random_linestring<R: rand::Rng>(
         Ok(LineString::new(vec![]))
     } else {
         let (center_x, center_y, half_size) = generate_random_circle(rng, options)?;
+
         let vertices_dist = Uniform::new_inclusive(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
         let coords =
@@ -814,6 +839,343 @@ fn generate_circular_vertices<R: rand::Rng>(
 
     Ok(out)
 }
+
+// struct RandomGeometrySampler<'a, 'b, R> {
+//     options: &'a RandomGeometryOptions,
+//     rng: &'b mut R,
+// }
+
+// impl<'a, 'b, R: Rng> RandomGeometrySampler<'a, 'b, R> {
+
+//     /// Generate random geometry WKB bytes based on the geometry type
+//     fn sample_wkb(&mut self) -> Result<Vec<u8>> {
+//         let geometry = self.sample_geometry()?;
+
+//         // Convert geometry to WKB
+//         let mut out: Vec<u8> = vec![];
+//         wkb::writer::write_geometry(
+//             &mut out,
+//             &geometry,
+//             &WriteOptions {
+//                 endianness: Endianness::LittleEndian,
+//             },
+//         )
+//         .map_err(|e| DataFusionError::External(Box::new(e)))?;
+//         Ok(out)
+//     }
+
+//     fn sample_geometry(&mut self) -> Result<Geometry> {
+//         Ok(match self.options.geom_type {
+//             GeometryTypeId::Point => Geometry::Point(self.sample_point()?),
+//             GeometryTypeId::LineString => {
+//                 Geometry::LineString(self.sample_linestring()?)
+//             }
+//             GeometryTypeId::Polygon => Geometry::Polygon(self.sample_polygon()?),
+//             GeometryTypeId::MultiPoint => {
+//                 Geometry::MultiPoint(self.sample_multipoint()?)
+//             }
+//             GeometryTypeId::MultiLineString => {
+//                 Geometry::MultiLineString(self.sample_multilinestring()?)
+//             }
+//             GeometryTypeId::MultiPolygon => {
+//                 Geometry::MultiPolygon(self.sample_multipolygon()?)
+//             }
+//             GeometryTypeId::GeometryCollection => {
+//                 Geometry::GeometryCollection(self.sample_geometrycollection()?)
+//             }
+//             GeometryTypeId::Geometry => {
+//                 // TODO: This should not have to copy the options
+//                 let mut copy_options = self.options.clone();
+//                 copy_options.geom_type = self.sample_geometry_type();
+//                 let mut sampler = RandomGeometrySampler { rng: &mut self.rng, options: &copy_options };
+//                 sampler.sample_geometry()?
+//             }
+//         })
+//     }
+
+//     fn sample_point(&mut self) -> Result<Point> {
+//         if self.sample_is_empty() {
+//             // This is a bit of a hack because geo-types doesn't support empty point; however,
+//             // this does work with respect to sending this directly to the WKB reader and getting
+//             // the WKB result we want
+//             Ok(Point::new(f64::NAN, f64::NAN))
+//         } else {
+//             let (x, y) = self.sample_position();
+//             Ok(Point::new(x, y))
+//         }
+//     }
+
+//     fn sample_linestring(&mut self) -> Result<LineString> {
+//         if self.sample_is_empty() {
+//             Ok(LineString::new(vec![]))
+//         } else {
+//             // Always sample in such a way that we end up with a valid linestring
+//             let (center_x, center_y, half_size) = self.sample_circle();
+//             let num_vertices = self.sample_num_vertices();
+//             let coords =
+//                 self.generate_circular_vertices(center_x, center_y, half_size, num_vertices, false)?;
+//             Ok(LineString::from(coords))
+//         }
+//     }
+
+//     fn sample_polygon(&mut self) -> Result<Polygon> {
+//         if self.sample_is_empty() {
+//             Ok(Polygon::new(LineString::new(vec![]), vec![]))
+//         } else {
+//              // Always sample in such a way that we end up with a valid Polygon
+//             let (center_x, center_y, half_size) = self.sample_circle();
+//             let num_vertices = self.sample_num_vertices().max(3);
+//             let coords =
+//                 self.generate_circular_vertices(center_x, center_y, half_size, num_vertices, false)?;
+//             let shell = LineString::from(coords);
+
+
+//             // Potentially add a hole based on probability
+//             let mut holes = Vec::new();
+//             if self.sample_polygon_has_hole() {
+//                 let new_size = half_size * self.sample_polygon_hole_scale_factor();
+//                 let mut coords =
+//                     self.generate_circular_vertices(center_x, center_y, new_size, num_vertices, true)?;
+//                 coords.reverse();
+//                 holes.push(LineString::from(coords));
+//             }
+
+//             Ok(Polygon::new(shell, holes))
+//         }
+//     }
+
+//     fn sample_multipoint(&mut self) -> Result<MultiPoint> {
+//         if self.sample_is_empty() {
+//             Ok(MultiPoint::new(vec![]))
+//         } else {
+//             let children = self.sample_collection_children(|rng, child_options| {
+//                 let mut child_sampler = RandomGeometrySampler { rng, options: child_options};
+//                 child_sampler.sample_point()
+//             })?;
+
+//             Ok(MultiPoint::new(children))
+//         }
+//     }
+
+//     fn sample_multilinestring(&mut self) -> Result<MultiLineString> {
+//         if self.sample_is_empty() {
+//             Ok(MultiLineString::new(vec![]))
+//         } else {
+//             let children = self.sample_collection_children(|rng, child_options| {
+//                 let mut child_sampler = RandomGeometrySampler { rng, options: child_options};
+//                 child_sampler.sample_linestring()
+//             })?;
+
+//             Ok(MultiLineString::new(children))
+//         }
+//     }
+
+//     fn sample_multipolygon(&mut self) -> Result<MultiPolygon> {
+//         if self.sample_is_empty() {
+//             Ok(MultiPolygon::new(vec![]))
+//         } else {
+//             let children = self.sample_collection_children(|rng, child_options| {
+//                 let mut child_sampler = RandomGeometrySampler { rng, options: child_options};
+//                 child_sampler.sample_polygon()
+//             })?;
+
+//             Ok(MultiPolygon::new(children))
+//         }
+//     }
+
+//     fn sample_geometrycollection(&mut self) -> Result<GeometryCollection> {
+//         if self.sample_is_empty() {
+//             Ok(GeometryCollection::new_from(vec![]))
+//         } else {
+//             let children = self.sample_collection_children(|rng, child_options| {
+//                 let mut child_sampler = RandomGeometrySampler { rng, options: child_options};
+//                 child_sampler.sample_geometry()
+//             })?;
+
+//             Ok(GeometryCollection::new_from(children))
+//         }
+//     }
+
+//     fn sample_collection_children<T, F: FnMut(&mut R, &RandomGeometryOptions) -> Result<T>>(&mut self, mut func: F) -> Result<Vec<T>>
+//     {
+//         // Constrain this feature to the size range indicated in the option
+//         let num_parts = self.sample_num_parts();
+//         let (center_x, center_y, half_width) = self.sample_circle();
+//         let feature_bounds = Rect::new(
+//             Coord {
+//                 x: center_x - half_width,
+//                 y: center_y - half_width,
+//             },
+//             Coord {
+//                 x: center_x + half_width,
+//                 y: center_y + half_width,
+//             },
+//         );
+
+//         let child_bounds = generate_non_overlapping_sub_rectangles(num_parts, &feature_bounds);
+//         let mut child_options = self.options.clone();
+//         child_options.empty_rate = 0.0;
+
+//         let mut children = Vec::new();
+//         for bounds in child_bounds {
+//             child_options.bounds = bounds;
+//             let child_size = bounds.height().min(bounds.width());
+//             child_options.size_range = (child_size * 0.9, child_size);
+
+//             // If GeometryCollection, pick a random geometry type
+//             // Don't support nested GeometryCollection for now to avoid too much recursion
+//             if self.options.geom_type == GeometryTypeId::GeometryCollection {
+//                 child_options.geom_type = self.sample_geometry_type();
+//             }
+
+//             children.push(func(&mut self.rng, &child_options)?);
+//         }
+
+//         Ok(children)
+//     }
+
+//     fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> Vec<Rect> {
+//         let mut tiles = vec![*bounds];
+//         let mut n = 0;
+//         while tiles.len() < num_parts {
+//             // Find the largest rectangle
+//             let (largest_idx, _) = tiles
+//                 .iter()
+//                 .enumerate()
+//                 .map(|(i, rect)| (i, rect.height() * rect.width()))
+//                 .max_by(|(_, a1), (_, a2)| a1.partial_cmp(a2).unwrap())
+//                 .unwrap_or((0, 0.0));
+
+//             // Mix up subdividing by x and y
+//             let new_rects = if (n % 2) == 0 {
+//                 tiles[largest_idx].split_x()
+//             } else {
+//                 tiles[largest_idx].split_y()
+//             };
+
+//             // Remove the largest rectangle and add its subdivisions
+//             tiles.remove(largest_idx);
+//             tiles.insert(largest_idx, new_rects[0]);
+//             tiles.insert(largest_idx, new_rects[1]);
+//             n += 1;
+//         }
+
+//         tiles
+//     }
+
+//     fn generate_circular_vertices(
+//         &mut self,
+//         center_x: f64,
+//         center_y: f64,
+//         radius: f64,
+//         num_vertices: usize,
+//         closed: bool,
+//     ) -> Result<Vec<Coord>> {
+//         let mut out = Vec::new();
+
+//         // Randomize starting angle (0 to 2 * PI)
+//         let mut angle = self.sample_radians();
+
+//         let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
+//         for _ in 0..num_vertices {
+//             out.push(Coord {
+//                 x: angle.cos() * radius + center_x,
+//                 y: angle.sin() * radius + center_y,
+//             });
+//             angle += dangle;
+//         }
+
+//         if closed {
+//             out.push(out[0]);
+//         }
+
+//         Ok(out)
+//     }
+
+//     fn sample_geometry_type(&mut self) -> GeometryTypeId {
+//         [
+//             GeometryTypeId::Point,
+//             GeometryTypeId::LineString,
+//             GeometryTypeId::Polygon,
+//             GeometryTypeId::MultiPoint,
+//             GeometryTypeId::MultiLineString,
+//             GeometryTypeId::MultiPolygon,
+//         ][self.rng.random_range(0..6)]
+//     }
+
+//     fn sample_is_empty(&mut self) -> bool {
+//         self.rng.random_bool(self.options.empty_rate)
+//     }
+
+//     fn sample_polygon_has_hole(&mut self) -> bool {
+//         self.rng.random_bool(self.options.polygon_hole_rate)
+//     }
+
+//     fn sample_polygon_hole_scale_factor(&mut self) -> f64 {
+//         // Not currently an option but could be
+//         self.rng.random_range(0.1..0.5)
+//     }
+
+//     fn sample_radians(&mut self) -> f64 {
+//         self.rng.random_range(0.0..(2.0 * PI))
+//     }
+
+//     fn sample_position(&mut self) -> (f64, f64) {
+//         let x = self
+//             .rng
+//             .random_range(self.options.bounds.min().x..=self.options.bounds.max().x);
+//         let y = self
+//             .rng
+//             .random_range(self.options.bounds.min().y..=self.options.bounds.max().y);
+//         (x, y)
+//     }
+
+//     fn sample_circle(&mut self) -> (f64, f64, f64) {
+//         let size = self.sample_size();
+//         let width = self.options.bounds.width();
+//         let height = self.options.bounds.height();
+//         let half_size = size / 2.0;
+
+//         let xmid = match size >= width {
+//             true => self.options.bounds.min().x() + width / 2.0,
+//             false => {
+//                 self.rng.random_range(
+//                     (self.options.bounds.min().x() + half_size)
+//                         ..(self.options.bounds.max().x() - half_size),
+//                 )
+//             }
+//         };
+
+//         let ymid = match size >= height {
+//             true => self.options.bounds.min().y() + height / 2.0,
+//             false => {
+//                 self.rng.random_range(
+//                     (self.options.bounds.min().y() + half_size)
+//                         ..(self.options.bounds.max().y() - half_size),
+//                 )
+//             }
+//         };
+
+//         (xmid, ymid, half_size)
+//     }
+
+//     fn sample_size(&mut self) -> f64 {
+//         self.rng
+//             .random_range(self.options.size_range.0..=self.options.size_range.1)
+//     }
+
+//     fn sample_num_vertices(&mut self) -> usize {
+//         self.rng.random_range(
+//             self.options.vertices_per_linestring_range.0
+//                 ..=self.options.vertices_per_linestring_range.1,
+//         )
+//     }
+
+//     fn sample_num_parts(&mut self) -> usize {
+//         self.rng
+//             .random_range(self.options.num_parts_range.0..=self.options.num_parts_range.1)
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
