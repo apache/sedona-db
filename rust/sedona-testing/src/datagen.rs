@@ -27,7 +27,7 @@ use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
 use arrow_array::{BinaryArray, BinaryViewArray};
 use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, exec_datafusion_err};
 use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
@@ -560,9 +560,9 @@ fn generate_random_point<R: rand::Rng>(
     } else {
         // Generate random points within the specified bounds
         let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid x bounds for random point: {e}"))?;
         let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid y bounds for random point: {e}"))?;
         let x = rng.sample(x_dist);
         let y = rng.sample(y_dist);
         Ok(Point::new(x, y))
@@ -581,7 +581,7 @@ fn generate_random_linestring<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid vertex count range for linestring: {e}"))?;
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
         let coords =
@@ -602,7 +602,7 @@ fn generate_random_polygon<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid vertex count range for polygon: {e}"))?;
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
         let coords =
@@ -681,7 +681,7 @@ fn generate_random_children<R: Rng, T, F: Fn(&mut R, &RandomGeometryOptions) -> 
 ) -> Result<Vec<T>> {
     let num_parts_dist =
         Uniform::new_inclusive(options.num_parts_range.0, options.num_parts_range.1)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid part count range: {e}"))?;
     let num_parts = rng.sample(num_parts_dist);
 
     // Constrain this feature to the size range indicated in the option
@@ -733,9 +733,9 @@ fn generate_random_circle<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> Result<(f64, f64, f64)> {
-    // Generate random diamond polygons (rotated squares)
+    // Generate random circular polygons
     let size_dist = Uniform::new(options.size_range.0, options.size_range.1)
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid size range for random region: {e}"))?;
     let size = rng.sample(size_dist);
     let half_size = size / 2.0;
     let height = options.bounds.height();
@@ -747,7 +747,7 @@ fn generate_random_circle<R: rand::Rng>(
             options.bounds.min().x + half_size,
             options.bounds.max().x - half_size,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid x bounds for random circle center: {e}"))?;
 
         rng.sample(center_x_dist)
     } else {
@@ -759,7 +759,7 @@ fn generate_random_circle<R: rand::Rng>(
             options.bounds.min().y + half_size,
             options.bounds.max().y - half_size,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid y bounds for random circle center: {e}"))?;
 
         rng.sample(center_y_dist)
     } else {
@@ -810,7 +810,7 @@ fn generate_circular_vertices<R: rand::Rng>(
 
     // Randomize starting angle (0 to 2 * PI)
     let start_angle_dist =
-        Uniform::new(0.0, 2.0 * PI).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        Uniform::new(0.0, 2.0 * PI).map_err(|e| exec_datafusion_err!("Invalid angle range: {e}"))?;
     let mut angle: f64 = rng.sample(start_angle_dist);
 
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
