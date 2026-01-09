@@ -212,6 +212,13 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_transmute__impl(SEXP self__, SEXP c_arg__ctx,
+                                             SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_transmute__ffi(self__, c_arg__ctx,
+                                                    c_arg__exprs_sexp);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExpr_alias__impl(SEXP self__, SEXP c_arg__name) {
   SEXP res = savvy_SedonaDBExpr_alias__ffi(self__, c_arg__name);
   return handle_result(res);
@@ -258,6 +265,15 @@ SEXP savvy_SedonaDBExprFactory_column__impl(SEXP self__, SEXP c_arg__name,
                                             SEXP c_arg__qualifier) {
   SEXP res = savvy_SedonaDBExprFactory_column__ffi(self__, c_arg__name,
                                                    c_arg__qualifier);
+  return handle_result(res);
+}
+
+SEXP savvy_SedonaDBExprFactory_evaluate_scalar__impl(SEXP self__,
+                                                     SEXP c_arg__exprs_sexp,
+                                                     SEXP c_arg__stream_in,
+                                                     SEXP c_arg__stream_out) {
+  SEXP res = savvy_SedonaDBExprFactory_evaluate_scalar__ffi(
+      self__, c_arg__exprs_sexp, c_arg__stream_in, c_arg__stream_out);
   return handle_result(res);
 }
 
@@ -330,6 +346,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_InternalDataFrame_transmute__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_transmute__impl, 3},
     {"savvy_SedonaDBExpr_alias__impl", (DL_FUNC)&savvy_SedonaDBExpr_alias__impl,
      2},
     {"savvy_SedonaDBExpr_cast__impl", (DL_FUNC)&savvy_SedonaDBExpr_cast__impl,
@@ -346,6 +364,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExprFactory_binary__impl, 4},
     {"savvy_SedonaDBExprFactory_column__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_column__impl, 3},
+    {"savvy_SedonaDBExprFactory_evaluate_scalar__impl",
+     (DL_FUNC)&savvy_SedonaDBExprFactory_evaluate_scalar__impl, 4},
     {"savvy_SedonaDBExprFactory_literal__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_literal__impl, 2},
     {"savvy_SedonaDBExprFactory_new__impl",
