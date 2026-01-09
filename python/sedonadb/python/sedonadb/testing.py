@@ -84,11 +84,6 @@ def random_geometry(
             f"Expected bounds as [xmin, ymin, xmax, ymax] but got {bounds}"
         )
 
-    width = bounds[2] - bounds[0]
-    height = bounds[3] - bounds[1]
-    if size_min > width or size_min > height:
-        raise ValueError("size > height / 2 or width / 2 of bounds")
-
     args = {
         "bounds": bounds,
         "empty_rate": max(min(empty_rate, 1.0), 0.0),
