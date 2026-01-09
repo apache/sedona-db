@@ -736,23 +736,37 @@ fn generate_random_circle<R: rand::Rng>(
     // Generate random diamond polygons (rotated squares)
     let size_dist = Uniform::new(options.size_range.0, options.size_range.1)
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let half_size = rng.sample(size_dist) / 2.0;
+    let size = rng.sample(size_dist);
+    let half_size = size / 2.0;
+    let height = options.bounds.height();
+    let width = options.bounds.width();
 
     // Ensure diamond fits within bounds by constraining center position
-    let center_x_dist = Uniform::new(
-        options.bounds.min().x + half_size,
-        options.bounds.max().x - half_size,
-    )
-    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let center_y_dist = Uniform::new(
-        options.bounds.min().y + half_size,
-        options.bounds.max().y - half_size,
-    )
-    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let center_x = rng.sample(center_x_dist);
-    let center_y = rng.sample(center_y_dist);
+    let center_x = if width >= size {
+        let center_x_dist = Uniform::new(
+            options.bounds.min().x + half_size,
+            options.bounds.max().x - half_size,
+        )
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-    Ok((center_x, center_y, half_size))
+        rng.sample(center_x_dist)
+    } else {
+        options.bounds.min().x + width / 2.0
+    };
+
+    let center_y = if height >= size {
+        let center_y_dist = Uniform::new(
+            options.bounds.min().y + half_size,
+            options.bounds.max().y - half_size,
+        )
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        rng.sample(center_y_dist)
+    } else {
+        options.bounds.min().y + height / 2.0
+    };
+
+    Ok((center_x, center_y, half_size.min(height / 2.0).min(width / 2.0)))
 }
 
 fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> Vec<Rect> {
