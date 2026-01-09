@@ -248,7 +248,7 @@ fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
         return None;
     }
     let srid_str = &maybe_srid[5..];
-    let srid: u16 = match srid_str.parse() {
+    let srid: u32 = match srid_str.parse() {
         Ok(srid) => srid,
         Err(_) => return None,
     };
