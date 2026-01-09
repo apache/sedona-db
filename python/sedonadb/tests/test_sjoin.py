@@ -105,7 +105,7 @@ def test_spatial_join_geography(join_type, on):
                 "num_parts": [2, 10],
                 "num_vertices": [2, 10],
                 "bounds": west_most_bound,
-                "size_range": [0.1, 5],
+                "size": [0.1, 5],
                 "seed": 958,
             }
         )
@@ -119,7 +119,7 @@ def test_spatial_join_geography(join_type, on):
                 "num_parts": [2, 10],
                 "num_vertices": [2, 10],
                 "bounds": east_most_bound,
-                "size_range": [0.1, 5],
+                "size": [0.1, 5],
                 "seed": 44,
             }
         )
@@ -150,7 +150,7 @@ def test_query_window_in_subquery():
         options = json.dumps(
             {
                 "geom_type": "Point",
-                "seed": 42,
+                "seed": 100,
             }
         )
         df_point = eng_sedonadb.execute_and_collect(
@@ -162,8 +162,8 @@ def test_query_window_in_subquery():
                 "hole_rate": 0.5,
                 "num_parts": [2, 10],
                 "num_vertices": [2, 10],
-                "size_range": [50, 60],
-                "seed": 43,
+                "size": [50, 60],
+                "seed": 999,
             }
         )
         df_polygon = eng_sedonadb.execute_and_collect(
