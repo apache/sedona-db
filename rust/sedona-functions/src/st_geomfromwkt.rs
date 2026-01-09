@@ -380,29 +380,16 @@ mod tests {
             &create_scalar_item_crs(Some("POINT (3 4)"), None, &WKB_GEOMETRY),
         );
 
-        let array_in: ArrayRef = match data_type {
-            DataType::Utf8 => arrow_array::create_array!(
-                Utf8,
-                [
-                    Some("SRID=4326;POINT (1 2)"),
-                    Some("SRID=3857;POINT (1 2)"),
-                    None,
-                    Some("POINT (3 4)"),
-                    Some("SRID=0;POINT (5 6)")
-                ]
-            ) as ArrayRef,
-            DataType::Utf8View => arrow_array::create_array!(
-                Utf8View,
-                [
-                    Some("SRID=4326;POINT (1 2)"),
-                    Some("SRID=3857;POINT (1 2)"),
-                    None,
-                    Some("POINT (3 4)"),
-                    Some("SRID=0;POINT (5 6)")
-                ]
-            ) as ArrayRef,
-            _ => unreachable!("unexpected data type for EWKT test"),
-        };
+        let array_in: ArrayRef = arrow_array::create_array!(
+            Utf8,
+            [
+                Some("SRID=4326;POINT (1 2)"),
+                Some("SRID=3857;POINT (1 2)"),
+                None,
+                Some("POINT (3 4)"),
+                Some("SRID=0;POINT (5 6)")
+            ]
+        );
         let expected = create_array_item_crs(
             &[
                 Some("POINT (1 2)"),
