@@ -157,6 +157,9 @@ impl RandomGeometryProvider {
             }
         }
 
+        // Check options early to provide an error at a more relevant place
+        builder.validate()?;
+
         Ok(RandomGeometryProvider {
             builder,
             num_partitions,

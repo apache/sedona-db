@@ -58,25 +58,17 @@ def random_geometry(
     if isinstance(num_vertices, tuple):
         num_vertices_min, num_vertices_max = num_vertices
     else:
-        num_vertices_min = num_vertices_max = num_vertices
+        num_vertices_min = num_vertices_max = num_vertices, num_vertices
 
     if isinstance(num_parts, tuple):
         num_parts_min, num_parts_max = num_parts
     else:
-        num_parts_min = num_parts_max = num_parts
+        num_parts_min = num_parts_max = num_parts, num_parts
 
     if isinstance(size, tuple):
         size_min, size_max = size
     else:
-        size_min = size
-        size_max = size + size / 1e3
-
-    if num_vertices_min > num_vertices_max:
-        raise ValueError("num_vertices_min > num_vertices_max")
-    if num_parts_min > num_parts_max:
-        raise ValueError("num_parts_min > num_parts_max")
-    if size_min > size_max:
-        raise ValueError("size_min > size_max")
+        size_min, size_max = size, size
 
     bounds = [float(b) for b in bounds]
     if len(bounds) != 4:
@@ -86,11 +78,11 @@ def random_geometry(
 
     args = {
         "bounds": bounds,
-        "empty_rate": max(min(empty_rate, 1.0), 0.0),
+        "empty_rate": empty_rate,
         "geom_type": geometry_type,
-        "null_rate": max(min(null_rate, 1.0), 0.0),
+        "null_rate": null_rate,
         "num_parts_range": [num_parts_min, num_parts_max],
-        "polygon_hole_rate": max(min(hole_rate, 1.0), 0.0),
+        "polygon_hole_rate": hole_rate,
         "seed": int(seed) if seed is not None else round(time.time() * 1000),
         "size_range": [size_min, size_max],
         "target_rows": int(n),

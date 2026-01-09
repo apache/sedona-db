@@ -27,7 +27,7 @@ use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
 use arrow_array::{BinaryArray, BinaryViewArray};
 use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
-use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
+use datafusion_common::{exec_datafusion_err, plan_err, DataFusionError, Result};
 use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
@@ -347,6 +347,32 @@ impl RandomPartitionedDataBuilder {
         Ok((schema, result))
     }
 
+    /// Validate options
+    ///
+    /// This is called internally before generating batches to prevent panics from
+    /// occurring while creating random output; however, it may also be called
+    /// at a higher level to generate an error at a more relevant time.
+    pub fn validate(&self) -> Result<()> {
+        self.options.validate()?;
+
+        if self.null_rate < 0.0 || self.null_rate > 1.0 {
+            return plan_err!(
+                "Expected null_rate between 0.0 and 1.0 but got {}",
+                self.null_rate
+            );
+        }
+
+        if self.rows_per_batch == 0 {
+            return plan_err!("Expected rows_per_batch > 0 but got 0");
+        }
+
+        if self.num_partitions == 0 {
+            return plan_err!("Expected num_partitions > 0 but got 0");
+        }
+
+        Ok(())
+    }
+
     /// Generate a [Rng] based on a seed
     ///
     /// Callers can also supply their own [Rng].
@@ -379,6 +405,9 @@ impl RandomPartitionedDataBuilder {
         partition_idx: usize,
         batch_idx: usize,
     ) -> Result<RecordBatch> {
+        // Check for valid ranges to avoid panic in generation
+        self.validate()?;
+
         // Generate IDs - make them unique across partitions and batches
         let id_start =
             (partition_idx * self.batches_per_partition + batch_idx) * self.rows_per_batch;
@@ -487,6 +516,52 @@ impl RandomGeometryOptions {
             polygon_hole_rate: 0.0,
             num_parts_range: (1, 3),
         }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.bounds.width() <= 0.0 || self.bounds.height() <= 0.0 {
+            return plan_err!("Expected valid bounds but got {:?}", self.bounds);
+        }
+
+        if self.bounds.width() <= 0.0 || self.bounds.height() <= 0.0 {
+            return plan_err!("Expected valid bounds but got {:?}", self.bounds);
+        }
+
+        if self.size_range.0 <= 0.0 || self.size_range.0 > self.size_range.1 {
+            return plan_err!("Expected valid size_range but got {:?}", self.size_range);
+        }
+
+        if self.vertices_per_linestring_range.0 == 0
+            || self.vertices_per_linestring_range.0 > self.vertices_per_linestring_range.1
+        {
+            return plan_err!(
+                "Expected valid vertices_per_linestring_range but got {:?}",
+                self.vertices_per_linestring_range
+            );
+        }
+
+        if !(0.0..=1.0).contains(&self.empty_rate) {
+            return plan_err!(
+                "Expected empty_rate between 0.0 and 1.0 but got {}",
+                self.empty_rate
+            );
+        }
+
+        if !(0.0..=1.0).contains(&self.polygon_hole_rate) {
+            return plan_err!(
+                "Expected polygon_hole_rate between 0.0 and 1.0 but got {}",
+                self.polygon_hole_rate
+            );
+        }
+
+        if self.num_parts_range.0 == 0 || self.num_parts_range.0 > self.num_parts_range.1 {
+            return plan_err!(
+                "Expected valid num_parts_range but got {:?}",
+                self.num_parts_range
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -743,7 +818,7 @@ fn generate_random_circle<R: rand::Rng>(
     options: &RandomGeometryOptions,
 ) -> Result<(f64, f64, f64)> {
     // Generate random circular polygons
-    let size_dist = Uniform::new(options.size_range.0, options.size_range.1)
+    let size_dist = Uniform::new_inclusive(options.size_range.0, options.size_range.1)
         .map_err(|e| exec_datafusion_err!("Invalid size range for random region: {e}"))?;
     let size = rng.sample(size_dist);
     let half_size = size / 2.0;
@@ -1291,5 +1366,184 @@ mod tests {
             assert!(bounds.x().is_empty());
             assert!(bounds.y().is_empty());
         }
+    }
+
+    #[test]
+    fn test_random_partitioned_data_builder_validation() {
+        // Test invalid null_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .null_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected null_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid null_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .null_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected null_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid rows_per_batch (0)
+        let err = RandomPartitionedDataBuilder::new()
+            .rows_per_batch(0)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected rows_per_batch > 0 but got 0"
+        );
+
+        // Test invalid num_partitions (0)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_partitions(0)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected num_partitions > 0 but got 0"
+        );
+
+        // Test invalid empty_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .empty_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected empty_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid empty_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .empty_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected empty_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid polygon_hole_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .polygon_hole_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected polygon_hole_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid polygon_hole_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .polygon_hole_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected polygon_hole_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid size_range (min <= 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((0.0, 10.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (0.0, 10.0)"
+        );
+
+        // Test invalid size_range (max <= 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((5.0, -1.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (5.0, -1.0)"
+        );
+
+        // Test invalid size_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((10.0, 5.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (10.0, 5.0)"
+        );
+
+        // Test invalid vertices_per_linestring_range (min == 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .vertices_per_linestring_range((0, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid vertices_per_linestring_range but got (0, 5)"
+        );
+
+        // Test invalid vertices_per_linestring_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .vertices_per_linestring_range((10, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid vertices_per_linestring_range but got (10, 5)"
+        );
+
+        // Test invalid num_parts_range (min == 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_parts_range((0, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid num_parts_range but got (0, 5)"
+        );
+
+        // Test invalid num_parts_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_parts_range((10, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid num_parts_range but got (10, 5)"
+        );
+
+        // Test invalid bounds (zero width)
+        let err = RandomPartitionedDataBuilder::new()
+            .bounds(Rect::new(
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 10.0, y: 20.0 },
+            ))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid bounds but got RECT(10.0 10.0,10.0 20.0)"
+        );
+
+        // Test invalid bounds (zero height)
+        let err = RandomPartitionedDataBuilder::new()
+            .bounds(Rect::new(
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 20.0, y: 10.0 },
+            ))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid bounds but got RECT(10.0 10.0,20.0 10.0)"
+        );
     }
 }
