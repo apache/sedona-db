@@ -305,7 +305,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_impl());
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn test_empty_geometry() {
-        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_impl());
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
@@ -378,7 +378,7 @@ mod tests {
 
     #[rstest]
     fn udf_with_buffer_params(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_style_impl());
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_style_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
@@ -404,7 +404,7 @@ mod tests {
 
     #[rstest]
     fn udf_with_quad_segs(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_buffer", st_buffer_style_impl());
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_style_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![

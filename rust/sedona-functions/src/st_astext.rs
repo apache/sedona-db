@@ -23,7 +23,10 @@ use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_AsText() scalar UDF implementation
@@ -32,7 +35,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_astext_udf() -> SedonaScalarUDF {
     let udf = SedonaScalarUDF::new(
         "st_astext",
-        vec![Arc::new(STAsText {})],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STAsText {})]),
         Volatility::Immutable,
         Some(st_astext_doc()),
     );
@@ -105,7 +108,8 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal},
@@ -123,7 +127,7 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
         let udf = st_astext_udf();

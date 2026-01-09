@@ -45,8 +45,8 @@ use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
 use sedona_datasource::provider::external_listing_table;
 use sedona_datasource::spec::ExternalFormatSpec;
-use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
-use sedona_expr::{function_set::FunctionSet, scalar_udf::ScalarKernelRef};
+use sedona_expr::function_set::FunctionSet;
+use sedona_expr::{aggregate_udf::SedonaAccumulatorRef, scalar_udf::IntoScalarKernelRefs};
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
@@ -173,9 +173,7 @@ impl SedonaContext {
         let sd_order_kernel = sd_order_lnglat::OrderLngLat::new(
             sedona_s2geography::s2geography::s2_cell_id_from_lnglat,
         );
-        self.register_scalar_kernels(
-            [("sd_order", Arc::new(sd_order_kernel) as ScalarKernelRef)].into_iter(),
-        )?;
+        self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
 
         Ok(())
     }
@@ -196,10 +194,10 @@ impl SedonaContext {
     /// Register a collection of kernels with this context
     pub fn register_scalar_kernels<'a>(
         &mut self,
-        kernels: impl Iterator<Item = (&'a str, ScalarKernelRef)>,
+        kernels: impl Iterator<Item = (&'a str, impl IntoScalarKernelRefs)>,
     ) -> Result<()> {
         for (name, kernel) in kernels {
-            let udf = self.functions.add_scalar_udf_kernel(name, kernel)?;
+            let udf = self.functions.add_scalar_udf_impl(name, kernel)?;
             self.ctx.register_udf(udf.clone().into());
         }
 

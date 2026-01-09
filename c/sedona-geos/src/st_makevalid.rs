@@ -96,7 +96,7 @@ mod tests {
 
     #[rstest]
     fn st_make_valid_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_makevalid", st_make_valid_impl());
+        let udf = SedonaScalarUDF::from_impl("st_makevalid", st_make_valid_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(WKB_GEOMETRY);
 
@@ -133,7 +133,7 @@ mod tests {
 
     #[rstest]
     fn st_make_valid_edge_cases(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_makevalid", st_make_valid_impl());
+        let udf = SedonaScalarUDF::from_impl("st_makevalid", st_make_valid_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
 
         // Test with very close points (floating point precision issues)

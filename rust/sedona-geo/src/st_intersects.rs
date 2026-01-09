@@ -20,15 +20,18 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::Intersects;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Intersects() implementation using [Intersects]
-pub fn st_intersects_impl() -> ScalarKernelRef {
-    Arc::new(STIntersects {})
+pub fn st_intersects_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STIntersects {})
 }
 
 #[derive(Debug)]
@@ -86,7 +89,7 @@ mod tests {
     #[test]
     fn scalar_scalar() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point = create_scalar(Some("POINT (0.25 0.25)"), &WKB_GEOMETRY);
@@ -147,7 +150,7 @@ mod tests {
     #[test]
     fn scalar_array() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point_array = create_array(
@@ -177,7 +180,7 @@ mod tests {
     #[test]
     fn array_array() {
         let mut udf = st_intersects_udf();
-        udf.add_kernel(st_intersects_impl());
+        udf.add_kernels(st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
 
         let point_array = create_array(

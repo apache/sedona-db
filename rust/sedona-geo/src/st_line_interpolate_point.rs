@@ -24,7 +24,10 @@ use datafusion_common::{
 use datafusion_expr::ColumnarValue;
 use geo::{algorithm::line_measures::InterpolatableLine, Euclidean};
 use geo_traits::GeometryTrait;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::write_wkb_point;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -34,8 +37,8 @@ use sedona_schema::{
 use crate::to_geo::GeoTypesExecutor;
 
 /// ST_LineInterpolatePoint() implementation using [InterpolatableLine]
-pub fn st_line_interpolate_point_impl() -> ScalarKernelRef {
-    Arc::new(STLineInterpolatePoint {})
+pub fn st_line_interpolate_point_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STLineInterpolatePoint {})
 }
 
 #[derive(Debug)]
@@ -104,8 +107,9 @@ fn invoke_scalar(geom: &geo_types::Geometry<f64>, ratio: f64) -> Result<(f64, f6
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_functions::register::stubs::st_area_udf;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::ScalarUdfTester};
 
     use super::*;
@@ -113,7 +117,7 @@ mod tests {
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let mut udf = st_area_udf();
-        udf.add_kernel(st_line_interpolate_point_impl());
+        udf.add_kernels(st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type, SedonaType::Arrow(DataType::Float64)],
@@ -127,5 +131,21 @@ mod tests {
                 .unwrap(),
             Some("POINT (0.5 0)"),
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf =
+            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 1 0)", 0.5)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (0.5 0)");
     }
 }

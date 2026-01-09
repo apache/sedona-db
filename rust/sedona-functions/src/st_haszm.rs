@@ -24,14 +24,17 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::Dimensions;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::wkb_header::WkbHeader;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 pub fn st_hasz_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_hasz",
-        vec![Arc::new(STHasZm { dim: "z" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "z" })]),
         Volatility::Immutable,
         Some(st_geometry_type_doc("z")),
     )
@@ -40,7 +43,7 @@ pub fn st_hasz_udf() -> SedonaScalarUDF {
 pub fn st_hasm_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_hasm",
-        vec![Arc::new(STHasZm { dim: "m" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "m" })]),
         Volatility::Immutable,
         Some(st_geometry_type_doc("m")),
     )
@@ -71,7 +74,7 @@ struct STHasZm {
 impl SedonaScalarKernel for STHasZm {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry()],
+            vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Arrow(DataType::Boolean),
         );
 
@@ -141,7 +144,10 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::{
         fixtures::MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB, testers::ScalarUdfTester,
     };
@@ -160,7 +166,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let z_tester = ScalarUdfTester::new(st_hasz_udf().into(), vec![sedona_type.clone()]);
         let m_tester = ScalarUdfTester::new(st_hasm_udf().into(), vec![sedona_type.clone()]);
 

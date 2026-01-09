@@ -107,7 +107,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_numinteriorrings", st_num_interior_rings_impl());
+        let udf = SedonaScalarUDF::from_impl("st_numinteriorrings", st_num_interior_rings_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Int32);
 

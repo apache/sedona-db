@@ -28,7 +28,10 @@ use geo_traits::{
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
@@ -38,7 +41,7 @@ use wkb::reader::Wkb;
 pub fn st_x_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_x",
-        vec![Arc::new(STXyzm { dim: "x" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "x" })]),
         Volatility::Immutable,
         Some(st_xy_doc("x")),
     )
@@ -50,7 +53,7 @@ pub fn st_x_udf() -> SedonaScalarUDF {
 pub fn st_y_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_y",
-        vec![Arc::new(STXyzm { dim: "y" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "y" })]),
         Volatility::Immutable,
         Some(st_xy_doc("y")),
     )
@@ -62,7 +65,7 @@ pub fn st_y_udf() -> SedonaScalarUDF {
 pub fn st_z_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_z",
-        vec![Arc::new(STXyzm { dim: "z" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "z" })]),
         Volatility::Immutable,
         Some(st_xy_doc("z")),
     )
@@ -74,7 +77,7 @@ pub fn st_z_udf() -> SedonaScalarUDF {
 pub fn st_m_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_m",
-        vec![Arc::new(STXyzm { dim: "m" })],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "m" })]),
         Volatility::Immutable,
         Some(st_xy_doc("m")),
     )
@@ -236,7 +239,8 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::{
         create::create_array, fixtures::MULTIPOINT_WITH_EMPTY_CHILD_WKB, testers::ScalarUdfTester,
@@ -263,7 +267,7 @@ mod tests {
 
     #[rstest]
     fn udf_invoke(
-        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)]
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
         let x_tester = ScalarUdfTester::new(st_x_udf().into(), vec![sedona_type.clone()]);
@@ -309,7 +313,7 @@ mod tests {
                 Some("MULTIPOINT M (1 2 3)"),
                 Some("MULTIPOINT ZM (1 2 3 4)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let expected_x: ArrayRef = create_array!(
             Float64,

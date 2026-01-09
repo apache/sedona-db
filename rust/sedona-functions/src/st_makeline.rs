@@ -25,6 +25,7 @@ use datafusion_expr::{
 };
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
 use sedona_common::sedona_internal_err;
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::write_wkb_linestring_header;
 use sedona_schema::datatypes::WKB_GEOGRAPHY;
@@ -42,14 +43,14 @@ use crate::executor::WkbExecutor;
 pub fn st_makeline_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_makeline",
-        vec![
+        ItemCrsKernel::wrap_impl(vec![
             Arc::new(STMakeLine {
                 out_type: WKB_GEOMETRY,
             }),
             Arc::new(STMakeLine {
                 out_type: WKB_GEOGRAPHY,
             }),
-        ],
+        ]),
         Volatility::Immutable,
         Some(doc()),
     )
@@ -211,7 +212,9 @@ mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::{
         testers::ScalarUdfTester,
         {compare::assert_array_equal, create::create_array},
@@ -324,6 +327,20 @@ mod tests {
         tester.assert_return_type(WKB_GEOGRAPHY);
 
         // Basic usage
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", "POINT (2 3)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 1, 2 3)");
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_makeline_udf().into(),
+            vec![sedona_type.clone(), sedona_type.clone()],
+        );
+        tester.assert_return_type(sedona_type);
+
         let result = tester
             .invoke_scalar_scalar("POINT (0 1)", "POINT (2 3)")
             .unwrap();

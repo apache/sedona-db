@@ -21,15 +21,18 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::algorithm::{line_measures::Euclidean, LengthMeasurableExt};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Length() implementation using [LengthMeasurableExt] with Euclidean metric
-pub fn st_length_impl() -> ScalarKernelRef {
-    Arc::new(STLength {})
+pub fn st_length_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STLength {})
 }
 
 #[derive(Debug)]
@@ -77,15 +80,18 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_functions::register::stubs::st_length_udf;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let mut udf = st_length_udf();
-        udf.add_kernel(st_length_impl());
+        udf.add_kernels(st_length_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(
