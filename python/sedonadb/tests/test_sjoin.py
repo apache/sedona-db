@@ -106,7 +106,7 @@ def test_spatial_join_geography(join_type, on):
                 "num_vertices": [2, 10],
                 "bounds": west_most_bound,
                 "size": [0.1, 5],
-                "seed": 958,
+                "seed": 542,
             }
         )
         df_point = eng_sedonadb.execute_and_collect(
