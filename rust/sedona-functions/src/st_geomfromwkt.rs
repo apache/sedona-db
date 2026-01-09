@@ -174,10 +174,7 @@ pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
 }
 
 #[derive(Debug)]
-struct STGeoFromEWKT {
-    // TODO
-    // engine: Option<Arc<dyn CrsEngine + Send + Sync>>,
-}
+struct STGeoFromEWKT {}
 
 impl SedonaScalarKernel for STGeoFromEWKT {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -262,7 +259,7 @@ fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
         _ => format!("EPSG:{srid}"),
     };
 
-    // TODO: validate CRS
+    // TODO: the CRS should be validated
     // validate_crs(&auth_code, maybe_engine)?;
 
     Some(auth_code)
