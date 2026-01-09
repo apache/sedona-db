@@ -30,36 +30,31 @@ if TYPE_CHECKING:
 
 
 def random_geometry(
-    target_rows: int = 1024,
-    geom_type: Literal[
-        "Point",
-        "LineString",
-        "Polygon",
-        "MultiPoint",
-        "MultiLineString",
-        "MultiPolygon",
-        "GeometryCollection",
-    ] = "Point",
+    target_rows: Optional[int] = None,
+    geom_type: Optional[
+        Literal[
+            "Point",
+            "LineString",
+            "Polygon",
+            "MultiPoint",
+            "MultiLineString",
+            "MultiPolygon",
+            "GeometryCollection",
+        ]
+    ] = None,
     *,
-    num_vertices: Union[int, Tuple[int, int]] = 4,
-    num_parts: Union[int, Tuple[int, int]] = (1, 3),
-    size: Union[float, Tuple[float, float]] = (5.0, 20.0),
-    bounds: Iterable[float] = (-170, -80, 170, 80),
-    hole_rate: float = 0.0,
-    empty_rate: float = 0.0,
-    null_rate: float = 0.0,
+    num_vertices: Union[int, Tuple[int, int], None] = None,
+    num_parts: Union[int, Tuple[int, int], None] = None,
+    size: Union[float, Tuple[float, float], None] = None,
+    bounds: Optional[Iterable[float]] = None,
+    hole_rate: Optional[float] = None,
+    empty_rate: Optional[float] = None,
+    null_rate: Optional[float] = None,
     seed: Optional[int] = None,
 ) -> "sedonadb.dataframe.DataFrame":
     import json
-    import time
 
     import sedonadb
-
-    bounds = [float(b) for b in bounds]
-    if len(bounds) != 4:
-        raise ValueError(
-            f"Expected bounds as [xmin, ymin, xmax, ymax] but got {bounds}"
-        )
 
     args = {
         "bounds": bounds,
@@ -67,17 +62,17 @@ def random_geometry(
         "geom_type": geom_type,
         "null_rate": null_rate,
         "num_parts": num_parts,
-        "polygon_hole_rate": hole_rate,
-        "seed": int(seed) if seed is not None else round(time.time() * 1000),
+        "hole_rate": hole_rate,
+        "seed": seed,
         "size": size,
-        "target_rows": int(target_rows),
+        "target_rows": target_rows,
         "num_vertices": num_vertices,
     }
 
+    args = {k: v for k, v in args.items() if v is not None}
+
     sd = sedonadb.connect()
-    return sd.sql(
-        f"SELECT id, geometry FROM sd_random_geometry('{json.dumps(args)}')"
-    ).limit(int(target_rows))
+    return sd.sql(f"SELECT id, geometry FROM sd_random_geometry('{json.dumps(args)}')")
 
 
 def skip_if_not_exists(path: Path):

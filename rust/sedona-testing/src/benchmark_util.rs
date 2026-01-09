@@ -19,7 +19,7 @@ use std::{fmt::Debug, sync::Arc, vec};
 use arrow_array::{ArrayRef, Float64Array, Int64Array};
 use arrow_schema::DataType;
 
-use datafusion_common::{Result, ScalarValue, exec_datafusion_err};
+use datafusion_common::{exec_datafusion_err, Result, ScalarValue};
 use datafusion_expr::{AggregateUDF, ScalarUDF};
 use geo_types::Rect;
 use rand::{distr::Uniform, rngs::StdRng, Rng, SeedableRng};
@@ -402,8 +402,8 @@ impl BenchmarkArgSpec {
             ),
             BenchmarkArgSpec::Int64(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist =
-                    Uniform::new(lo, hi).map_err(|e| exec_datafusion_err!("Invalid Int64 range [{lo}, {hi}): {e}"))?;
+                let dist = Uniform::new(lo, hi)
+                    .map_err(|e| exec_datafusion_err!("Invalid Int64 range [{lo}, {hi}): {e}"))?;
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let int64_array: Int64Array =
@@ -414,8 +414,8 @@ impl BenchmarkArgSpec {
             }
             BenchmarkArgSpec::Float64(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist =
-                    Uniform::new(lo, hi).map_err(|e| exec_datafusion_err!("Invalid Float64 range [{lo}, {hi}): {e}"))?;
+                let dist = Uniform::new(lo, hi)
+                    .map_err(|e| exec_datafusion_err!("Invalid Float64 range [{lo}, {hi}): {e}"))?;
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let float64_array: Float64Array =
@@ -426,8 +426,8 @@ impl BenchmarkArgSpec {
             }
             BenchmarkArgSpec::Int32(lo, hi) => {
                 let mut rng = self.rng(i);
-                let dist =
-                    Uniform::new(lo, hi).map_err(|e| exec_datafusion_err!("Invalid Int32 range [{lo}, {hi}): {e}"))?;
+                let dist = Uniform::new(lo, hi)
+                    .map_err(|e| exec_datafusion_err!("Invalid Int32 range [{lo}, {hi}): {e}"))?;
                 (0..num_batches)
                     .map(|_| -> Result<ArrayRef> {
                         let int32_array: arrow_array::Int32Array =
