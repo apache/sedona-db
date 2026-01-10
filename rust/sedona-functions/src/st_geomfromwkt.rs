@@ -16,13 +16,15 @@
 // under the License.
 use std::{str::FromStr, sync::Arc, vec};
 
-use arrow_array::builder::BinaryBuilder;
+use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -147,8 +149,132 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
     .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
 }
 
+/// ST_GeomFromEWKT() UDF implementation
+///
+/// An implementation of EWKT reading using GeoRust's wkt crate.
+pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
+    let doc = Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Construct a Geometry from EWKT",
+        "ST_GeomFromEWKT (Ewkt: String)",
+    )
+    .with_argument(
+        "EWKT",
+        "string: Extended well-known text representation of the geometry",
+    )
+    .with_sql_example("SELECT ST_GeomFromEWKT('SRID=4326;POINT(40.7128 -74.0060)')")
+    .build();
+
+    SedonaScalarUDF::new(
+        "st_geomfromewkt",
+        vec![Arc::new(STGeoFromEWKT {})],
+        Volatility::Immutable,
+        Some(doc),
+    )
+}
+
+#[derive(Debug)]
+struct STGeoFromEWKT {}
+
+impl SedonaScalarKernel for STGeoFromEWKT {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![ArgMatcher::is_string()],
+            SedonaType::new_item_crs(&WKB_GEOMETRY)?,
+        );
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let arg_array = args[0]
+            .cast_to(&DataType::Utf8View, None)?
+            .to_array(executor.num_iterations())?;
+
+        let mut geom_builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+        let mut srid_builder = StringViewBuilder::with_capacity(executor.num_iterations());
+
+        for item in as_string_view_array(&arg_array)? {
+            if let Some(ewkt_bytes) = item {
+                match ewkt_bytes.split_once(";") {
+                    Some((maybe_srid, wkt_bytes)) => {
+                        let srid = parse_maybe_srid(maybe_srid);
+                        invoke_scalar_with_srid(
+                            wkt_bytes,
+                            srid,
+                            &mut geom_builder,
+                            &mut srid_builder,
+                        )?;
+                    }
+                    None => {
+                        invoke_scalar_with_srid(
+                            ewkt_bytes,
+                            None,
+                            &mut geom_builder,
+                            &mut srid_builder,
+                        )?;
+                    }
+                }
+                geom_builder.append_value(vec![]);
+            } else {
+                geom_builder.append_null();
+                srid_builder.append_null();
+            }
+        }
+
+        let new_geom_array = geom_builder.finish();
+        let item_result = executor.finish(Arc::new(new_geom_array))?;
+
+        let new_srid_array = srid_builder.finish();
+        let crs_value = if matches!(&item_result, ColumnarValue::Scalar(_)) {
+            ColumnarValue::Scalar(ScalarValue::try_from_array(&new_srid_array, 0)?)
+        } else {
+            ColumnarValue::Array(Arc::new(new_srid_array))
+        };
+
+        make_item_crs(&WKB_GEOMETRY, item_result, &crs_value, None)
+    }
+}
+
+fn parse_maybe_srid(maybe_srid: &str) -> Option<String> {
+    if !maybe_srid.starts_with("SRID=") {
+        return None;
+    }
+    let srid_str = &maybe_srid[5..];
+    let auth_code = match srid_str.parse::<u32>() {
+        Ok(0) => return None,
+        Ok(4326) => "OGC:CRS84".to_string(),
+        Ok(srid) => format!("EPSG:{srid}"),
+        Err(_) => return None,
+    };
+
+    // CRS could be validated here
+    // https://github.com/apache/sedona-db/issues/501
+
+    Some(auth_code)
+}
+
+fn invoke_scalar_with_srid(
+    wkt_bytes: &str,
+    srid: Option<String>,
+    geom_builder: &mut BinaryBuilder,
+    srid_builder: &mut StringViewBuilder,
+) -> Result<()> {
+    invoke_scalar(wkt_bytes, geom_builder)?;
+    srid_builder.append_option(srid);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use arrow_array::ArrayRef;
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::{Literal, ScalarUDF};
@@ -157,7 +283,7 @@ mod tests {
     use sedona_schema::datatypes::Edges;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
-        create::{create_array, create_scalar},
+        create::{create_array, create_array_item_crs, create_scalar, create_scalar_item_crs},
         testers::ScalarUdfTester,
     };
 
@@ -177,7 +303,7 @@ mod tests {
     #[rstest]
     fn udf(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
         let udf = st_geomfromwkt_udf();
-        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type)]);
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         // Scalar non-null
@@ -231,6 +357,51 @@ mod tests {
                 .unwrap(),
             Some("POINT (1 2)"),
         );
+    }
+
+    #[rstest]
+    fn ewkt(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
+        let udf = st_geomfromewkt_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
+        tester.assert_return_type(SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("SRID=4326;POINT (1 2)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (1 2)"), Some("OGC:CRS84"), &WKB_GEOMETRY),
+        );
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("SRID=3857;POINT (1 2)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (1 2)"), Some("EPSG:3857"), &WKB_GEOMETRY),
+        );
+
+        assert_scalar_equal(
+            &tester.invoke_scalar("POINT (3 4)").unwrap(),
+            &create_scalar_item_crs(Some("POINT (3 4)"), None, &WKB_GEOMETRY),
+        );
+
+        let array_in: ArrayRef = arrow_array::create_array!(
+            Utf8,
+            [
+                Some("SRID=4326;POINT (1 2)"),
+                Some("SRID=3857;POINT (1 2)"),
+                None,
+                Some("POINT (3 4)"),
+                Some("SRID=0;POINT (5 6)")
+            ]
+        );
+        let expected = create_array_item_crs(
+            &[
+                Some("POINT (1 2)"),
+                Some("POINT (1 2)"),
+                None,
+                Some("POINT (3 4)"),
+                Some("POINT (5 6)"),
+            ],
+            [Some("OGC:CRS84"), Some("EPSG:3857"), None, None, None],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&tester.invoke_array(array_in).unwrap(), &expected);
     }
 
     #[test]
