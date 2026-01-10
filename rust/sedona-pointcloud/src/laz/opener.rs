@@ -26,6 +26,9 @@ use datafusion_physical_expr::PhysicalExpr;
 use datafusion_pruning::PruningPredicate;
 use futures::StreamExt;
 
+use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_geometry::bounding_box::BoundingBox;
+
 use crate::laz::{
     options::LazTableOptions,
     reader::{LazFileReader, LazFileReaderFactory},
@@ -69,6 +72,19 @@ impl FileOpener for LazOpener {
 
             // file pruning
             if let Some(pruning_predicate) = &pruning_predicate {
+                // based on spatial filter
+                let spatial_filter = SpatialFilter::try_from_expr(pruning_predicate.orig_expr())?;
+                let bounds = metadata.header.bounds();
+                let bbox = BoundingBox::xyzm(
+                    (bounds.min.x, bounds.max.x),
+                    (bounds.min.y, bounds.max.y),
+                    Some((bounds.min.z, bounds.max.z).into()),
+                    None,
+                );
+                if !spatial_filter.filter_bbox("geometry").intersects(&bbox) {
+                    return Ok(futures::stream::empty().boxed());
+                }
+                // based on file statistics
                 if let Some(statistics) = file.statistics {
                     let prunable_statistics = PrunableStatistics::new(vec![statistics], schema);
                     if let Ok(filter) = pruning_predicate.prune(&prunable_statistics) {
