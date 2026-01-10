@@ -5390,6 +5390,8 @@ dependencies = [
  "las",
  "laz",
  "object_store",
+ "sedona-expr",
+ "sedona-geometry",
 ]
 
 [[package]]
