@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 
 def random_geometry(
-    target_rows: Optional[int] = None,
     geom_type: Optional[
         Literal[
             "Geometry",
@@ -43,6 +42,7 @@ def random_geometry(
             "GeometryCollection",
         ]
     ] = None,
+    target_rows: Optional[int] = None,
     *,
     num_vertices: Union[int, Tuple[int, int], None] = None,
     num_parts: Union[int, Tuple[int, int], None] = None,
@@ -60,13 +60,13 @@ def random_geometry(
 
     Parameters
     ----------
-    target_rows : int, default 1024
-        Target number of rows to generate. The actual number may be more than
-        this (use `limit()` to constrain this number exactly).
     geom_type : str, default "Point"
         The type of geometry to generate. One of "Geometry",
         "Point", "LineString",  "Polygon", "MultiPoint", "MultiLineString",
         "MultiPolygon", or "GeometryCollection".
+    target_rows : int, default 1024
+        Target number of rows to generate. The actual number may be more than
+        this (use `limit()` to constrain this number exactly).
     num_vertices : int or tuple of (int, int), default 4
         Number of vertices per geometry. If a tuple, specifies (min, max) range.
     num_parts : int or tuple of (int, int), default (1, 3)
