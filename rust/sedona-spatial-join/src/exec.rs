@@ -720,7 +720,7 @@ mod tests {
         });
 
         for (name, kernel) in scalar_kernels.into_iter() {
-            let udf = function_set.add_scalar_udf_kernel(name, kernel)?;
+            let udf = function_set.add_scalar_udf_impl(name, kernel)?;
             ctx.register_udf(udf.clone().into());
         }
 

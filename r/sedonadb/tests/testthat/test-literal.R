@@ -18,7 +18,7 @@
 test_that("basic literals can be converted to expressions", {
   expect_identical(
     as_sedonadb_literal(NULL)$debug_string(),
-    'Literal(NULL, None)'
+    "Literal(NULL, None)"
   )
 
   expect_identical(
@@ -28,12 +28,12 @@ test_that("basic literals can be converted to expressions", {
 
   expect_identical(
     as_sedonadb_literal(1L)$debug_string(),
-    'Literal(Int32(1), None)'
+    "Literal(Int32(1), None)"
   )
 
   expect_identical(
     as_sedonadb_literal(1.0)$debug_string(),
-    'Literal(Float64(1), None)'
+    "Literal(Float64(1), None)"
   )
 
   expect_identical(

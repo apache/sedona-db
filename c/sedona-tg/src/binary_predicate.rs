@@ -70,7 +70,7 @@ struct TgPredicate<Op> {
     _op: Op,
 }
 
-impl<Op: tg::BinaryPredicate> SedonaScalarKernel for TgPredicate<Op> {
+impl<Op: tg::BinaryPredicate + Send + Sync> SedonaScalarKernel for TgPredicate<Op> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn scalar_scalar() {
-        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
         tester.assert_return_type(DataType::Boolean);
 
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn scalar_array() {
-        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
         tester.assert_return_type(DataType::Boolean);
 
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn array_array() {
-        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects_impl());
+        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
         tester.assert_return_type(DataType::Boolean);
 

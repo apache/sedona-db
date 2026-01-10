@@ -21,7 +21,10 @@ use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geo_traits::{GeometryTrait, PointTrait, PolygonTrait};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
@@ -29,8 +32,8 @@ use wkb::reader::Wkb;
 use crate::to_geo::item_to_geometry;
 
 /// ST_AsGeoJSON() kernel implementation using WkbExecutor
-pub fn st_asgeojson_impl() -> ScalarKernelRef {
-    Arc::new(STAsGeoJSON {})
+pub fn st_asgeojson_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STAsGeoJSON {})
 }
 
 #[derive(Debug)]
@@ -108,17 +111,20 @@ fn geom_to_geojson(geom: &Wkb) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use datafusion_common::scalar::ScalarValue;
+    use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
-    #[test]
-    fn test_simple_geojson() {
+    #[rstest]
+    fn test_simple_geojson(
+        #[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType,
+    ) {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
-        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         // Test with a simple point
         let result = tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap();
@@ -132,7 +138,7 @@ mod tests {
     #[test]
     fn test_linestring() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -147,7 +153,7 @@ mod tests {
     #[test]
     fn test_polygon() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -162,7 +168,7 @@ mod tests {
     #[test]
     fn test_geometry_collection() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester
@@ -177,7 +183,7 @@ mod tests {
     #[test]
     fn test_empty_point() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester.invoke_wkb_scalar(Some("POINT EMPTY")).unwrap();
@@ -187,7 +193,7 @@ mod tests {
     #[test]
     fn test_empty_polygon() {
         let kernel = st_asgeojson_impl();
-        let udf = SedonaScalarUDF::from_kernel("st_asgeojson", kernel);
+        let udf = SedonaScalarUDF::from_impl("st_asgeojson", kernel);
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         let result = tester.invoke_wkb_scalar(Some("POLYGON EMPTY")).unwrap();

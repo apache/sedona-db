@@ -25,7 +25,10 @@ use datafusion_expr::{
 };
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     bounds::{geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z},
     interval::{Interval, IntervalTrait},
@@ -35,10 +38,10 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn st_xmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_xmin",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "x",
             is_max: false,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("x", false)),
     )
@@ -47,10 +50,10 @@ pub fn st_xmin_udf() -> SedonaScalarUDF {
 pub fn st_xmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_xmax",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "x",
             is_max: true,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("x", true)),
     )
@@ -59,10 +62,10 @@ pub fn st_xmax_udf() -> SedonaScalarUDF {
 pub fn st_ymin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_ymin",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "y",
             is_max: false,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("y", false)),
     )
@@ -71,10 +74,10 @@ pub fn st_ymin_udf() -> SedonaScalarUDF {
 pub fn st_ymax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_ymax",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "y",
             is_max: true,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("y", true)),
     )
@@ -83,10 +86,10 @@ pub fn st_ymax_udf() -> SedonaScalarUDF {
 pub fn st_zmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_zmin",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "z",
             is_max: false,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("z", false)),
     )
@@ -95,10 +98,10 @@ pub fn st_zmin_udf() -> SedonaScalarUDF {
 pub fn st_zmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_zmax",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "z",
             is_max: true,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("z", true)),
     )
@@ -107,10 +110,10 @@ pub fn st_zmax_udf() -> SedonaScalarUDF {
 pub fn st_mmin_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_mmin",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "m",
             is_max: false,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("m", false)),
     )
@@ -119,10 +122,10 @@ pub fn st_mmin_udf() -> SedonaScalarUDF {
 pub fn st_mmax_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_mmax",
-        vec![Arc::new(STXyzmMinMax {
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzmMinMax {
             dim: "m",
             is_max: true,
-        })],
+        })]),
         Volatility::Immutable,
         Some(st_xyzm_minmax_doc("m", true)),
     )
@@ -228,7 +231,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -270,7 +273,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let xmin_tester = ScalarUdfTester::new(st_xmin_udf().into(), vec![sedona_type.clone()]);
         let ymin_tester = ScalarUdfTester::new(st_ymin_udf().into(), vec![sedona_type.clone()]);
         let xmax_tester = ScalarUdfTester::new(st_xmax_udf().into(), vec![sedona_type.clone()]);

@@ -98,10 +98,8 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel(
-            "st_minimumclearanceline",
-            st_minimum_clearance_line_impl(),
-        );
+        let udf =
+            SedonaScalarUDF::from_impl("st_minimumclearanceline", st_minimum_clearance_line_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(WKB_GEOMETRY);
 

@@ -14,18 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+set(VCPKG_TARGET_ARCHITECTURE x64)
+set(VCPKG_CRT_LINKAGE dynamic)
+set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+set(VCPKG_OSX_ARCHITECTURES x86_64)
+set(VCPKG_BUILD_TYPE release)
+set(VCPKG_OSX_DEPLOYMENT_TARGET "12.0")
 
-test_that("adbc driver works", {
-  con <- sedonadb_adbc() |>
-    adbcdrivermanager::adbc_database_init() |>
-    adbcdrivermanager::adbc_connection_init()
-
-  df <- con |>
-    adbcdrivermanager::read_adbc("SELECT ST_Point(0, 1) as geometry") |>
-    as.data.frame()
-
-  expect_identical(
-    wk::as_wkt(df$geometry),
-    wk::wkt("POINT (0 1)")
-  )
-})
+set(VCPKG_LIBRARY_LINKAGE static)
+if(PORT MATCHES "geos")
+  set(VCPKG_LIBRARY_LINKAGE dynamic)
+endif()

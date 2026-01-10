@@ -317,7 +317,7 @@ mod test {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::deserialize_crs;
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::create::{create_array, create_array_item_crs, create_scalar_item_crs};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -384,10 +384,8 @@ mod test {
 
     #[test]
     fn udf_item_srid() {
-        let tester = ScalarUdfTester::new(
-            st_srid_udf().into(),
-            vec![SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()],
-        );
+        let tester =
+            ScalarUdfTester::new(st_srid_udf().into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
         tester.assert_return_type(DataType::UInt32);
 
         let result = tester

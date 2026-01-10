@@ -54,7 +54,9 @@ pub async fn geoparquet_listing_table(
     // check if the file extension matches the expected extension
     for path in &table_paths {
         let file_path = path.as_str();
-        if !file_path.ends_with(option_extension.clone().as_str()) && !path.is_collection() {
+        let path_without_query = file_path.split('?').next().unwrap_or(file_path);
+        if !path_without_query.ends_with(option_extension.clone().as_str()) && !path.is_collection()
+        {
             return exec_err!(
                     "File path '{file_path}' does not match the expected extension '{option_extension}'"
                 );
@@ -88,9 +90,8 @@ impl GeoParquetReadOptions<'_> {
     }
 
     /// Create GeoParquetReadOptions from table options HashMap
-    /// Validates that AWS options are spelled correctly to help catch user errors
+    /// Validates that AWS and Azure options are spelled correctly to help catch user errors
     pub fn from_table_options(options: HashMap<String, String>) -> Result<Self, String> {
-        // Validate AWS options to catch common misspellings
         for key in options.keys() {
             if key.starts_with("aws.") {
                 let common_aws_options = [
@@ -99,23 +100,19 @@ impl GeoParquetReadOptions<'_> {
                     "aws.region",
                     "aws.endpoint",
                     "aws.skip_signature",
-                    "aws.nosign", // Alternative name for skip_signature
+                    "aws.nosign",
                     "aws.bucket_name",
                     "aws.use_ssl",
                     "aws.force_path_style",
                 ];
 
                 if !common_aws_options.contains(&key.as_str()) {
-                    // Find potential matches for misspelled options
                     let close_matches: Vec<&str> = common_aws_options
                         .iter()
                         .filter(|&&option| {
-                            // Check for similar starting patterns or abbreviations
-                            let key_start = &key[4..]; // Remove "aws." prefix
-                            let option_start = &option[4..]; // Remove "aws." prefix
+                            let key_start = &key[4..];
+                            let option_start = &option[4..];
 
-                            // Check if the key is a prefix of the option (abbreviation)
-                            // or if they share a common prefix of at least 4 characters
                             option_start.starts_with(key_start)
                                 || key_start.starts_with(option_start)
                                 || (key_start.len() >= 4
@@ -136,6 +133,49 @@ impl GeoParquetReadOptions<'_> {
                             "Unknown AWS option '{}'. Valid options are: {}",
                             key,
                             common_aws_options.join(", ")
+                        ));
+                    }
+                }
+            } else if key.starts_with("azure.") {
+                let common_azure_options = [
+                    "azure.account_name",
+                    "azure.account_key",
+                    "azure.sas_token",
+                    "azure.container_name",
+                    "azure.use_emulator",
+                    "azure.client_id",
+                    "azure.client_secret",
+                    "azure.tenant_id",
+                    "azure.allow_http",
+                ];
+
+                if !common_azure_options.contains(&key.as_str()) {
+                    let close_matches: Vec<&str> = common_azure_options
+                        .iter()
+                        .filter(|&&option| {
+                            let key_start = &key[6..];
+                            let option_start = &option[6..];
+
+                            option_start.starts_with(key_start)
+                                || key_start.starts_with(option_start)
+                                || (key_start.len() >= 4
+                                    && option_start.len() >= 4
+                                    && key_start[..4] == option_start[..4])
+                        })
+                        .cloned()
+                        .collect();
+
+                    if !close_matches.is_empty() {
+                        return Err(format!(
+                            "Unknown Azure option '{}'. Did you mean: {}?",
+                            key,
+                            close_matches.join(", ")
+                        ));
+                    } else {
+                        return Err(format!(
+                            "Unknown Azure option '{}'. Valid options are: {}",
+                            key,
+                            common_azure_options.join(", ")
                         ));
                     }
                 }

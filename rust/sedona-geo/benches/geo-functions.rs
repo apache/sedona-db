@@ -21,7 +21,7 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 fn criterion_benchmark(c: &mut Criterion) {
     let mut f = FunctionSet::new();
     for (name, kernel) in sedona_geo::register::scalar_kernels() {
-        f.add_scalar_udf_kernel(name, kernel).unwrap();
+        f.add_scalar_udf_impl(name, kernel).unwrap();
     }
 
     benchmark::scalar(c, &f, "geo", "st_area", Polygon(10));

@@ -20,15 +20,18 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result};
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::line_measures::DistanceExt;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_DWithin() implementation using [DistanceExt]
-pub fn st_dwithin_impl() -> ScalarKernelRef {
-    Arc::new(STDWithin {})
+pub fn st_dwithin_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STDWithin {})
 }
 
 #[derive(Debug)]
@@ -85,7 +88,7 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
     use sedona_testing::{compare::assert_array_equal, create::create_array};
@@ -94,10 +97,10 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] left_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] right_sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_dwithin", st_dwithin_impl());
+        let udf = SedonaScalarUDF::from_impl("st_dwithin", st_dwithin_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
@@ -157,7 +160,7 @@ mod tests {
                 None,
                 Some("POINT EMPTY"),
             ],
-            &WKB_GEOMETRY,
+            &left_sedona_type,
         );
         let arg2 = create_array(
             &[
@@ -166,7 +169,7 @@ mod tests {
                 Some("POINT (0 0)"),
                 Some("POINT EMPTY"),
             ],
-            &WKB_GEOMETRY,
+            &right_sedona_type,
         );
         let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1)]);
         let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);

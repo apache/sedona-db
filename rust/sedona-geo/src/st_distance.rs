@@ -20,15 +20,18 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geo_generic_alg::line_measures::DistanceExt;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
 /// ST_Distance() implementation using [DistanceExt]
-pub fn st_distance_impl() -> ScalarKernelRef {
-    Arc::new(STDistance {})
+pub fn st_distance_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STDistance {})
 }
 
 #[derive(Debug)]
@@ -75,7 +78,7 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -83,10 +86,10 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] left_sedona_type: SedonaType,
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] right_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] left_sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] right_sedona_type: SedonaType,
     ) {
-        let udf = SedonaScalarUDF::from_kernel("st_distance", st_distance_impl());
+        let udf = SedonaScalarUDF::from_impl("st_distance", st_distance_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![left_sedona_type.clone(), right_sedona_type.clone()],

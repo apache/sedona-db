@@ -21,7 +21,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_geometry::{
     error::SedonaGeometryError,
     transform::{transform, CrsTransform},
@@ -39,7 +42,7 @@ use crate::executor::WkbExecutor;
 pub fn st_translate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_translate",
-        vec![Arc::new(STTranslate)],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STTranslate)]),
         Volatility::Immutable,
         Some(st_translate_doc()),
     )
@@ -134,9 +137,10 @@ impl CrsTransform for Translate {
 #[cfg(test)]
 mod tests {
     use arrow_array::create_array;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -219,5 +223,27 @@ mod tests {
 
         let result = tester.invoke_arrays(vec![points, dx, dy]).unwrap();
         assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_translate_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "POINT (0 1)",
+                ScalarValue::Float64(Some(1.0)),
+                ScalarValue::Float64(Some(2.0)),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 3)");
     }
 }

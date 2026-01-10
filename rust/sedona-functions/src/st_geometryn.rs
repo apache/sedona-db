@@ -28,6 +28,7 @@ use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, MultiLineStringTrait, MultiPointTrait,
     MultiPolygonTrait,
 };
+use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -42,7 +43,7 @@ use wkb::reader::Wkb;
 pub fn st_geometryn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometryn",
-        vec![Arc::new(STGeometryN)],
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryN)]),
         Volatility::Immutable,
         Some(st_geometryn_doc()),
     )
@@ -136,8 +137,9 @@ fn invoke_scalar(geom: &Wkb, index: usize, writer: &mut impl std::io::Write) -> 
 
 #[cfg(test)]
 mod tests {
+    use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
     use sedona_testing::{compare::assert_array_equal, create::create_array};
 
@@ -275,5 +277,25 @@ mod tests {
             &tester.invoke_arrays(vec![input_wkt, integers]).unwrap(),
             &expected,
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_geometryn_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+            ],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar(
+                "MULTIPOINT((1 1), (2 2), (3 3))",
+                ScalarValue::Int64(Some(2)),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (2 2)");
     }
 }

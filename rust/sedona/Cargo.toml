@@ -31,8 +31,9 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [features]
-default = ["aws", "gcp", "http", "geo", "geos", "tg", "spatial-join"]
+default = ["aws", "azure", "gcp", "http", "geo", "geos", "tg", "spatial-join"]
 aws = ["dep:aws-config", "dep:aws-credential-types", "object_store/aws"]
+azure = ["object_store/azure"]
 gcp = ["object_store/gcp"]
 geo = ["dep:sedona-geo"]
 geos = ["dep:sedona-geos"]

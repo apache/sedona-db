@@ -45,6 +45,9 @@ use object_store::aws::{AmazonS3Builder, AwsCredential};
 #[cfg(feature = "aws")]
 use object_store::gcp::GoogleCloudStorageBuilder;
 
+#[cfg(feature = "azure")]
+use object_store::azure::MicrosoftAzureBuilder;
+
 #[cfg(feature = "http")]
 use object_store::http::HttpBuilder;
 #[cfg(feature = "http")]
@@ -103,6 +106,22 @@ pub async fn ensure_object_store_registered_with_options(
                         }
 
                         table_options.extensions.insert(gcp_options);
+                    }
+                }
+                #[cfg(feature = "azure")]
+                "az" | "abfs" | "abfss" => {
+                    if let Some(table_options) = builder.table_options() {
+                        let mut azure_options = AzureOptions::default();
+
+                        if let Some(options) = custom_options {
+                            for (key, value) in options {
+                                if key.starts_with("azure.") {
+                                    let _ = azure_options.set(key, value);
+                                }
+                            }
+                        }
+
+                        table_options.extensions.insert(azure_options);
                     }
                 }
                 _ => {}
@@ -313,6 +332,69 @@ pub fn get_gcs_object_store_builder(
     Ok(builder)
 }
 
+#[cfg(feature = "azure")]
+pub fn get_azure_object_store_builder(
+    url: &Url,
+    azure_options: &AzureOptions,
+) -> Result<MicrosoftAzureBuilder> {
+    let container_name = azure_options
+        .container_name
+        .as_deref()
+        .or_else(|| url.host_str())
+        .ok_or_else(|| {
+            DataFusionError::Execution(format!(
+                "Not able to parse container name from url: {}",
+                url.as_str()
+            ))
+        })?;
+
+    let mut builder = MicrosoftAzureBuilder::from_env().with_container_name(container_name);
+
+    if let Some(account_name) = &azure_options.account_name {
+        builder = builder.with_account(account_name);
+    }
+
+    if let Some(account_key) = &azure_options.account_key {
+        builder = builder.with_access_key(account_key);
+    }
+
+    if let Some(sas_token) = &azure_options.sas_token {
+        let query_pairs: Vec<(String, String)> = sas_token
+            .trim_start_matches('?')
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                match (parts.next(), parts.next()) {
+                    (Some(k), Some(v)) => Some((k.to_string(), v.to_string())),
+                    _ => None,
+                }
+            })
+            .collect();
+        builder = builder.with_sas_authorization(query_pairs);
+    }
+
+    if let Some(true) = azure_options.use_emulator {
+        builder = builder.with_use_emulator(true);
+    }
+
+    if let (Some(client_id), Some(client_secret), Some(tenant_id)) = (
+        &azure_options.client_id,
+        &azure_options.client_secret,
+        &azure_options.tenant_id,
+    ) {
+        builder = builder
+            .with_client_id(client_id)
+            .with_client_secret(client_secret)
+            .with_tenant_id(tenant_id);
+    }
+
+    if let Some(allow_http) = azure_options.allow_http {
+        builder = builder.with_allow_http(allow_http);
+    }
+
+    Ok(builder)
+}
+
 fn get_bucket_name(url: &Url) -> Result<&str> {
     url.host_str().ok_or_else(|| {
         DataFusionError::Execution(format!(
@@ -503,6 +585,121 @@ impl ConfigExtension for GcpOptions {
     const PREFIX: &'static str = "gcp";
 }
 
+/// This struct encapsulates Azure options one uses when setting up object storage.
+#[cfg(feature = "azure")]
+#[derive(Default, Debug, Clone)]
+pub struct AzureOptions {
+    /// Storage account name
+    pub account_name: Option<String>,
+    /// Storage account key
+    pub account_key: Option<String>,
+    /// SAS token for authentication
+    pub sas_token: Option<String>,
+    /// Container name (optional, can be derived from URL)
+    pub container_name: Option<String>,
+    /// Use Azure Storage Emulator (Azurite)
+    pub use_emulator: Option<bool>,
+    /// Client ID for service principal authentication
+    pub client_id: Option<String>,
+    /// Client secret for service principal authentication
+    pub client_secret: Option<String>,
+    /// Tenant ID for service principal authentication
+    pub tenant_id: Option<String>,
+    /// Allow HTTP (otherwise will always use https)
+    pub allow_http: Option<bool>,
+}
+
+#[cfg(feature = "azure")]
+impl ExtensionOptions for AzureOptions {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn cloned(&self) -> Box<dyn ExtensionOptions> {
+        Box::new(self.clone())
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        let (_key, rem) = key.split_once('.').unwrap_or((key, ""));
+        match rem {
+            "account_name" => {
+                self.account_name.set(rem, value)?;
+            }
+            "account_key" => {
+                self.account_key.set(rem, value)?;
+            }
+            "sas_token" => {
+                self.sas_token.set(rem, value)?;
+            }
+            "container_name" => {
+                self.container_name.set(rem, value)?;
+            }
+            "use_emulator" => {
+                self.use_emulator.set(rem, value)?;
+            }
+            "client_id" => {
+                self.client_id.set(rem, value)?;
+            }
+            "client_secret" => {
+                self.client_secret.set(rem, value)?;
+            }
+            "tenant_id" => {
+                self.tenant_id.set(rem, value)?;
+            }
+            "allow_http" => {
+                self.allow_http.set(rem, value)?;
+            }
+            _ => {
+                return config_err!("Config value \"{}\" not found on AzureOptions", rem);
+            }
+        }
+        Ok(())
+    }
+
+    fn entries(&self) -> Vec<ConfigEntry> {
+        struct Visitor(Vec<ConfigEntry>);
+
+        impl Visit for Visitor {
+            fn some<V: Display>(&mut self, key: &str, value: V, description: &'static str) {
+                self.0.push(ConfigEntry {
+                    key: key.to_string(),
+                    value: Some(value.to_string()),
+                    description,
+                })
+            }
+
+            fn none(&mut self, key: &str, description: &'static str) {
+                self.0.push(ConfigEntry {
+                    key: key.to_string(),
+                    value: None,
+                    description,
+                })
+            }
+        }
+
+        let mut v = Visitor(vec![]);
+        self.account_name.visit(&mut v, "account_name", "");
+        self.account_key.visit(&mut v, "account_key", "");
+        self.sas_token.visit(&mut v, "sas_token", "");
+        self.container_name.visit(&mut v, "container_name", "");
+        self.use_emulator.visit(&mut v, "use_emulator", "");
+        self.client_id.visit(&mut v, "client_id", "");
+        self.client_secret.visit(&mut v, "client_secret", "");
+        self.tenant_id.visit(&mut v, "tenant_id", "");
+        self.allow_http.visit(&mut v, "allow_http", "");
+        v.0
+    }
+}
+
+#[cfg(feature = "azure")]
+impl ConfigExtension for AzureOptions {
+    const PREFIX: &'static str = "azure";
+}
+
 pub(crate) async fn get_object_store(
     state: &SessionState,
     scheme: &str,
@@ -542,6 +739,16 @@ pub(crate) async fn get_object_store(
             let builder = get_gcs_object_store_builder(url, options)?;
             Arc::new(builder.build()?)
         }
+        #[cfg(feature = "azure")]
+        "az" | "abfs" | "abfss" => {
+            let Some(options) = table_options.extensions.get::<AzureOptions>() else {
+                return exec_err!(
+                    "Given table options incompatible with the 'az'/'abfs'/'abfss' scheme"
+                );
+            };
+            let builder = get_azure_object_store_builder(url, options)?;
+            Arc::new(builder.build()?)
+        }
         #[cfg(feature = "http")]
         "http" | "https" => Arc::new(
             HttpBuilder::new()
@@ -576,6 +783,10 @@ pub(crate) fn register_table_options_extension_from_scheme(ctx: &SedonaContext, 
             ctx.ctx
                 .register_table_options_extension(GcpOptions::default())
         }
+        #[cfg(feature = "azure")]
+        "az" | "abfs" | "abfss" => ctx
+            .ctx
+            .register_table_options_extension(AzureOptions::default()),
         // For unsupported schemes, do nothing:
         _ => {}
     }
@@ -804,6 +1015,56 @@ mod tests {
                     GoogleConfigKey::ApplicationCredentials,
                     application_credentials_path,
                 ),
+            ];
+            for (key, value) in config {
+                assert_eq!(value, builder.get_config_value(&key).unwrap());
+            }
+        } else {
+            return plan_err!("LogicalPlan is not a CreateExternalTable");
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "azure")]
+    #[tokio::test]
+    async fn azure_object_store_builder() -> Result<()> {
+        use object_store::azure::AzureConfigKey;
+
+        let account_name = "fake_account_name";
+        let account_key = "fake_account_key";
+        let client_id = "fake_client_id";
+        let client_secret = "fake_client_secret";
+        let tenant_id = "fake_tenant_id";
+        let location = "az://container/path/file.parquet";
+
+        let table_url = ListingTableUrl::parse(location)?;
+        let scheme = table_url.scheme();
+        let sql = format!(
+            "CREATE EXTERNAL TABLE test STORED AS PARQUET OPTIONS(\
+            'azure.account_name' '{account_name}', \
+            'azure.account_key' '{account_key}', \
+            'azure.client_id' '{client_id}', \
+            'azure.client_secret' '{client_secret}', \
+            'azure.tenant_id' '{tenant_id}'\
+            ) LOCATION '{location}'"
+        );
+
+        let ctx = SedonaContext::new();
+        let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
+
+        if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
+            register_table_options_extension_from_scheme(&ctx, scheme);
+            let mut table_options = ctx.ctx.state().default_table_options();
+            table_options.alter_with_string_hash_map(&cmd.options)?;
+            let azure_options = table_options.extensions.get::<AzureOptions>().unwrap();
+            let builder = get_azure_object_store_builder(table_url.as_ref(), azure_options)?;
+            let config = [
+                (AzureConfigKey::AccountName, account_name),
+                (AzureConfigKey::AccessKey, account_key),
+                (AzureConfigKey::ClientId, client_id),
+                (AzureConfigKey::ClientSecret, client_secret),
+                (AzureConfigKey::AuthorityId, tenant_id),
             ];
             for (key, value) in config {
                 assert_eq!(value, builder.get_config_value(&key).unwrap());

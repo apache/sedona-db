@@ -116,7 +116,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel(
+        let udf = SedonaScalarUDF::from_impl(
             "st_simplifypreservetopology",
             st_simplify_preserve_topology_impl(),
         );

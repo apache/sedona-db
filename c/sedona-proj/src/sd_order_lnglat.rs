@@ -52,7 +52,7 @@ impl<F: Fn((f64, f64)) -> u64> Debug for OrderLngLat<F> {
     }
 }
 
-impl<F: Fn((f64, f64)) -> u64> SedonaScalarKernel for OrderLngLat<F> {
+impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<F> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
@@ -153,7 +153,7 @@ mod test {
                 lng as u64
             }
         });
-        let udf = SedonaScalarUDF::from_kernel("sd_order", Arc::new(kernel));
+        let udf = SedonaScalarUDF::from_impl("sd_order", kernel);
 
         let array = create_array(
             &[

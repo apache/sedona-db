@@ -71,7 +71,7 @@ impl<F> std::fmt::Debug for BinaryOverlay<F> {
     }
 }
 
-impl<F> SedonaScalarKernel for BinaryOverlay<F>
+impl<F: Send + Sync> SedonaScalarKernel for BinaryOverlay<F>
 where
     F: Fn(&geos::Geometry, &geos::Geometry) -> geos::GResult<geos::Geometry>,
 {
@@ -136,7 +136,7 @@ mod tests {
 
     #[rstest]
     fn intersection_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_intersection", st_intersection_impl());
+        let udf = SedonaScalarUDF::from_impl("st_intersection", st_intersection_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(WKB_GEOMETRY);
 
@@ -179,7 +179,7 @@ mod tests {
 
     #[rstest]
     fn union_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_union", st_union_impl());
+        let udf = SedonaScalarUDF::from_impl("st_union", st_union_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(WKB_GEOMETRY);
 
@@ -218,7 +218,7 @@ mod tests {
 
     #[rstest]
     fn difference_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_difference", st_difference_impl());
+        let udf = SedonaScalarUDF::from_impl("st_difference", st_difference_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(WKB_GEOMETRY);
 
@@ -257,7 +257,7 @@ mod tests {
 
     #[rstest]
     fn sym_difference_udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_sym_difference", st_sym_difference_impl());
+        let udf = SedonaScalarUDF::from_impl("st_sym_difference", st_sym_difference_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
         tester.assert_return_type(WKB_GEOMETRY);
 

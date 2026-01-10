@@ -80,6 +80,7 @@ sd_view <- function(table_ref) {
   new_sedonadb_dataframe(ctx, df)
 }
 
+# nolint start: line_length_linter
 #' Register a user-defined function
 #'
 #' Several types of user-defined functions can be registered into a session
@@ -96,6 +97,7 @@ sd_register_udf <- function(udf) {
   ctx <- ctx()
   ctx$register_scalar_udf(udf)
 }
+# nolint end
 
 # We use just one context for now. In theory we could support multiple
 # contexts with a shared runtime, which would scope the registration
@@ -110,7 +112,6 @@ ctx <- function() {
 
 global_ctx <- new.env(parent = emptyenv())
 global_ctx$ctx <- NULL
-
 
 
 #' Configure PROJ
@@ -138,12 +139,15 @@ global_ctx$ctx <- NULL
 #' @examples
 #' sd_configure_proj("auto")
 #'
-sd_configure_proj <- function(preset = NULL,
-                              shared_library = NULL,
-                             database_path = NULL,
-                             search_path = NULL) {
+sd_configure_proj <- function(
+  preset = NULL,
+  shared_library = NULL,
+  database_path = NULL,
+  search_path = NULL
+) {
   if (!is.null(preset)) {
-    switch (preset,
+    switch(
+      preset,
       homebrew = {
         configure_proj_prefix(Sys.getenv("HOMEBREW_PREFIX", "/opt/homebrew"))
         return(invisible(NULL))
@@ -217,10 +221,14 @@ configure_proj_prefix <- function(prefix) {
 }
 
 proj_dll_name <- function() {
-  switch(tolower(Sys.info()[["sysname"]]),
+  switch(
+    tolower(Sys.info()[["sysname"]]),
     windows = "proj.dll",
     darwin = "libproj.dylib",
     linux = "libproj.so",
-    stop(sprintf("Can't determine system PROJ shared library name for OS: %s", Sys.info()[["sysname"]]))
+    stop(sprintf(
+      "Can't determine system PROJ shared library name for OS: %s",
+      Sys.info()[["sysname"]]
+    ))
   )
 }

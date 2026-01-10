@@ -163,7 +163,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_concavehull", st_concave_hull_impl());
+        let udf = SedonaScalarUDF::from_impl("st_concavehull", st_concave_hull_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
@@ -300,8 +300,7 @@ mod tests {
 
     #[rstest]
     fn udf_allow_holes(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf =
-            SedonaScalarUDF::from_kernel("st_concavehull", st_concave_hull_allow_holes_impl());
+        let udf = SedonaScalarUDF::from_impl("st_concavehull", st_concave_hull_allow_holes_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![

@@ -124,7 +124,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_kernel("st_snap", st_snap_impl());
+        let udf = SedonaScalarUDF::from_impl("st_snap", st_snap_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
