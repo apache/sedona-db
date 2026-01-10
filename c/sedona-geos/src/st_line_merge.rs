@@ -26,6 +26,7 @@ use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 pub fn st_line_merge_impl() -> ScalarKernelRef {
     Arc::new(STLineMerge {})
@@ -95,13 +96,7 @@ fn invoke_scalar(
     let geom =
         result.map_err(|e| DataFusionError::Execution(format!("Failed to merge lines: {e}")))?;
 
-    let wkb = geom
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert result to WKB: {e}")))?;
-
-    writer
-        .write_all(wkb.as_ref())
-        .map_err(|e| DataFusionError::Execution(format!("Failed to write result WKB: {e}")))?;
+    write_geos_geometry(&geom, writer)?;
 
     Ok(())
 }
