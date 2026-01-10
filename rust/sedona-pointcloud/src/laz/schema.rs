@@ -17,18 +17,18 @@
 
 use std::sync::Arc;
 
-use arrow_schema::{DataType, Field, Schema};
+use arrow_schema::{ArrowError, DataType, Field, Schema};
 use geoarrow_schema::{CoordType, Crs, Dimension, Metadata, PointType, WkbType};
 use las::Header;
 
 use crate::laz::options::{LasExtraBytes, LasPointEncoding};
 
 // Arrow schema for LAS points
-pub fn schema_from_header(
+pub fn try_schema_from_header(
     header: &Header,
     point_encoding: LasPointEncoding,
     extra_bytes: LasExtraBytes,
-) -> Schema {
+) -> Result<Schema, ArrowError> {
     let crs = header
         .get_wkt_crs_bytes()
         .and_then(|b| String::from_utf8(b.to_vec()).ok().map(Crs::from_wkt2_2019))
@@ -44,7 +44,7 @@ pub fn schema_from_header(
             let point_type = WkbType::new(Arc::new(Metadata::new(crs, None)));
             vec![Field::new("geometry", DataType::Binary, false).with_extension_type(point_type)]
         }
-        LasPointEncoding::Nativ => {
+        LasPointEncoding::Native => {
             let point_type = PointType::new(Dimension::XYZ, Arc::new(Metadata::new(crs, None)))
                 .with_coord_type(CoordType::Separated);
             vec![point_type.to_field("geometry", false)]
@@ -83,7 +83,7 @@ pub fn schema_from_header(
     // extra bytes
     if header.point_format().extra_bytes > 0 {
         match extra_bytes {
-            LasExtraBytes::Typed => fields.extend(extra_bytes_fields(header)),
+            LasExtraBytes::Typed => fields.extend(extra_bytes_fields(header)?),
             LasExtraBytes::Blob => fields.push(Field::new(
                 "extra_bytes",
                 DataType::FixedSizeBinary(header.point_format().extra_bytes as i32),
@@ -93,10 +93,10 @@ pub fn schema_from_header(
         }
     }
 
-    Schema::new(fields)
+    Ok(Schema::new(fields))
 }
 
-fn extra_bytes_fields(header: &Header) -> Vec<Field> {
+fn extra_bytes_fields(header: &Header) -> Result<Vec<Field>, ArrowError> {
     let mut fields = Vec::new();
 
     for vlr in header.all_vlrs() {
@@ -106,9 +106,8 @@ fn extra_bytes_fields(header: &Header) -> Vec<Field> {
 
         for bytes in vlr.data.chunks(192) {
             // name
-            let name = std::str::from_utf8(&bytes[4..36])
-                .unwrap()
-                .trim_end_matches(char::from(0));
+            let name = std::str::from_utf8(&bytes[4..36])?;
+            let name = name.trim_end_matches(char::from(0));
 
             // data type
             let data_type = if bytes[2] != 0 && (bytes[3] >> 3 & 1 == 1 || bytes[3] >> 4 & 1 == 1) {
@@ -127,8 +126,16 @@ fn extra_bytes_fields(header: &Header) -> Vec<Field> {
                     8 => DataType::Int64,
                     9 => DataType::Float32,
                     10 => DataType::Float64,
-                    11..=30 => panic!("deprecated extra bytes data type"),
-                    31..=255 => panic!("reserved extra butes data type"),
+                    11..=30 => {
+                        return Err(ArrowError::ExternalError(
+                            "deprecated extra bytes data type".into(),
+                        ));
+                    }
+                    31..=255 => {
+                        return Err(ArrowError::ExternalError(
+                            "reserved extra bytes data type".into(),
+                        ));
+                    }
                 }
             };
 
@@ -143,5 +150,5 @@ fn extra_bytes_fields(header: &Header) -> Vec<Field> {
         }
     }
 
-    fields
+    Ok(fields)
 }

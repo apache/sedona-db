@@ -125,7 +125,6 @@ impl FileFormat for LazFormat {
 
     fn get_ext(&self) -> String {
         LazFormatFactory::new().get_ext()
-        // DEFAULT_LAZ_EXTENSION[1..].to_string()
     }
 
     fn get_ext_with_compression(

@@ -139,7 +139,7 @@ impl LazFileReader {
             builder.append(point);
         }
 
-        let struct_array = builder.finish();
+        let struct_array = builder.finish()?;
 
         Ok(RecordBatch::from(struct_array))
     }

@@ -29,7 +29,7 @@ use las::{
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::laz::{options::LazTableOptions, schema::schema_from_header};
+use crate::laz::{options::LazTableOptions, schema::try_schema_from_header};
 
 /// Laz chunk metadata
 #[derive(Debug, Clone)]
@@ -125,8 +125,8 @@ impl<'a> LazMetadataReader<'a> {
         }
 
         let header = self.fetch_header().await?;
-        let extra_attributes = extra_bytes_attributes(&header);
-        let chunk_table = chunk_table(*store, object_meta, &header).await.unwrap();
+        let extra_attributes = extra_bytes_attributes(&header)?;
+        let chunk_table = chunk_table(*store, object_meta, &header).await?;
 
         let metadata = Arc::new(LazMetadata {
             header: Arc::new(header),
@@ -145,11 +145,11 @@ impl<'a> LazMetadataReader<'a> {
     pub async fn fetch_schema(&mut self) -> Result<Schema, DataFusionError> {
         let metadata = self.fetch_metadata().await?;
 
-        let schema = schema_from_header(
+        let schema = try_schema_from_header(
             &metadata.header,
             self.options.point_encoding,
             self.options.extra_bytes,
-        );
+        )?;
 
         Ok(schema)
     }
@@ -264,7 +264,9 @@ pub struct ExtraAttribute {
     pub offset: Option<f64>,
 }
 
-pub(crate) fn extra_bytes_attributes(header: &Header) -> Vec<ExtraAttribute> {
+pub(crate) fn extra_bytes_attributes(
+    header: &Header,
+) -> Result<Vec<ExtraAttribute>, Box<dyn Error + Send + Sync>> {
     let mut attributes = Vec::new();
 
     for vlr in header.all_vlrs() {
@@ -286,8 +288,8 @@ pub(crate) fn extra_bytes_attributes(header: &Header) -> Vec<ExtraAttribute> {
                 8 => DataType::Int64,
                 9 => DataType::Float32,
                 10 => DataType::Float64,
-                11..=30 => panic!("deprecated extra bytes data type"),
-                31..=255 => panic!("reserved extra butes data type"),
+                11..=30 => return Err("deprecated extra bytes data type".into()),
+                31..=255 => return Err("reserved extra butes data type".into()),
             };
 
             // no data
@@ -322,7 +324,7 @@ pub(crate) fn extra_bytes_attributes(header: &Header) -> Vec<ExtraAttribute> {
         }
     }
 
-    attributes
+    Ok(attributes)
 }
 
 pub(crate) async fn chunk_table(
@@ -337,7 +339,7 @@ pub(crate) async fn chunk_table(
     let header_size = header.version().header_size() as usize + header.padding().len();
     let mut byte_offset = (header_size + vlr_len + header.vlr_padding().len()) as u64;
 
-    let laz_vlr = header.laz_vlr().expect("LAZ file must contain laz vlr");
+    let laz_vlr = header.laz_vlr()?;
 
     let ranges = [
         byte_offset..byte_offset + 8,
@@ -357,7 +359,7 @@ pub(crate) async fn chunk_table(
     }
 
     let Some(table_offset) = table_offset else {
-        unimplemented!("LAZ files without chunk table not supported (yet)")
+        return Err("LAZ files without chunk table not supported (yet)".into());
     };
 
     let bytes = store
