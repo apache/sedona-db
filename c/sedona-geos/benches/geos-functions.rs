@@ -24,6 +24,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     for (name, kernel) in sedona_geos::register::scalar_kernels() {
         f.add_scalar_udf_kernel(name, kernel).unwrap();
     }
+    for (name, kernel) in sedona_geos::register::aggregate_kernels() {
+        f.add_aggregate_udf_kernel(name, kernel).unwrap();
+    }
 
     benchmark::scalar(c, &f, "geos", "st_area", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_area", Polygon(500));
