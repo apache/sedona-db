@@ -1300,6 +1300,7 @@ def test_st_geomfromtext_with_srid(eng, wkt, srid, expected):
 @pytest.mark.parametrize(
     ("ewkt", "expected", "expected_srid"),
     [
+        (None, None, None),
         ("SRID=4326;POINT (0 0)", "POINT (0 0)", 4326),
         ("SRID=3857;POINT (0 0)", "POINT (0 0)", 3857),
         ("SRID=0;POINT (0 0)", "POINT (0 0)", 0),
