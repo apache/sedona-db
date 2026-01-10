@@ -89,14 +89,6 @@ impl SedonaAggregateUDF {
         Self::new(name, vec![Arc::new(stub_kernel)], volatility, documentation)
     }
 
-    /// Create a SedonaAggregateUDF from a single kernel
-    ///
-    /// This constructor creates a [Volatility::Immutable] function with no documentation
-    /// consisting of only the implementation provided.
-    pub fn from_kernel(name: &str, kernel: SedonaAccumulatorRef) -> SedonaAggregateUDF {
-        Self::new(name, vec![kernel], Volatility::Immutable, None)
-    }
-
     /// Add a new kernel to an Aggregate UDF
     ///
     /// Because kernels are resolved in reverse order, the new kernel will take
