@@ -1814,7 +1814,7 @@ def test_st_isring_non_linestring_error(eng, geom):
         # Note that the behaviour on non-multilinestring geometry is not documented.
         # But, we test such cases here as well to detect if there's any difference.
         ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
-        ("LINESTRING(0 0,1 0)", "LINESTRING(0 0,1 0)"),
+        ("LINESTRING (0 0, 1 0)", "LINESTRING (0 0, 1 0)"),
         ("POLYGON ((0 0, 0 1, 1 0, 0 0))", "LINESTRING (0 0, 0 1, 1 0, 0 0)"),
     ],
 )
