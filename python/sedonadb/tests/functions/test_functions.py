@@ -1310,11 +1310,6 @@ def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
     if ewkt is not None:
         ewkt = f"'{ewkt}'"
     eng = eng.create_or_skip()
-    # TODO: currently, a per-item-CRS geometry cannot be cast to string
-    # eng.assert_query_result(
-    #     f"SELECT ST_GeomFromEWKT({val_or_null(ewkt)})",
-    #     expected,
-    # )
     eng.assert_query_result(
         f"SELECT ST_SRID(ST_GeomFromEWKT({val_or_null(ewkt)}))",
         expected_srid,
