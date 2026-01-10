@@ -457,8 +457,8 @@ mod test {
         let df = ctx.read_table(Arc::new(provider)).unwrap();
         assert_eq!(df.count().await.unwrap(), 8192);
 
-        // If the batch size * num_partitions doesn't fit evenly, we should have more rows
-        // than target_rows
+        // If the batch size * num_partitions doesn't fit evenly, we should still get the
+        // exact number of target rows
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
             Some(
@@ -467,7 +467,7 @@ mod test {
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
-        assert_eq!(df.count().await.unwrap(), 8192 + (2 * 1024));
+        assert_eq!(df.count().await.unwrap(), 9000);
     }
 
     #[tokio::test]
