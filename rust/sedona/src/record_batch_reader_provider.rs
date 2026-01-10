@@ -17,7 +17,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow_array::RecordBatchReader;
-use arrow_schema::SchemaRef;
+use arrow_schema::{SchemaRef};
 use async_trait::async_trait;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
@@ -101,14 +101,14 @@ impl TableProvider for RecordBatchReaderProvider {
 }
 
 /// An iterator that limits the number of rows from a RecordBatchReader
-struct RowLimitedIterator {
+pub struct RowLimitedIterator {
     reader: Option<Box<dyn RecordBatchReader + Send>>,
     limit: usize,
     rows_consumed: usize,
 }
 
 impl RowLimitedIterator {
-    fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
+    pub fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
         Self {
             reader: Some(reader),
             limit,
