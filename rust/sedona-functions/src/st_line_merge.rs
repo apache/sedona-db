@@ -33,7 +33,7 @@ pub fn st_line_merge_udf() -> SedonaScalarUDF {
 fn st_line_merge_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Merge the line segemnts in a geometry",
+        "Merge the line segments in a geometry",
         "ST_LineMerge (Geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry")
