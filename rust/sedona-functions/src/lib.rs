@@ -23,6 +23,7 @@ mod referencing;
 pub mod register;
 mod sd_format;
 pub mod sd_order;
+mod st_affine;
 pub mod st_analyze_agg;
 mod st_area;
 mod st_asbinary;
