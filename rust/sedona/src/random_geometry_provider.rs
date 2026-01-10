@@ -39,6 +39,8 @@ use sedona_geometry::types::GeometryTypeId;
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use serde::{Deserialize, Serialize};
 
+use crate::record_batch_reader_provider::RowLimitedIterator;
+
 /// A table function that refers to a table of random geometries
 ///
 /// This table function accepts one argument, which is a JSON-specified
@@ -201,14 +203,14 @@ impl TableProvider for RandomGeometryProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let builder = builder_with_partition_sizes(
+        let (builder, last_partition_rows) = builder_with_partition_sizes(
             self.builder.clone(),
             self.rows_per_batch,
             self.num_partitions,
             self.target_rows,
         );
 
-        let exec = Arc::new(RandomGeometryExec::new(builder));
+        let exec = Arc::new(RandomGeometryExec::new(builder, last_partition_rows));
 
         // We're required to handle the projection or we'll get an execution error
         if let Some(projection) = projection {
@@ -230,11 +232,12 @@ impl TableProvider for RandomGeometryProvider {
 #[derive(Debug)]
 struct RandomGeometryExec {
     builder: RandomPartitionedDataBuilder,
+    last_partition_rows: usize,
     properties: PlanProperties,
 }
 
 impl RandomGeometryExec {
-    pub fn new(builder: RandomPartitionedDataBuilder) -> Self {
+    pub fn new(builder: RandomPartitionedDataBuilder, last_partition_rows: usize) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(builder.schema().clone()),
             Partitioning::UnknownPartitioning(builder.num_partitions),
@@ -244,6 +247,7 @@ impl RandomGeometryExec {
 
         Self {
             builder,
+            last_partition_rows,
             properties,
         }
     }
@@ -290,14 +294,24 @@ impl ExecutionPlan for RandomGeometryExec {
     ) -> Result<SendableRecordBatchStream> {
         let rng = RandomPartitionedDataBuilder::default_rng(self.builder.seed + partition as u64);
         let reader = self.builder.partition_reader(rng, partition);
-        let iter = reader.map(|item| match item {
-            Ok(batch) => Ok(batch),
-            Err(e) => Err(DataFusionError::from(e)),
-        });
 
-        let stream = Box::pin(futures::stream::iter(iter));
-        let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
-        Ok(Box::pin(record_batch_stream))
+        // If this is the last partition, limit the number of rows from the reader
+        if partition == (self.builder.num_partitions - 1) {
+            let iter = Box::new(RowLimitedIterator::new(reader, self.last_partition_rows));
+
+            let stream = Box::pin(futures::stream::iter(iter));
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            Ok(Box::pin(record_batch_stream))
+        } else {
+            let iter = reader.map(|item| match item {
+                Ok(batch) => Ok(batch),
+                Err(e) => Err(DataFusionError::from(e)),
+            });
+
+            let stream = Box::pin(futures::stream::iter(iter));
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            Ok(Box::pin(record_batch_stream))
+        }
     }
 }
 
@@ -331,7 +345,7 @@ fn builder_with_partition_sizes(
     batch_size: usize,
     partitions: usize,
     target_rows: usize,
-) -> RandomPartitionedDataBuilder {
+) -> (RandomPartitionedDataBuilder, usize) {
     let rows_for_one_batch_per_partition = batch_size * partitions;
     let batches_per_partition = if target_rows.is_multiple_of(rows_for_one_batch_per_partition) {
         target_rows / rows_for_one_batch_per_partition
@@ -339,10 +353,18 @@ fn builder_with_partition_sizes(
         target_rows / rows_for_one_batch_per_partition + 1
     };
 
-    builder
+    let builder_out = builder
         .rows_per_batch(batch_size)
         .num_partitions(partitions)
-        .batches_per_partition(batches_per_partition)
+        .batches_per_partition(batches_per_partition);
+    let normal_partition_rows = batches_per_partition * batch_size;
+    let remainder = (normal_partition_rows * partitions) - target_rows;
+    let last_partition_rows = if remainder == 0 {
+        normal_partition_rows
+    } else {
+        normal_partition_rows - remainder
+    };
+    (builder_out, last_partition_rows)
 }
 
 /// Helper to make specifying scalar ranges more concise when only one value is needed
