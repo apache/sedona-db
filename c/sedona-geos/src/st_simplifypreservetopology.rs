@@ -23,7 +23,6 @@ use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
-use geos::Geom;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -32,6 +31,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_SimplifyPreserveTopology() implementation using the geos crate
 pub fn st_simplify_preserve_topology_impl() -> ScalarKernelRef {
@@ -94,11 +94,7 @@ fn invoke_scalar(
         .topology_preserve_simplify(tolerance)
         .map_err(|e| DataFusionError::Execution(format!("Failed to simplify geometry: {e}")))?;
 
-    let wkb = geometry
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert to wkb: {e}")))?;
-
-    writer.write_all(wkb.as_ref())?;
+    write_geos_geometry(&geometry, writer)?;
     Ok(())
 }
 
