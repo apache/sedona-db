@@ -266,9 +266,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_polygonize", LineString(10));
     benchmark::scalar(c, &f, "geos", "st_polygonize", LineString(500));
 
-    benchmark::aggregate(c, &f, "geos", "st_polygonize_agg", LineString(10));
-    benchmark::aggregate(c, &f, "geos", "st_polygonize_agg", LineString(500));
-
     benchmark::scalar(
         c,
         &f,
