@@ -125,10 +125,7 @@ mod tests {
         let udf = SedonaScalarUDF::from_impl("st_linemerge", st_line_merge_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
-            vec![
-                sedona_type,
-                SedonaType::Arrow(DataType::Boolean),
-            ],
+            vec![sedona_type, SedonaType::Arrow(DataType::Boolean)],
         );
         tester.assert_return_type(WKB_GEOMETRY);
 

@@ -1803,8 +1803,14 @@ def test_st_isring_non_linestring_error(eng, geom):
     [
         (None, None),
         ("MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))", "LINESTRING (0 0, 1 0, 1 1)"),
-        ("MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))", "LINESTRING (0 0, 1 0, 1 1)"), # opposite direction
-        ("MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))", "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))"),
+        (
+            "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",
+            "LINESTRING (0 0, 1 0, 1 1)",
+        ),  # opposite direction
+        (
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
+        ),
         # Note that the behaviour on non-multilinestring geometry is not documented.
         # But, we test such cases here as well to detect if there's any difference.
         ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
@@ -1825,8 +1831,14 @@ def test_st_linemerge(eng, geom, expected):
     ("geom", "expected"),
     [
         ("MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))", "LINESTRING (0 0, 1 0, 1 1)"),
-        ("MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))", "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))"),
-        ("MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))", "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))"),
+        (
+            "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",
+            "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",
+        ),
+        (
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
+        ),
     ],
 )
 def test_st_linemerge_directed(eng, geom, expected):
