@@ -87,6 +87,15 @@ fn invoke_scalar(
     writer: &mut impl std::io::Write,
     directed: bool,
 ) -> Result<()> {
+    // PostGIS seems to return the original geometry if it is empty
+    let is_empty = geos_geom.is_empty().map_err(|e| {
+        DataFusionError::Execution(format!("Failed to check if the geometry is empty: {e}"))
+    })?;
+    if is_empty {
+        write_geos_geometry(geos_geom, writer)?;
+        return Ok(());
+    }
+
     let result = if directed {
         geos_geom.line_merge_directed()
     } else {
