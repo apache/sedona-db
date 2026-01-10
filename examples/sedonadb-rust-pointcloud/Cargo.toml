@@ -29,8 +29,6 @@ rust-version = "1.86"
 publish = false
 
 [dependencies]
-datafusion = { version = "50.2.0"}
-# When sedona is released on crates.io, this can be a version and not a git repo
 sedona = { workspace = true, features = ["pointcloud"]}
 sedona-pointcloud = { workspace = true }
 tokio = { version = "1.44", features = ["rt-multi-thread"]}

@@ -17,10 +17,9 @@
 
 use std::{any::Any, sync::Arc};
 
-use arrow_schema::Schema;
 use datafusion_common::{config::ConfigOptions, error::DataFusionError, internal_err, Statistics};
 use datafusion_datasource::{
-    file::FileSource, file_scan_config::FileScanConfig, file_stream::FileOpener,
+    file::FileSource, file_scan_config::FileScanConfig, file_stream::FileOpener, TableSchema,
 };
 use datafusion_physical_expr::{conjunction, PhysicalExpr};
 use datafusion_physical_plan::{
@@ -36,7 +35,7 @@ pub struct LazSource {
     /// Optional metrics
     metrics: ExecutionPlanMetricsSet,
     /// The schema of the file.
-    pub(crate) table_schema: Option<Arc<Schema>>,
+    pub(crate) table_schema: Option<TableSchema>,
     /// Optional predicate for row filtering during parquet scan
     pub(crate) predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Laz file reader factory
@@ -89,7 +88,7 @@ impl FileSource for LazSource {
         Arc::new(conf)
     }
 
-    fn with_schema(&self, schema: Arc<Schema>) -> Arc<dyn FileSource> {
+    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
         let mut conf = self.clone();
         conf.table_schema = Some(schema);
         Arc::new(conf)

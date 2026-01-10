@@ -19,28 +19,26 @@ use std::{fmt::Debug, sync::Arc};
 
 use arrow_array::{
     builder::{
-        ArrayBuilder, BooleanBuilder, FixedSizeBinaryBuilder, Float32Builder, Float64Builder,
-        Int16Builder, Int32Builder, Int64Builder, Int8Builder, UInt16Builder, UInt32Builder,
-        UInt64Builder, UInt8Builder,
+        ArrayBuilder, BinaryBuilder, BooleanBuilder, FixedSizeBinaryBuilder, Float32Builder,
+        Float64Builder, Int16Builder, Int32Builder, Int64Builder, Int8Builder, UInt16Builder,
+        UInt32Builder, UInt64Builder, UInt8Builder,
     },
     Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array, StructArray,
     UInt16Array, UInt8Array,
 };
 use arrow_buffer::ScalarBuffer;
-use arrow_schema::DataType;
+use arrow_schema::{ArrowError, DataType};
 use geoarrow_array::{
     array::{CoordBuffer, PointArray, SeparatedCoordBuffer},
-    builder::WkbBuilder,
-    capacity::WkbCapacity,
     GeoArrowArray,
 };
-use geoarrow_schema::{Dimension, WkbType};
+use geoarrow_schema::Dimension;
 use las::{Header, Point};
 
 use crate::laz::{
     metadata::ExtraAttribute,
     options::{LasExtraBytes, LasPointEncoding},
-    schema::schema_from_header,
+    schema::try_schema_from_header,
 };
 
 #[derive(Debug)]
@@ -163,8 +161,8 @@ impl RowBuilder {
     }
 
     /// Note: returns StructArray to allow nesting within another array if desired
-    pub fn finish(&mut self) -> StructArray {
-        let schema = schema_from_header(&self.header, self.point_encoding, self.extra_bytes);
+    pub fn finish(&mut self) -> Result<StructArray, ArrowError> {
+        let schema = try_schema_from_header(&self.header, self.point_encoding, self.extra_bytes)?;
 
         let mut columns = match self.point_encoding {
             LasPointEncoding::Plain => vec![
@@ -177,8 +175,7 @@ impl RowBuilder {
 
                 let n: usize = self.x.len();
 
-                let capacity = WkbCapacity::new(POINT_SIZE * n, 4 * n);
-                let mut builder = WkbBuilder::<i32>::with_capacity(WkbType::default(), capacity);
+                let mut builder = BinaryBuilder::with_capacity(n, n * POINT_SIZE);
 
                 let x = self.x.finish();
                 let y = self.y.finish();
@@ -197,21 +194,22 @@ impl RowBuilder {
                     wkb_bytes[13..21].copy_from_slice(y.to_le_bytes().as_slice());
                     wkb_bytes[21..29].copy_from_slice(z.to_le_bytes().as_slice());
 
-                    unsafe { builder.push_wkb_unchecked(Some(&wkb_bytes)) };
+                    builder.append_value(wkb_bytes);
                 }
 
-                vec![builder.finish().to_array_ref()]
+                vec![Arc::new(builder.finish()) as ArrayRef]
             }
-            LasPointEncoding::Nativ => {
+            LasPointEncoding::Native => {
                 let buffers = [
                     self.x.finish().into_parts().1,
                     self.y.finish().into_parts().1,
                     self.z.finish().into_parts().1,
                     ScalarBuffer::from(vec![]),
                 ];
-                let coords = CoordBuffer::Separated(
-                    SeparatedCoordBuffer::from_array(buffers, Dimension::XYZ).unwrap(),
-                );
+                let coords = CoordBuffer::Separated(SeparatedCoordBuffer::from_array(
+                    buffers,
+                    Dimension::XYZ,
+                )?);
                 let points = PointArray::new(coords, None, Default::default());
                 vec![points.to_array_ref()]
             }
@@ -257,7 +255,7 @@ impl RowBuilder {
                     let mut pos = 0;
 
                     for attribute in self.extra_attributes.iter() {
-                        pos += build_attribute(attribute, pos, &extra, &mut columns);
+                        pos += build_attribute(attribute, pos, &extra, &mut columns)?;
                     }
                 }
                 LasExtraBytes::Blob => columns.push(Arc::new(self.extra.finish())),
@@ -265,7 +263,7 @@ impl RowBuilder {
             }
         }
 
-        StructArray::new(schema.fields.to_owned(), columns, None)
+        Ok(StructArray::new(schema.fields.to_owned(), columns, None))
     }
 }
 
@@ -274,7 +272,7 @@ fn build_attribute(
     pos: usize,
     extra: &FixedSizeBinaryArray,
     columns: &mut Vec<ArrayRef>,
-) -> usize {
+) -> Result<usize, ArrowError> {
     let scale = attribute.scale.unwrap_or(1.0);
     let offset = attribute.offset.unwrap_or(0.0);
 
@@ -288,7 +286,7 @@ fn build_attribute(
 
     match &attribute.data_type {
         DataType::FixedSizeBinary(_) => {
-            let data = FixedSizeBinaryArray::try_from_iter(iter).unwrap();
+            let data = FixedSizeBinaryArray::try_from_iter(iter)?;
             columns.push(Arc::new(data) as ArrayRef)
         }
         DataType::Int8 => {
@@ -562,8 +560,12 @@ fn build_attribute(
             }
         }
 
-        dt => panic!("Unsupported data type for extra bytes: `{dt}`"),
+        dt => {
+            return Err(ArrowError::ExternalError(
+                format!("Unsupported data type for extra bytes: `{dt}`").into(),
+            ))
+        }
     }
 
-    width
+    Ok(width)
 }

@@ -26,10 +26,13 @@ use datafusion_common::{
 /// Geometry representation
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum LasPointEncoding {
+    /// Use plain coordinates as three fields `x`, `y`, `z` with datatype Float64 encoding.
     #[default]
     Plain,
+    /// Resolves the coordinates to a fields `geometry` with WKB encoding.
     Wkb,
-    Nativ,
+    /// Resolves the coordinates to a fields `geometry` with separated GeoArrow encoding.
+    Native,
 }
 
 impl Display for LasPointEncoding {
@@ -37,7 +40,7 @@ impl Display for LasPointEncoding {
         match self {
             LasPointEncoding::Plain => f.write_str("plain"),
             LasPointEncoding::Wkb => f.write_str("wkb"),
-            LasPointEncoding::Nativ => f.write_str("nativ"),
+            LasPointEncoding::Native => f.write_str("nativ"),
         }
     }
 }
@@ -49,7 +52,7 @@ impl FromStr for LasPointEncoding {
         match s.to_lowercase().as_str() {
             "plain" => Ok(Self::Plain),
             "wkb" => Ok(Self::Wkb),
-            "native" => Ok(Self::Nativ),
+            "native" => Ok(Self::Native),
             s => Err(format!("Unable to parse from `{s}`")),
         }
     }
@@ -124,7 +127,7 @@ impl ConfigField for LasExtraBytes {
 extensions_options! {
     /// The LAZ config options
     pub struct LazTableOptions {
-        pub point_encoding: LasPointEncoding, default = LasPointEncoding::Nativ
+        pub point_encoding: LasPointEncoding, default = LasPointEncoding::Native
         pub extra_bytes: LasExtraBytes, default = LasExtraBytes::Typed
     }
 

@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use datafusion_common::{error::DataFusionError, pruning::PrunableStatistics};
 use datafusion_datasource::{
-    file_meta::FileMeta,
     file_stream::{FileOpenFuture, FileOpener},
     PartitionedFile,
 };
@@ -30,7 +29,7 @@ use futures::StreamExt;
 use crate::laz::{
     options::LazTableOptions,
     reader::{LazFileReader, LazFileReaderFactory},
-    schema::schema_from_header,
+    schema::try_schema_from_header,
 };
 
 pub struct LazOpener {
@@ -46,11 +45,7 @@ pub struct LazOpener {
 }
 
 impl FileOpener for LazOpener {
-    fn open(
-        &self,
-        _file_meta: FileMeta,
-        file: PartitionedFile,
-    ) -> Result<FileOpenFuture, DataFusionError> {
+    fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture, DataFusionError> {
         let projection = self.projection.clone();
         let limit = self.limit;
 
@@ -62,11 +57,11 @@ impl FileOpener for LazOpener {
 
         Ok(Box::pin(async move {
             let metadata = laz_reader.get_metadata().await?;
-            let schema = Arc::new(schema_from_header(
+            let schema = Arc::new(try_schema_from_header(
                 &metadata.header,
                 laz_reader.options.point_encoding,
                 laz_reader.options.extra_bytes,
-            ));
+            )?);
 
             let pruning_predicate = predicate.and_then(|physical_expr| {
                 PruningPredicate::try_new(physical_expr, schema.clone()).ok()
@@ -121,8 +116,6 @@ impl FileOpener for LazOpener {
                 }
 
             };
-
-            // let stream = futures::stream::iter(batches);
 
             Ok(Box::pin(stream) as _)
         }))
