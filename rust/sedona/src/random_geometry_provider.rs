@@ -255,7 +255,11 @@ impl RandomGeometryExec {
 
 impl DisplayAs for RandomGeometryExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "RecordBatchReaderExec")
+        write!(
+            f,
+            "RandomGeometryExec: builder={:?}, last_partition_rows={}",
+            self.builder, self.last_partition_rows
+        )
     }
 }
 
