@@ -18,7 +18,7 @@ import math
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Tuple
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
@@ -29,90 +29,15 @@ if TYPE_CHECKING:
     import sedonadb
 
 
-def random_geometry(
-    geom_type: Optional[
-        Literal[
-            "Geometry",
-            "Point",
-            "LineString",
-            "Polygon",
-            "MultiPoint",
-            "MultiLineString",
-            "MultiPolygon",
-            "GeometryCollection",
-        ]
-    ] = None,
-    num_rows: Optional[int] = None,
-    *,
-    num_vertices: Union[int, Tuple[int, int], None] = None,
-    num_parts: Union[int, Tuple[int, int], None] = None,
-    size: Union[float, Tuple[float, float], None] = None,
-    bounds: Optional[Iterable[float]] = None,
-    hole_rate: Optional[float] = None,
-    empty_rate: Optional[float] = None,
-    null_rate: Optional[float] = None,
-    seed: Optional[int] = None,
-) -> "sedonadb.dataframe.DataFrame":
+def random_geometry(*args, **kwargs) -> "sedonadb.dataframe.DataFrame":
     """
-    Generate a DataFrame with random geometries for testing purposes.
-    This function creates a DataFrame containing randomly generated geometries with
-    configurable parameters for geometry type, size, complexity, and spatial distribution.
-    Returns a DataFrame with columns 'id', 'dist', and 'geometry' containing randomly
-    generated geometries and distances.
-
-    Parameters
-    ----------
-    geom_type : str, default "Point"
-        The type of geometry to generate. One of "Geometry",
-        "Point", "LineString",  "Polygon", "MultiPoint", "MultiLineString",
-        "MultiPolygon", or "GeometryCollection".
-    num_rows : int, default 1024
-        Number of rows to generate.
-    num_vertices : int or tuple of (int, int), default 4
-        Number of vertices per geometry. If a tuple, specifies (min, max) range.
-    num_parts : int or tuple of (int, int), default (1, 3)
-        Number of parts for multi-geometries. If a tuple, specifies (min, max) range.
-    size : float or tuple of (float, float), default (1.0, 10.0)
-        Spatial size of geometries. If a tuple, specifies (min, max) range.
-    bounds : iterable of float, default [0.0, 0.0, 100.0, 100.0]
-        Spatial bounds as [xmin, ymin, xmax, ymax] to constrain generated geometries.
-    hole_rate : float, default 0.0
-        Rate of polygons with holes, between 0.0 and 1.0.
-    empty_rate : float, default 0.0
-        Rate of empty geometries, between 0.0 and 1.0.
-    null_rate : float, default 0.0
-        Rate of null geometries, between 0.0 and 1.0.
-    seed : int, optional
-        Random seed for reproducible geometry generation. If omitted, the result is
-        non-deterministic.
-
-    Examples
-    --------
-    >>> df = random_geometry(num_rows=100, geom_type="Point")
-    >>> df = random_geometry(num_rows=50, geom_type="Polygon", num_vertices=(4, 10))
-    >>> df = random_geometry(bounds=[-180, -90, 180, 90], seed=4837)
+    Generate a DataFrame with random geometries for testing purposes by
+    calling sd_random_geometry() on an isolated SedonaDB session.
     """
-    import json
-
     import sedonadb
 
-    args = {
-        "bounds": bounds,
-        "empty_rate": empty_rate,
-        "geom_type": geom_type,
-        "null_rate": null_rate,
-        "num_parts": num_parts,
-        "hole_rate": hole_rate,
-        "seed": seed,
-        "size": size,
-        "num_rows": num_rows,
-        "num_vertices": num_vertices,
-    }
-
-    args = {k: v for k, v in args.items() if v is not None}
-
     sd = sedonadb.connect()
-    return sd.sql(f"SELECT * FROM sd_random_geometry('{json.dumps(args)}')")
+    return sd.funcs.table.sd_random_geometry(*args, **kwargs)
 
 
 def skip_if_not_exists(path: Path):
