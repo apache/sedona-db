@@ -237,13 +237,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_length", LineString(500));
 
     benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
-    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(10));
+    benchmark::scalar(c, &f, "geos", "st_makevalid", Polygon(100));
 
     benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_minimumclearance", Polygon(10));
 
     benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(10));
-    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(500));
+    benchmark::scalar(c, &f, "geos", "st_minimumclearanceline", LineString(50));
 
     benchmark::scalar(
         c,
@@ -263,6 +263,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(10));
     benchmark::scalar(c, &f, "geos", "st_perimeter", Polygon(500));
 
+    benchmark::scalar(c, &f, "geos", "st_polygonize", LineString(10));
+    benchmark::scalar(c, &f, "geos", "st_polygonize", LineString(500));
+
     benchmark::scalar(
         c,
         &f,
@@ -276,6 +279,22 @@ fn criterion_benchmark(c: &mut Criterion) {
         "geos",
         "st_simplify",
         ArrayScalar(Polygon(500), Float64(1.0, 10.0)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_simplifypreservetopology",
+        ArrayScalar(Polygon(10), Float64(1.0, 10.0)),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "geos",
+        "st_simplifypreservetopology",
+        ArrayScalar(Polygon(25), Float64(1.0, 10.0)),
     );
 
     benchmark::scalar(

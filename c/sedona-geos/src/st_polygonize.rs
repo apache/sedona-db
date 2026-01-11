@@ -20,7 +20,6 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
-use geos::Geom;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
@@ -29,6 +28,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Polygonize() scalar implementation using GEOS
 pub fn st_polygonize_impl() -> ScalarKernelRef {
@@ -74,12 +74,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -
     let result = geos::Geometry::polygonize(&[geos_geom])
         .map_err(|e| DataFusionError::Execution(format!("Failed to polygonize: {e}")))?;
 
-    let wkb = result
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to convert result to WKB: {e}")))?;
-    writer
-        .write_all(wkb.as_ref())
-        .map_err(|e| DataFusionError::Execution(format!("Failed to write result WKB: {e}")))?;
+    write_geos_geometry(&result, writer)?;
 
     Ok(())
 }

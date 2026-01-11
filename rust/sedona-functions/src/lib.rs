@@ -52,6 +52,7 @@ pub mod st_isclosed;
 mod st_iscollection;
 pub mod st_isempty;
 mod st_length;
+mod st_line_merge;
 mod st_makeline;
 mod st_numgeometries;
 mod st_perimeter;

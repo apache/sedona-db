@@ -33,6 +33,7 @@ mod st_issimple;
 mod st_isvalid;
 mod st_isvalidreason;
 mod st_length;
+mod st_line_merge;
 mod st_makevalid;
 mod st_minimumclearance;
 mod st_minimumclearance_line;
