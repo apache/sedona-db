@@ -311,11 +311,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use datafusion_expr::ScalarUDF;
+    use datafusion_common::ScalarValue;
+    use datafusion_expr::{ColumnarValue, ScalarUDF};
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+        compare::assert_array_equal, create::create_array, create::create_scalar,
+        testers::ScalarUdfTester,
     };
 
     use super::*;
@@ -564,5 +566,40 @@ mod tests {
             .invoke_arrays(prepare_args(points_2d, m_translate))
             .unwrap();
         assert_array_equal(&result_translate, &expected_translate);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_affine_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester.assert_return_type(sedona_type.clone());
+
+        let geom = create_scalar(Some("POINT (1 2)"), &sedona_type);
+        let args = vec![
+            ColumnarValue::Scalar(geom),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(2.0))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(2.0))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(1.0))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(3.0))),
+        ];
+
+        let result = tester.invoke(args).unwrap();
+        if let ColumnarValue::Scalar(scalar) = result {
+            tester.assert_scalar_result_equals(scalar, "POINT (3 7)");
+        } else {
+            panic!("Expected scalar result from item CRS affine invoke");
+        }
     }
 }
