@@ -245,9 +245,16 @@ impl ExecutionPlan for RecordBatchReaderExec {
 
     fn execute(
         &self,
-        _partition: usize,
+        partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Return empty stream for out-of-range partitions (can happen with joins)
+        if partition > 0 {
+            let stream = Box::pin(futures::stream::empty());
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            return Ok(Box::pin(record_batch_stream));
+        }
+
         let mut reader_guard = self.reader.lock();
 
         let reader = if let Some(reader) = reader_guard.take() {
