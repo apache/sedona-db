@@ -105,6 +105,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_rotate::st_rotate_udf,
         crate::st_rotate::st_rotate_x_udf,
         crate::st_rotate::st_rotate_y_udf,
+        crate::st_scale::st_scale_udf,
         crate::st_setsrid::st_set_crs_udf,
         crate::st_setsrid::st_set_srid_udf,
         crate::st_srid::st_crs_udf,

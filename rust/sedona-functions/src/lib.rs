@@ -62,6 +62,7 @@ mod st_pointzm;
 mod st_polygonize_agg;
 mod st_reverse;
 mod st_rotate;
+mod st_scale;
 mod st_setsrid;
 mod st_srid;
 mod st_start_point;
