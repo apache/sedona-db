@@ -193,7 +193,6 @@ def test_st_azimuth(eng, geom1, geom2, expected):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "a", "b", "d", "e", "xoff", "yoff", "expected"),
-    # fmt: skip
     [
         (
             "POINT (1 2)",
@@ -270,6 +269,135 @@ def test_st_affine_3d(
             pytest.skip(f"PostGIS may not support 3D ST_Affine: {exc}")
         raise
 # fmt: on
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "sx", "sy", "expected"),
+    [
+        (None, 2.0, 3.0, None),
+        ("POINT (1 2)", 1.0, 1.0, "POINT (1 2)"),
+        ("POINT (1 2)", 2.0, 3.0, "POINT (2 6)"),
+        ("LINESTRING (0 0, 1 1)", 2.0, 3.0, "LINESTRING (0 0, 2 3)"),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            2.0,
+            3.0,
+            "POLYGON ((0 0, 2 0, 2 3, 0 3, 0 0))",
+        ),
+        (
+            "MULTIPOINT (1 2, 3 4)",
+            2.0,
+            3.0,
+            "MULTIPOINT (2 6, 6 12)",
+        ),
+        (
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+            2.0,
+            3.0,
+            "MULTILINESTRING ((0 0, 2 3), (4 6, 6 9))",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            2.0,
+            3.0,
+            "MULTIPOLYGON (((0 0, 2 0, 2 3, 0 3, 0 0)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1))",
+            2.0,
+            3.0,
+            "GEOMETRYCOLLECTION (POINT (2 6), LINESTRING (0 0, 2 3))",
+        ),
+        ("POINT Z (1 2 3)", 2.0, 3.0, "POINT Z (2 6 3)"),
+    ],
+)
+def test_st_scale_2d(eng, geom, sx, sy, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Scale({geom_or_null(geom)}, {val_or_null(sx)}, {val_or_null(sy)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "sx", "sy", "sz", "expected"),
+    [
+        ("POINT Z (1 2 3)", 1.0, 1.0, 1.0, "POINT Z (1 2 3)"),
+        ("POINT Z (1 2 3)", 2.0, 3.0, 4.0, "POINT Z (2 6 12)"),
+    ],
+)
+def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
+    eng = eng.create_or_skip()
+    query = (
+        "SELECT ST_Scale("
+        f"{geom_or_null(geom)}, {val_or_null(sx)}, {val_or_null(sy)}, {val_or_null(sz)})"
+    )
+    try:
+        eng.assert_query_result(query, expected)
+    except Exception as exc:
+        if isinstance(eng, PostGIS):
+            pytest.skip(f"PostGIS may not support 3D ST_Scale: {exc}")
+        raise
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "expected_x", "expected_y"),
+    [
+        (None, 0.0, None, None),
+        ("POINT (1 2)", 0.0, 1.0, 2.0),
+        ("POINT (1 2)", 1.5707963267948966, -2.0, 1.0),
+        ("POINT (1 2)", 3.141592653589793, -1.0, -2.0),
+    ],
+)
+def test_st_rotate(eng, geom, angle, expected_x, expected_y):
+    eng = eng.create_or_skip()
+    x_query = f"SELECT ST_X(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))"
+    y_query = f"SELECT ST_Y(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))"
+    eng.assert_query_result(x_query, expected_x, numeric_epsilon=1e-12)
+    eng.assert_query_result(y_query, expected_y, numeric_epsilon=1e-12)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "xmin", "xmax", "ymin", "ymax"),
+    [
+        ("LINESTRING (1 0, 0 2)", 1.5707963267948966, -2.0, 0.0, 0.0, 1.0),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            1.5707963267948966,
+            -1.0,
+            0.0,
+            0.0,
+            1.0,
+        ),
+        ("MULTIPOINT (1 0, 0 2)", 1.5707963267948966, -2.0, 0.0, 0.0, 1.0),
+    ],
+)
+def test_st_rotate_bounds(eng, geom, angle, xmin, xmax, ymin, ymax):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_XMin(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
+        xmin,
+        numeric_epsilon=1e-12,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_XMax(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
+        xmax,
+        numeric_epsilon=1e-12,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_YMin(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
+        ymin,
+        numeric_epsilon=1e-12,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_YMax(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
+        ymax,
+        numeric_epsilon=1e-12,
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
