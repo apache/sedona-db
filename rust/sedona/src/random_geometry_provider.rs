@@ -86,7 +86,7 @@ pub struct RandomGeometryProvider {
     builder: RandomPartitionedDataBuilder,
     num_partitions: usize,
     rows_per_batch: usize,
-    target_rows: usize,
+    num_rows: usize,
 }
 
 impl RandomGeometryProvider {
@@ -96,7 +96,7 @@ impl RandomGeometryProvider {
     /// Parameters that affect the number of partitions or rows have different defaults that
     /// always override that of the builder (unless manually specified in the option). This
     /// reflects the SQL use case where often the parameter that needs tweaking is the number
-    /// of total rows, which in this case can be set with `{"target_rows": 2048}`. The number
+    /// of total rows, which in this case can be set with `{"num_rows": 2048}`. The number
     /// of total rows will always be a multiple of the batch size times the number of partitions,
     /// whose defaults to 1024 and 1, respectively.
     ///
@@ -115,7 +115,7 @@ impl RandomGeometryProvider {
 
         let mut num_partitions = 1;
         let mut rows_per_batch = 1024;
-        let mut target_rows = 1024;
+        let mut num_rows = 1024;
 
         if let Some(options) = options {
             if let Some(opt_num_partitions) = options.num_partitions {
@@ -126,8 +126,8 @@ impl RandomGeometryProvider {
                 rows_per_batch = opt_rows_per_batch;
             }
 
-            if let Some(opt_target_rows) = options.target_rows {
-                target_rows = opt_target_rows;
+            if let Some(opt_num_rows) = options.num_rows {
+                num_rows = opt_num_rows;
             }
 
             // Unlike the Rust version, where we almost always want a set seed by default,
@@ -177,7 +177,7 @@ impl RandomGeometryProvider {
             builder,
             num_partitions,
             rows_per_batch,
-            target_rows,
+            num_rows,
         })
     }
 }
@@ -207,7 +207,7 @@ impl TableProvider for RandomGeometryProvider {
             self.builder.clone(),
             self.rows_per_batch,
             self.num_partitions,
-            self.target_rows,
+            self.num_rows,
         );
 
         let exec = Arc::new(RandomGeometryExec::new(builder, last_partition_rows));
@@ -325,7 +325,7 @@ impl ExecutionPlan for RandomGeometryExec {
 struct RandomGeometryFunctionOptions {
     num_partitions: Option<usize>,
     rows_per_batch: Option<usize>,
-    target_rows: Option<usize>,
+    num_rows: Option<usize>,
     seed: Option<u64>,
     null_rate: Option<f64>,
     geom_type: Option<GeometryTypeId>,
@@ -344,13 +344,13 @@ fn builder_with_partition_sizes(
     builder: RandomPartitionedDataBuilder,
     batch_size: usize,
     partitions: usize,
-    target_rows: usize,
+    num_rows: usize,
 ) -> (RandomPartitionedDataBuilder, usize) {
     let rows_for_one_batch_per_partition = batch_size * partitions;
-    let batches_per_partition = if target_rows.is_multiple_of(rows_for_one_batch_per_partition) {
-        target_rows / rows_for_one_batch_per_partition
+    let batches_per_partition = if num_rows.is_multiple_of(rows_for_one_batch_per_partition) {
+        num_rows / rows_for_one_batch_per_partition
     } else {
-        target_rows / rows_for_one_batch_per_partition + 1
+        num_rows / rows_for_one_batch_per_partition + 1
     };
 
     let builder_out = builder
@@ -358,7 +358,7 @@ fn builder_with_partition_sizes(
         .num_partitions(partitions)
         .batches_per_partition(batches_per_partition);
     let normal_partition_rows = batches_per_partition * batch_size;
-    let remainder = (normal_partition_rows * partitions) - target_rows;
+    let remainder = (normal_partition_rows * partitions) - num_rows;
     let last_partition_rows = if remainder == 0 {
         normal_partition_rows
     } else {
@@ -415,7 +415,8 @@ mod test {
         let provider = RandomGeometryProvider::try_new(
             builder,
             Some(
-                r#"{"target_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}"#.to_string(),
+                r#"{"num_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}"#
+                    .to_string(),
             ),
         )
         .unwrap();
@@ -431,7 +432,7 @@ mod test {
         ctx.register_udtf("sd_random_geometry", Arc::new(RandomGeometryFunction {}));
         let df = ctx
             .sql(r#"
-        SELECT * FROM sd_random_geometry('{"target_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}')
+        SELECT * FROM sd_random_geometry('{"num_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}')
             "#)
             .await
             .unwrap();
@@ -449,9 +450,7 @@ mod test {
         // an exact number of rows
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 8192, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string(),
-            ),
+            Some(r#"{"num_rows": 8192, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
@@ -461,9 +460,7 @@ mod test {
         // exact number of target rows
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 9000, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string(),
-            ),
+            Some(r#"{"num_rows": 9000, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
@@ -477,7 +474,7 @@ mod test {
         // Test that a scalar value for size works (gets converted to (value, value))
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(r#"{"target_rows": 1024, "size": 0.5}"#.to_string()),
+            Some(r#"{"num_rows": 1024, "size": 0.5}"#.to_string()),
         )
         .unwrap();
 
@@ -487,7 +484,7 @@ mod test {
         // Test that a range value for size still works
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(r#"{"target_rows": 1024, "size": [0.1, 0.5]}"#.to_string()),
+            Some(r#"{"num_rows": 1024, "size": [0.1, 0.5]}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();

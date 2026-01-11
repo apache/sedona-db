@@ -43,14 +43,14 @@ class TestBenchBase:
                 "points_simple",
                 {
                     "geom_type": "Point",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                 },
             ),
             (
                 "segments_large",
                 {
                     "geom_type": "LineString",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                     "num_vertices": [2, 10],
                 },
             ),
@@ -58,7 +58,7 @@ class TestBenchBase:
                 "polygons_simple",
                 {
                     "geom_type": "Polygon",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                     "num_vertices": [10, 10],
                 },
             ),
@@ -66,7 +66,7 @@ class TestBenchBase:
                 "polygons_complex",
                 {
                     "geom_type": "Polygon",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                     "num_vertices": [500, 500],
                 },
             ),
@@ -74,7 +74,7 @@ class TestBenchBase:
                 "collections_simple",
                 {
                     "geom_type": "GeometryCollection",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                     "num_vertices": [10, 10],
                 },
             ),
@@ -82,7 +82,7 @@ class TestBenchBase:
                 "collections_complex",
                 {
                     "geom_type": "GeometryCollection",
-                    "target_rows": num_geoms,
+                    "num_rows": num_geoms,
                     "num_vertices": [500, 500],
                 },
             ),

@@ -31,7 +31,7 @@ def test_knn_join_basic(k):
         point_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 20,
+                "num_rows": 20,
                 "seed": 42,
             }
         )
@@ -43,7 +43,7 @@ def test_knn_join_basic(k):
         target_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 50,
+                "num_rows": 50,
                 "seed": 43,
             }
         )
@@ -115,7 +115,7 @@ def test_knn_join_with_polygons():
         point_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 15,
+                "num_rows": 15,
                 "seed": 100,
             }
         )
@@ -127,7 +127,7 @@ def test_knn_join_with_polygons():
         polygon_options = json.dumps(
             {
                 "geom_type": "Polygon",
-                "target_rows": 30,
+                "num_rows": 30,
                 "num_vertices": [4, 8],
                 "size": [0.001, 0.01],
                 "seed": 101,
@@ -199,7 +199,7 @@ def test_knn_join_edge_cases():
         point_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 5,
+                "num_rows": 5,
                 "seed": 200,
             }
         )
@@ -210,7 +210,7 @@ def test_knn_join_edge_cases():
         target_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 3,  # Fewer targets than k in some tests
+                "num_rows": 3,  # Fewer targets than k in some tests
                 "seed": 201,
             }
         )
@@ -271,7 +271,7 @@ def test_knn_join_with_attributes():
         point_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 10,
+                "num_rows": 10,
                 "seed": 300,
             }
         )
@@ -290,7 +290,7 @@ def test_knn_join_with_attributes():
         target_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 20,
+                "num_rows": 20,
                 "seed": 301,
             }
         )
@@ -374,7 +374,7 @@ def test_knn_join_correctness_known_points():
         query_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 3,
+                "num_rows": 3,
                 "seed": 1000,
             }
         )
@@ -385,7 +385,7 @@ def test_knn_join_correctness_known_points():
         target_options = json.dumps(
             {
                 "geom_type": "Point",
-                "target_rows": 8,
+                "num_rows": 8,
                 "seed": 1001,
             }
         )
