@@ -17,7 +17,7 @@
 use arrow_array::{builder::BinaryBuilder, types::Float64Type, Array, PrimitiveArray};
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::as_float64_array, error::Result, exec_err, internal_err, DataFusionError, ScalarValue,
+    cast::as_float64_array, error::Result, exec_err, internal_err, DataFusionError,
 };
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
@@ -530,5 +530,149 @@ impl<'a> Iterator for DAffineIterator<'a> {
                 daffine3_iterator.next().map(|a| DAffine::DAffine3(a))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow_array::create_array;
+    use datafusion_common::ScalarValue;
+    use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_testing::{
+        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+    };
+
+    use super::*;
+
+    #[test]
+    fn udf_metadata() {
+        let st_affine_udf: ScalarUDF = st_affine_udf().into();
+        assert_eq!(st_affine_udf.name(), "st_affine");
+        assert!(st_affine_udf.documentation().is_some());
+    }
+
+    #[rstest]
+    fn udf_2d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester_2d = ScalarUdfTester::new(
+            st_affine_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester_2d.assert_return_type(WKB_GEOMETRY);
+
+        let points = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT M (1 2 3)"),
+            ],
+            &sedona_type,
+        );
+
+        // identity transformation
+
+        #[rustfmt::skip]
+        let m_identity = &[
+            Some(1.0), Some(0.0),
+            Some(0.0), Some(1.0),
+            Some(0.0), Some(0.0),
+        ];
+
+        let expected_identity = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT M (1 2 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_identity = tester_2d
+            .invoke_arrays(prepare_args(points.clone(), m_identity))
+            .unwrap();
+        assert_array_equal(&result_identity, &expected_identity);
+
+        // scale transformation
+
+        #[rustfmt::skip]
+        let m_scale = &[
+            Some(10.0), Some(0.0),
+            Some(0.0), Some(10.0),
+            Some(0.0), Some(0.0),
+        ];
+
+        let expected_scale = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (10 20)"),
+                Some("POINT M (10 20 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_scale = tester_2d
+            .invoke_arrays(prepare_args(points.clone(), m_scale))
+            .unwrap();
+        assert_array_equal(&result_scale, &expected_scale);
+    }
+
+    fn prepare_args(wkt: Arc<dyn Array>, mat: &[Option<f64>]) -> Vec<Arc<dyn Array>> {
+        let n = wkt.len();
+        let mut args: Vec<Arc<dyn Array>> = mat
+            .iter()
+            .map(|a| {
+                let values = vec![*a; n];
+                Arc::new(arrow_array::Float64Array::from(values)) as Arc<dyn Array>
+            })
+            .collect();
+        args.insert(0, wkt);
+        args
+    }
+
+    #[rstest]
+    fn udf_3d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester_3d = ScalarUdfTester::new(
+            st_affine_udf().into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester_3d.assert_return_type(WKB_GEOMETRY);
+
+        // identity matrix
+        #[rustfmt::skip]
+        let m_identity = [
+            Some(1.0), Some(0.0), Some(0.0),
+            Some(0.0), Some(1.0), Some(0.0),
+            Some(0.0), Some(0.0), Some(1.0),
+            Some(0.0), Some(0.0), Some(0.0),
+        ];
     }
 }
