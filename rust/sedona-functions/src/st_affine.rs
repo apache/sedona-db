@@ -435,19 +435,6 @@ mod tests {
         assert_array_equal(&result_scale_3d, &expected_scale_3d);
     }
 
-    fn prepare_args(wkt: Arc<dyn Array>, mat: &[Option<f64>]) -> Vec<Arc<dyn Array>> {
-        let n = wkt.len();
-        let mut args: Vec<Arc<dyn Array>> = mat
-            .iter()
-            .map(|a| {
-                let values = vec![*a; n];
-                Arc::new(arrow_array::Float64Array::from(values)) as Arc<dyn Array>
-            })
-            .collect();
-        args.insert(0, wkt);
-        args
-    }
-
     #[rstest]
     fn udf_3d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester_3d = ScalarUdfTester::new(
@@ -566,6 +553,19 @@ mod tests {
             .invoke_arrays(prepare_args(points_2d, m_translate))
             .unwrap();
         assert_array_equal(&result_translate, &expected_translate);
+    }
+
+    fn prepare_args(wkt: Arc<dyn Array>, mat: &[Option<f64>]) -> Vec<Arc<dyn Array>> {
+        let n = wkt.len();
+        let mut args: Vec<Arc<dyn Array>> = mat
+            .iter()
+            .map(|a| {
+                let values = vec![*a; n];
+                Arc::new(arrow_array::Float64Array::from(values)) as Arc<dyn Array>
+            })
+            .collect();
+        args.insert(0, wkt);
+        args
     }
 
     #[rstest]
