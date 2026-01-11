@@ -1802,19 +1802,19 @@ def test_st_isring_non_linestring_error(eng, geom):
     ("geom", "expected"),
     [
         (None, None),
-        ("MULTILINESTRING((0 0,1 0),(1 0,1 1))", "LINESTRING(0 0,1 0,1 1)"),
+        ("MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))", "LINESTRING (0 0, 1 0, 1 1)"),
         # opposite direction
         (
-            "MULTILINESTRING((0 0,1 0),(1 1,1 0))",
-            "LINESTRING(0 0,1 0,1 1)",
+            "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",
+            "LINESTRING (0 0, 1 0, 1 1)",
         ),
         # non-touching
         (
-            "MULTILINESTRING((0 0,1 0),(8 8,9 9))",
-            "MULTILINESTRING((0 0,1 0),(8 8,9 9))",
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
+            "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
         ),
         # empty cases
-        ("POINT EMPTY", "POINT EMPTY"),
+        # ("POINT EMPTY", "POINT EMPTY"), # PostGIS returns POINT (nan, nan)
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -1823,17 +1823,15 @@ def test_st_isring_non_linestring_error(eng, geom):
         ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
         # Note that the behaviour on non-multilinestring geometry is not documented.
         # But, we test such cases here as well to detect if there's any difference.
-        ("POINT(0 0)", "GEOMETRYCOLLECTION EMPTY"),
-        ("LINESTRING(0 0,1 0)", "LINESTRING(0 0,1 0)"),
-        ("POLYGON((0 0,0 1,1 0,0 0))", "LINESTRING(0 0,0 1,1 0,0 0)"),
+        ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
+        ("LINESTRING (0 0, 1 0)", "LINESTRING (0 0, 1 0)"),
+        ("POLYGON ((0 0, 0 1, 1 0, 0 0))", "LINESTRING (0 0, 0 1, 1 0, 0 0)"),
     ],
 )
 def test_st_linemerge(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        # This requires ST_AsText(), otherwise "POINT EMPTY" is converted as
-        # "POINT (nan, nan)", which makes this test fail.
-        f"SELECT ST_AsText(ST_LineMerge({geom_or_null(geom)}))",
+        f"SELECT ST_LineMerge({geom_or_null(geom)})",
         expected,
     )
 
