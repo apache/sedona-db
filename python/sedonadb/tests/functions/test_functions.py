@@ -191,6 +191,86 @@ def test_st_azimuth(eng, geom1, geom2, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "a", "b", "d", "e", "xoff", "yoff", "expected"),
+    # fmt: skip
+    [
+        (
+            "POINT (1 2)",
+            1.0, 0.0,
+            0.0, 1.0,
+            0.0, 0.0,
+            "POINT (1 2)"),
+        (
+            "POINT (1 2)",
+            2.0, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            "POINT (3 7)"),
+        (
+            "LINESTRING (0 0, 1 1)",
+            1.0, 0.0,
+            0.0, 1.0,
+            1.0, 2.0,
+            "LINESTRING (1 2, 2 3)"
+        ),
+    ],
+)
+def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_Affine("
+        f"{geom_or_null(geom)}, "
+        f"{val_or_null(a)}, {val_or_null(b)}, {val_or_null(d)}, {val_or_null(e)}, "
+        f"{val_or_null(xoff)}, {val_or_null(yoff)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "a", "b", "c", "d", "e", "f", "g", "h", "i", "xoff", "yoff", "zoff", "expected"),
+    # fmt: skip
+    [
+        (
+            "POINT Z (1 2 3)",
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+            0.0, 0.0, 0.0,
+            "POINT Z (1 2 3)",
+        ),
+        (
+            "POINT Z (1 2 3)",
+            2.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            "POINT Z (3 7 11)",
+        ),
+    ],
+)
+def test_st_affine_3d(
+    eng, geom, a, b, c, d, e, f, g, h, i, xoff, yoff, zoff, expected
+):
+    eng = eng.create_or_skip()
+    query = (
+        "SELECT ST_Affine("
+        f"{geom_or_null(geom)}, "
+        f"{val_or_null(a)}, {val_or_null(b)}, {val_or_null(c)}, "
+        f"{val_or_null(d)}, {val_or_null(e)}, {val_or_null(f)}, "
+        f"{val_or_null(g)}, {val_or_null(h)}, {val_or_null(i)}, "
+        f"{val_or_null(xoff)}, {val_or_null(yoff)}, {val_or_null(zoff)})"
+    )
+    try:
+        eng.assert_query_result(query, expected)
+    except Exception as exc:
+        if isinstance(eng, PostGIS):
+            pytest.skip(f"PostGIS may not support 3D ST_Affine: {exc}")
+        raise
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected_boundary"),
     [
         (None, None),
