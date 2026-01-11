@@ -42,7 +42,7 @@ def random_geometry(
             "GeometryCollection",
         ]
     ] = None,
-    target_rows: Optional[int] = None,
+    num_rows: Optional[int] = None,
     *,
     num_vertices: Union[int, Tuple[int, int], None] = None,
     num_parts: Union[int, Tuple[int, int], None] = None,
@@ -64,7 +64,7 @@ def random_geometry(
         The type of geometry to generate. One of "Geometry",
         "Point", "LineString",  "Polygon", "MultiPoint", "MultiLineString",
         "MultiPolygon", or "GeometryCollection".
-    target_rows : int, default 1024
+    num_rows : int, default 1024
         Target number of rows to generate. The actual number may be more than
         this (use `limit()` to constrain this number exactly).
     num_vertices : int or tuple of (int, int), default 4
@@ -92,8 +92,8 @@ def random_geometry(
 
     Examples
     --------
-    >>> df = random_geometry(target_rows=100, geom_type="Point")
-    >>> df = random_geometry(target_rows=50, geom_type="Polygon", num_vertices=(4, 10))
+    >>> df = random_geometry(num_rows=100, geom_type="Point")
+    >>> df = random_geometry(num_rows=50, geom_type="Polygon", num_vertices=(4, 10))
     >>> df = random_geometry(bounds=[-180, -90, 180, 90], seed=4837)
     """
     import json
@@ -109,7 +109,7 @@ def random_geometry(
         "hole_rate": hole_rate,
         "seed": seed,
         "size": size,
-        "target_rows": target_rows,
+        "num_rows": num_rows,
         "num_vertices": num_vertices,
     }
 
