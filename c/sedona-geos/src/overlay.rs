@@ -28,6 +28,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 pub fn st_intersection_impl() -> ScalarKernelRef {
     Arc::new(BinaryOverlay {
@@ -107,11 +108,8 @@ where
                         ))
                     })?;
 
-                    let wkb = geom.to_wkb().map_err(|e| {
-                        DataFusionError::Execution(format!("Failed to convert to WKB: {e}"))
-                    })?;
-
-                    builder.append_value(&wkb);
+                    write_geos_geometry(&geom, &mut builder)?;
+                    builder.append_value(vec![]);
                 }
                 _ => builder.append_null(),
             };
