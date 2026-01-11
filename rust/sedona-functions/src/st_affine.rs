@@ -182,7 +182,7 @@ fn invoke_scalar(
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_transformed_coord(writer, pt.coord().unwrap(), mat, dim)?;
+                write_transformed_coord_3d(writer, pt.coord().unwrap(), mat, dim)?;
             } else {
                 write_wkb_empty_point(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -273,10 +273,36 @@ where
 {
     coords
         .into_iter()
-        .try_for_each(|coord| write_transformed_coord(writer, coord, affine, dim))
+        .try_for_each(|coord| write_transformed_coord_3d(writer, coord, affine, dim))
 }
 
-fn write_transformed_coord<C>(
+fn write_transformed_coord_2d<C>(
+    writer: &mut impl Write,
+    coord: C,
+    affine: &glam::DAffine2,
+    dim: &geo_traits::Dimensions,
+) -> Result<()>
+where
+    C: CoordTrait<T = f64>,
+{
+    let transformed = affine.transform_point2(glam::DVec2::new(coord.x(), coord.y()));
+
+    match dim {
+        geo_traits::Dimensions::Xy => write_wkb_coord(writer, (transformed.x, transformed.y))
+            .map_err(|e| DataFusionError::Execution(e.to_string())),
+        geo_traits::Dimensions::Xym => {
+            // Preserve m value
+            let m = coord.nth(3).unwrap();
+            write_wkb_coord(writer, (transformed.x, transformed.y, m))
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        _ => {
+            return internal_err!("3D dimension is passed to 2D affine transformation.");
+        }
+    }
+}
+
+fn write_transformed_coord_3d<C>(
     writer: &mut impl Write,
     coord: C,
     affine: &glam::DAffine3,
@@ -305,6 +331,66 @@ where
         _ => {
             return internal_err!("2D dimension is passed to 3D affine transformation.");
         }
+    }
+}
+
+struct DAffine2Iterator<'a> {
+    index: usize,
+    a: &'a PrimitiveArray<Float64Type>,
+    b: &'a PrimitiveArray<Float64Type>,
+    d: &'a PrimitiveArray<Float64Type>,
+    e: &'a PrimitiveArray<Float64Type>,
+    x_offset: &'a PrimitiveArray<Float64Type>,
+    y_offset: &'a PrimitiveArray<Float64Type>,
+}
+
+impl<'a> DAffine2Iterator<'a> {
+    fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        if array_args.len() != 6 {
+            return internal_err!("Invalid number of arguments are passed");
+        }
+
+        let a = as_float64_array(&array_args[0])?;
+        let b = as_float64_array(&array_args[1])?;
+        let d = as_float64_array(&array_args[2])?;
+        let e = as_float64_array(&array_args[3])?;
+        let x_offset = as_float64_array(&array_args[4])?;
+        let y_offset = as_float64_array(&array_args[5])?;
+
+        Ok(Self {
+            index: 0,
+            a,
+            b,
+            d,
+            e,
+            x_offset,
+            y_offset,
+        })
+    }
+}
+
+impl<'a> Iterator for DAffine2Iterator<'a> {
+    type Item = glam::DAffine2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.index;
+        self.index += 1;
+        Some(glam::DAffine2 {
+            matrix2: glam::DMat2 {
+                x_axis: glam::DVec2 {
+                    x: self.a.value(i),
+                    y: self.b.value(i),
+                },
+                y_axis: glam::DVec2 {
+                    x: self.d.value(i),
+                    y: self.e.value(i),
+                },
+            },
+            translation: glam::DVec2 {
+                x: self.x_offset.value(i),
+                y: self.y_offset.value(i),
+            },
+        })
     }
 }
 
