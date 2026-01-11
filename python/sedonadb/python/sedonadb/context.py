@@ -14,15 +14,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 import os
 import sys
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
-from sedonadb.dataframe import DataFrame, _create_data_frame
-from sedonadb.utility import sedona  # noqa: F401
 from sedonadb._options import Options
+from sedonadb.dataframe import DataFrame, _create_data_frame
+from sedonadb.functions import Functions
+from sedonadb.utility import sedona  # noqa: F401
 
 
 class SedonaContext:
@@ -271,6 +274,11 @@ class SedonaContext:
 
         """
         self._impl.register_udf(udf)
+
+    @cached_property
+    def funcs(self) -> Functions:
+        """Access Python wrappers for SedonaDB functions"""
+        return Functions(self)
 
 
 def connect() -> SedonaContext:
