@@ -101,14 +101,14 @@ impl TableProvider for RecordBatchReaderProvider {
 }
 
 /// An iterator that limits the number of rows from a RecordBatchReader
-struct RowLimitedIterator {
+pub struct RowLimitedIterator {
     reader: Option<Box<dyn RecordBatchReader + Send>>,
     limit: usize,
     rows_consumed: usize,
 }
 
 impl RowLimitedIterator {
-    fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
+    pub fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
         Self {
             reader: Some(reader),
             limit,
@@ -245,9 +245,16 @@ impl ExecutionPlan for RecordBatchReaderExec {
 
     fn execute(
         &self,
-        _partition: usize,
+        partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Return empty stream for out-of-range partitions (can happen with joins)
+        if partition > 0 {
+            let stream = Box::pin(futures::stream::empty());
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            return Ok(Box::pin(record_batch_stream));
+        }
+
         let mut reader_guard = self.reader.lock();
 
         let reader = if let Some(reader) = reader_guard.take() {
