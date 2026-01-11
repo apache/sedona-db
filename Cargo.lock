@@ -61,12 +61,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "adbc_core"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8dbe031527c9856a1e2df5e82aa8e568ffaab3be897f70d874477fb42a783bb"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+]
+
+[[package]]
 name = "adbc_ffi"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d36274376fdc4849cf47a78f3baeef4ae1654ef703dc3148d91adde3336c11"
 dependencies = [
- "adbc_core",
+ "adbc_core 0.21.0",
  "arrow-array",
  "arrow-schema",
 ]
@@ -4979,7 +4989,7 @@ dependencies = [
 name = "sedona-adbc"
 version = "0.3.0"
 dependencies = [
- "adbc_core",
+ "adbc_core 0.22.0",
  "adbc_ffi",
  "arrow-array",
  "arrow-schema",
@@ -5467,7 +5477,7 @@ dependencies = [
 name = "sedonadb"
 version = "0.3.0"
 dependencies = [
- "adbc_core",
+ "adbc_core 0.22.0",
  "arrow-array",
  "arrow-schema",
  "async-trait",
