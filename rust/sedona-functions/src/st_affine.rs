@@ -14,8 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{error::Result, exec_err, DataFusionError, ScalarValue};
+use arrow_array::{builder::BinaryBuilder, types::Float64Type, Array, PrimitiveArray};
+use arrow_schema::DataType;
+use datafusion_common::{
+    cast::as_float64_array, error::Result, exec_err, internal_err, DataFusionError, ScalarValue,
+};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -29,11 +32,10 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::wkb_factory::{
-    write_wkb_coord, write_wkb_coord_trait, write_wkb_empty_point,
-    write_wkb_geometrycollection_header, write_wkb_linestring_header,
-    write_wkb_multilinestring_header, write_wkb_multipoint_header, write_wkb_multipolygon_header,
-    write_wkb_point_header, write_wkb_polygon_header, write_wkb_polygon_ring_header,
-    WKB_MIN_PROBABLE_BYTES,
+    write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
+    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
+    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
+    write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -132,40 +134,31 @@ impl SedonaScalarKernel for STAffine {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let a = get_scalar_f64(args, 1)?;
-        let b = get_scalar_f64(args, 2)?;
-        let c = get_scalar_f64(args, 3)?;
-        let d = get_scalar_f64(args, 4)?;
-        let e = get_scalar_f64(args, 5)?;
-        let f = get_scalar_f64(args, 6)?;
-        let g = get_scalar_f64(args, 7)?;
-        let h = get_scalar_f64(args, 8)?;
-        let i = get_scalar_f64(args, 9)?;
-        let x_offset = get_scalar_f64(args, 10)?;
-        let y_offset = get_scalar_f64(args, 11)?;
-        let z_offset = get_scalar_f64(args, 12)?;
+        let array_args = args[1..]
+            .iter()
+            .map(|arg| {
+                arg.cast_to(&DataType::Float64, None)?
+                    .to_array(executor.num_iterations())
+            })
+            .collect::<Result<Vec<Arc<dyn Array>>>>()?;
 
-        let mat = glam::DAffine3::from_cols_array(&[
-            a, b, c, d, e, f, g, h, i, x_offset, y_offset, z_offset,
-        ]);
+        let mut affine_iter = DAffine3Iterator::new(&array_args)?;
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    match (self.is_3d, wkb.dim()) {
-                        (true, geo_traits::Dimensions::Xyz) => {}
-                        (true, geo_traits::Dimensions::Xyzm) => {}
-                        (true, _) => {
-                            return exec_err!("The geometry is 2D while the affine matrix is 3D")
-                        }
-                        (false, geo_traits::Dimensions::Xy) => {}
-                        (false, geo_traits::Dimensions::Xym) => {}
-                        (false, _) => {
-                            return exec_err!("The geometry is 3D while the affine matrix is 2D")
-                        }
+                    let mat = affine_iter.next().unwrap();
+
+                    let dim = wkb.dim();
+                    if matches!(
+                        dim,
+                        geo_traits::Dimensions::Xyz | geo_traits::Dimensions::Xyzm
+                    ) {
+                        invoke_scalar(&wkb, &mut builder, &mat, &dim)?;
+                        builder.append_value([]);
+                    } else {
+                        return exec_err!("The geometry is 2D while the affine matrix is 3D");
                     }
-                    invoke_scalar(&wkb, &mut builder, &mat)?;
-                    builder.append_value([]);
                 }
                 None => builder.append_null(),
             }
@@ -177,36 +170,11 @@ impl SedonaScalarKernel for STAffine {
     }
 }
 
-fn get_scalar_f64(args: &[ColumnarValue], index: usize) -> Result<f64> {
-    let v = match args.get(index) {
-        Some(ColumnarValue::Scalar(scalar_value)) => match scalar_value {
-            ScalarValue::Float16(Some(v)) => f64::from(*v),
-            ScalarValue::Float32(Some(v)) => f64::from(*v),
-            ScalarValue::Float64(Some(v)) => f64::from(*v),
-            ScalarValue::Int8(Some(v)) => f64::from(*v),
-            ScalarValue::Int16(Some(v)) => f64::from(*v),
-            ScalarValue::Int32(Some(v)) => f64::from(*v),
-            ScalarValue::Int64(Some(v)) => *v as f64, // lossy conversion
-            ScalarValue::UInt8(Some(v)) => f64::from(*v),
-            ScalarValue::UInt16(Some(v)) => f64::from(*v),
-            ScalarValue::UInt32(Some(v)) => f64::from(*v),
-            ScalarValue::UInt64(Some(v)) => *v as f64, // lossy conversion
-            _ => return exec_err!("Affine matrix must be numeric"),
-        },
-        _ => return exec_err!("Affine matrix must be numeric"),
-    };
-
-    if v.is_nan() {
-        return exec_err!("Affine matrix must not contain NAN");
-    }
-
-    Ok(v)
-}
-
 fn invoke_scalar(
     geom: &impl GeometryTrait<T = f64>,
     writer: &mut impl Write,
     mat: &glam::DAffine3,
+    dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     let dims = geom.dim();
     match geom.as_type() {
@@ -214,8 +182,7 @@ fn invoke_scalar(
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_wkb_coord_trait(writer, &pt.coord().unwrap())
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                write_transformed_coord(writer, pt.coord().unwrap(), mat, dim)?;
             } else {
                 write_wkb_empty_point(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -226,14 +193,14 @@ fn invoke_scalar(
             write_wkb_multipoint_header(writer, dims, multi_point.points().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             for pt in multi_point.points() {
-                invoke_scalar(&pt, writer, mat)?;
+                invoke_scalar(&pt, writer, mat, dim)?;
             }
         }
 
         geo_traits::GeometryType::LineString(ls) => {
             write_wkb_linestring_header(writer, dims, ls.coords().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            write_transformed_coords(writer, ls.coords(), mat)?;
+            write_transformed_coords(writer, ls.coords(), mat, dim)?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
@@ -242,11 +209,11 @@ fn invoke_scalar(
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
             if let Some(exterior) = pgn.exterior() {
-                write_transformed_ring(writer, exterior, mat)?;
+                write_transformed_ring(writer, exterior, mat, dim)?;
             }
 
             for interior in pgn.interiors() {
-                write_transformed_ring(writer, interior, mat)?;
+                write_transformed_ring(writer, interior, mat, dim)?;
             }
         }
 
@@ -254,7 +221,7 @@ fn invoke_scalar(
             write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             for ls in mls.line_strings() {
-                invoke_scalar(&ls, writer, mat)?;
+                invoke_scalar(&ls, writer, mat, dim)?;
             }
         }
 
@@ -262,7 +229,7 @@ fn invoke_scalar(
             write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             for pgn in mpgn.polygons() {
-                invoke_scalar(&pgn, writer, mat)?;
+                invoke_scalar(&pgn, writer, mat, dim)?;
             }
         }
 
@@ -270,7 +237,7 @@ fn invoke_scalar(
             write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?;
             for geom in gcn.geometries() {
-                invoke_scalar(&geom, writer, mat)?;
+                invoke_scalar(&geom, writer, mat, dim)?;
             }
         }
 
@@ -287,28 +254,142 @@ fn write_transformed_ring(
     writer: &mut impl Write,
     ring: impl LineStringTrait<T = f64>,
     affine: &glam::DAffine3,
+    dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     write_wkb_polygon_ring_header(writer, ring.coords().count())
         .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-    write_transformed_coords(writer, ring.coords(), affine)
+    write_transformed_coords(writer, ring.coords(), affine, dim)
 }
 
 fn write_transformed_coords<I>(
     writer: &mut impl Write,
     coords: I,
     affine: &glam::DAffine3,
+    dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
     I: DoubleEndedIterator,
     I::Item: CoordTrait<T = f64>,
 {
-    coords.into_iter().try_for_each(|coord| {
-        let transformed = affine.transform_point3(glam::DVec3::new(
-            coord.x(),
-            coord.y(),
-            coord.nth(2).unwrap_or(f64::NAN),
-        ));
-        write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z))
-            .map_err(|e| DataFusionError::Execution(e.to_string()))
-    })
+    coords
+        .into_iter()
+        .try_for_each(|coord| write_transformed_coord(writer, coord, affine, dim))
+}
+
+fn write_transformed_coord<C>(
+    writer: &mut impl Write,
+    coord: C,
+    affine: &glam::DAffine3,
+    dim: &geo_traits::Dimensions,
+) -> Result<()>
+where
+    C: CoordTrait<T = f64>,
+{
+    let transformed = affine.transform_point3(glam::DVec3::new(
+        coord.x(),
+        coord.y(),
+        coord.nth(2).unwrap(),
+    ));
+
+    match dim {
+        geo_traits::Dimensions::Xyz => {
+            write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z))
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        geo_traits::Dimensions::Xyzm => {
+            // Preserve m value
+            let m = coord.nth(3).unwrap();
+            write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z, m))
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        _ => {
+            return internal_err!("2D dimension is passed to 3D affine transformation.");
+        }
+    }
+}
+
+struct DAffine3Iterator<'a> {
+    index: usize,
+    a: &'a PrimitiveArray<Float64Type>,
+    b: &'a PrimitiveArray<Float64Type>,
+    c: &'a PrimitiveArray<Float64Type>,
+    d: &'a PrimitiveArray<Float64Type>,
+    e: &'a PrimitiveArray<Float64Type>,
+    f: &'a PrimitiveArray<Float64Type>,
+    g: &'a PrimitiveArray<Float64Type>,
+    h: &'a PrimitiveArray<Float64Type>,
+    i: &'a PrimitiveArray<Float64Type>,
+    x_offset: &'a PrimitiveArray<Float64Type>,
+    y_offset: &'a PrimitiveArray<Float64Type>,
+    z_offset: &'a PrimitiveArray<Float64Type>,
+}
+
+impl<'a> DAffine3Iterator<'a> {
+    fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        if array_args.len() != 12 {
+            return internal_err!("Invalid number of arguments are passed");
+        }
+
+        let a = as_float64_array(&array_args[0])?;
+        let b = as_float64_array(&array_args[1])?;
+        let c = as_float64_array(&array_args[2])?;
+        let d = as_float64_array(&array_args[3])?;
+        let e = as_float64_array(&array_args[4])?;
+        let f = as_float64_array(&array_args[5])?;
+        let g = as_float64_array(&array_args[6])?;
+        let h = as_float64_array(&array_args[7])?;
+        let i = as_float64_array(&array_args[8])?;
+        let x_offset = as_float64_array(&array_args[9])?;
+        let y_offset = as_float64_array(&array_args[10])?;
+        let z_offset = as_float64_array(&array_args[11])?;
+
+        Ok(Self {
+            index: 0,
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
+            g,
+            h,
+            i,
+            x_offset,
+            y_offset,
+            z_offset,
+        })
+    }
+}
+
+impl<'a> Iterator for DAffine3Iterator<'a> {
+    type Item = glam::DAffine3;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.index;
+        self.index += 1;
+        Some(glam::DAffine3 {
+            matrix3: glam::DMat3 {
+                x_axis: glam::DVec3 {
+                    x: self.a.value(i),
+                    y: self.b.value(i),
+                    z: self.c.value(i),
+                },
+                y_axis: glam::DVec3 {
+                    x: self.d.value(i),
+                    y: self.e.value(i),
+                    z: self.f.value(i),
+                },
+                z_axis: glam::DVec3 {
+                    x: self.g.value(i),
+                    y: self.h.value(i),
+                    z: self.i.value(i),
+                },
+            },
+            translation: glam::DVec3 {
+                x: self.x_offset.value(i),
+                y: self.y_offset.value(i),
+                z: self.z_offset.value(i),
+            },
+        })
+    }
 }
