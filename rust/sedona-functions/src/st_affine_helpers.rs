@@ -23,13 +23,13 @@ use datafusion_common::internal_err;
 use std::sync::Arc;
 
 pub(crate) struct DAffine2Iterator<'a> {
-    pub(crate) index: usize,
-    pub(crate) a: &'a PrimitiveArray<Float64Type>,
-    pub(crate) b: &'a PrimitiveArray<Float64Type>,
-    pub(crate) d: &'a PrimitiveArray<Float64Type>,
-    pub(crate) e: &'a PrimitiveArray<Float64Type>,
-    pub(crate) x_offset: &'a PrimitiveArray<Float64Type>,
-    pub(crate) y_offset: &'a PrimitiveArray<Float64Type>,
+    index: usize,
+    a: &'a PrimitiveArray<Float64Type>,
+    b: &'a PrimitiveArray<Float64Type>,
+    d: &'a PrimitiveArray<Float64Type>,
+    e: &'a PrimitiveArray<Float64Type>,
+    x_offset: &'a PrimitiveArray<Float64Type>,
+    y_offset: &'a PrimitiveArray<Float64Type>,
 }
 
 impl<'a> DAffine2Iterator<'a> {
@@ -83,19 +83,19 @@ impl<'a> Iterator for DAffine2Iterator<'a> {
 }
 
 pub(crate) struct DAffine3Iterator<'a> {
-    pub(crate) index: usize,
-    pub(crate) a: &'a PrimitiveArray<Float64Type>,
-    pub(crate) b: &'a PrimitiveArray<Float64Type>,
-    pub(crate) c: &'a PrimitiveArray<Float64Type>,
-    pub(crate) d: &'a PrimitiveArray<Float64Type>,
-    pub(crate) e: &'a PrimitiveArray<Float64Type>,
-    pub(crate) f: &'a PrimitiveArray<Float64Type>,
-    pub(crate) g: &'a PrimitiveArray<Float64Type>,
-    pub(crate) h: &'a PrimitiveArray<Float64Type>,
-    pub(crate) i: &'a PrimitiveArray<Float64Type>,
-    pub(crate) x_offset: &'a PrimitiveArray<Float64Type>,
-    pub(crate) y_offset: &'a PrimitiveArray<Float64Type>,
-    pub(crate) z_offset: &'a PrimitiveArray<Float64Type>,
+    index: usize,
+    a: &'a PrimitiveArray<Float64Type>,
+    b: &'a PrimitiveArray<Float64Type>,
+    c: &'a PrimitiveArray<Float64Type>,
+    d: &'a PrimitiveArray<Float64Type>,
+    e: &'a PrimitiveArray<Float64Type>,
+    f: &'a PrimitiveArray<Float64Type>,
+    g: &'a PrimitiveArray<Float64Type>,
+    h: &'a PrimitiveArray<Float64Type>,
+    i: &'a PrimitiveArray<Float64Type>,
+    x_offset: &'a PrimitiveArray<Float64Type>,
+    y_offset: &'a PrimitiveArray<Float64Type>,
+    z_offset: &'a PrimitiveArray<Float64Type>,
 }
 
 impl<'a> DAffine3Iterator<'a> {
@@ -169,9 +169,9 @@ impl<'a> Iterator for DAffine3Iterator<'a> {
 }
 
 pub(crate) struct DAffine2ScaleIterator<'a> {
-    pub(crate) index: usize,
-    pub(crate) x_scale: &'a PrimitiveArray<Float64Type>,
-    pub(crate) y_scale: &'a PrimitiveArray<Float64Type>,
+    index: usize,
+    x_scale: &'a PrimitiveArray<Float64Type>,
+    y_scale: &'a PrimitiveArray<Float64Type>,
 }
 
 impl<'a> DAffine2ScaleIterator<'a> {
@@ -203,10 +203,10 @@ impl<'a> Iterator for DAffine2ScaleIterator<'a> {
 }
 
 pub(crate) struct DAffine3ScaleIterator<'a> {
-    pub(crate) index: usize,
-    pub(crate) x_scale: &'a PrimitiveArray<Float64Type>,
-    pub(crate) y_scale: &'a PrimitiveArray<Float64Type>,
-    pub(crate) z_scale: &'a PrimitiveArray<Float64Type>,
+    index: usize,
+    x_scale: &'a PrimitiveArray<Float64Type>,
+    y_scale: &'a PrimitiveArray<Float64Type>,
+    z_scale: &'a PrimitiveArray<Float64Type>,
 }
 
 impl<'a> DAffine3ScaleIterator<'a> {
@@ -243,25 +243,41 @@ impl<'a> Iterator for DAffine3ScaleIterator<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RotateAxis {
+    X,
+    Y,
+    Z,
+}
+
 pub(crate) struct DAffineRotateIterator<'a> {
-    pub(crate) index: usize,
-    pub(crate) angle: &'a PrimitiveArray<Float64Type>,
+    index: usize,
+    angle: &'a PrimitiveArray<Float64Type>,
+    axis: RotateAxis,
 }
 
 impl<'a> DAffineRotateIterator<'a> {
-    pub(crate) fn new(angle: &'a Arc<dyn Array>) -> Result<Self> {
+    pub(crate) fn new(angle: &'a Arc<dyn Array>, axis: RotateAxis) -> Result<Self> {
         let angle = as_float64_array(angle)?;
-        Ok(Self { index: 0, angle })
+        Ok(Self {
+            index: 0,
+            angle,
+            axis,
+        })
     }
 }
 
 impl<'a> Iterator for DAffineRotateIterator<'a> {
-    type Item = glam::DAffine2;
+    type Item = glam::DAffine3;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
-        Some(glam::DAffine2::from_angle(self.angle.value(i)))
+        match self.axis {
+            RotateAxis::X => Some(glam::DAffine3::from_rotation_x(self.angle.value(i))),
+            RotateAxis::Y => Some(glam::DAffine3::from_rotation_y(self.angle.value(i))),
+            RotateAxis::Z => Some(glam::DAffine3::from_rotation_z(self.angle.value(i))),
+        }
     }
 }
 
@@ -290,8 +306,10 @@ impl<'a> DAffineIterator<'a> {
         Ok(Self::DAffine3Scale(DAffine3ScaleIterator::new(array_args)?))
     }
 
-    pub(crate) fn from_angle(angle: &'a Arc<dyn Array>) -> Result<Self> {
-        Ok(Self::DAffineRotate(DAffineRotateIterator::new(angle)?))
+    pub(crate) fn from_angle(angle: &'a Arc<dyn Array>, axis: RotateAxis) -> Result<Self> {
+        Ok(Self::DAffineRotate(DAffineRotateIterator::new(
+            angle, axis,
+        )?))
     }
 }
 
@@ -346,7 +364,7 @@ impl<'a> Iterator for DAffineIterator<'a> {
                 daffine3_scale_iterator.next().map(DAffine::DAffine3)
             }
             DAffineIterator::DAffineRotate(daffine_rotate_iterator) => {
-                daffine_rotate_iterator.next().map(DAffine::DAffine2)
+                daffine_rotate_iterator.next().map(DAffine::DAffine3)
             }
         }
     }
