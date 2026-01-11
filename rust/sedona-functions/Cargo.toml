@@ -52,6 +52,7 @@ sedona-schema = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
 serde_json = { workspace = true }
+glam = { workspace = true }
 
 [[bench]]
 harness = false
