@@ -1814,7 +1814,7 @@ def test_st_isring_non_linestring_error(eng, geom):
             "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
         ),
         # empty cases
-        # ("POINT EMPTY", "POINT EMPTY"), # PostGIS returns POINT (nan, nan)
+        ("POINT EMPTY", "POINT (nan nan)"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
