@@ -65,8 +65,7 @@ def random_geometry(
         "Point", "LineString",  "Polygon", "MultiPoint", "MultiLineString",
         "MultiPolygon", or "GeometryCollection".
     num_rows : int, default 1024
-        Target number of rows to generate. The actual number may be more than
-        this (use `limit()` to constrain this number exactly).
+        Number of rows to generate.
     num_vertices : int or tuple of (int, int), default 4
         Number of vertices per geometry. If a tuple, specifies (min, max) range.
     num_parts : int or tuple of (int, int), default (1, 3)
@@ -116,7 +115,7 @@ def random_geometry(
     args = {k: v for k, v in args.items() if v is not None}
 
     sd = sedonadb.connect()
-    return sd.sql(f"SELECT id, geometry FROM sd_random_geometry('{json.dumps(args)}')")
+    return sd.sql(f"SELECT * FROM sd_random_geometry('{json.dumps(args)}')")
 
 
 def skip_if_not_exists(path: Path):

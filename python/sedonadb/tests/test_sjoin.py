@@ -16,7 +16,7 @@
 # under the License.
 import pytest
 import json
-from sedonadb.testing import PostGIS, SedonaDB
+from sedonadb.testing import PostGIS, SedonaDB, random_geometry
 
 
 @pytest.mark.parametrize(
@@ -38,30 +38,11 @@ def test_spatial_join(join_type, on):
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        options = json.dumps(
-            {
-                "geom_type": "Point",
-                "hole_rate": 0.5,
-                "num_parts": [2, 10],
-                "num_vertices": [2, 10],
-                "seed": 42,
-            }
-        )
-        df_point = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
-        options = json.dumps(
-            {
-                "geom_type": "Polygon",
-                "hole_rate": 0.5,
-                "num_parts": [2, 10],
-                "num_vertices": [2, 10],
-                "seed": 43,
-            }
-        )
-        df_polygon = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
+        df_point = random_geometry("Point", 100, seed=42).to_arrow_table()
+        df_polygon = random_geometry(
+            "Polygon", 100, hole_rate=0.5, num_vertices=(2, 10), seed=43
+        ).to_arrow_table()
+
         eng_sedonadb.create_table_arrow("sjoin_point", df_point)
         eng_sedonadb.create_table_arrow("sjoin_polygon", df_polygon)
         eng_postgis.create_table_arrow("sjoin_point", df_point)
@@ -147,28 +128,11 @@ def test_query_window_in_subquery():
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        options = json.dumps(
-            {
-                "geom_type": "Point",
-                "seed": 100,
-            }
-        )
-        df_point = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
-        options = json.dumps(
-            {
-                "geom_type": "Polygon",
-                "hole_rate": 0.5,
-                "num_parts": [2, 10],
-                "num_vertices": [2, 10],
-                "size": [50, 60],
-                "seed": 999,
-            }
-        )
-        df_polygon = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
+        df_point = random_geometry("Point", 100, seed=100).to_arrow_table()
+        df_polygon = random_geometry(
+            "Polygon", 100, hole_rate=0.5, num_vertices=(2, 10), size=(50, 60), seed=999
+        ).to_arrow_table()
+
         eng_sedonadb.create_table_arrow("sjoin_point", df_point)
         eng_sedonadb.create_table_arrow("sjoin_polygon", df_polygon)
         eng_postgis.create_table_arrow("sjoin_point", df_point)
@@ -195,24 +159,9 @@ def test_non_optimizable_subquery():
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        options = json.dumps(
-            {
-                "geom_type": "Point",
-                "seed": 42,
-            }
-        )
-        df_main = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
-        options = json.dumps(
-            {
-                "geom_type": "Point",
-                "seed": 43,
-            }
-        )
-        df_subquery = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{options}') LIMIT 100"
-        )
+        df_main = random_geometry("Point", 100, seed=42).to_arrow_table()
+        df_subquery = random_geometry("Point", 100, seed=43).to_arrow_table()
+
         eng_sedonadb.create_table_arrow("sjoin_main", df_main)
         eng_sedonadb.create_table_arrow("sjoin_subquery", df_subquery)
         eng_postgis.create_table_arrow("sjoin_main", df_main)
