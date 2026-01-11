@@ -168,9 +168,113 @@ impl<'a> Iterator for DAffine3Iterator<'a> {
     }
 }
 
+pub(crate) struct DAffine2ScaleIterator<'a> {
+    pub(crate) index: usize,
+    pub(crate) x_scale: &'a PrimitiveArray<Float64Type>,
+    pub(crate) y_scale: &'a PrimitiveArray<Float64Type>,
+}
+
+impl<'a> DAffine2ScaleIterator<'a> {
+    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        if array_args.len() != 2 {
+            return internal_err!("Invalid number of arguments are passed");
+        }
+
+        let x_scale = as_float64_array(&array_args[0])?;
+        let y_scale = as_float64_array(&array_args[1])?;
+
+        Ok(Self {
+            index: 0,
+            x_scale,
+            y_scale,
+        })
+    }
+}
+
+impl<'a> Iterator for DAffine2ScaleIterator<'a> {
+    type Item = glam::DAffine2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.index;
+        self.index += 1;
+        let scale = glam::DVec2::new(self.x_scale.value(i), self.y_scale.value(i));
+        Some(glam::DAffine2::from_scale(scale))
+    }
+}
+
+pub(crate) struct DAffine3ScaleIterator<'a> {
+    pub(crate) index: usize,
+    pub(crate) x_scale: &'a PrimitiveArray<Float64Type>,
+    pub(crate) y_scale: &'a PrimitiveArray<Float64Type>,
+    pub(crate) z_scale: &'a PrimitiveArray<Float64Type>,
+}
+
+impl<'a> DAffine3ScaleIterator<'a> {
+    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        if array_args.len() != 3 {
+            return internal_err!("Invalid number of arguments are passed");
+        }
+
+        let x_scale = as_float64_array(&array_args[0])?;
+        let y_scale = as_float64_array(&array_args[1])?;
+        let z_scale = as_float64_array(&array_args[2])?;
+
+        Ok(Self {
+            index: 0,
+            x_scale,
+            y_scale,
+            z_scale,
+        })
+    }
+}
+
+impl<'a> Iterator for DAffine3ScaleIterator<'a> {
+    type Item = glam::DAffine3;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.index;
+        self.index += 1;
+        let scale = glam::DVec3::new(
+            self.x_scale.value(i),
+            self.y_scale.value(i),
+            self.z_scale.value(i),
+        );
+        Some(glam::DAffine3::from_scale(scale))
+    }
+}
+
+pub(crate) struct DAffineRotateIterator<'a> {
+    pub(crate) index: usize,
+    pub(crate) angle: &'a PrimitiveArray<Float64Type>,
+}
+
+impl<'a> DAffineRotateIterator<'a> {
+    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        if array_args.len() != 2 {
+            return internal_err!("Invalid number of arguments are passed");
+        }
+
+        let angle = as_float64_array(&array_args[0])?;
+        Ok(Self { index: 0, angle })
+    }
+}
+
+impl<'a> Iterator for DAffineRotateIterator<'a> {
+    type Item = glam::DAffine2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let i = self.index;
+        self.index += 1;
+        Some(glam::DAffine2::from_angle(self.angle.value(i)))
+    }
+}
+
 pub(crate) enum DAffineIterator<'a> {
     DAffine2(DAffine2Iterator<'a>),
     DAffine3(DAffine3Iterator<'a>),
+    DAffine2Scale(DAffine2ScaleIterator<'a>),
+    DAffine3Scale(DAffine3ScaleIterator<'a>),
+    DAffineRotate(DAffineRotateIterator<'a>),
 }
 
 impl<'a> DAffineIterator<'a> {
@@ -180,6 +284,18 @@ impl<'a> DAffineIterator<'a> {
 
     pub(crate) fn new_3d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
         Ok(Self::DAffine3(DAffine3Iterator::new(array_args)?))
+    }
+
+    pub(crate) fn from_scale_2d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        Ok(Self::DAffine2Scale(DAffine2ScaleIterator::new(array_args)?))
+    }
+
+    pub(crate) fn from_scale_3d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        Ok(Self::DAffine3Scale(DAffine3ScaleIterator::new(array_args)?))
+    }
+
+    pub(crate) fn from_rotate(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        Ok(Self::DAffineRotate(DAffineRotateIterator::new(array_args)?))
     }
 }
 
@@ -226,6 +342,15 @@ impl<'a> Iterator for DAffineIterator<'a> {
             }
             DAffineIterator::DAffine3(daffine3_iterator) => {
                 daffine3_iterator.next().map(DAffine::DAffine3)
+            }
+            DAffineIterator::DAffine2Scale(daffine2_scale_iterator) => {
+                daffine2_scale_iterator.next().map(DAffine::DAffine2)
+            }
+            DAffineIterator::DAffine3Scale(daffine3_scale_iterator) => {
+                daffine3_scale_iterator.next().map(DAffine::DAffine3)
+            }
+            DAffineIterator::DAffineRotate(daffine_rotate_iterator) => {
+                daffine_rotate_iterator.next().map(DAffine::DAffine2)
             }
         }
     }
