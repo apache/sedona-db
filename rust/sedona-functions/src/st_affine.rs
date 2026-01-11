@@ -14,11 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::{builder::BinaryBuilder, types::Float64Type, Array, PrimitiveArray};
+use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
-use datafusion_common::{
-    cast::as_float64_array, error::Result, exec_err, internal_err, DataFusionError,
-};
+use datafusion_common::{error::Result, exec_err, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -43,7 +41,7 @@ use sedona_schema::{
 };
 use std::{io::Write, sync::Arc};
 
-use crate::executor::WkbExecutor;
+use crate::{executor::WkbExecutor, st_affine_helpers};
 
 /// ST_Affine() scalar UDF
 ///
@@ -143,9 +141,9 @@ impl SedonaScalarKernel for STAffine {
             .collect::<Result<Vec<Arc<dyn Array>>>>()?;
 
         let mut affine_iter = if self.is_3d {
-            DAffineIterator::new_3d(&array_args)?
+            st_affine_helpers::DAffineIterator::new_3d(&array_args)?
         } else {
-            DAffineIterator::new_2d(&array_args)?
+            st_affine_helpers::DAffineIterator::new_2d(&array_args)?
         };
 
         executor.execute_wkb_void(|maybe_wkb| {
@@ -168,7 +166,7 @@ impl SedonaScalarKernel for STAffine {
 fn invoke_scalar(
     geom: &impl GeometryTrait<T = f64>,
     writer: &mut impl Write,
-    mat: &DAffine,
+    mat: &st_affine_helpers::DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     let dims = geom.dim();
@@ -248,7 +246,7 @@ fn invoke_scalar(
 fn write_transformed_ring(
     writer: &mut impl Write,
     ring: impl LineStringTrait<T = f64>,
-    affine: &DAffine,
+    affine: &st_affine_helpers::DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     write_wkb_polygon_ring_header(writer, ring.coords().count())
@@ -259,7 +257,7 @@ fn write_transformed_ring(
 fn write_transformed_coords<I>(
     writer: &mut impl Write,
     coords: I,
-    affine: &DAffine,
+    affine: &st_affine_helpers::DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
@@ -274,7 +272,7 @@ where
 fn write_transformed_coord<C>(
     writer: &mut impl Write,
     coord: C,
-    affine: &DAffine,
+    affine: &st_affine_helpers::DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
@@ -307,215 +305,6 @@ where
         }
         geo_traits::Dimensions::Unknown(_) => {
             exec_err!("A geometry with unknown dimension cannot be transformed")
-        }
-    }
-}
-
-struct DAffine2Iterator<'a> {
-    index: usize,
-    a: &'a PrimitiveArray<Float64Type>,
-    b: &'a PrimitiveArray<Float64Type>,
-    d: &'a PrimitiveArray<Float64Type>,
-    e: &'a PrimitiveArray<Float64Type>,
-    x_offset: &'a PrimitiveArray<Float64Type>,
-    y_offset: &'a PrimitiveArray<Float64Type>,
-}
-
-impl<'a> DAffine2Iterator<'a> {
-    fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        if array_args.len() != 6 {
-            return internal_err!("Invalid number of arguments are passed");
-        }
-
-        let a = as_float64_array(&array_args[0])?;
-        let b = as_float64_array(&array_args[1])?;
-        let d = as_float64_array(&array_args[2])?;
-        let e = as_float64_array(&array_args[3])?;
-        let x_offset = as_float64_array(&array_args[4])?;
-        let y_offset = as_float64_array(&array_args[5])?;
-
-        Ok(Self {
-            index: 0,
-            a,
-            b,
-            d,
-            e,
-            x_offset,
-            y_offset,
-        })
-    }
-}
-
-impl<'a> Iterator for DAffine2Iterator<'a> {
-    type Item = glam::DAffine2;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let i = self.index;
-        self.index += 1;
-        Some(glam::DAffine2 {
-            matrix2: glam::DMat2 {
-                x_axis: glam::DVec2 {
-                    x: self.a.value(i),
-                    y: self.b.value(i),
-                },
-                y_axis: glam::DVec2 {
-                    x: self.d.value(i),
-                    y: self.e.value(i),
-                },
-            },
-            translation: glam::DVec2 {
-                x: self.x_offset.value(i),
-                y: self.y_offset.value(i),
-            },
-        })
-    }
-}
-
-struct DAffine3Iterator<'a> {
-    index: usize,
-    a: &'a PrimitiveArray<Float64Type>,
-    b: &'a PrimitiveArray<Float64Type>,
-    c: &'a PrimitiveArray<Float64Type>,
-    d: &'a PrimitiveArray<Float64Type>,
-    e: &'a PrimitiveArray<Float64Type>,
-    f: &'a PrimitiveArray<Float64Type>,
-    g: &'a PrimitiveArray<Float64Type>,
-    h: &'a PrimitiveArray<Float64Type>,
-    i: &'a PrimitiveArray<Float64Type>,
-    x_offset: &'a PrimitiveArray<Float64Type>,
-    y_offset: &'a PrimitiveArray<Float64Type>,
-    z_offset: &'a PrimitiveArray<Float64Type>,
-}
-
-impl<'a> DAffine3Iterator<'a> {
-    fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        if array_args.len() != 12 {
-            return internal_err!("Invalid number of arguments are passed");
-        }
-
-        let a = as_float64_array(&array_args[0])?;
-        let b = as_float64_array(&array_args[1])?;
-        let c = as_float64_array(&array_args[2])?;
-        let d = as_float64_array(&array_args[3])?;
-        let e = as_float64_array(&array_args[4])?;
-        let f = as_float64_array(&array_args[5])?;
-        let g = as_float64_array(&array_args[6])?;
-        let h = as_float64_array(&array_args[7])?;
-        let i = as_float64_array(&array_args[8])?;
-        let x_offset = as_float64_array(&array_args[9])?;
-        let y_offset = as_float64_array(&array_args[10])?;
-        let z_offset = as_float64_array(&array_args[11])?;
-
-        Ok(Self {
-            index: 0,
-            a,
-            b,
-            c,
-            d,
-            e,
-            f,
-            g,
-            h,
-            i,
-            x_offset,
-            y_offset,
-            z_offset,
-        })
-    }
-}
-
-impl<'a> Iterator for DAffine3Iterator<'a> {
-    type Item = glam::DAffine3;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let i = self.index;
-        self.index += 1;
-        Some(glam::DAffine3 {
-            matrix3: glam::DMat3 {
-                x_axis: glam::DVec3 {
-                    x: self.a.value(i),
-                    y: self.b.value(i),
-                    z: self.c.value(i),
-                },
-                y_axis: glam::DVec3 {
-                    x: self.d.value(i),
-                    y: self.e.value(i),
-                    z: self.f.value(i),
-                },
-                z_axis: glam::DVec3 {
-                    x: self.g.value(i),
-                    y: self.h.value(i),
-                    z: self.i.value(i),
-                },
-            },
-            translation: glam::DVec3 {
-                x: self.x_offset.value(i),
-                y: self.y_offset.value(i),
-                z: self.z_offset.value(i),
-            },
-        })
-    }
-}
-
-enum DAffineIterator<'a> {
-    DAffine2(DAffine2Iterator<'a>),
-    DAffine3(DAffine3Iterator<'a>),
-}
-
-impl<'a> DAffineIterator<'a> {
-    fn new_2d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        Ok(Self::DAffine2(DAffine2Iterator::new(array_args)?))
-    }
-
-    fn new_3d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        Ok(Self::DAffine3(DAffine3Iterator::new(array_args)?))
-    }
-}
-
-enum DAffine {
-    DAffine2(glam::DAffine2),
-    DAffine3(glam::DAffine3),
-}
-
-impl DAffine {
-    fn transform_point3(&self, x: f64, y: f64, z: f64) -> (f64, f64, f64) {
-        match self {
-            DAffine::DAffine2(daffine2) => {
-                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
-                (transformed.x, transformed.y, z)
-            }
-            DAffine::DAffine3(daffine3) => {
-                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z });
-                (transformed.x, transformed.y, transformed.z)
-            }
-        }
-    }
-
-    fn transform_point2(&self, x: f64, y: f64) -> (f64, f64) {
-        match self {
-            DAffine::DAffine2(daffine2) => {
-                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
-                (transformed.x, transformed.y)
-            }
-            DAffine::DAffine3(daffine3) => {
-                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z: 0.0 });
-                (transformed.x, transformed.y)
-            }
-        }
-    }
-}
-
-impl<'a> Iterator for DAffineIterator<'a> {
-    type Item = DAffine;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            DAffineIterator::DAffine2(daffine2_iterator) => {
-                daffine2_iterator.next().map(DAffine::DAffine2)
-            }
-            DAffineIterator::DAffine3(daffine3_iterator) => {
-                daffine3_iterator.next().map(DAffine::DAffine3)
-            }
         }
     }
 }
