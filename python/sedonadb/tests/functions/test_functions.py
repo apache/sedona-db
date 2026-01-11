@@ -189,6 +189,7 @@ def test_st_azimuth(eng, geom1, geom2, expected):
     )
 
 
+# fmt: off
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "a", "b", "d", "e", "xoff", "yoff", "expected"),
@@ -224,12 +225,13 @@ def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
         f"{val_or_null(xoff)}, {val_or_null(yoff)})",
         expected,
     )
+# fmt: on
 
 
+# fmt: off
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "a", "b", "c", "d", "e", "f", "g", "h", "i", "xoff", "yoff", "zoff", "expected"),
-    # fmt: skip
     [
         (
             "POINT Z (1 2 3)",
@@ -267,6 +269,7 @@ def test_st_affine_3d(
         if isinstance(eng, PostGIS):
             pytest.skip(f"PostGIS may not support 3D ST_Affine: {exc}")
         raise
+# fmt: on
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
