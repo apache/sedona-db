@@ -415,8 +415,13 @@ impl RandomPartitionedDataBuilder {
             .map(|i| (id_start + i) as i32)
             .collect();
 
-        // Generate random distances between 0.0 and 100.0
-        let distance_dist = Uniform::new(0.0, 100.0).expect("valid input to Uniform::new()");
+        // Generate random distances relevant to the bounds (0.0 and 100.0 by default)
+        let max_dist = self
+            .options
+            .bounds
+            .width()
+            .min(self.options.bounds.height());
+        let distance_dist = Uniform::new(0.0, max_dist).expect("valid input to Uniform::new()");
         let distances: Vec<f64> = (0..self.rows_per_batch)
             .map(|_| rng.sample(distance_dist))
             .collect();
