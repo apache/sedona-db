@@ -249,12 +249,8 @@ pub(crate) struct DAffineRotateIterator<'a> {
 }
 
 impl<'a> DAffineRotateIterator<'a> {
-    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        if array_args.len() != 2 {
-            return internal_err!("Invalid number of arguments are passed");
-        }
-
-        let angle = as_float64_array(&array_args[0])?;
+    pub(crate) fn new(angle: &'a Arc<dyn Array>) -> Result<Self> {
+        let angle = as_float64_array(angle)?;
         Ok(Self { index: 0, angle })
     }
 }
@@ -294,8 +290,8 @@ impl<'a> DAffineIterator<'a> {
         Ok(Self::DAffine3Scale(DAffine3ScaleIterator::new(array_args)?))
     }
 
-    pub(crate) fn from_rotate(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
-        Ok(Self::DAffineRotate(DAffineRotateIterator::new(array_args)?))
+    pub(crate) fn from_angle(angle: &'a Arc<dyn Array>) -> Result<Self> {
+        Ok(Self::DAffineRotate(DAffineRotateIterator::new(angle)?))
     }
 }
 
