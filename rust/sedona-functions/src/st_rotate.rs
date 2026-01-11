@@ -58,13 +58,13 @@ pub fn st_rotate_udf() -> SedonaScalarUDF {
 fn st_rotate_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Rotate the given geometry.",
+        "Rotates a geometry by a specified angle in radians counter-clockwise",
         "ST_Rotate (geom: Geometry, rot: Double)",
     )
     .with_argument("geom", "geometry: Input geometry")
     .with_argument("rot", "angle (in radians)")
     .with_sql_example(
-        "SELECT ST_Rotate(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), Degree(45))",
+        "SELECT ST_Rotate(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), radians(45))",
     )
     .build()
 }
