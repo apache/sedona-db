@@ -17,7 +17,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow_array::RecordBatchReader;
-use arrow_schema::{SchemaRef};
+use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
