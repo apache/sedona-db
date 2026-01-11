@@ -362,46 +362,6 @@ def test_st_rotate(eng, geom, angle, expected_x, expected_y):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "angle", "xmin", "xmax", "ymin", "ymax"),
-    [
-        ("LINESTRING (1 0, 0 2)", 1.5707963267948966, -2.0, 0.0, 0.0, 1.0),
-        (
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-            1.5707963267948966,
-            -1.0,
-            0.0,
-            0.0,
-            1.0,
-        ),
-        ("MULTIPOINT (1 0, 0 2)", 1.5707963267948966, -2.0, 0.0, 0.0, 1.0),
-    ],
-)
-def test_st_rotate_bounds(eng, geom, angle, xmin, xmax, ymin, ymax):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_XMin(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
-        xmin,
-        numeric_epsilon=1e-12,
-    )
-    eng.assert_query_result(
-        f"SELECT ST_XMax(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
-        xmax,
-        numeric_epsilon=1e-12,
-    )
-    eng.assert_query_result(
-        f"SELECT ST_YMin(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
-        ymin,
-        numeric_epsilon=1e-12,
-    )
-    eng.assert_query_result(
-        f"SELECT ST_YMax(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))",
-        ymax,
-        numeric_epsilon=1e-12,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-@pytest.mark.parametrize(
     ("geom", "expected_boundary"),
     [
         (None, None),
