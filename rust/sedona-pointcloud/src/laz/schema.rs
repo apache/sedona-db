@@ -20,6 +20,7 @@ use std::sync::Arc;
 use arrow_schema::{ArrowError, DataType, Field, Schema};
 use geoarrow_schema::{CoordType, Crs, Dimension, Metadata, PointType, WkbType};
 use las::Header;
+use las_crs::{get_epsg_from_geotiff_crs, get_epsg_from_wkt_crs_bytes};
 
 use crate::laz::options::{LasExtraBytes, LasPointEncoding};
 
@@ -29,9 +30,19 @@ pub fn try_schema_from_header(
     point_encoding: LasPointEncoding,
     extra_bytes: LasExtraBytes,
 ) -> Result<Schema, ArrowError> {
-    let crs = header
-        .get_wkt_crs_bytes()
-        .and_then(|b| String::from_utf8(b.to_vec()).ok().map(Crs::from_wkt2_2019))
+    let epsg_crs = if header.has_wkt_crs() {
+        header
+            .get_wkt_crs_bytes()
+            .and_then(|bytes| get_epsg_from_wkt_crs_bytes(bytes).ok())
+    } else {
+        header
+            .get_geotiff_crs()
+            .map(|gtc| gtc.and_then(|gtc| get_epsg_from_geotiff_crs(&gtc).ok()))
+            .unwrap_or_default()
+    };
+
+    let crs = epsg_crs
+        .map(|epsg_crs| Crs::from_authority_code(format!("EPSG:{}", epsg_crs.get_horizontal())))
         .unwrap_or_default();
 
     let mut fields = match point_encoding {

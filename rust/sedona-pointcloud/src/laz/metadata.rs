@@ -53,8 +53,8 @@ impl FileMetadata for LazMetadata {
     }
 
     fn memory_size(&self) -> usize {
-        // TODO: proper size
-        std::mem::size_of_val(self)
+        self.chunk_table.capacity() * std::mem::size_of::<ChunkMeta>()
+            + self.extra_attributes.capacity() * std::mem::size_of::<ExtraAttribute>()
     }
 
     fn extra_info(&self) -> HashMap<String, String> {
