@@ -17,7 +17,7 @@
 
 import pytest
 import json
-from sedonadb.testing import PostGIS, SedonaDB
+from sedonadb.testing import PostGIS, SedonaDB, random_geometry
 
 
 @pytest.mark.parametrize("k", [1, 3, 5])
@@ -28,28 +28,10 @@ def test_knn_join_basic(k):
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create query points (probe side)
-        point_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 20,
-                "seed": 42,
-            }
-        )
-        df_points = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{point_options}') LIMIT 20"
-        )
+        df_points = random_geometry("Point", 20, seed=42).to_arrow_table()
 
         # Create target points (build side)
-        target_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 50,
-                "seed": 43,
-            }
-        )
-        df_targets = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{target_options}') LIMIT 50"
-        )
+        df_targets = random_geometry("Point", 50, seed=43).to_arrow_table()
 
         # Set up tables in both engines
         eng_sedonadb.create_table_arrow("knn_query_points", df_points)
@@ -112,30 +94,12 @@ def test_knn_join_with_polygons():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create query points
-        point_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 15,
-                "seed": 100,
-            }
-        )
-        df_points = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{point_options}') LIMIT 15"
-        )
+        df_points = random_geometry("Point", 15, seed=100).to_arrow_table()
 
         # Create target polygons
-        polygon_options = json.dumps(
-            {
-                "geom_type": "Polygon",
-                "num_rows": 30,
-                "num_vertices": [4, 8],
-                "size": [0.001, 0.01],
-                "seed": 101,
-            }
-        )
-        df_polygons = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{polygon_options}') LIMIT 30"
-        )
+        df_polygons = random_geometry(
+            "Polygon", 30, num_vertices=(4, 8), size=(0.001, 0.01), seed=101
+        ).to_arrow_table()
 
         # Set up tables
         eng_sedonadb.create_table_arrow("knn_points", df_points)
@@ -196,27 +160,10 @@ def test_knn_join_edge_cases():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create small datasets for edge case testing
-        point_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 5,
-                "seed": 200,
-            }
-        )
-        df_points = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{point_options}') LIMIT 5"
-        )
+        df_points = random_geometry("Point", 5, seed=200).to_arrow_table()
 
-        target_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 3,  # Fewer targets than k in some tests
-                "seed": 201,
-            }
-        )
-        df_targets = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{target_options}') LIMIT 3"
-        )
+        # Fewer targets than k in some tests
+        df_targets = random_geometry("Point", 3, seed=201).to_arrow_table()
 
         eng_sedonadb.create_table_arrow("knn_query_small", df_points)
         eng_sedonadb.create_table_arrow("knn_target_small", df_targets)
@@ -371,27 +318,8 @@ def test_knn_join_correctness_known_points():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create deterministic synthetic data for reproducible results
-        query_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 3,
-                "seed": 1000,
-            }
-        )
-        df_known = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{query_options}') LIMIT 3"
-        )
-
-        target_options = json.dumps(
-            {
-                "geom_type": "Point",
-                "num_rows": 8,
-                "seed": 1001,
-            }
-        )
-        df_targets = eng_sedonadb.execute_and_collect(
-            f"SELECT * FROM sd_random_geometry('{target_options}') LIMIT 8"
-        )
+        df_known = random_geometry("Point", 3, seed=1000).to_arrow_table()
+        df_targets = random_geometry("Point", 8, seed=1001).to_arrow_table()
 
         eng_sedonadb.create_table_arrow("knn_known", df_known)
         eng_sedonadb.create_table_arrow("knn_target_known", df_targets)
