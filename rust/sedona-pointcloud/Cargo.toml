@@ -46,6 +46,7 @@ futures = { workspace = true }
 geoarrow-array = { version = "0.7.0" }
 geoarrow-schema = { version = "0.7.0" }
 las = { version = "0.9.8", features = ["laz"] }
+las-crs = { version = "1.0.0" }
 laz = "0.11.1"
 object_store = { workspace = true }
 sedona-expr = { workspace = true }
