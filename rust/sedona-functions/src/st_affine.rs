@@ -142,7 +142,11 @@ impl SedonaScalarKernel for STAffine {
             })
             .collect::<Result<Vec<Arc<dyn Array>>>>()?;
 
-        let mut affine_iter = DAffine3Iterator::new(&array_args)?;
+        let mut affine_iter = if self.is_3d {
+            DAffineIterator::new_3d(&array_args)?
+        } else {
+            DAffineIterator::new_2d(&array_args)?
+        };
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
@@ -150,15 +154,31 @@ impl SedonaScalarKernel for STAffine {
                     let mat = affine_iter.next().unwrap();
 
                     let dim = wkb.dim();
-                    if matches!(
-                        dim,
-                        geo_traits::Dimensions::Xyz | geo_traits::Dimensions::Xyzm
-                    ) {
-                        invoke_scalar(&wkb, &mut builder, &mat, &dim)?;
-                        builder.append_value([]);
-                    } else {
-                        return exec_err!("The geometry is 2D while the affine matrix is 3D");
+                    match mat {
+                        DAffine::DAffine3(_) => {
+                            if matches!(
+                                dim,
+                                geo_traits::Dimensions::Xy | geo_traits::Dimensions::Xym
+                            ) {
+                                return exec_err!(
+                                    "The geometry is 2D while the affine matrix is 3D"
+                                );
+                            }
+                        }
+                        DAffine::DAffine2(_) => {
+                            if matches!(
+                                dim,
+                                geo_traits::Dimensions::Xyz | geo_traits::Dimensions::Xyzm
+                            ) {
+                                return exec_err!(
+                                    "The geometry is 3D while the affine matrix is 2D"
+                                );
+                            }
+                        }
                     }
+
+                    invoke_scalar(&wkb, &mut builder, &mat, &dim)?;
+                    builder.append_value([]);
                 }
                 None => builder.append_null(),
             }
@@ -173,7 +193,7 @@ impl SedonaScalarKernel for STAffine {
 fn invoke_scalar(
     geom: &impl GeometryTrait<T = f64>,
     writer: &mut impl Write,
-    mat: &glam::DAffine3,
+    mat: &DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     let dims = geom.dim();
@@ -182,7 +202,7 @@ fn invoke_scalar(
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_transformed_coord_3d(writer, pt.coord().unwrap(), mat, dim)?;
+                write_transformed_coord(writer, pt.coord().unwrap(), mat, dim)?;
             } else {
                 write_wkb_empty_point(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -253,7 +273,7 @@ fn invoke_scalar(
 fn write_transformed_ring(
     writer: &mut impl Write,
     ring: impl LineStringTrait<T = f64>,
-    affine: &glam::DAffine3,
+    affine: &DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()> {
     write_wkb_polygon_ring_header(writer, ring.coords().count())
@@ -264,7 +284,7 @@ fn write_transformed_ring(
 fn write_transformed_coords<I>(
     writer: &mut impl Write,
     coords: I,
-    affine: &glam::DAffine3,
+    affine: &DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
@@ -273,63 +293,61 @@ where
 {
     coords
         .into_iter()
-        .try_for_each(|coord| write_transformed_coord_3d(writer, coord, affine, dim))
+        .try_for_each(|coord| write_transformed_coord(writer, coord, affine, dim))
 }
 
-fn write_transformed_coord_2d<C>(
+fn write_transformed_coord<C>(
     writer: &mut impl Write,
     coord: C,
-    affine: &glam::DAffine2,
+    affine: &DAffine,
     dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
     C: CoordTrait<T = f64>,
 {
-    let transformed = affine.transform_point2(glam::DVec2::new(coord.x(), coord.y()));
+    match affine {
+        DAffine::DAffine2(affine) => {
+            let transformed = affine.transform_point2(glam::DVec2::new(coord.x(), coord.y()));
+            match dim {
+                geo_traits::Dimensions::Xy => {
+                    write_wkb_coord(writer, (transformed.x, transformed.y))
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))
+                }
+                geo_traits::Dimensions::Xym => {
+                    // Preserve m value
+                    let m = coord.nth(2).unwrap();
+                    write_wkb_coord(writer, (transformed.x, transformed.y, m))
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))
+                }
+                geo_traits::Dimensions::Unknown(_) => {
+                    exec_err!("A geometry with unknown dimension cannot be transformed")
+                }
+                _ => internal_err!("3D dimension is passed to 2D affine transformation."),
+            }
+        }
+        DAffine::DAffine3(affine) => {
+            let transformed = affine.transform_point3(glam::DVec3::new(
+                coord.x(),
+                coord.y(),
+                coord.nth(2).unwrap(),
+            ));
 
-    match dim {
-        geo_traits::Dimensions::Xy => write_wkb_coord(writer, (transformed.x, transformed.y))
-            .map_err(|e| DataFusionError::Execution(e.to_string())),
-        geo_traits::Dimensions::Xym => {
-            // Preserve m value
-            let m = coord.nth(3).unwrap();
-            write_wkb_coord(writer, (transformed.x, transformed.y, m))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        _ => {
-            return internal_err!("3D dimension is passed to 2D affine transformation.");
-        }
-    }
-}
-
-fn write_transformed_coord_3d<C>(
-    writer: &mut impl Write,
-    coord: C,
-    affine: &glam::DAffine3,
-    dim: &geo_traits::Dimensions,
-) -> Result<()>
-where
-    C: CoordTrait<T = f64>,
-{
-    let transformed = affine.transform_point3(glam::DVec3::new(
-        coord.x(),
-        coord.y(),
-        coord.nth(2).unwrap(),
-    ));
-
-    match dim {
-        geo_traits::Dimensions::Xyz => {
-            write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        geo_traits::Dimensions::Xyzm => {
-            // Preserve m value
-            let m = coord.nth(3).unwrap();
-            write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z, m))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        _ => {
-            return internal_err!("2D dimension is passed to 3D affine transformation.");
+            match dim {
+                geo_traits::Dimensions::Xyz => {
+                    write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z))
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))
+                }
+                geo_traits::Dimensions::Xyzm => {
+                    // Preserve m value
+                    let m = coord.nth(3).unwrap();
+                    write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z, m))
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))
+                }
+                geo_traits::Dimensions::Unknown(_) => {
+                    exec_err!("A geometry with unknown dimension cannot be transformed")
+                }
+                _ => internal_err!("2D dimension is passed to 3D affine transformation."),
+            }
         }
     }
 }
@@ -477,5 +495,40 @@ impl<'a> Iterator for DAffine3Iterator<'a> {
                 z: self.z_offset.value(i),
             },
         })
+    }
+}
+
+enum DAffineIterator<'a> {
+    DAffine2(DAffine2Iterator<'a>),
+    DAffine3(DAffine3Iterator<'a>),
+}
+
+impl<'a> DAffineIterator<'a> {
+    fn new_2d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        Ok(Self::DAffine2(DAffine2Iterator::new(array_args)?))
+    }
+
+    fn new_3d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+        Ok(Self::DAffine3(DAffine3Iterator::new(array_args)?))
+    }
+}
+
+enum DAffine {
+    DAffine2(glam::DAffine2),
+    DAffine3(glam::DAffine3),
+}
+
+impl<'a> Iterator for DAffineIterator<'a> {
+    type Item = DAffine;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DAffineIterator::DAffine2(daffine2_iterator) => {
+                daffine2_iterator.next().map(|a| DAffine::DAffine2(a))
+            }
+            DAffineIterator::DAffine3(daffine3_iterator) => {
+                daffine3_iterator.next().map(|a| DAffine::DAffine3(a))
+            }
+        }
     }
 }
