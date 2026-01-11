@@ -524,10 +524,10 @@ impl<'a> Iterator for DAffineIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             DAffineIterator::DAffine2(daffine2_iterator) => {
-                daffine2_iterator.next().map(|a| DAffine::DAffine2(a))
+                daffine2_iterator.next().map(DAffine::DAffine2)
             }
             DAffineIterator::DAffine3(daffine3_iterator) => {
-                daffine3_iterator.next().map(|a| DAffine::DAffine3(a))
+                daffine3_iterator.next().map(DAffine::DAffine3)
             }
         }
     }
