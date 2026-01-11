@@ -5510,6 +5510,7 @@ dependencies = [
  "sedona-geoparquet",
  "sedona-proj",
  "sedona-schema",
+ "serde_json",
  "thiserror 2.0.17",
  "tokio",
 ]
