@@ -296,6 +296,13 @@ impl ExecutionPlan for RandomGeometryExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Return empty stream for out-of-range partitions (can happen with joins)
+        if partition >= self.builder.num_partitions {
+            let stream = Box::pin(futures::stream::empty());
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            return Ok(Box::pin(record_batch_stream));
+        }
+
         let rng = RandomPartitionedDataBuilder::default_rng(self.builder.seed + partition as u64);
         let reader = self.builder.partition_reader(rng, partition);
 
