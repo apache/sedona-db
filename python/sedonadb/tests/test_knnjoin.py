@@ -28,10 +28,11 @@ def test_knn_join_basic(k):
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create query points (probe side)
-        df_points = random_geometry("Point", 20, seed=42).to_arrow_table()
+        num_points = 20
+        df_points = random_geometry("Point", num_points, seed=42)
 
         # Create target points (build side)
-        df_targets = random_geometry("Point", 50, seed=43).to_arrow_table()
+        df_targets = random_geometry("Point", 50, seed=43)
 
         # Set up tables in both engines
         eng_sedonadb.create_table_arrow("knn_query_points", df_points)
@@ -55,7 +56,7 @@ def test_knn_join_basic(k):
         # Verify basic correctness
         assert len(sedonadb_results) > 0
         assert (
-            len(sedonadb_results) == len(df_points) * k
+            len(sedonadb_results) == num_points * k
         )  # Each query point should have k neighbors
 
         # Verify results are ordered by distance within each query point
@@ -94,12 +95,13 @@ def test_knn_join_with_polygons():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create query points
-        df_points = random_geometry("Point", 15, seed=100).to_arrow_table()
+        n_points = 15
+        df_points = random_geometry("Point", n_points, seed=100)
 
         # Create target polygons
         df_polygons = random_geometry(
             "Polygon", 30, num_vertices=(4, 8), size=(0.001, 0.01), seed=101
-        ).to_arrow_table()
+        )
 
         # Set up tables
         eng_sedonadb.create_table_arrow("knn_points", df_points)
@@ -123,7 +125,7 @@ def test_knn_join_with_polygons():
 
         # Verify correctness
         assert len(sedonadb_results) > 0
-        assert len(sedonadb_results) == len(df_points) * k
+        assert len(sedonadb_results) == n_points * k
 
         # Verify ordering within each point
         for point_id in sedonadb_results["point_id"].unique():
@@ -160,10 +162,12 @@ def test_knn_join_edge_cases():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create small datasets for edge case testing
-        df_points = random_geometry("Point", 5, seed=200).to_arrow_table()
+        n_points = 5
+        df_points = random_geometry("Point", n_points, seed=200)
 
         # Fewer targets than k in some tests
-        df_targets = random_geometry("Point", 3, seed=201).to_arrow_table()
+        n_targets = 3
+        df_targets = random_geometry("Point", n_targets, seed=201)
 
         eng_sedonadb.create_table_arrow("knn_query_small", df_points)
         eng_sedonadb.create_table_arrow("knn_target_small", df_targets)
@@ -185,8 +189,8 @@ def test_knn_join_edge_cases():
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
 
         # Should return all available targets (3) for each query point
-        expected_results_per_query = min(k, len(df_targets))  # min(5, 3) = 3
-        assert len(sedonadb_results) == len(df_points) * expected_results_per_query
+        expected_results_per_query = min(k, n_targets)  # min(5, 3) = 3
+        assert len(sedonadb_results) == n_points * expected_results_per_query
 
         # PostGIS syntax
         postgis_sql = f"""
@@ -318,8 +322,8 @@ def test_knn_join_correctness_known_points():
         PostGIS.create_or_skip() as eng_postgis,
     ):
         # Create deterministic synthetic data for reproducible results
-        df_known = random_geometry("Point", 3, seed=1000).to_arrow_table()
-        df_targets = random_geometry("Point", 8, seed=1001).to_arrow_table()
+        df_known = random_geometry("Point", 3, seed=1000)
+        df_targets = random_geometry("Point", 8, seed=1001)
 
         eng_sedonadb.create_table_arrow("knn_known", df_known)
         eng_sedonadb.create_table_arrow("knn_target_known", df_targets)

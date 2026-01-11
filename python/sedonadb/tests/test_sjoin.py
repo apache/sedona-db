@@ -38,10 +38,10 @@ def test_spatial_join(join_type, on):
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        df_point = random_geometry("Point", 100, seed=42).to_arrow_table()
+        df_point = random_geometry("Point", 100, seed=42)
         df_polygon = random_geometry(
             "Polygon", 100, hole_rate=0.5, num_vertices=(2, 10), seed=43
-        ).to_arrow_table()
+        )
 
         eng_sedonadb.create_table_arrow("sjoin_point", df_point)
         eng_sedonadb.create_table_arrow("sjoin_polygon", df_polygon)
@@ -128,10 +128,10 @@ def test_query_window_in_subquery():
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        df_point = random_geometry("Point", 100, seed=100).to_arrow_table()
+        df_point = random_geometry("Point", 100, seed=100)
         df_polygon = random_geometry(
             "Polygon", 100, hole_rate=0.5, num_vertices=(2, 10), size=(50, 60), seed=999
-        ).to_arrow_table()
+        )
 
         eng_sedonadb.create_table_arrow("sjoin_point", df_point)
         eng_sedonadb.create_table_arrow("sjoin_polygon", df_polygon)
@@ -159,8 +159,8 @@ def test_non_optimizable_subquery():
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
-        df_main = random_geometry("Point", 100, seed=42).to_arrow_table()
-        df_subquery = random_geometry("Point", 100, seed=43).to_arrow_table()
+        df_main = random_geometry("Point", 100, seed=42)
+        df_subquery = random_geometry("Point", 100, seed=43)
 
         eng_sedonadb.create_table_arrow("sjoin_main", df_main)
         eng_sedonadb.create_table_arrow("sjoin_subquery", df_subquery)
