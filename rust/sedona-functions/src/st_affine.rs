@@ -152,32 +152,7 @@ impl SedonaScalarKernel for STAffine {
             match maybe_wkb {
                 Some(wkb) => {
                     let mat = affine_iter.next().unwrap();
-
-                    let dim = wkb.dim();
-                    match mat {
-                        DAffine::DAffine3(_) => {
-                            if matches!(
-                                dim,
-                                geo_traits::Dimensions::Xy | geo_traits::Dimensions::Xym
-                            ) {
-                                return exec_err!(
-                                    "The geometry is 2D while the affine matrix is 3D"
-                                );
-                            }
-                        }
-                        DAffine::DAffine2(_) => {
-                            if matches!(
-                                dim,
-                                geo_traits::Dimensions::Xyz | geo_traits::Dimensions::Xyzm
-                            ) {
-                                return exec_err!(
-                                    "The geometry is 3D while the affine matrix is 2D"
-                                );
-                            }
-                        }
-                    }
-
-                    invoke_scalar(&wkb, &mut builder, &mat, &dim)?;
+                    invoke_scalar(&wkb, &mut builder, &mat, &wkb.dim())?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -305,49 +280,33 @@ fn write_transformed_coord<C>(
 where
     C: CoordTrait<T = f64>,
 {
-    match affine {
-        DAffine::DAffine2(affine) => {
-            let transformed = affine.transform_point2(glam::DVec2::new(coord.x(), coord.y()));
-            match dim {
-                geo_traits::Dimensions::Xy => {
-                    write_wkb_coord(writer, (transformed.x, transformed.y))
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))
-                }
-                geo_traits::Dimensions::Xym => {
-                    // Preserve m value
-                    let m = coord.nth(2).unwrap();
-                    write_wkb_coord(writer, (transformed.x, transformed.y, m))
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))
-                }
-                geo_traits::Dimensions::Unknown(_) => {
-                    exec_err!("A geometry with unknown dimension cannot be transformed")
-                }
-                _ => internal_err!("3D dimension is passed to 2D affine transformation."),
-            }
+    match dim {
+        geo_traits::Dimensions::Xy => {
+            let transformed = affine.transform_point2(coord.x(), coord.y());
+            write_wkb_coord(writer, transformed)
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
         }
-        DAffine::DAffine3(affine) => {
-            let transformed = affine.transform_point3(glam::DVec3::new(
-                coord.x(),
-                coord.y(),
-                coord.nth(2).unwrap(),
-            ));
-
-            match dim {
-                geo_traits::Dimensions::Xyz => {
-                    write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z))
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))
-                }
-                geo_traits::Dimensions::Xyzm => {
-                    // Preserve m value
-                    let m = coord.nth(3).unwrap();
-                    write_wkb_coord(writer, (transformed.x, transformed.y, transformed.z, m))
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))
-                }
-                geo_traits::Dimensions::Unknown(_) => {
-                    exec_err!("A geometry with unknown dimension cannot be transformed")
-                }
-                _ => internal_err!("2D dimension is passed to 3D affine transformation."),
-            }
+        geo_traits::Dimensions::Xym => {
+            let transformed = affine.transform_point2(coord.x(), coord.y());
+            // Preserve m value
+            let m = coord.nth(2).unwrap();
+            write_wkb_coord(writer, (transformed.0, transformed.1, m))
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        geo_traits::Dimensions::Xyz => {
+            let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
+            write_wkb_coord(writer, transformed)
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        geo_traits::Dimensions::Xyzm => {
+            let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
+            // Preserve m value
+            let m = coord.nth(3).unwrap();
+            write_wkb_coord(writer, (transformed.0, transformed.1, transformed.2, m))
+                .map_err(|e| DataFusionError::Execution(e.to_string()))
+        }
+        geo_traits::Dimensions::Unknown(_) => {
+            exec_err!("A geometry with unknown dimension cannot be transformed")
         }
     }
 }
@@ -518,6 +477,34 @@ enum DAffine {
     DAffine3(glam::DAffine3),
 }
 
+impl DAffine {
+    fn transform_point3(&self, x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+        match self {
+            DAffine::DAffine2(daffine2) => {
+                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
+                (transformed.x, transformed.y, z)
+            }
+            DAffine::DAffine3(daffine3) => {
+                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z });
+                (transformed.x, transformed.y, transformed.z)
+            }
+        }
+    }
+
+    fn transform_point2(&self, x: f64, y: f64) -> (f64, f64) {
+        match self {
+            DAffine::DAffine2(daffine2) => {
+                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
+                (transformed.x, transformed.y)
+            }
+            DAffine::DAffine3(daffine3) => {
+                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z: 0.0 });
+                (transformed.x, transformed.y)
+            }
+        }
+    }
+}
+
 impl<'a> Iterator for DAffineIterator<'a> {
     type Item = DAffine;
 
@@ -627,6 +614,34 @@ mod tests {
             .invoke_arrays(prepare_args(points.clone(), m_scale))
             .unwrap();
         assert_array_equal(&result_scale, &expected_scale);
+
+        // 2D matrix with 3D input (z/m preserved)
+        let points_3d = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (1 2 3)"),
+                Some("POINT ZM (1 2 3 4)"),
+            ],
+            &sedona_type,
+        );
+
+        let expected_scale_3d = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (10 20 3)"),
+                Some("POINT ZM (10 20 3 4)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_scale_3d = tester_2d
+            .invoke_arrays(prepare_args(points_3d, m_scale))
+            .unwrap();
+        assert_array_equal(&result_scale_3d, &expected_scale_3d);
     }
 
     fn prepare_args(wkt: Arc<dyn Array>, mat: &[Option<f64>]) -> Vec<Arc<dyn Array>> {
@@ -724,5 +739,41 @@ mod tests {
             .invoke_arrays(prepare_args(points, m_scale))
             .unwrap();
         assert_array_equal(&result_scale, &expected_scale);
+
+        // 3D matrix with 2D input (z translation ignored, m preserved)
+        let points_2d = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT M (1 2 3)"),
+            ],
+            &sedona_type,
+        );
+
+        #[rustfmt::skip]
+        let m_translate = &[
+            Some(1.0), Some(0.0), Some(0.0),
+            Some(0.0), Some(1.0), Some(0.0),
+            Some(0.0), Some(0.0), Some(1.0),
+            Some(10.0), Some(20.0), Some(30.0),
+        ];
+
+        let expected_translate = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (11 22)"),
+                Some("POINT M (11 22 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_translate = tester_3d
+            .invoke_arrays(prepare_args(points_2d, m_translate))
+            .unwrap();
+        assert_array_equal(&result_translate, &expected_translate);
     }
 }
