@@ -57,6 +57,8 @@ def random_geometry(
     Generate a DataFrame with random geometries for testing purposes.
     This function creates a DataFrame containing randomly generated geometries with
     configurable parameters for geometry type, size, complexity, and spatial distribution.
+    Returns a DataFrame with columns 'id', 'dist', and 'geometry' containing randomly
+    generated geometries and distances.
 
     Parameters
     ----------
@@ -83,11 +85,6 @@ def random_geometry(
     seed : int, optional
         Random seed for reproducible geometry generation. If omitted, the result is
         non-deterministic.
-
-    Returns
-    -------
-    sedonadb.dataframe.DataFrame
-        A DataFrame with columns 'id' and 'geometry' containing randomly generated geometries.
 
     Examples
     --------
