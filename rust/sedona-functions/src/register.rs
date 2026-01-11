@@ -58,6 +58,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::predicates::st_knn_udf,
         crate::predicates::st_touches_udf,
         crate::predicates::st_within_udf,
+        crate::st_line_merge::st_line_merge_udf,
         crate::referencing::st_line_interpolate_point_udf,
         crate::referencing::st_line_locate_point_udf,
         crate::sd_format::sd_format_udf,
