@@ -535,11 +535,9 @@ impl<'a> Iterator for DAffineIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::create_array;
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -666,13 +664,65 @@ mod tests {
         );
         tester_3d.assert_return_type(WKB_GEOMETRY);
 
+        let points = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (1 2 3)"),
+                Some("POINT ZM (1 2 3 4)"),
+            ],
+            &sedona_type,
+        );
+
         // identity matrix
         #[rustfmt::skip]
-        let m_identity = [
+        let m_identity = &[
             Some(1.0), Some(0.0), Some(0.0),
             Some(0.0), Some(1.0), Some(0.0),
             Some(0.0), Some(0.0), Some(1.0),
             Some(0.0), Some(0.0), Some(0.0),
         ];
+
+        let expected_identity = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (1 2 3)"),
+                Some("POINT ZM (1 2 3 4)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_identity = tester_3d
+            .invoke_arrays(prepare_args(points.clone(), m_identity))
+            .unwrap();
+        assert_array_equal(&result_identity, &expected_identity);
+
+        // scale transformation
+        #[rustfmt::skip]
+        let m_scale = &[
+            Some(10.0), Some(0.0), Some(0.0),
+            Some(0.0), Some(10.0), Some(0.0),
+            Some(0.0), Some(0.0), Some(10.0),
+            Some(0.0), Some(0.0), Some(0.0),
+        ];
+
+        let expected_scale = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (10 20 30)"),
+                Some("POINT ZM (10 20 30 4)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_scale = tester_3d
+            .invoke_arrays(prepare_args(points, m_scale))
+            .unwrap();
+        assert_array_equal(&result_scale, &expected_scale);
     }
 }
