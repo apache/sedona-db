@@ -41,7 +41,10 @@ use sedona_schema::{
 };
 use std::{io::Write, sync::Arc};
 
-use crate::{executor::WkbExecutor, st_affine_helpers};
+use crate::{
+    executor::WkbExecutor,
+    st_affine_helpers::{self, RotateAxis},
+};
 
 /// ST_Rotate() scalar UDF
 ///
@@ -49,28 +52,64 @@ use crate::{executor::WkbExecutor, st_affine_helpers};
 pub fn st_rotate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_rotate",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STRotate {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STRotate {
+            axis: RotateAxis::Z,
+        })]),
         Volatility::Immutable,
-        Some(st_rotate_doc()),
+        Some(st_rotate_doc("")),
     )
 }
 
-fn st_rotate_doc() -> Documentation {
+/// ST_RotateX() scalar UDF
+///
+/// Native implementation for rotate transformation
+pub fn st_rotate_x_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_rotatex",
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STRotate {
+            axis: RotateAxis::X,
+        })]),
+        Volatility::Immutable,
+        Some(st_rotate_doc("X")),
+    )
+}
+
+/// ST_RotateY() scalar UDF
+///
+/// Native implementation for rotate transformation
+pub fn st_rotate_y_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_rotatey",
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STRotate {
+            axis: RotateAxis::Y,
+        })]),
+        Volatility::Immutable,
+        Some(st_rotate_doc("Y")),
+    )
+}
+
+fn st_rotate_doc(axis: &str) -> Documentation {
+    let suffix = match axis {
+        "Z" => "",
+        _ => axis,
+    };
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Rotates a geometry by a specified angle in radians counter-clockwise",
-        "ST_Rotate (geom: Geometry, rot: Double)",
+        format!("Rotates a geometry by a specified angle in radians counter-clockwise around the {axis}-axis "),
+        format!("ST_Rotate{suffix} (geom: Geometry, rot: Double)"),
     )
     .with_argument("geom", "geometry: Input geometry")
     .with_argument("rot", "angle (in radians)")
     .with_sql_example(
-        "SELECT ST_Rotate(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), radians(45))",
+        format!("SELECT ST_Rotate{suffix}(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), radians(45))"),
     )
     .build()
 }
 
 #[derive(Debug)]
-struct STRotate {}
+struct STRotate {
+    axis: RotateAxis,
+}
 
 impl SedonaScalarKernel for STRotate {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -97,7 +136,7 @@ impl SedonaScalarKernel for STRotate {
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
 
-        let mut affine_iter = st_affine_helpers::DAffineIterator::from_angle(&angle)?;
+        let mut affine_iter = st_affine_helpers::DAffineIterator::from_angle(&angle, self.axis)?;
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
