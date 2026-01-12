@@ -25,8 +25,10 @@ use datafusion_common::{
     ScalarValue,
 };
 use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, Volatility,
+    scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, EmitTo,
+    GroupsAccumulator, Volatility,
 };
+use geo_traits::CoordTrait;
 use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
 use sedona_geometry::{
@@ -175,6 +177,89 @@ impl Accumulator for BoundsAccumulator2D {
         let executor = WkbExecutor::new(&arg_types, &args);
         self.execute_update(executor)?;
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct BoundsGroupsAccumulator2D {
+    input_type: SedonaType,
+    xs: Vec<Interval>,
+    ys: Vec<Interval>,
+}
+
+impl GroupsAccumulator for BoundsGroupsAccumulator2D {
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        opt_filter: Option<&arrow_array::BooleanArray>,
+        total_num_groups: usize,
+    ) -> Result<()> {
+        let arg_types = [self.input_type.clone()];
+        let args = [ColumnarValue::Array(values[0].clone())];
+        let executor = WkbExecutor::new(&arg_types, &args);
+        self.xs = Vec::with_capacity(total_num_groups);
+        self.ys = Vec::with_capacity(total_num_groups);
+        let mut i = 0;
+
+        if let Some(filter) = opt_filter {
+            let mut filter_iter = filter.iter();
+            executor.execute_wkb_void(|maybe_item| {
+                if filter_iter.next().unwrap().unwrap() {
+                    let group_id = group_indices[i];
+                    i += 1;
+                    if let Some(item) = maybe_item {
+                        geo_traits_update_xy_bounds(
+                            item,
+                            &mut self.xs[group_id],
+                            &mut self.ys[group_id],
+                        )
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    }
+                }
+
+                Ok(())
+            })?;
+        } else {
+            executor.execute_wkb_void(|maybe_item| {
+                let group_id = group_indices[i];
+                i += 1;
+                if let Some(item) = maybe_item {
+                    geo_traits_update_xy_bounds(
+                        item,
+                        &mut self.xs[group_id],
+                        &mut self.ys[group_id],
+                    )
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                }
+
+                Ok(())
+            })?;
+        }
+
+        todo!()
+    }
+
+    fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
+        todo!()
+    }
+
+    fn state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
+        todo!()
+    }
+
+    fn merge_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        opt_filter: Option<&arrow_array::BooleanArray>,
+        total_num_groups: usize,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn size(&self) -> usize {
+        todo!()
     }
 }
 
