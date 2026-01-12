@@ -20,13 +20,13 @@ use arrow_array::PrimitiveArray;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
-use datafusion_common::internal_err;
 use datafusion_common::DataFusionError;
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait as _, GeometryTrait, LineStringTrait,
     MultiLineStringTrait as _, MultiPointTrait as _, MultiPolygonTrait as _, PointTrait,
     PolygonTrait as _,
 };
+use sedona_common::sedona_internal_err;
 use sedona_geometry::wkb_factory::{
     write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
     write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
@@ -372,7 +372,7 @@ pub(crate) struct DAffine3ScaleIterator<'a> {
 impl<'a> DAffine3ScaleIterator<'a> {
     pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
         if array_args.len() != 3 {
-            return internal_err!("Invalid number of arguments are passed");
+            return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
         let x_scale = as_float64_array(&array_args[0])?;
