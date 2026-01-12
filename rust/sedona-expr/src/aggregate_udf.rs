@@ -20,7 +20,7 @@ use arrow_schema::{DataType, FieldRef};
 use datafusion_common::{not_impl_err, Result};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
-    Accumulator, AggregateUDFImpl, Documentation, Signature, Volatility,
+    Accumulator, AggregateUDFImpl, Documentation, GroupsAccumulator, Signature, Volatility,
 };
 use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
@@ -102,6 +102,18 @@ impl SedonaAggregateUDF {
         &self.kernels
     }
 
+    fn accumulator_arg_types(args: &AccumulatorArgs) -> Result<Vec<SedonaType>> {
+        let arg_fields = args
+            .exprs
+            .iter()
+            .map(|expr| expr.return_field(args.schema))
+            .collect::<Result<Vec<_>>>()?;
+        arg_fields
+            .iter()
+            .map(|field| SedonaType::from_storage_field(field))
+            .collect()
+    }
+
     fn dispatch_impl(&self, args: &[SedonaType]) -> Result<(&dyn SedonaAccumulator, SedonaType)> {
         // Resolve kernels in reverse so that more recently added ones are resolved first
         for kernel in self.kernels.iter().rev() {
@@ -154,16 +166,27 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
         sedona_internal_err!("return_type() should not be called (use return_field())")
     }
 
+    fn groups_accumulator_supported(&self, args: AccumulatorArgs) -> bool {
+        if let Ok(arg_types) = Self::accumulator_arg_types(&args) {
+            if let Ok((accumulator, _)) = self.dispatch_impl(&arg_types) {
+                return accumulator.groups_accumulator_supported(&arg_types);
+            }
+        }
+
+        false
+    }
+
+    fn create_groups_accumulator(
+        &self,
+        args: AccumulatorArgs,
+    ) -> Result<Box<dyn GroupsAccumulator>> {
+        let arg_types = Self::accumulator_arg_types(&args)?;
+        let (accumulator, output_type) = self.dispatch_impl(&arg_types)?;
+        accumulator.groups_accumulator(&arg_types, &output_type)
+    }
+
     fn accumulator(&self, acc_args: AccumulatorArgs) -> Result<Box<dyn Accumulator>> {
-        let arg_fields = acc_args
-            .exprs
-            .iter()
-            .map(|expr| expr.return_field(acc_args.schema))
-            .collect::<Result<Vec<_>>>()?;
-        let arg_types = arg_fields
-            .iter()
-            .map(|field| SedonaType::from_storage_field(field))
-            .collect::<Result<Vec<_>>>()?;
+        let arg_types = Self::accumulator_arg_types(&acc_args)?;
         let (accumulator, output_type) = self.dispatch_impl(&arg_types)?;
         accumulator.accumulator(&arg_types, &output_type)
     }
@@ -189,6 +212,18 @@ pub trait SedonaAccumulator: Debug {
         args: &[SedonaType],
         output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>>;
+
+    fn groups_accumulator_supported(&self, _args: &[SedonaType]) -> bool {
+        false
+    }
+
+    fn groups_accumulator(
+        &self,
+        _args: &[SedonaType],
+        _output_type: &SedonaType,
+    ) -> Result<Box<dyn GroupsAccumulator>> {
+        sedona_internal_err!("groups_accumulator not supported for {self:?}")
+    }
 
     /// The fields representing the underlying serialized state of the Accumulator
     fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>>;
