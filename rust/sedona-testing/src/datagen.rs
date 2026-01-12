@@ -826,7 +826,7 @@ fn generate_random_circle<R: rand::Rng>(
     let height = options.bounds.height();
     let width = options.bounds.width();
 
-    // Ensure diamond fits within bounds by constraining center position
+    // Ensure circle fits within bounds by constraining center position
     let center_x = if width >= size {
         let center_x_dist = Uniform::new(
             options.bounds.min().x + half_size,
