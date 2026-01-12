@@ -528,10 +528,6 @@ impl RandomGeometryOptions {
             return plan_err!("Expected valid bounds but got {:?}", self.bounds);
         }
 
-        if self.bounds.width() <= 0.0 || self.bounds.height() <= 0.0 {
-            return plan_err!("Expected valid bounds but got {:?}", self.bounds);
-        }
-
         if self.size_range.0 <= 0.0 || self.size_range.0 > self.size_range.1 {
             return plan_err!("Expected valid size_range but got {:?}", self.size_range);
         }
