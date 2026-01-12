@@ -21,7 +21,10 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry, GeometryTypes};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -32,8 +35,8 @@ use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Boundary() implementation using the geos crate
-pub fn st_boundary_impl() -> ScalarKernelRef {
-    Arc::new(STBoundary {})
+pub fn st_boundary_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STBoundary {})
 }
 
 #[derive(Debug)]
@@ -284,7 +287,7 @@ fn collect_boundary_components(
 mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -365,6 +368,16 @@ mod tests {
         );
 
         let result = tester.invoke_scalar("GEOMETRYCOLLECTION EMPTY").unwrap();
+        tester.assert_scalar_result_equals(result, "GEOMETRYCOLLECTION EMPTY");
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_boundary", st_boundary_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "GEOMETRYCOLLECTION EMPTY");
     }
 }
