@@ -195,7 +195,7 @@ pub(crate) struct DAffine2Iterator<'a> {
 impl<'a> DAffine2Iterator<'a> {
     pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
         if array_args.len() != 6 {
-            return internal_err!("Invalid number of arguments are passed");
+            return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
         let a = as_float64_array(&array_args[0])?;
@@ -261,7 +261,7 @@ pub(crate) struct DAffine3Iterator<'a> {
 impl<'a> DAffine3Iterator<'a> {
     pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
         if array_args.len() != 12 {
-            return internal_err!("Invalid number of arguments are passed");
+            return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
         let a = as_float64_array(&array_args[0])?;
@@ -337,7 +337,7 @@ pub(crate) struct DAffine2ScaleIterator<'a> {
 impl<'a> DAffine2ScaleIterator<'a> {
     pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
         if array_args.len() != 2 {
-            return internal_err!("Invalid number of arguments are passed");
+            return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
         let x_scale = as_float64_array(&array_args[0])?;
