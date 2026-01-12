@@ -244,10 +244,10 @@ impl SpatialJoinStream {
         // Extract the necessary data first to avoid borrowing conflicts
         let (batch_opt, is_complete) = match &mut self.state {
             SpatialJoinStreamState::ProcessProbeBatch(iterator) => {
-                // For KNN joins, we swapped build/probe sides, so build_side should be Right
-                // For regular joins, build_side is Left
+                // For KNN joins, we may have swapped build/probe sides, so build_side might be Right;
+                // For regular joins, build_side is always Left.
                 let build_side = match &self.spatial_predicate {
-                    SpatialPredicate::KNearestNeighbors(_) => JoinSide::Right,
+                    SpatialPredicate::KNearestNeighbors(knn) => knn.probe_side.negate(),
                     _ => JoinSide::Left,
                 };
 

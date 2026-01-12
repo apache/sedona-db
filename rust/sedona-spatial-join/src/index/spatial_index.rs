@@ -24,14 +24,18 @@ use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_execution::memory_pool::{MemoryPool, MemoryReservation};
-use geo_index::rtree::distance::{DistanceMetric, GeometryAccessor};
+use float_next_after::NextAfter;
+use geo::BoundingRect;
+use geo_index::rtree::{
+    distance::{DistanceMetric, GeometryAccessor},
+    util::f64_box_to_f32,
+};
 use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
 use geo_index::IndexableNum;
-use geo_types::{Point, Rect};
+use geo_types::Rect;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
-use sedona_geo_generic_alg::algorithm::Centroid;
 use wkb::reader::Wkb;
 
 use crate::{
@@ -318,25 +322,28 @@ impl SpatialIndex {
 
                 // For tie-breakers, create spatial envelope around probe centroid and use rtree.search()
 
-                let probe_centroid = probe_geom.centroid().unwrap_or(Point::new(0.0, 0.0));
-                let probe_x = probe_centroid.x() as f32;
-                let probe_y = probe_centroid.y() as f32;
-                let max_distance_f32 = match f32::from_f64(max_distance) {
-                    Some(val) => val,
-                    None => {
-                        // If conversion fails, return empty results for this probe
-                        return Ok(QueryResultMetrics {
-                            count: 0,
-                            candidate_count: 0,
-                        });
-                    }
+                // Create envelope bounds by expanding the probe bounding box by max_distance
+                let Some(rect) = probe_geom.bounding_rect() else {
+                    // If bounding rectangle cannot be computed, return empty results
+                    return Ok(QueryResultMetrics {
+                        count: 0,
+                        candidate_count: 0,
+                    });
                 };
 
-                // Create envelope bounds around probe centroid
-                let min_x = probe_x - max_distance_f32;
-                let min_y = probe_y - max_distance_f32;
-                let max_x = probe_x + max_distance_f32;
-                let max_y = probe_y + max_distance_f32;
+                let min = rect.min();
+                let max = rect.max();
+                let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min.x, min.y, max.x, max.y);
+                let mut distance_f32 = max_distance as f32;
+                if (distance_f32 as f64) < max_distance {
+                    distance_f32 = distance_f32.next_after(f32::INFINITY);
+                }
+                let (min_x, min_y, max_x, max_y) = (
+                    min_x - distance_f32,
+                    min_y - distance_f32,
+                    max_x + distance_f32,
+                    max_y + distance_f32,
+                );
 
                 // Use rtree.search() with envelope bounds (like the old code)
                 let expanded_results = self.rtree.search(min_x, min_y, max_x, max_y);
@@ -1407,8 +1414,33 @@ mod tests {
             )
             .unwrap();
 
-        // Should return more than 2 results because of ties (all 4 points at distance sqrt(2))
-        assert!(result_with_ties.count >= 2);
+        // Should return 4 results because of ties (all 4 points at distance sqrt(2))
+        assert!(result_with_ties.count == 4);
+
+        // Query using a box centered at the origin
+        let query_geom = create_array(
+            &[Some(
+                "POLYGON ((-0.5 -0.5, -0.5 0.5, 0.5 0.5, 0.5 -0.5, -0.5 -0.5))",
+            )],
+            &WKB_GEOMETRY,
+        );
+        let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
+        let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
+
+        // This query should return 4 points
+        let mut build_positions_with_ties = Vec::new();
+        let result_with_ties = index
+            .query_knn(
+                query_wkb,
+                2,     // k=2
+                false, // use_spheroid
+                true,  // include_tie_breakers=true
+                &mut build_positions_with_ties,
+            )
+            .unwrap();
+
+        // Should return 4 results because of ties (all 4 points at distance sqrt(2))
+        assert!(result_with_ties.count == 4);
     }
 
     #[test]
