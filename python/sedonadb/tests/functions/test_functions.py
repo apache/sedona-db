@@ -3365,3 +3365,63 @@ def test_st_NRings(eng, geom, expected):
         f"SELECT ST_NRings({geom_or_null(geom)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", None),
+        ("LINESTRING EMPTY", None),
+        ("POLYGON EMPTY", 0),
+        ("MULTIPOINT EMPTY", None),
+        ("MULTILINESTRING EMPTY", None),
+        ("MULTIPOLYGON EMPTY", None),
+        ("GEOMETRYCOLLECTION EMPTY", None),
+        ("POINT (1 2)", None),
+        ("MULTIPOINT ((0 0), (1 1))", None),
+        ("LINESTRING (0 0, 1 1, 2 2)", None),
+        ("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", None),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)"),
+        (
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            "LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 20 10, 20 20, 10 20, 10 10)))",
+            None,
+        ),
+        ("GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))", None),
+        (
+            "POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))",
+            "LINESTRING Z (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)",
+        ),
+        (
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
+            "LINESTRING Z (0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)",
+        ),
+        ("POINT Z (1 1 5)", None),
+        (
+            "POLYGON M ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))",
+            "LINESTRING M (0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1)",
+        ),
+        (
+            "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 1), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 6))",
+            "LINESTRING M (0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 1)",
+        ),
+        ("LINESTRING M (0 0 1, 1 1 2)", None),
+        (
+            "POLYGON ZM ((0 0 1 2, 1 0 1 2, 1 1 1 2, 0 1 1 2, 0 0 1 2))",
+            "LINESTRING ZM (0 0 1 2, 1 0 1 2, 1 1 1 2, 0 1 1 2, 0 0 1 2)",
+        ),
+        (
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 1), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 6))",
+            "LINESTRING ZM (0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 1)",
+        ),
+        ("POLYGON ZM EMPTY", None),
+    ],
+)
+def test_st_exteriorRing(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ExteriorRing({geom_or_null(geom)})", expected)
