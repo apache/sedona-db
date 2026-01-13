@@ -48,7 +48,7 @@ pub(crate) fn invoke_affine(
             if pt.coord().is_some() {
                 write_wkb_point_header(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_transformed_coord(writer, pt.coord().unwrap(), mat, dim)?;
+                write_transformed_coords(writer, Some(pt.coord().unwrap()).into_iter(), mat, dim)?;
             } else {
                 write_wkb_empty_point(writer, dims)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -137,49 +137,61 @@ where
     I: DoubleEndedIterator,
     I::Item: CoordTrait<T = f64>,
 {
+    let write_transformed_coord_fn = match dim {
+        geo_traits::Dimensions::Xy => write_transformed_coord_xy,
+        geo_traits::Dimensions::Xyz => write_transformed_coord_xyz,
+        geo_traits::Dimensions::Xym => write_transformed_coord_xym,
+        geo_traits::Dimensions::Xyzm => write_transformed_coord_xyzm,
+        geo_traits::Dimensions::Unknown(_) => {
+            return exec_err!("A geometry with unknown dimension cannot be transformed");
+        }
+    };
+
     coords
         .into_iter()
-        .try_for_each(|coord| write_transformed_coord(writer, coord, affine, dim))
+        .try_for_each(|coord| write_transformed_coord_fn(writer, coord, affine))
 }
 
-fn write_transformed_coord<C>(
+fn write_transformed_coord_xy<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
+where
+    C: CoordTrait<T = f64>,
+{
+    let transformed = affine.transform_point2(coord.x(), coord.y());
+    write_wkb_coord(writer, transformed).map_err(|e| DataFusionError::Execution(e.to_string()))
+}
+
+fn write_transformed_coord_xym<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
+where
+    C: CoordTrait<T = f64>,
+{
+    let transformed = affine.transform_point2(coord.x(), coord.y());
+    // Preserve m value
+    let m = coord.nth(2).unwrap();
+    write_wkb_coord(writer, (transformed.0, transformed.1, m))
+        .map_err(|e| DataFusionError::Execution(e.to_string()))
+}
+
+fn write_transformed_coord_xyz<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
+where
+    C: CoordTrait<T = f64>,
+{
+    let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
+    write_wkb_coord(writer, transformed).map_err(|e| DataFusionError::Execution(e.to_string()))
+}
+
+fn write_transformed_coord_xyzm<C>(
     writer: &mut impl Write,
     coord: C,
     affine: &DAffine,
-    dim: &geo_traits::Dimensions,
 ) -> Result<()>
 where
     C: CoordTrait<T = f64>,
 {
-    match dim {
-        geo_traits::Dimensions::Xy => {
-            let transformed = affine.transform_point2(coord.x(), coord.y());
-            write_wkb_coord(writer, transformed)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        geo_traits::Dimensions::Xym => {
-            let transformed = affine.transform_point2(coord.x(), coord.y());
-            // Preserve m value
-            let m = coord.nth(2).unwrap();
-            write_wkb_coord(writer, (transformed.0, transformed.1, m))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        geo_traits::Dimensions::Xyz => {
-            let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
-            write_wkb_coord(writer, transformed)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        geo_traits::Dimensions::Xyzm => {
-            let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
-            // Preserve m value
-            let m = coord.nth(3).unwrap();
-            write_wkb_coord(writer, (transformed.0, transformed.1, transformed.2, m))
-                .map_err(|e| DataFusionError::Execution(e.to_string()))
-        }
-        geo_traits::Dimensions::Unknown(_) => {
-            exec_err!("A geometry with unknown dimension cannot be transformed")
-        }
-    }
+    let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
+    // Preserve m value
+    let m = coord.nth(3).unwrap();
+    write_wkb_coord(writer, (transformed.0, transformed.1, transformed.2, m))
+        .map_err(|e| DataFusionError::Execution(e.to_string()))
 }
 
 pub(crate) struct DAffine2Iterator<'a> {
