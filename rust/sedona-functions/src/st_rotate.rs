@@ -163,6 +163,14 @@ mod tests {
         let st_rotate_udf: ScalarUDF = st_rotate_udf().into();
         assert_eq!(st_rotate_udf.name(), "st_rotate");
         assert!(st_rotate_udf.documentation().is_some());
+
+        let st_rotate_x_udf: ScalarUDF = st_rotate_x_udf().into();
+        assert_eq!(st_rotate_x_udf.name(), "st_rotate_x");
+        assert!(st_rotate_x_udf.documentation().is_some());
+
+        let st_rotate_y_udf: ScalarUDF = st_rotate_y_udf().into();
+        assert_eq!(st_rotate_y_udf.name(), "st_rotate_y");
+        assert!(st_rotate_y_udf.documentation().is_some());
     }
 
     #[rstest]
@@ -223,7 +231,7 @@ mod tests {
         );
         tester.assert_return_type(sedona_type.clone());
 
-        let result = tester.invoke_scalar_scalar("POINT (1 2)", 0.0);
-        tester.assert_scalar_result_equals("POINT (1 2)");
+        let result = tester.invoke_scalar_scalar("POINT (1 2)", 0.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }
 }

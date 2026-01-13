@@ -340,7 +340,9 @@ mod tests {
         );
         tester.assert_return_type(sedona_type.clone());
 
-        let result = tester.invoke_scalar_scalar_scalar("POINT (1 2)", 2, 3).unwrap();
-        tester.assert_scalar_result_equals("POINT (2 6)"); 
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT (1 2)", 2, 3)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (2 6)");
     }
 }
