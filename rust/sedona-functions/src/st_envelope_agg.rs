@@ -14,11 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{sync::Arc, vec};
+use std::{iter::zip, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use crate::st_envelope::write_envelope;
-use arrow_array::ArrayRef;
+use arrow_array::{builder::BinaryBuilder, ArrayRef, BooleanArray};
 use arrow_schema::FieldRef;
 use datafusion_common::{
     error::{DataFusionError, Result},
@@ -28,12 +28,12 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, EmitTo,
     GroupsAccumulator, Volatility,
 };
-use geo_traits::CoordTrait;
 use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
 use sedona_geometry::{
     bounds::geo_traits_update_xy_bounds,
     interval::{Interval, IntervalTrait},
+    wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -70,6 +70,18 @@ impl SedonaAccumulator for STEnvelopeAgg {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
+    }
+
+    fn groups_accumulator_supported(&self, _args: &[SedonaType]) -> bool {
+        true
+    }
+
+    fn groups_accumulator(
+        &self,
+        args: &[SedonaType],
+        _output_type: &SedonaType,
+    ) -> Result<Box<dyn GroupsAccumulator>> {
+        Ok(Box::new(BoundsGroupsAccumulator2D::new(args[0].clone())))
     }
 
     fn accumulator(
@@ -185,14 +197,24 @@ struct BoundsGroupsAccumulator2D {
     input_type: SedonaType,
     xs: Vec<Interval>,
     ys: Vec<Interval>,
+    offset: usize,
 }
 
-impl GroupsAccumulator for BoundsGroupsAccumulator2D {
-    fn update_batch(
+impl BoundsGroupsAccumulator2D {
+    pub fn new(input_type: SedonaType) -> Self {
+        Self {
+            input_type,
+            xs: Vec::new(),
+            ys: Vec::new(),
+            offset: 0,
+        }
+    }
+
+    fn execute_update(
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&arrow_array::BooleanArray>,
+        opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
         let arg_types = [self.input_type.clone()];
@@ -206,7 +228,7 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
             let mut filter_iter = filter.iter();
             executor.execute_wkb_void(|maybe_item| {
                 if filter_iter.next().unwrap().unwrap() {
-                    let group_id = group_indices[i];
+                    let group_id = group_indices[i] - self.offset;
                     i += 1;
                     if let Some(item) = maybe_item {
                         geo_traits_update_xy_bounds(
@@ -222,7 +244,7 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
             })?;
         } else {
             executor.execute_wkb_void(|maybe_item| {
-                let group_id = group_indices[i];
+                let group_id = group_indices[i] - self.offset;
                 i += 1;
                 if let Some(item) = maybe_item {
                     geo_traits_update_xy_bounds(
@@ -237,15 +259,50 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
             })?;
         }
 
-        todo!()
+        Ok(())
     }
 
-    fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
-        todo!()
+    fn emit_wkb_result(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
+        let emit_size = match emit_to {
+            EmitTo::All => self.xs.len(),
+            EmitTo::First(n) => n,
+        };
+
+        let mut builder =
+            BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES * emit_size);
+
+        for (x, y) in zip(&self.xs[self.offset..], &self.ys[self.offset..]) {
+            write_envelope(&(*x).into(), y, &mut builder)?;
+        }
+
+        match emit_to {
+            EmitTo::All => {
+                self.xs = Vec::new();
+                self.ys = Vec::new();
+                self.offset = 0;
+            }
+            EmitTo::First(n) => {
+                self.offset += n;
+            }
+        }
+
+        Ok(Arc::new(builder.finish()))
+    }
+}
+
+impl GroupsAccumulator for BoundsGroupsAccumulator2D {
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        opt_filter: Option<&BooleanArray>,
+        total_num_groups: usize,
+    ) -> Result<()> {
+        self.execute_update(values, group_indices, opt_filter, total_num_groups)
     }
 
     fn state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
-        todo!()
+        Ok(vec![self.emit_wkb_result(emit_to)?])
     }
 
     fn merge_batch(
@@ -255,11 +312,18 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
         opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        todo!()
+        // In this case, our state is identical to our input values
+        self.execute_update(values, group_indices, opt_filter, total_num_groups)
+    }
+
+    fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
+        self.emit_wkb_result(emit_to)
     }
 
     fn size(&self) -> usize {
-        todo!()
+        size_of::<BoundsAccumulator2D>()
+            + self.xs.capacity() * size_of::<Interval>()
+            + self.ys.capacity() * size_of::<Interval>()
     }
 }
 
