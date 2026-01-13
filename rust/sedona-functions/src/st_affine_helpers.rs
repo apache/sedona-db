@@ -31,7 +31,7 @@ pub(crate) struct DAffine2Iterator<'a> {
     e: &'a PrimitiveArray<Float64Type>,
     x_offset: &'a PrimitiveArray<Float64Type>,
     y_offset: &'a PrimitiveArray<Float64Type>,
-    any_null: bool,
+    no_null: bool,
 }
 
 impl<'a> DAffine2Iterator<'a> {
@@ -55,17 +55,17 @@ impl<'a> DAffine2Iterator<'a> {
             e,
             x_offset,
             y_offset,
-            any_null: a.null_count() > 0
-                || b.null_count() > 0
-                || d.null_count() > 0
-                || e.null_count() > 0
-                || x_offset.null_count() > 0
-                || y_offset.null_count() > 0,
+            no_null: a.null_count() == 0
+                && b.null_count() == 0
+                && d.null_count() == 0
+                && e.null_count() == 0
+                && x_offset.null_count() == 0
+                && y_offset.null_count() == 0,
         })
     }
 
     fn is_null(&self, i: usize) -> bool {
-        if self.any_null {
+        if self.no_null {
             return false;
         }
 
@@ -123,7 +123,7 @@ pub(crate) struct DAffine3Iterator<'a> {
     x_offset: &'a PrimitiveArray<Float64Type>,
     y_offset: &'a PrimitiveArray<Float64Type>,
     z_offset: &'a PrimitiveArray<Float64Type>,
-    any_null: bool,
+    no_null: bool,
 }
 
 impl<'a> DAffine3Iterator<'a> {
@@ -159,23 +159,23 @@ impl<'a> DAffine3Iterator<'a> {
             x_offset,
             y_offset,
             z_offset,
-            any_null: a.null_count() > 0
-                || b.null_count() > 0
-                || c.null_count() > 0
-                || d.null_count() > 0
-                || e.null_count() > 0
-                || f.null_count() > 0
-                || g.null_count() > 0
-                || h.null_count() > 0
-                || i.null_count() > 0
-                || x_offset.null_count() > 0
-                || y_offset.null_count() > 0
-                || z_offset.null_count() > 0,
+            no_null: a.null_count() == 0
+                && b.null_count() == 0
+                && c.null_count() == 0
+                && d.null_count() == 0
+                && e.null_count() == 0
+                && f.null_count() == 0
+                && g.null_count() == 0
+                && h.null_count() == 0
+                && i.null_count() == 0
+                && x_offset.null_count() == 0
+                && y_offset.null_count() == 0
+                && z_offset.null_count() == 0,
         })
     }
 
     fn is_null(&self, i: usize) -> bool {
-        if self.any_null {
+        if self.no_null {
             return false;
         }
 
@@ -237,7 +237,7 @@ pub(crate) struct DAffine2ScaleIterator<'a> {
     index: usize,
     x_scale: &'a PrimitiveArray<Float64Type>,
     y_scale: &'a PrimitiveArray<Float64Type>,
-    any_null: bool,
+    no_null: bool,
 }
 
 impl<'a> DAffine2ScaleIterator<'a> {
@@ -253,12 +253,12 @@ impl<'a> DAffine2ScaleIterator<'a> {
             index: 0,
             x_scale,
             y_scale,
-            any_null: x_scale.null_count() > 0 || y_scale.null_count() > 0,
+            no_null: x_scale.null_count() == 0 && y_scale.null_count() == 0,
         })
     }
 
     fn is_null(&self, i: usize) -> bool {
-        if self.any_null {
+        if self.no_null {
             return false;
         }
 
@@ -288,7 +288,7 @@ pub(crate) struct DAffine3ScaleIterator<'a> {
     x_scale: &'a PrimitiveArray<Float64Type>,
     y_scale: &'a PrimitiveArray<Float64Type>,
     z_scale: &'a PrimitiveArray<Float64Type>,
-    any_null: bool,
+    no_null: bool,
 }
 
 impl<'a> DAffine3ScaleIterator<'a> {
@@ -306,14 +306,14 @@ impl<'a> DAffine3ScaleIterator<'a> {
             x_scale,
             y_scale,
             z_scale,
-            any_null: x_scale.null_count() > 0
-                || y_scale.null_count() > 0
-                || z_scale.null_count() > 0,
+            no_null: x_scale.null_count() == 0
+                && y_scale.null_count() == 0
+                && z_scale.null_count() == 0,
         })
     }
 
     fn is_null(&self, i: usize) -> bool {
-        if self.any_null {
+        if self.no_null {
             return false;
         }
 
@@ -353,7 +353,7 @@ pub(crate) struct DAffineRotateIterator<'a> {
     index: usize,
     angle: &'a PrimitiveArray<Float64Type>,
     axis: RotateAxis,
-    any_null: bool,
+    no_null: bool,
 }
 
 impl<'a> DAffineRotateIterator<'a> {
@@ -363,12 +363,12 @@ impl<'a> DAffineRotateIterator<'a> {
             index: 0,
             angle,
             axis,
-            any_null: angle.null_count() > 0,
+            no_null: angle.null_count() == 0,
         })
     }
 
     fn is_null(&self, i: usize) -> bool {
-        if self.any_null {
+        if self.no_null {
             return false;
         }
 
