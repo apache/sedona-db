@@ -614,15 +614,15 @@ mod tests {
         prelude::{SessionConfig, SessionContext},
     };
     use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion_expr::ColumnarValue;
     use geo::{Distance, Euclidean};
     use geo_types::{Coord, Rect};
     use rstest::rstest;
-    use sedona_geo::to_geo::item_to_geometry;
+    use sedona_geo::to_geo::GeoTypesExecutor;
     use sedona_geometry::types::GeometryTypeId;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
     use sedona_testing::datagen::RandomPartitionedDataBuilder;
     use tokio::sync::OnceCell;
-    use wkb::reader::read_wkb;
 
     use crate::register_spatial_join_optimizer;
     use sedona_common::{
@@ -1218,44 +1218,25 @@ mod tests {
                     .schema()
                     .index_of("geometry")
                     .expect("Geometry column not found");
+
                 let geoms_col = batch.column(geom_idx);
-                let geoms_binary = geoms_col
-                    .as_any()
-                    .downcast_ref::<arrow_array::BinaryArray>();
-                let geoms_binary_view = geoms_col
-                    .as_any()
-                    .downcast_ref::<arrow_array::BinaryViewArray>();
+                let geom_type = SedonaType::from_storage_field(batch.schema().field(geom_idx))
+                    .expect("Failed to get SedonaType from geometry field");
+                let arg_types = [geom_type];
+                let arg_values = [ColumnarValue::Array(Arc::clone(geoms_col))];
 
-                if geoms_binary.is_none() && geoms_binary_view.is_none() {
-                    panic!(
-                        "Column 'geometry' should be Binary or BinaryView. Schema: {:?}",
-                        batch.schema()
-                    );
-                }
-
-                for i in 0..batch.num_rows() {
-                    if ids.is_null(i) {
-                        continue;
-                    }
-                    let id = ids.value(i);
-
-                    let geom_bytes = if let Some(arr) = geoms_binary {
-                        if arr.is_null(i) {
-                            continue;
+                let executor = GeoTypesExecutor::new(&arg_types, &arg_values);
+                let mut id_iter = ids.iter();
+                executor
+                    .execute_wkb_void(|maybe_geom| {
+                        if let Some(id_opt) = id_iter.next() {
+                            if let (Some(id), Some(geom)) = (id_opt, maybe_geom) {
+                                result.push((id, geom))
+                            }
                         }
-                        arr.value(i)
-                    } else {
-                        let arr = geoms_binary_view.unwrap();
-                        if arr.is_null(i) {
-                            continue;
-                        }
-                        arr.value(i)
-                    };
-
-                    let geom_wkb = read_wkb(geom_bytes).expect("Failed to parse WKB");
-                    let geom = item_to_geometry(geom_wkb).expect("Failed to parse WKB");
-                    result.push((id, geom));
-                }
+                        Ok(())
+                    })
+                    .expect("Failed to extract geoms and ids from RecordBatch");
             }
         }
         result
