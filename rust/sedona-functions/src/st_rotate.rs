@@ -225,17 +225,7 @@ mod tests {
         );
         tester.assert_return_type(sedona_type.clone());
 
-        let geom = create_scalar(Some("POINT (1 2)"), &sedona_type);
-        let args = vec![
-            ColumnarValue::Scalar(geom),
-            ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
-        ];
-
-        let result = tester.invoke(args).unwrap();
-        if let ColumnarValue::Scalar(scalar) = result {
-            tester.assert_scalar_result_equals(scalar, "POINT (1 2)");
-        } else {
-            panic!("Expected scalar result from item CRS rotate invoke");
-        }
+        let result = tester.invoke_scalar_scalar("POINT (1 2)", 0.0);
+        tester.assert_scalar_result_equals("POINT (1 2)");
     }
 }
