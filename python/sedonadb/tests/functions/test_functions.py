@@ -271,7 +271,8 @@ def test_st_affine_3d(
 @pytest.mark.parametrize(
     ("geom", "sx", "sy", "expected"),
     [
-        (None, 2.0, 3.0, None),
+        (None, 1.0, 1.0, None),
+        ("POINT EMPTY", 1.0, 1.0, "POINT (nan nan)"),
         ("POINT (1 2)", 1.0, 1.0, "POINT (1 2)"),
         ("POINT (1 2)", 2.0, 3.0, "POINT (2 6)"),
         ("LINESTRING (0 0, 1 1)", 2.0, 3.0, "LINESTRING (0 0, 2 3)"),
@@ -306,6 +307,8 @@ def test_st_affine_3d(
             "GEOMETRYCOLLECTION (POINT (2 6), LINESTRING (0 0, 2 3))",
         ),
         ("POINT Z (1 2 3)", 2.0, 3.0, "POINT Z (2 6 3)"),
+        ("POINT M (1 2 3)", 2.0, 3.0, "POINT M (2 6 3)"),
+        ("POINT ZM (1 2 3 4)", 2.0, 3.0, "POINT ZM (2 6 3 4)"),
     ],
 )
 def test_st_scale_2d(eng, geom, sx, sy, expected):
@@ -320,8 +323,22 @@ def test_st_scale_2d(eng, geom, sx, sy, expected):
 @pytest.mark.parametrize(
     ("geom", "sx", "sy", "sz", "expected"),
     [
+        (None, 1.0, 1.0, 1.0, None),
+        ("POINT EMPTY", 1.0, 1.0, 1.0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 1.0, 1.0, 1.0, "POINT Z (nan nan nan)"),
         ("POINT Z (1 2 3)", 1.0, 1.0, 1.0, "POINT Z (1 2 3)"),
         ("POINT Z (1 2 3)", 2.0, 3.0, 4.0, "POINT Z (2 6 12)"),
+        ("POINT ZM (1 2 3 4)", 2.0, 3.0, 4.0, "POINT ZM (2 6 12 4)"),
+        ("LINESTRING Z (0 0 0, 1 1 1)", 2.0, 3.0, 4.0, "LINESTRING Z (0 0 0, 2 3 4)"),
+        (
+            "POLYGON Z ((0 0 0, 1 0 2, 1 1 4, 0 1 2, 0 0 0))",
+            2.0,
+            3.0,
+            4.0,
+            "POLYGON Z ((0 0 0, 2 0 8, 2 3 16, 0 3 8, 0 0 0))",
+        ),
+        ("POINT (1 2)", 2.0, 3.0, 4.0, "POINT (2 6)"),
+        ("POINT M (1 2 3)", 2.0, 3.0, 4.0, "POINT M (2 6 3)"),
     ],
 )
 def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
@@ -338,9 +355,26 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
     ("geom", "angle", "expected"),
     [
         (None, 0, None),
+        ("POINT EMPTY", 0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 0, "POINT Z (nan nan nan)"),
         ("POINT (1 2)", 0, "POINT (1 2)"),
         ("POINT (1 2)", math.pi / 2, "POINT (-2 1)"),
         ("POINT (1 2)", math.pi, "POINT (-1 -2)"),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (-1 -2 3)"),
+        ("POINT M (1 2 3)", math.pi, "POINT M (-1 -2 3)"),
+        ("POINT ZM (1 2 3 4)", math.pi, "POINT ZM (-1 -2 3 4)"),
+        ("LINESTRING (0 0, 1 2)", math.pi, "LINESTRING (0 0, -1 -2)"),
+        ("LINESTRING Z (0 0 0, 1 2 3)", math.pi, "LINESTRING Z (0 0 0, -1 -2 3)"),
+        (
+            "POLYGON ((0 0, 1 2, 2 3, 2 1, 0 0))",
+            math.pi,
+            "POLYGON ((0 0, -1 -2, -2 -3, -2 -1, 0 0))",
+        ),
+        (
+            "POLYGON Z ((0 0 0, 1 2 4, 2 3 4, 2 1 4, 0 0 0))",
+            math.pi,
+            "POLYGON Z ((0 0 0, -1 -2 4, -2 -3 4, -2 -1 4, 0 0 0))",
+        ),
     ],
 )
 def test_st_rotate(eng, geom, angle, expected):
