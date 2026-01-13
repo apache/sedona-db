@@ -196,17 +196,40 @@ def test_st_azimuth(eng, geom1, geom2, expected):
     ("geom", "a", "b", "d", "e", "xoff", "yoff", "expected"),
     [
         (
+            None,
+            1.0, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            None
+        ),
+        (
+            "POINT (1 2)",
+            None, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            None
+        ),
+        (
+            "POINT (1 2)",
+            1.0, 0.0,
+            0.0, 2.0,
+            1.0, None,
+            None
+        ),
+        (
             "POINT (1 2)",
             1.0, 0.0,
             0.0, 1.0,
             0.0, 0.0,
-            "POINT (1 2)"),
+            "POINT (1 2)"
+        ),
         (
             "POINT (1 2)",
             2.0, 0.0,
             0.0, 2.0,
             1.0, 3.0,
-            "POINT (3 7)"),
+            "POINT (3 7)"
+        ),
         (
             "LINESTRING (0 0, 1 1)",
             1.0, 0.0,
@@ -233,6 +256,30 @@ def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
 @pytest.mark.parametrize(
     ("geom", "a", "b", "c", "d", "e", "f", "g", "h", "i", "xoff", "yoff", "zoff", "expected"),
     [
+        (
+            None,
+            1.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            None
+        ),
+        (
+            "POINT Z (1 2 3)",
+            None, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            None
+        ),
+        (
+            "POINT Z (1 2 3)",
+            2.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, None,
+            None
+        ),
         (
             "POINT Z (1 2 3)",
             1.0, 0.0, 0.0,
@@ -272,6 +319,8 @@ def test_st_affine_3d(
     ("geom", "sx", "sy", "expected"),
     [
         (None, 1.0, 1.0, None),
+        ("POINT (1 2)", None, 1.0, None),
+        ("POINT (1 2)", 1.0, None, None),
         ("POINT EMPTY", 1.0, 1.0, "POINT (nan nan)"),
         ("POINT (1 2)", 1.0, 1.0, "POINT (1 2)"),
         ("POINT (1 2)", 2.0, 3.0, "POINT (2 6)"),
@@ -324,6 +373,8 @@ def test_st_scale_2d(eng, geom, sx, sy, expected):
     ("geom", "sx", "sy", "sz", "expected"),
     [
         (None, 1.0, 1.0, 1.0, None),
+        ("POINT Z (1 2 3)", None, 1.0, 1.0, None),
+        ("POINT Z (1 2 3)", 1.0, 1.0, None, None),
         ("POINT EMPTY", 1.0, 1.0, 1.0, "POINT (nan nan)"),
         ("POINT Z EMPTY", 1.0, 1.0, 1.0, "POINT Z (nan nan nan)"),
         ("POINT Z (1 2 3)", 1.0, 1.0, 1.0, "POINT Z (1 2 3)"),
@@ -355,6 +406,7 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
     ("geom", "angle", "expected"),
     [
         (None, 0, None),
+        ("POINT (1 2)", None, None),
         ("POINT EMPTY", 0, "POINT (nan nan)"),
         ("POINT Z EMPTY", 0, "POINT Z (nan nan nan)"),
         ("POINT (1 2)", 0, "POINT (1 2)"),
