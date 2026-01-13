@@ -31,6 +31,7 @@ pub(crate) struct DAffine2Iterator<'a> {
     e: &'a PrimitiveArray<Float64Type>,
     x_offset: &'a PrimitiveArray<Float64Type>,
     y_offset: &'a PrimitiveArray<Float64Type>,
+    any_null: bool,
 }
 
 impl<'a> DAffine2Iterator<'a> {
@@ -54,17 +55,39 @@ impl<'a> DAffine2Iterator<'a> {
             e,
             x_offset,
             y_offset,
+            any_null: a.null_count() > 0
+                || b.null_count() > 0
+                || d.null_count() > 0
+                || e.null_count() > 0
+                || x_offset.null_count() > 0
+                || y_offset.null_count() > 0,
         })
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        self.any_null
+            && (self.a.is_null(i)
+                || self.b.is_null(i)
+                || self.d.is_null(i)
+                || self.e.is_null(i)
+                || self.x_offset.is_null(i)
+                || self.y_offset.is_null(i))
     }
 }
 
 impl<'a> Iterator for DAffine2Iterator<'a> {
-    type Item = glam::DAffine2;
+    // As this needs to distinguish NULL, next() returns Some(Some(value))
+    type Item = Option<glam::DAffine2>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
-        Some(glam::DAffine2 {
+
+        if self.is_null(i) {
+            return Some(None);
+        }
+
+        Some(Some(glam::DAffine2 {
             matrix2: glam::DMat2 {
                 x_axis: glam::DVec2 {
                     x: self.a.value(i),
@@ -79,7 +102,7 @@ impl<'a> Iterator for DAffine2Iterator<'a> {
                 x: self.x_offset.value(i),
                 y: self.y_offset.value(i),
             },
-        })
+        }))
     }
 }
 
@@ -97,6 +120,7 @@ pub(crate) struct DAffine3Iterator<'a> {
     x_offset: &'a PrimitiveArray<Float64Type>,
     y_offset: &'a PrimitiveArray<Float64Type>,
     z_offset: &'a PrimitiveArray<Float64Type>,
+    any_null: bool,
 }
 
 impl<'a> DAffine3Iterator<'a> {
@@ -132,17 +156,51 @@ impl<'a> DAffine3Iterator<'a> {
             x_offset,
             y_offset,
             z_offset,
+            any_null: a.null_count() > 0
+                || b.null_count() > 0
+                || c.null_count() > 0
+                || d.null_count() > 0
+                || e.null_count() > 0
+                || f.null_count() > 0
+                || g.null_count() > 0
+                || h.null_count() > 0
+                || i.null_count() > 0
+                || x_offset.null_count() > 0
+                || y_offset.null_count() > 0
+                || z_offset.null_count() > 0,
         })
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        self.any_null
+            && (self.a.is_null(i)
+                || self.b.is_null(i)
+                || self.c.is_null(i)
+                || self.d.is_null(i)
+                || self.e.is_null(i)
+                || self.f.is_null(i)
+                || self.g.is_null(i)
+                || self.h.is_null(i)
+                || self.i.is_null(i)
+                || self.x_offset.is_null(i)
+                || self.y_offset.is_null(i)
+                || self.z_offset.is_null(i))
     }
 }
 
 impl<'a> Iterator for DAffine3Iterator<'a> {
-    type Item = glam::DAffine3;
+    // As this needs to distinguish NULL, next() returns Some(Some(value))
+    type Item = Option<glam::DAffine3>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
-        Some(glam::DAffine3 {
+
+        if self.is_null(i) {
+            return Some(None);
+        }
+
+        Some(Some(glam::DAffine3 {
             matrix3: glam::DMat3 {
                 x_axis: glam::DVec3 {
                     x: self.a.value(i),
@@ -165,7 +223,7 @@ impl<'a> Iterator for DAffine3Iterator<'a> {
                 y: self.y_offset.value(i),
                 z: self.z_offset.value(i),
             },
-        })
+        }))
     }
 }
 
@@ -173,6 +231,7 @@ pub(crate) struct DAffine2ScaleIterator<'a> {
     index: usize,
     x_scale: &'a PrimitiveArray<Float64Type>,
     y_scale: &'a PrimitiveArray<Float64Type>,
+    any_null: bool,
 }
 
 impl<'a> DAffine2ScaleIterator<'a> {
@@ -188,18 +247,29 @@ impl<'a> DAffine2ScaleIterator<'a> {
             index: 0,
             x_scale,
             y_scale,
+            any_null: x_scale.null_count() > 0 || y_scale.null_count() > 0,
         })
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        self.any_null && (self.x_scale.is_null(i) || self.y_scale.is_null(i))
     }
 }
 
 impl<'a> Iterator for DAffine2ScaleIterator<'a> {
-    type Item = glam::DAffine2;
+    // As this needs to distinguish NULL, next() returns Some(Some(value))
+    type Item = Option<glam::DAffine2>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
+
+        if self.is_null(i) {
+            return Some(None);
+        }
+
         let scale = glam::DVec2::new(self.x_scale.value(i), self.y_scale.value(i));
-        Some(glam::DAffine2::from_scale(scale))
+        Some(Some(glam::DAffine2::from_scale(scale)))
     }
 }
 
@@ -208,6 +278,7 @@ pub(crate) struct DAffine3ScaleIterator<'a> {
     x_scale: &'a PrimitiveArray<Float64Type>,
     y_scale: &'a PrimitiveArray<Float64Type>,
     z_scale: &'a PrimitiveArray<Float64Type>,
+    any_null: bool,
 }
 
 impl<'a> DAffine3ScaleIterator<'a> {
@@ -225,22 +296,36 @@ impl<'a> DAffine3ScaleIterator<'a> {
             x_scale,
             y_scale,
             z_scale,
+            any_null: x_scale.null_count() > 0
+                || y_scale.null_count() > 0
+                || z_scale.null_count() > 0,
         })
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        self.any_null
+            && (self.x_scale.is_null(i) || self.y_scale.is_null(i) || self.z_scale.is_null(i))
     }
 }
 
 impl<'a> Iterator for DAffine3ScaleIterator<'a> {
-    type Item = glam::DAffine3;
+    // As this needs to distinguish NULL, next() returns Some(Some(value))
+    type Item = Option<glam::DAffine3>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
+
+        if self.is_null(i) {
+            return Some(None);
+        }
+
         let scale = glam::DVec3::new(
             self.x_scale.value(i),
             self.y_scale.value(i),
             self.z_scale.value(i),
         );
-        Some(glam::DAffine3::from_scale(scale))
+        Some(Some(glam::DAffine3::from_scale(scale)))
     }
 }
 
@@ -255,6 +340,7 @@ pub(crate) struct DAffineRotateIterator<'a> {
     index: usize,
     angle: &'a PrimitiveArray<Float64Type>,
     axis: RotateAxis,
+    any_null: bool,
 }
 
 impl<'a> DAffineRotateIterator<'a> {
@@ -264,20 +350,31 @@ impl<'a> DAffineRotateIterator<'a> {
             index: 0,
             angle,
             axis,
+            any_null: angle.null_count() > 0,
         })
+    }
+
+    fn is_null(&self, i: usize) -> bool {
+        self.any_null && self.angle.is_null(i)
     }
 }
 
 impl<'a> Iterator for DAffineRotateIterator<'a> {
-    type Item = glam::DAffine3;
+    // As this needs to distinguish NULL, next() returns Some(Some(value))
+    type Item = Option<glam::DAffine3>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let i = self.index;
         self.index += 1;
+
+        if self.is_null(i) {
+            return Some(None);
+        }
+
         match self.axis {
-            RotateAxis::X => Some(glam::DAffine3::from_rotation_x(self.angle.value(i))),
-            RotateAxis::Y => Some(glam::DAffine3::from_rotation_y(self.angle.value(i))),
-            RotateAxis::Z => Some(glam::DAffine3::from_rotation_z(self.angle.value(i))),
+            RotateAxis::X => Some(Some(glam::DAffine3::from_rotation_x(self.angle.value(i)))),
+            RotateAxis::Y => Some(Some(glam::DAffine3::from_rotation_y(self.angle.value(i)))),
+            RotateAxis::Z => Some(Some(glam::DAffine3::from_rotation_z(self.angle.value(i)))),
         }
     }
 }
@@ -378,24 +475,40 @@ impl CrsTransform for DAffine {
 }
 
 impl<'a> Iterator for DAffineIterator<'a> {
-    type Item = DAffine;
+    type Item = Option<DAffine>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            DAffineIterator::DAffine2(daffine2_iterator) => {
-                daffine2_iterator.next().map(DAffine::DAffine2)
-            }
-            DAffineIterator::DAffine3(daffine3_iterator) => {
-                daffine3_iterator.next().map(DAffine::DAffine3)
-            }
+            DAffineIterator::DAffine2(daffine2_iterator) => match daffine2_iterator.next() {
+                Some(Some(a)) => Some(Some(DAffine::DAffine2(a))),
+                Some(None) => Some(None),
+                None => None,
+            },
+            DAffineIterator::DAffine3(daffine3_iterator) => match daffine3_iterator.next() {
+                Some(Some(a)) => Some(Some(DAffine::DAffine3(a))),
+                Some(None) => Some(None),
+                None => None,
+            },
             DAffineIterator::DAffine2Scale(daffine2_scale_iterator) => {
-                daffine2_scale_iterator.next().map(DAffine::DAffine2)
+                match daffine2_scale_iterator.next() {
+                    Some(Some(a)) => Some(Some(DAffine::DAffine2(a))),
+                    Some(None) => Some(None),
+                    None => None,
+                }
             }
             DAffineIterator::DAffine3Scale(daffine3_scale_iterator) => {
-                daffine3_scale_iterator.next().map(DAffine::DAffine3)
+                match daffine3_scale_iterator.next() {
+                    Some(Some(a)) => Some(Some(DAffine::DAffine3(a))),
+                    Some(None) => Some(None),
+                    None => None,
+                }
             }
             DAffineIterator::DAffineRotate(daffine_rotate_iterator) => {
-                daffine_rotate_iterator.next().map(DAffine::DAffine3)
+                match daffine_rotate_iterator.next() {
+                    Some(Some(a)) => Some(Some(DAffine::DAffine3(a))),
+                    Some(None) => Some(None),
+                    None => None,
+                }
             }
         }
     }

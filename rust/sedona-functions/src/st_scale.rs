@@ -120,14 +120,14 @@ impl SedonaScalarKernel for STScale {
         };
 
         executor.execute_wkb_void(|maybe_wkb| {
-            match maybe_wkb {
-                Some(wkb) => {
-                    let mat = affine_iter.next().unwrap();
+            let maybe_mat = affine_iter.next().unwrap();
+            match (maybe_wkb, maybe_mat) {
+                (Some(wkb), Some(mat)) => {
                     transform(&wkb, &mat, &mut builder)
                         .map_err(|e| DataFusionError::Execution(e.to_string()))?;
                     builder.append_value([]);
                 }
-                None => builder.append_null(),
+                _ => builder.append_null(),
             }
 
             Ok(())
