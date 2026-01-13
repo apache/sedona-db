@@ -17,6 +17,7 @@
 import pytest
 import shapely
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
+import math
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -262,12 +263,7 @@ def test_st_affine_3d(
         f"{val_or_null(g)}, {val_or_null(h)}, {val_or_null(i)}, "
         f"{val_or_null(xoff)}, {val_or_null(yoff)}, {val_or_null(zoff)})"
     )
-    try:
-        eng.assert_query_result(query, expected)
-    except Exception as exc:
-        if isinstance(eng, PostGIS):
-            pytest.skip(f"PostGIS may not support 3D ST_Affine: {exc}")
-        raise
+    eng.assert_query_result(query, expected)
 # fmt: on
 
 
@@ -334,30 +330,23 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
         "SELECT ST_Scale("
         f"{geom_or_null(geom)}, {val_or_null(sx)}, {val_or_null(sy)}, {val_or_null(sz)})"
     )
-    try:
-        eng.assert_query_result(query, expected)
-    except Exception as exc:
-        if isinstance(eng, PostGIS):
-            pytest.skip(f"PostGIS may not support 3D ST_Scale: {exc}")
-        raise
+    eng.assert_query_result(query, expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "angle", "expected_x", "expected_y"),
+    ("geom", "angle", "expected"),
     [
-        (None, 0.0, None, None),
-        ("POINT (1 2)", 0.0, 1.0, 2.0),
-        ("POINT (1 2)", 1.5707963267948966, -2.0, 1.0),
-        ("POINT (1 2)", 3.141592653589793, -1.0, -2.0),
+        (None, 0, None),
+        ("POINT (1 2)", 0, "POINT (1 2)"),
+        ("POINT (1 2)", math.pi / 2, "POINT (-2 1)"),
+        ("POINT (1 2)", math.pi, "POINT (-1 -2)"),
     ],
 )
-def test_st_rotate(eng, geom, angle, expected_x, expected_y):
+def test_st_rotate(eng, geom, angle, expected):
     eng = eng.create_or_skip()
-    x_query = f"SELECT ST_X(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))"
-    y_query = f"SELECT ST_Y(ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)}))"
-    eng.assert_query_result(x_query, expected_x, numeric_epsilon=1e-12)
-    eng.assert_query_result(y_query, expected_y, numeric_epsilon=1e-12)
+    query = f"SELECT ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
