@@ -437,6 +437,36 @@ def test_st_rotate(eng, geom, angle, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "angle", "expected"),
+    [
+        (None, 0, None),
+        ("POINT (1 2)", None, None),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (1 -2 -3)"),
+    ],
+)
+def test_st_rotate_x(eng, geom, angle, expected):
+    eng = eng.create_or_skip()
+    query = f"SELECT ST_RotateX({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "expected"),
+    [
+        (None, 0, None),
+        ("POINT (1 2)", None, None),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (-1 2 -3)"),
+    ],
+)
+def test_st_rotate_y(eng, geom, angle, expected):
+    eng = eng.create_or_skip()
+    query = f"SELECT ST_RotateY({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected_boundary"),
     [
         (None, None),
