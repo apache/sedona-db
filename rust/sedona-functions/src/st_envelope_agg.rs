@@ -220,8 +220,8 @@ impl BoundsGroupsAccumulator2D {
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
-        self.xs = Vec::with_capacity(total_num_groups);
-        self.ys = Vec::with_capacity(total_num_groups);
+        self.xs.resize(total_num_groups, Interval::empty());
+        self.ys.resize(total_num_groups, Interval::empty());
         let mut i = 0;
 
         if let Some(filter) = opt_filter {
@@ -269,10 +269,15 @@ impl BoundsGroupsAccumulator2D {
         };
 
         let mut builder =
-            BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES * emit_size);
+            BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES);
 
         for (x, y) in zip(&self.xs[self.offset..], &self.ys[self.offset..]) {
-            write_envelope(&(*x).into(), y, &mut builder)?;
+            let written = write_envelope(&(*x).into(), y, &mut builder)?;
+            if written {
+                builder.append_value([]);
+            } else {
+                builder.append_null();
+            }
         }
 
         match emit_to {

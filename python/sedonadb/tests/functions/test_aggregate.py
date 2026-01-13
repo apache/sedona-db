@@ -107,15 +107,18 @@ def test_st_envelope_agg_collinear_points(eng):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_envelope_agg_many_groups(eng, con):
     eng = eng.create_or_skip()
+    num_groups = 1000
 
     df_points = con.sql("""
-        SELECT id, geometry FROM sd_random_geometry('{"target_rows": 1000000, "seed": 9728}')
+        SELECT id, geometry FROM sd_random_geometry('{"target_rows": 100000, "seed": 9728}')
     """)
     eng.create_table_arrow("df_points", df_points.to_arrow_table())
 
     result = eng.execute_and_collect(
         f"""
-        SELECT id % 1000 AS id_mod, {call_st_envelope_agg(eng, "geometry")} AS envelope
+        SELECT
+            (id % {num_groups})::INTEGER AS id_mod,
+            {call_st_envelope_agg(eng, "geometry")} AS envelope
         FROM df_points
         GROUP BY id_mod
         ORDER BY id_mod
@@ -124,7 +127,7 @@ def test_st_envelope_agg_many_groups(eng, con):
 
     df_points_geopandas = df_points.to_pandas()
     expected = (
-        df_points_geopandas.groupby(df_points_geopandas["id"] % 1000)["geometry"]
+        df_points_geopandas.groupby(df_points_geopandas["id"] % num_groups)["geometry"]
         .apply(lambda group: shapely.box(*group.total_bounds))
         .reset_index(name="envelope")
         .rename(columns={"id": "id_mod"})
