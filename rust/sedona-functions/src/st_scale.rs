@@ -140,13 +140,11 @@ impl SedonaScalarKernel for STScale {
 #[cfg(test)]
 mod tests {
     use arrow_array::Array;
-    use datafusion_common::ScalarValue;
-    use datafusion_expr::{ColumnarValue, ScalarUDF};
+    use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_array_equal, create::create_array, create::create_scalar,
-        testers::ScalarUdfTester,
+        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
 
     use super::*;
