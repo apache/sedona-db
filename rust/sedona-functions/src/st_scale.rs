@@ -16,16 +16,15 @@
 // under the License.
 use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
+use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::GeometryTrait;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
+use sedona_geometry::{transform::transform, wkb_factory::WKB_MIN_PROBABLE_BYTES};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -124,7 +123,8 @@ impl SedonaScalarKernel for STScale {
             match maybe_wkb {
                 Some(wkb) => {
                     let mat = affine_iter.next().unwrap();
-                    st_affine_helpers::invoke_affine(&wkb, &mut builder, &mat, &wkb.dim())?;
+                    transform(&wkb, &mat, &mut builder)
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),

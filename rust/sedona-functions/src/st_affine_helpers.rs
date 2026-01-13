@@ -19,180 +19,9 @@ use arrow_array::Array;
 use arrow_array::PrimitiveArray;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
-use datafusion_common::exec_err;
-use datafusion_common::DataFusionError;
-use geo_traits::{
-    CoordTrait, GeometryCollectionTrait as _, GeometryTrait, LineStringTrait,
-    MultiLineStringTrait as _, MultiPointTrait as _, MultiPolygonTrait as _, PointTrait,
-    PolygonTrait as _,
-};
 use sedona_common::sedona_internal_err;
-use sedona_geometry::wkb_factory::{
-    write_wkb_coord, write_wkb_empty_point, write_wkb_geometrycollection_header,
-    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
-    write_wkb_polygon_ring_header,
-};
-use std::io::Write;
+use sedona_geometry::transform::CrsTransform;
 use std::sync::Arc;
-
-pub(crate) fn invoke_affine(
-    geom: &impl GeometryTrait<T = f64>,
-    writer: &mut impl Write,
-    mat: &DAffine,
-    dim: &geo_traits::Dimensions,
-) -> Result<()> {
-    let dims = geom.dim();
-    match geom.as_type() {
-        geo_traits::GeometryType::Point(pt) => {
-            if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_transformed_coords(writer, Some(pt.coord().unwrap()).into_iter(), mat, dim)?;
-            } else {
-                write_wkb_empty_point(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for pt in multi_point.points() {
-                invoke_affine(&pt, writer, mat, dim)?;
-            }
-        }
-
-        geo_traits::GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(writer, dims, ls.coords().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            write_transformed_coords(writer, ls.coords(), mat, dim)?;
-        }
-
-        geo_traits::GeometryType::Polygon(pgn) => {
-            let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
-            if let Some(exterior) = pgn.exterior() {
-                write_transformed_ring(writer, exterior, mat, dim)?;
-            }
-
-            for interior in pgn.interiors() {
-                write_transformed_ring(writer, interior, mat, dim)?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for ls in mls.line_strings() {
-                invoke_affine(&ls, writer, mat, dim)?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for pgn in mpgn.polygons() {
-                invoke_affine(&pgn, writer, mat, dim)?;
-            }
-        }
-
-        geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for geom in gcn.geometries() {
-                invoke_affine(&geom, writer, mat, dim)?;
-            }
-        }
-
-        _ => {
-            return Err(DataFusionError::Execution(
-                "Unsupported geometry type for reversal operation".to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn write_transformed_ring(
-    writer: &mut impl Write,
-    ring: impl LineStringTrait<T = f64>,
-    affine: &DAffine,
-    dim: &geo_traits::Dimensions,
-) -> Result<()> {
-    write_wkb_polygon_ring_header(writer, ring.coords().count())
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-    write_transformed_coords(writer, ring.coords(), affine, dim)
-}
-
-fn write_transformed_coords<I>(
-    writer: &mut impl Write,
-    coords: I,
-    affine: &DAffine,
-    dim: &geo_traits::Dimensions,
-) -> Result<()>
-where
-    I: DoubleEndedIterator,
-    I::Item: CoordTrait<T = f64>,
-{
-    let write_transformed_coord_fn = match dim {
-        geo_traits::Dimensions::Xy => write_transformed_coord_xy,
-        geo_traits::Dimensions::Xyz => write_transformed_coord_xyz,
-        geo_traits::Dimensions::Xym => write_transformed_coord_xym,
-        geo_traits::Dimensions::Xyzm => write_transformed_coord_xyzm,
-        geo_traits::Dimensions::Unknown(_) => {
-            return exec_err!("A geometry with unknown dimension cannot be transformed");
-        }
-    };
-
-    coords
-        .into_iter()
-        .try_for_each(|coord| write_transformed_coord_fn(writer, coord, affine))
-}
-
-fn write_transformed_coord_xy<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
-where
-    C: CoordTrait<T = f64>,
-{
-    let transformed = affine.transform_point2(coord.x(), coord.y());
-    write_wkb_coord(writer, transformed).map_err(|e| DataFusionError::Execution(e.to_string()))
-}
-
-fn write_transformed_coord_xym<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
-where
-    C: CoordTrait<T = f64>,
-{
-    let transformed = affine.transform_point2(coord.x(), coord.y());
-    // Preserve m value
-    let m = coord.nth(2).unwrap();
-    write_wkb_coord(writer, (transformed.0, transformed.1, m))
-        .map_err(|e| DataFusionError::Execution(e.to_string()))
-}
-
-fn write_transformed_coord_xyz<C>(writer: &mut impl Write, coord: C, affine: &DAffine) -> Result<()>
-where
-    C: CoordTrait<T = f64>,
-{
-    let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
-    write_wkb_coord(writer, transformed).map_err(|e| DataFusionError::Execution(e.to_string()))
-}
-
-fn write_transformed_coord_xyzm<C>(
-    writer: &mut impl Write,
-    coord: C,
-    affine: &DAffine,
-) -> Result<()>
-where
-    C: CoordTrait<T = f64>,
-{
-    let transformed = affine.transform_point3(coord.x(), coord.y(), coord.nth(2).unwrap());
-    // Preserve m value
-    let m = coord.nth(3).unwrap();
-    write_wkb_coord(writer, (transformed.0, transformed.1, transformed.2, m))
-        .map_err(|e| DataFusionError::Execution(e.to_string()))
-}
 
 pub(crate) struct DAffine2Iterator<'a> {
     index: usize,
@@ -485,36 +314,66 @@ impl<'a> DAffineIterator<'a> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum DAffine {
     DAffine2(glam::DAffine2),
     DAffine3(glam::DAffine3),
 }
 
-impl DAffine {
-    pub(crate) fn transform_point3(&self, x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+impl CrsTransform for DAffine {
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+    ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
         match self {
             DAffine::DAffine2(daffine2) => {
-                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
-                (transformed.x, transformed.y, z)
+                let transformed = daffine2.transform_point2(glam::DVec2 {
+                    x: coord.0,
+                    y: coord.1,
+                });
+                coord.0 = transformed.x;
+                coord.1 = transformed.y;
             }
             DAffine::DAffine3(daffine3) => {
-                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z });
-                (transformed.x, transformed.y, transformed.z)
+                let transformed = daffine3.transform_point3(glam::DVec3 {
+                    x: coord.0,
+                    y: coord.1,
+                    z: coord.2,
+                });
+                coord.0 = transformed.x;
+                coord.1 = transformed.y;
+                coord.2 = transformed.z;
             }
         }
+
+        Ok(())
     }
 
-    pub(crate) fn transform_point2(&self, x: f64, y: f64) -> (f64, f64) {
+    fn transform_coord(
+        &self,
+        coord: &mut (f64, f64),
+    ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
         match self {
             DAffine::DAffine2(daffine2) => {
-                let transformed = daffine2.transform_point2(glam::DVec2 { x, y });
-                (transformed.x, transformed.y)
+                let transformed = daffine2.transform_point2(glam::DVec2 {
+                    x: coord.0,
+                    y: coord.1,
+                });
+                coord.0 = transformed.x;
+                coord.1 = transformed.y;
             }
             DAffine::DAffine3(daffine3) => {
-                let transformed = daffine3.transform_point3(glam::DVec3 { x, y, z: 0.0 });
-                (transformed.x, transformed.y)
+                let transformed = daffine3.transform_point3(glam::DVec3 {
+                    x: coord.0,
+                    y: coord.1,
+                    z: 0.0,
+                });
+                coord.0 = transformed.x;
+                coord.1 = transformed.y;
             }
         }
+
+        Ok(())
     }
 }
 
