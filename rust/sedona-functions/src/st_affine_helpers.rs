@@ -65,13 +65,16 @@ impl<'a> DAffine2Iterator<'a> {
     }
 
     fn is_null(&self, i: usize) -> bool {
-        self.any_null
-            && (self.a.is_null(i)
-                || self.b.is_null(i)
-                || self.d.is_null(i)
-                || self.e.is_null(i)
-                || self.x_offset.is_null(i)
-                || self.y_offset.is_null(i))
+        if self.any_null {
+            return false;
+        }
+
+        self.a.is_null(i)
+            || self.b.is_null(i)
+            || self.d.is_null(i)
+            || self.e.is_null(i)
+            || self.x_offset.is_null(i)
+            || self.y_offset.is_null(i)
     }
 }
 
@@ -172,19 +175,22 @@ impl<'a> DAffine3Iterator<'a> {
     }
 
     fn is_null(&self, i: usize) -> bool {
-        self.any_null
-            && (self.a.is_null(i)
-                || self.b.is_null(i)
-                || self.c.is_null(i)
-                || self.d.is_null(i)
-                || self.e.is_null(i)
-                || self.f.is_null(i)
-                || self.g.is_null(i)
-                || self.h.is_null(i)
-                || self.i.is_null(i)
-                || self.x_offset.is_null(i)
-                || self.y_offset.is_null(i)
-                || self.z_offset.is_null(i))
+        if self.any_null {
+            return false;
+        }
+
+        self.a.is_null(i)
+            || self.b.is_null(i)
+            || self.c.is_null(i)
+            || self.d.is_null(i)
+            || self.e.is_null(i)
+            || self.f.is_null(i)
+            || self.g.is_null(i)
+            || self.h.is_null(i)
+            || self.i.is_null(i)
+            || self.x_offset.is_null(i)
+            || self.y_offset.is_null(i)
+            || self.z_offset.is_null(i)
     }
 }
 
@@ -252,7 +258,11 @@ impl<'a> DAffine2ScaleIterator<'a> {
     }
 
     fn is_null(&self, i: usize) -> bool {
-        self.any_null && (self.x_scale.is_null(i) || self.y_scale.is_null(i))
+        if self.any_null {
+            return false;
+        }
+
+        self.x_scale.is_null(i) || self.y_scale.is_null(i)
     }
 }
 
@@ -303,8 +313,11 @@ impl<'a> DAffine3ScaleIterator<'a> {
     }
 
     fn is_null(&self, i: usize) -> bool {
-        self.any_null
-            && (self.x_scale.is_null(i) || self.y_scale.is_null(i) || self.z_scale.is_null(i))
+        if self.any_null {
+            return false;
+        }
+
+        self.x_scale.is_null(i) || self.y_scale.is_null(i) || self.z_scale.is_null(i)
     }
 }
 
@@ -355,7 +368,11 @@ impl<'a> DAffineRotateIterator<'a> {
     }
 
     fn is_null(&self, i: usize) -> bool {
-        self.any_null && self.angle.is_null(i)
+        if self.any_null {
+            return false;
+        }
+
+        self.angle.is_null(i)
     }
 }
 
