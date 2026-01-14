@@ -250,7 +250,9 @@ def test_spatial_join_with_pandas_metadata(con):
     rng = np.random.default_rng(49791)
     lons = rng.uniform(-6, 2, n_points)
     lats = rng.uniform(50, 59, n_points)
-    pts_df = pd.DataFrame({"idx": range(n_points), "geometry": [Point(x, y) for x, y in zip(lons, lats)]})
+    pts_df = pd.DataFrame(
+        {"idx": range(n_points), "geometry": [Point(x, y) for x, y in zip(lons, lats)]}
+    )
     pts_gdf = gpd.GeoDataFrame(pts_df, crs="EPSG:4326")
 
     # Polygons (Centers buffered)
@@ -276,4 +278,4 @@ def test_spatial_join_with_pandas_metadata(con):
     """
 
     res = con.sql(query).to_pandas()
-    assert len(res) > 0
+    pd.testing.assert_frame_equal(res, pd.DataFrame({"idx": [410, 463, 612]}))
