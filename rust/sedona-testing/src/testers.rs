@@ -127,7 +127,14 @@ impl AggregateUdfTester {
     ) -> Result<ArrayRef> {
         let state_schema = Arc::new(Schema::new(self.state_fields()?));
         let mut state_accumulator = self.new_groups_accumulator()?;
-        let total_num_groups = group_indices.iter().max().unwrap_or(&1) - 1;
+        let total_num_groups = group_indices.iter().max().unwrap_or(&0) + 1;
+
+        // Check input
+        let total_input_rows: usize = batches.iter().map(|a| a.len()).sum();
+        assert_eq!(total_input_rows, group_indices.len());
+        if let Some(filter) = opt_filter {
+            assert_eq!(total_input_rows, filter.len());
+        }
 
         let mut offset = 0;
         for batch in batches {
@@ -145,19 +152,19 @@ impl AggregateUdfTester {
             )?;
             offset += batch.len();
 
+            // For the state accumulator the input is ordered such that
+            // each row is group i for i in (0..total_num_groups)
             let state_batch = RecordBatch::try_new(
                 state_schema.clone(),
                 batch_accumulator.state(datafusion_expr::EmitTo::All)?,
             )?;
             state_accumulator.merge_batch(
                 state_batch.columns(),
-                &group_indices[offset..(offset + batch.len())],
+                &(0..total_num_groups).collect::<Vec<_>>(),
                 None,
                 total_num_groups,
             )?;
         }
-
-        assert_eq!(offset, group_indices.len());
 
         if emit_sizes.is_empty() {
             state_accumulator.evaluate(datafusion_expr::EmitTo::All)

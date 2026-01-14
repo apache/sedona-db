@@ -217,6 +217,12 @@ impl BoundsGroupsAccumulator2D {
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].len(), group_indices.len());
+        if let Some(filter) = opt_filter {
+            assert_eq!(values[0].len(), filter.len());
+        }
+
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
@@ -337,7 +343,11 @@ mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_testing::{
+        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        create::create_array,
+        testers::AggregateUdfTester,
+    };
 
     use super::*;
 
@@ -398,5 +408,42 @@ mod test {
                 .unwrap(),
             Some("LINESTRING (0 1, 1 1)"),
         );
+    }
+
+    #[test]
+    fn udf_grouped_accumulate() {
+        let tester = AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![WKB_GEOMETRY]);
+        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
+
+        // Six elements, four groups, with one all null group and one partially null group
+        let group_indices = vec![0, 3, 1, 1, 0, 2];
+        let array0 = create_array(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            &WKB_GEOMETRY,
+        );
+        let array1 = create_array(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            &WKB_GEOMETRY,
+        );
+        let batches = vec![array0, array1];
+
+        let expected = create_array(
+            &[
+                // First element only + a null
+                Some("POINT (0 1)"),
+                // Middle two elements
+                Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"),
+                // Last element only
+                Some("POINT (6 7)"),
+                // Only null
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let result = tester
+            .aggregate_groups(&batches, group_indices, None, vec![])
+            .unwrap();
+
+        assert_array_equal(&result, &expected);
     }
 }
