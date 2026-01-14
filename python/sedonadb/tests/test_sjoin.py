@@ -16,6 +16,7 @@
 # under the License.
 
 import json
+import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -23,7 +24,6 @@ import pandas as pd
 import pytest
 from sedonadb.testing import PostGIS, SedonaDB
 from shapely.geometry import Point
-import warnings
 
 
 @pytest.mark.parametrize(
