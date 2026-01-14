@@ -148,6 +148,8 @@ impl SedonaScalarKernel for STRotate {
 
 #[cfg(test)]
 mod tests {
+    use std::f64;
+
     use arrow_array::Array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -165,21 +167,31 @@ mod tests {
         assert!(st_rotate_udf.documentation().is_some());
 
         let st_rotate_x_udf: ScalarUDF = st_rotate_x_udf().into();
-        assert_eq!(st_rotate_x_udf.name(), "st_rotate_x");
+        assert_eq!(st_rotate_x_udf.name(), "st_rotatex");
         assert!(st_rotate_x_udf.documentation().is_some());
 
         let st_rotate_y_udf: ScalarUDF = st_rotate_y_udf().into();
-        assert_eq!(st_rotate_y_udf.name(), "st_rotate_y");
+        assert_eq!(st_rotate_y_udf.name(), "st_rotatey");
         assert!(st_rotate_y_udf.documentation().is_some());
     }
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
+        let tester_z = ScalarUdfTester::new(
             st_rotate_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        let tester_x = ScalarUdfTester::new(
+            st_rotate_x_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        let tester_y = ScalarUdfTester::new(
+            st_rotate_y_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester_z.assert_return_type(WKB_GEOMETRY);
+        tester_x.assert_return_type(WKB_GEOMETRY);
+        tester_y.assert_return_type(WKB_GEOMETRY);
 
         let points = create_array(
             &[
@@ -188,6 +200,7 @@ mod tests {
                 Some("POINT M EMPTY"),
                 Some("POINT (1 2)"),
                 Some("POINT M (1 2 3)"),
+                Some("POINT Z (1 2 3)"),
             ],
             &sedona_type,
         );
@@ -198,14 +211,25 @@ mod tests {
                 Some("POINT M EMPTY"),
                 Some("POINT (1 2)"),
                 Some("POINT M (1 2 3)"),
+                Some("POINT Z (1 2 3)"),
             ],
             &WKB_GEOMETRY,
         );
 
-        let result_identity = tester
-            .invoke_arrays(prepare_args(points.clone(), &[Some(0.0_f64.to_radians())]))
+        let result_identity_z = tester_z
+            .invoke_arrays(prepare_args(points.clone(), &[Some(0.0_f64)]))
             .unwrap();
-        assert_array_equal(&result_identity, &expected_identity);
+        assert_array_equal(&result_identity_z, &expected_identity);
+
+        let result_identity_x = tester_x
+            .invoke_arrays(prepare_args(points.clone(), &[Some(0.0_f64)]))
+            .unwrap();
+        assert_array_equal(&result_identity_x, &expected_identity);
+
+        let result_identity_y = tester_y
+            .invoke_arrays(prepare_args(points.clone(), &[Some(0.0_f64)]))
+            .unwrap();
+        assert_array_equal(&result_identity_y, &expected_identity);
 
         // Don't test the rotated results here since it's hard to match with the exact number.
     }
