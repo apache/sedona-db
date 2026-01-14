@@ -129,11 +129,12 @@ impl SpatialIndexBuilder {
     ///
     /// This method accumulates geometry batches that will be used to build the spatial index.
     /// Each batch contains processed geometry data along with memory usage information.
-    pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) {
-        let in_mem_size = indexed_batch.in_mem_size();
+    pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        let in_mem_size = indexed_batch.in_mem_size()?;
         self.indexed_batches.push(indexed_batch);
         self.reservation.grow(in_mem_size);
         self.metrics.build_mem_used.add(in_mem_size);
+        Ok(())
     }
 
     pub fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
@@ -298,7 +299,7 @@ impl SpatialIndexBuilder {
         let mut stream = partition.build_side_batch_stream;
         while let Some(batch) = stream.next().await {
             let indexed_batch = batch?;
-            self.add_batch(indexed_batch);
+            self.add_batch(indexed_batch)?;
         }
         self.merge_stats(partition.geo_statistics);
         let mem_bytes = partition.reservation.free();
