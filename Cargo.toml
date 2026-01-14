@@ -60,8 +60,8 @@ categories = ["science::geo", "database"]
 
 [workspace.dependencies]
 approx = "0.5"
-adbc_core = ">=0.21.0"
-adbc_ffi = ">=0.21.0"
+adbc_core = ">=0.22.0"
+adbc_ffi = ">=0.22.0"
 lru = "0.16"
 arrow = { version = "57.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "57.0.0" }
