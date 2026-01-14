@@ -2,82 +2,82 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/contributors-guide/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/crs-examples/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/delta-lake/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/geopandas-interop/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/iceberg/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/overture-examples/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/programming-guide/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/quickstart-python/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/working-with-parquet-files/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/working-with-sql-sedonadb/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/python/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql-joins/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_analyze_agg/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_area/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_asbinary/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_buffer/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/functions/st_intersection/</loc>
-         <lastmod>2026-01-11</lastmod>
+         <lastmod>2026-01-14</lastmod>
     </url>
 </urlset>
