@@ -35,6 +35,7 @@ use datafusion::{
 };
 use datafusion_common::{plan_err, DataFusionError, ScalarValue};
 use geo_types::Rect;
+use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use serde::{Deserialize, Serialize};
@@ -296,11 +297,11 @@ impl ExecutionPlan for RandomGeometryExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        // Return empty stream for out-of-range partitions (can happen with joins)
-        if partition >= self.builder.num_partitions {
-            let stream = Box::pin(futures::stream::empty());
-            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
-            return Ok(Box::pin(record_batch_stream));
+        // Error for an attempt to read an incorrect partition
+        if partition > 0 {
+            return sedona_internal_err!(
+                "Can't read partition {partition} from RandomGeometryExec"
+            );
         }
 
         let rng = RandomPartitionedDataBuilder::default_rng(self.builder.seed + partition as u64);

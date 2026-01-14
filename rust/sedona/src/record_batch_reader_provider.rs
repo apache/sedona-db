@@ -248,11 +248,11 @@ impl ExecutionPlan for RecordBatchReaderExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        // Return empty stream for out-of-range partitions (can happen with joins)
+        // Error for an attempt to read an incorrect partition
         if partition > 0 {
-            let stream = Box::pin(futures::stream::empty());
-            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
-            return Ok(Box::pin(record_batch_stream));
+            return sedona_internal_err!(
+                "Can't read partition {partition} from RecordBatchReaderExec"
+            );
         }
 
         let mut reader_guard = self.reader.lock();
