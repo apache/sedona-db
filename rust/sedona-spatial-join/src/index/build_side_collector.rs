@@ -29,7 +29,8 @@ use sedona_schema::datatypes::WKB_GEOMETRY;
 use crate::{
     evaluated_batch::{
         evaluated_batch_stream::{
-            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
+            evaluate::create_evaluated_build_stream, in_mem::InMemoryEvaluatedBatchStream,
+            SendableEvaluatedBatchStream,
         },
         EvaluatedBatch,
     },
@@ -88,29 +89,22 @@ impl BuildSideBatchesCollector {
 
     pub async fn collect(
         &self,
-        mut stream: SendableRecordBatchStream,
+        mut stream: SendableEvaluatedBatchStream,
         mut reservation: MemoryReservation,
         metrics: &CollectBuildSideMetrics,
     ) -> Result<BuildPartition> {
-        let evaluator = self.evaluator.as_ref();
         let mut in_mem_batches: Vec<EvaluatedBatch> = Vec::new();
         let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
 
-        while let Some(record_batch) = stream.next().await {
-            let record_batch = record_batch?;
+        while let Some(evaluated_batch) = stream.next().await {
+            let build_side_batch = evaluated_batch?;
             let _timer = metrics.time_taken.timer();
 
             // Process the record batch and create a BuildSideBatch
-            let geom_array = evaluator.evaluate_build(&record_batch)?;
-
+            let geom_array = &build_side_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
                 analyzer.update_statistics(wkb, wkb.buf().len())?;
             }
-
-            let build_side_batch = EvaluatedBatch {
-                batch: record_batch,
-                geom_array,
-            };
 
             let in_mem_size = build_side_batch.in_mem_size()?;
             metrics.num_batches.add(1);
@@ -122,7 +116,10 @@ impl BuildSideBatchesCollector {
         }
 
         Ok(BuildPartition {
-            build_side_batch_stream: Box::pin(InMemoryEvaluatedBatchStream::new(in_mem_batches)),
+            build_side_batch_stream: Box::pin(InMemoryEvaluatedBatchStream::new(
+                stream.schema(),
+                in_mem_batches,
+            )),
             geo_statistics: analyzer.finish(),
             reservation,
         })
@@ -133,39 +130,65 @@ impl BuildSideBatchesCollector {
         streams: Vec<SendableRecordBatchStream>,
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
+        concurrent: bool,
     ) -> Result<Vec<BuildPartition>> {
         if streams.is_empty() {
             return Ok(vec![]);
         }
 
-        // Spawn all tasks to scan all build streams concurrently
-        let mut join_set = JoinSet::new();
-        for (partition_id, ((stream, metrics), reservation)) in streams
-            .into_iter()
-            .zip(metrics_vec)
-            .zip(reservations)
-            .enumerate()
-        {
-            let collector = self.clone();
-            join_set.spawn(async move {
-                let result = collector.collect(stream, reservation, &metrics).await;
-                (partition_id, result)
-            });
+        if concurrent {
+            // Spawn all tasks to scan all build streams concurrently
+            let mut join_set = JoinSet::new();
+            for (partition_id, ((stream, metrics), reservation)) in streams
+                .into_iter()
+                .zip(metrics_vec)
+                .zip(reservations)
+                .enumerate()
+            {
+                let collector = self.clone();
+                let evaluator = Arc::clone(&self.evaluator);
+                join_set.spawn(async move {
+                    let evaluated_stream = create_evaluated_build_stream(
+                        stream,
+                        evaluator,
+                        metrics.time_taken.clone(),
+                    );
+                    let result = collector
+                        .collect(evaluated_stream, reservation, &metrics)
+                        .await;
+                    (partition_id, result)
+                });
+            }
+
+            // Wait for all async tasks to finish. Results may be returned in arbitrary order,
+            // so we need to reorder them by partition_id later.
+            let results = join_set.join_all().await;
+
+            // Reorder results according to partition ids
+            let mut partitions: Vec<Option<BuildPartition>> = Vec::with_capacity(results.len());
+            partitions.resize_with(results.len(), || None);
+            for result in results {
+                let (partition_id, partition_result) = result;
+                let partition = partition_result?;
+                partitions[partition_id] = Some(partition);
+            }
+
+            Ok(partitions.into_iter().map(|v| v.unwrap()).collect())
+        } else {
+            // Collect partitions sequentially (for JNI/embedded contexts)
+            let mut results = Vec::with_capacity(streams.len());
+            for ((stream, metrics), reservation) in
+                streams.into_iter().zip(metrics_vec).zip(reservations)
+            {
+                let evaluator = Arc::clone(&self.evaluator);
+                let evaluated_stream =
+                    create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
+                let result = self
+                    .collect(evaluated_stream, reservation, &metrics)
+                    .await?;
+                results.push(result);
+            }
+            Ok(results)
         }
-
-        // Wait for all async tasks to finish. Results may be returned in arbitrary order,
-        // so we need to reorder them by partition_id later.
-        let results = join_set.join_all().await;
-
-        // Reorder results according to partition ids
-        let mut partitions: Vec<Option<BuildPartition>> = Vec::with_capacity(results.len());
-        partitions.resize_with(results.len(), || None);
-        for result in results {
-            let (partition_id, partition_result) = result;
-            let partition = partition_result?;
-            partitions[partition_id] = Some(partition);
-        }
-
-        Ok(partitions.into_iter().map(|v| v.unwrap()).collect())
     }
 }

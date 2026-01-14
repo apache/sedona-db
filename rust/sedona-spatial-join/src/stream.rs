@@ -33,9 +33,11 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
+use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::SpatialIndex;
-use crate::operand_evaluator::{create_operand_evaluator, distance_value_at, OperandEvaluator};
+use crate::operand_evaluator::{create_operand_evaluator, distance_value_at};
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
     adjust_indices_by_join_type, apply_join_filter_to_indices, build_batch_from_indices,
@@ -55,7 +57,7 @@ pub(crate) struct SpatialJoinStream {
     /// type of the join
     join_type: JoinType,
     /// The stream of the probe side
-    probe_stream: SendableRecordBatchStream,
+    probe_stream: SendableEvaluatedBatchStream,
     /// Information of index and left / right placement of columns
     column_indices: Vec<ColumnIndex>,
     /// Maintains the order of the probe side
@@ -76,8 +78,6 @@ pub(crate) struct SpatialJoinStream {
     once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
     /// The spatial index
     spatial_index: Option<Arc<SpatialIndex>>,
-    /// The `on` spatial predicate evaluator
-    evaluator: Arc<dyn OperandEvaluator>,
     /// The spatial predicate being evaluated
     spatial_predicate: SpatialPredicate,
 }
@@ -99,6 +99,11 @@ impl SpatialJoinStream {
         once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
     ) -> Self {
         let evaluator = create_operand_evaluator(on, options.clone());
+        let probe_stream = create_evaluated_probe_stream(
+            probe_stream,
+            Arc::clone(&evaluator),
+            join_metrics.join_time.clone(),
+        );
         Self {
             schema,
             filter,
@@ -113,7 +118,6 @@ impl SpatialJoinStream {
             once_fut_spatial_index,
             once_async_spatial_index,
             spatial_index: None,
-            evaluator,
             spatial_predicate: on.clone(),
         }
     }
@@ -386,9 +390,9 @@ impl SpatialJoinStream {
 
     fn create_spatial_join_iterator(
         &self,
-        probe_batch: RecordBatch,
+        probe_evaluated_batch: EvaluatedBatch,
     ) -> Result<SpatialJoinBatchIterator> {
-        let num_rows = probe_batch.num_rows();
+        let num_rows = probe_evaluated_batch.num_rows();
         self.join_metrics.probe_input_batches.add(1);
         self.join_metrics.probe_input_rows.add(num_rows);
 
@@ -398,13 +402,11 @@ impl SpatialJoinStream {
             .as_ref()
             .expect("Spatial index should be available");
 
-        // Evaluate the probe side geometry expression to get geometry array
-        let geom_array = self.evaluator.evaluate_probe(&probe_batch)?;
-
         // Update the probe side statistics, which may help the spatial index to select a better
         // execution mode for evaluating the spatial predicate.
         if spatial_index.need_more_probe_stats() {
             let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
+            let geom_array = &probe_evaluated_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
                 analyzer.update_statistics(wkb, wkb.buf().len())?;
             }
@@ -414,10 +416,7 @@ impl SpatialJoinStream {
 
         SpatialJoinBatchIterator::new(SpatialJoinBatchIteratorParams {
             spatial_index: spatial_index.clone(),
-            probe_evaluated_batch: EvaluatedBatch {
-                batch: probe_batch,
-                geom_array,
-            },
+            probe_evaluated_batch,
             join_metrics: self.join_metrics.clone(),
             max_batch_size: self.target_output_batch_size,
             probe_side_ordered: self.probe_side_ordered,
