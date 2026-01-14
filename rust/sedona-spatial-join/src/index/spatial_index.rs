@@ -1233,8 +1233,8 @@ mod tests {
         assert!(result.count > 0);
         assert!(result.count <= 3);
 
-        log::debug!("KNN Geometry test - found {} results", result.count);
-        log::debug!("Result positions: {build_positions:?}");
+        println!("KNN Geometry test - found {} results", result.count);
+        println!("Result positions: {build_positions:?}");
     }
 
     #[test]
@@ -1316,7 +1316,7 @@ mod tests {
         // Should return results
         assert!(!build_positions.is_empty());
 
-        log::debug!("KNN with mixed geometries: {build_positions:?}");
+        println!("KNN with mixed geometries: {build_positions:?}");
 
         // Should work with mixed geometry types
         assert!(result.count > 0);
