@@ -213,10 +213,16 @@ pub trait SedonaAccumulator: Debug {
         output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>>;
 
+    /// Given input data types, check if this implementation supports GroupsAccumulator
     fn groups_accumulator_supported(&self, _args: &[SedonaType]) -> bool {
         false
     }
 
+    /// Given input data types, resolve a [GroupsAccumulator]
+    ///
+    /// A GroupsAccumulator is an important optimization for aggregating many small groups,
+    /// particularly when such an aggregation is cheap. See the DataFusion documentation
+    /// for details.
     fn groups_accumulator(
         &self,
         _args: &[SedonaType],

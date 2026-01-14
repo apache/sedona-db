@@ -118,6 +118,13 @@ impl AggregateUdfTester {
         state_accumulator.evaluate()
     }
 
+    /// Perform a simple grouped aggregation
+    ///
+    /// Each batch in batches is accumulated with its own groups accumulator
+    /// and serialized into its own state, after which the state resulting
+    /// from each batch is merged into the final groups accumulator. This
+    /// has the effect of testing the pieces of a groups accumulator in a
+    /// predictable/debug-friendly (if artificial) way.
     pub fn aggregate_groups(
         &self,
         batches: &Vec<ArrayRef>,

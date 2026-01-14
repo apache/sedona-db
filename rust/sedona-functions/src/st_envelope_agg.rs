@@ -217,11 +217,12 @@ impl BoundsGroupsAccumulator2D {
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        assert_eq!(self.offset, 0);
-        assert_eq!(values.len(), 1);
-        assert_eq!(values[0].len(), group_indices.len());
+        // Check some of our assumptions about how this will be called
+        debug_assert_eq!(self.offset, 0);
+        debug_assert_eq!(values.len(), 1);
+        debug_assert_eq!(values[0].len(), group_indices.len());
         if let Some(filter) = opt_filter {
-            assert_eq!(values[0].len(), filter.len());
+            debug_assert_eq!(values[0].len(), filter.len());
         }
 
         let arg_types = [self.input_type.clone()];
@@ -232,11 +233,9 @@ impl BoundsGroupsAccumulator2D {
         let mut i = 0;
 
         if let Some(filter) = opt_filter {
-            assert_eq!(filter.null_count(), 0);
-
             let mut filter_iter = filter.iter();
             executor.execute_wkb_void(|maybe_item| {
-                if filter_iter.next().unwrap().unwrap() {
+                if filter_iter.next().unwrap().unwrap_or(false) {
                     let group_id = group_indices[i];
                     i += 1;
                     if let Some(item) = maybe_item {
