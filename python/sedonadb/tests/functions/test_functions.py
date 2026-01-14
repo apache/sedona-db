@@ -17,6 +17,7 @@
 import pytest
 import shapely
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
+import math
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -187,6 +188,281 @@ def test_st_azimuth(eng, geom1, geom2, expected):
         expected,
         numeric_epsilon=1e-8,
     )
+
+
+# fmt: off
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "a", "b", "d", "e", "xoff", "yoff", "expected"),
+    [
+        (
+            None,
+            1.0, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            None
+        ),
+        (
+            "POINT (1 2)",
+            None, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            None
+        ),
+        (
+            "POINT (1 2)",
+            1.0, 0.0,
+            0.0, 2.0,
+            1.0, None,
+            None
+        ),
+        (
+            "POINT (1 2)",
+            1.0, 0.0,
+            0.0, 1.0,
+            0.0, 0.0,
+            "POINT (1 2)"
+        ),
+        (
+            "POINT (1 2)",
+            2.0, 0.0,
+            0.0, 2.0,
+            1.0, 3.0,
+            "POINT (3 7)"
+        ),
+        (
+            "LINESTRING (0 0, 1 1)",
+            1.0, 0.0,
+            0.0, 1.0,
+            1.0, 2.0,
+            "LINESTRING (1 2, 2 3)"
+        ),
+    ],
+)
+def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_Affine("
+        f"{geom_or_null(geom)}, "
+        f"{val_or_null(a)}, {val_or_null(b)}, {val_or_null(d)}, {val_or_null(e)}, "
+        f"{val_or_null(xoff)}, {val_or_null(yoff)})",
+        expected,
+    )
+# fmt: on
+
+
+# fmt: off
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "a", "b", "c", "d", "e", "f", "g", "h", "i", "xoff", "yoff", "zoff", "expected"),
+    [
+        (
+            None,
+            1.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            None
+        ),
+        (
+            "POINT Z (1 2 3)",
+            None, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            None
+        ),
+        (
+            "POINT Z (1 2 3)",
+            2.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, None,
+            None
+        ),
+        (
+            "POINT Z (1 2 3)",
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+            0.0, 0.0, 0.0,
+            "POINT Z (1 2 3)",
+        ),
+        (
+            "POINT Z (1 2 3)",
+            2.0, 0.0, 0.0,
+            0.0, 2.0, 0.0,
+            0.0, 0.0, 2.0,
+            1.0, 3.0, 5.0,
+            "POINT Z (3 7 11)",
+        ),
+    ],
+)
+def test_st_affine_3d(
+    eng, geom, a, b, c, d, e, f, g, h, i, xoff, yoff, zoff, expected
+):
+    eng = eng.create_or_skip()
+    query = (
+        "SELECT ST_Affine("
+        f"{geom_or_null(geom)}, "
+        f"{val_or_null(a)}, {val_or_null(b)}, {val_or_null(c)}, "
+        f"{val_or_null(d)}, {val_or_null(e)}, {val_or_null(f)}, "
+        f"{val_or_null(g)}, {val_or_null(h)}, {val_or_null(i)}, "
+        f"{val_or_null(xoff)}, {val_or_null(yoff)}, {val_or_null(zoff)})"
+    )
+    eng.assert_query_result(query, expected)
+# fmt: on
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "sx", "sy", "expected"),
+    [
+        (None, 1.0, 1.0, None),
+        ("POINT (1 2)", None, 1.0, None),
+        ("POINT (1 2)", 1.0, None, None),
+        ("POINT EMPTY", 1.0, 1.0, "POINT (nan nan)"),
+        ("POINT (1 2)", 1.0, 1.0, "POINT (1 2)"),
+        ("POINT (1 2)", 2.0, 3.0, "POINT (2 6)"),
+        ("LINESTRING (0 0, 1 1)", 2.0, 3.0, "LINESTRING (0 0, 2 3)"),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            2.0,
+            3.0,
+            "POLYGON ((0 0, 2 0, 2 3, 0 3, 0 0))",
+        ),
+        (
+            "MULTIPOINT (1 2, 3 4)",
+            2.0,
+            3.0,
+            "MULTIPOINT (2 6, 6 12)",
+        ),
+        (
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+            2.0,
+            3.0,
+            "MULTILINESTRING ((0 0, 2 3), (4 6, 6 9))",
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            2.0,
+            3.0,
+            "MULTIPOLYGON (((0 0, 2 0, 2 3, 0 3, 0 0)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1))",
+            2.0,
+            3.0,
+            "GEOMETRYCOLLECTION (POINT (2 6), LINESTRING (0 0, 2 3))",
+        ),
+        ("POINT Z (1 2 3)", 2.0, 3.0, "POINT Z (2 6 3)"),
+        ("POINT M (1 2 3)", 2.0, 3.0, "POINT M (2 6 3)"),
+        ("POINT ZM (1 2 3 4)", 2.0, 3.0, "POINT ZM (2 6 3 4)"),
+    ],
+)
+def test_st_scale_2d(eng, geom, sx, sy, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Scale({geom_or_null(geom)}, {val_or_null(sx)}, {val_or_null(sy)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "sx", "sy", "sz", "expected"),
+    [
+        (None, 1.0, 1.0, 1.0, None),
+        ("POINT Z (1 2 3)", None, 1.0, 1.0, None),
+        ("POINT Z (1 2 3)", 1.0, 1.0, None, None),
+        ("POINT EMPTY", 1.0, 1.0, 1.0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 1.0, 1.0, 1.0, "POINT Z (nan nan nan)"),
+        ("POINT Z (1 2 3)", 1.0, 1.0, 1.0, "POINT Z (1 2 3)"),
+        ("POINT Z (1 2 3)", 2.0, 3.0, 4.0, "POINT Z (2 6 12)"),
+        ("POINT ZM (1 2 3 4)", 2.0, 3.0, 4.0, "POINT ZM (2 6 12 4)"),
+        ("LINESTRING Z (0 0 0, 1 1 1)", 2.0, 3.0, 4.0, "LINESTRING Z (0 0 0, 2 3 4)"),
+        (
+            "POLYGON Z ((0 0 0, 1 0 2, 1 1 4, 0 1 2, 0 0 0))",
+            2.0,
+            3.0,
+            4.0,
+            "POLYGON Z ((0 0 0, 2 0 8, 2 3 16, 0 3 8, 0 0 0))",
+        ),
+        ("POINT (1 2)", 2.0, 3.0, 4.0, "POINT (2 6)"),
+        ("POINT M (1 2 3)", 2.0, 3.0, 4.0, "POINT M (2 6 3)"),
+    ],
+)
+def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
+    eng = eng.create_or_skip()
+    query = (
+        "SELECT ST_Scale("
+        f"{geom_or_null(geom)}, {val_or_null(sx)}, {val_or_null(sy)}, {val_or_null(sz)})"
+    )
+    eng.assert_query_result(query, expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "expected"),
+    [
+        (None, 0, None),
+        ("POINT (1 2)", None, None),
+        ("POINT EMPTY", 0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 0, "POINT Z (nan nan nan)"),
+        ("POINT (1 2)", 0, "POINT (1 2)"),
+        ("POINT (1 2)", math.pi / 2, "POINT (-2 1)"),
+        ("POINT (1 2)", math.pi, "POINT (-1 -2)"),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (-1 -2 3)"),
+        ("POINT M (1 2 3)", math.pi, "POINT M (-1 -2 3)"),
+        ("POINT ZM (1 2 3 4)", math.pi, "POINT ZM (-1 -2 3 4)"),
+        ("LINESTRING (0 0, 1 2)", math.pi, "LINESTRING (0 0, -1 -2)"),
+        ("LINESTRING Z (0 0 0, 1 2 3)", math.pi, "LINESTRING Z (0 0 0, -1 -2 3)"),
+        (
+            "POLYGON ((0 0, 1 2, 2 3, 2 1, 0 0))",
+            math.pi,
+            "POLYGON ((0 0, -1 -2, -2 -3, -2 -1, 0 0))",
+        ),
+        (
+            "POLYGON Z ((0 0 0, 1 2 4, 2 3 4, 2 1 4, 0 0 0))",
+            math.pi,
+            "POLYGON Z ((0 0 0, -1 -2 4, -2 -3 4, -2 -1 4, 0 0 0))",
+        ),
+    ],
+)
+def test_st_rotate(eng, geom, angle, expected):
+    eng = eng.create_or_skip()
+    query = f"SELECT ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "expected"),
+    [
+        (None, 0, None),
+        ("POINT (1 2)", None, None),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (1 -2 -3)"),
+    ],
+)
+def test_st_rotate_x(eng, geom, angle, expected):
+    eng = eng.create_or_skip()
+    query = f"SELECT ST_RotateX({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "angle", "expected"),
+    [
+        (None, 0, None),
+        ("POINT (1 2)", None, None),
+        ("POINT Z (1 2 3)", math.pi, "POINT Z (-1 2 -3)"),
+    ],
+)
+def test_st_rotate_y(eng, geom, angle, expected):
+    eng = eng.create_or_skip()
+    query = f"SELECT ST_RotateY({geom_or_null(geom)}, {val_or_null(angle)})"
+    eng.assert_query_result(query, expected, wkt_precision=1e-12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

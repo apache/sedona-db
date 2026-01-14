@@ -58,12 +58,26 @@ pub trait CrsEngine: Debug {
 /// Trait for transforming coordinates in a geometry from one CRS to another.
 pub trait CrsTransform: std::fmt::Debug {
     fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError>;
+
+    // CrsTransform can optionally handle 3D coordinates. If this method is not implemented,
+    // the Z coordinate is simply ignored.
+    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+        let mut coord_2d = (coord.0, coord.1);
+        self.transform_coord(&mut coord_2d)?;
+        coord.0 = coord_2d.0;
+        coord.1 = coord_2d.1;
+        Ok(())
+    }
 }
 
 /// A boxed trait object for dynamic dispatch of CRS transformations.
 impl CrsTransform for Box<dyn CrsTransform> {
     fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
         self.as_ref().transform_coord(coord)
+    }
+
+    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+        self.as_ref().transform_coord_3d(coord)
     }
 }
 
@@ -345,24 +359,26 @@ where
     I: Iterator<Item = C>,
 {
     for coord in coords {
-        let mut xy: (f64, f64) = (coord.x(), coord.y());
-        trans.transform_coord(&mut xy)?;
-
         match coord.dim() {
             Dimensions::Xy => {
+                let mut xy: (f64, f64) = (coord.x(), coord.y());
+                trans.transform_coord(&mut xy)?;
                 write_wkb_coord(buf, (xy.0, xy.1))?;
             }
             Dimensions::Xyz => {
-                write_wkb_coord(buf, (xy.0, xy.1, coord.nth_or_panic(2)))?;
+                let mut xyz: (f64, f64, f64) = (coord.x(), coord.y(), coord.nth_or_panic(2));
+                trans.transform_coord_3d(&mut xyz)?;
+                write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2))?;
             }
             Dimensions::Xym => {
+                let mut xy: (f64, f64) = (coord.x(), coord.y());
+                trans.transform_coord(&mut xy)?;
                 write_wkb_coord(buf, (xy.0, xy.1, coord.nth_or_panic(2)))?;
             }
             Dimensions::Xyzm => {
-                write_wkb_coord(
-                    buf,
-                    (xy.0, xy.1, coord.nth_or_panic(2), coord.nth_or_panic(3)),
-                )?;
+                let mut xyz: (f64, f64, f64) = (coord.x(), coord.y(), coord.nth_or_panic(2));
+                trans.transform_coord_3d(&mut xyz)?;
+                write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2, coord.nth_or_panic(3)))?;
             }
             _ => {
                 return Err(SedonaGeometryError::Invalid(
@@ -389,6 +405,49 @@ mod test {
             coord.1 += 20.0;
             Ok(())
         }
+    }
+
+    #[derive(Debug)]
+    struct Mock3DTransform {}
+    impl CrsTransform for Mock3DTransform {
+        // This transforms 2D and 3D differently for testing purposes
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+            coord.0 += 100.0;
+            coord.1 += 200.0;
+            Ok(())
+        }
+
+        fn transform_coord_3d(
+            &self,
+            coord: &mut (f64, f64, f64),
+        ) -> Result<(), SedonaGeometryError> {
+            coord.0 += 10.0;
+            coord.1 += 20.0;
+            coord.2 += 30.0;
+            Ok(())
+        }
+    }
+
+    fn test_transform_inner(
+        geom: impl GeometryTrait<T = f64>,
+        expected: &str,
+        mock_transform: impl CrsTransform,
+    ) {
+        let mut wkb_bytes = Vec::new();
+
+        transform(geom, &mock_transform, &mut wkb_bytes).unwrap();
+        let wkb_reader = read_wkb(&wkb_bytes).unwrap();
+        let mut wkt = String::new();
+        wkt::to_wkt::write_geometry(&mut wkt, &wkb_reader).unwrap();
+        assert_eq!(wkt, expected);
+    }
+
+    fn test_transform(geom: impl GeometryTrait<T = f64>, expected: &str) {
+        test_transform_inner(geom, expected, MockTransform {})
+    }
+
+    fn test_transform_3d(geom: impl GeometryTrait<T = f64>, expected: &str) {
+        test_transform_inner(geom, expected, Mock3DTransform {})
     }
 
     #[test]
@@ -525,15 +584,32 @@ mod test {
         test_transform(ls_xyzm, "LINESTRING ZM(11 22 3 4,15 26 7 8)");
     }
 
-    fn test_transform(geom: impl GeometryTrait<T = f64>, expected: &str) {
-        let mock_transform = MockTransform {};
-        let mut wkb_bytes = Vec::new();
+    #[test]
+    fn test_transform_point_3d() {
+        let point = wkt::Wkt::from_str("POINT Z(1 2 3)").unwrap();
+        test_transform_3d(point, "POINT Z(11 22 33)");
 
-        transform(geom, &mock_transform, &mut wkb_bytes).unwrap();
-        let wkb_reader = read_wkb(&wkb_bytes).unwrap();
-        let mut wkt = String::new();
-        wkt::to_wkt::write_geometry(&mut wkt, &wkb_reader).unwrap();
-        assert_eq!(wkt, expected);
+        let nan_point = wkt::Wkt::from_str("POINT Z EMPTY").unwrap();
+        test_transform_3d(nan_point, "POINT Z EMPTY");
+    }
+
+    #[test]
+    fn test_transform_dimensions_3d() {
+        let ls_xy_wkt = "LINESTRING(1.0 2.0, 3.0 4.0)";
+        let ls_xy: Wkt = Wkt::from_str(ls_xy_wkt).unwrap();
+        test_transform_3d(ls_xy, "LINESTRING(101 202,103 204)");
+
+        let ls_xyz_wkt = "LINESTRING Z(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xyz: Wkt = Wkt::from_str(ls_xyz_wkt).unwrap();
+        test_transform_3d(ls_xyz, "LINESTRING Z(11 22 33,14 25 36)");
+
+        let ls_xym_wkt = "LINESTRING M(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xym: Wkt = Wkt::from_str(ls_xym_wkt).unwrap();
+        test_transform_3d(ls_xym, "LINESTRING M(101 202 3,104 205 6)");
+
+        let ls_xyzm_wkt = "LINESTRING ZM(1.0 2.0 3.0 4.0, 5.0 6.0 7.0 8.0)";
+        let ls_xyzm: Wkt = Wkt::from_str(ls_xyzm_wkt).unwrap();
+        test_transform_3d(ls_xyzm, "LINESTRING ZM(11 22 33 4,15 26 37 8)");
     }
 
     /// Mock CRS engine for testing caching behavior
