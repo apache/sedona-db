@@ -247,7 +247,7 @@ def test_spatial_join_with_pandas_metadata(con):
     n_polys = 10
 
     # Points
-    rng = np.random.default_rng(49791)
+    rng = np.random.Generator(np.random.MT19937(49791))
     lons = rng.uniform(-6, 2, n_points)
     lats = rng.uniform(50, 59, n_points)
     pts_df = pd.DataFrame(
@@ -278,4 +278,4 @@ def test_spatial_join_with_pandas_metadata(con):
     """
 
     res = con.sql(query).to_pandas()
-    pd.testing.assert_frame_equal(res, pd.DataFrame({"idx": [410, 463, 612]}))
+    pd.testing.assert_frame_equal(res, pd.DataFrame({"idx": [304, 342, 490, 705]}))
