@@ -428,7 +428,7 @@ impl<'a> DAffineIterator<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum DAffine {
     DAffine2(glam::DAffine2),
     DAffine3(glam::DAffine3),
@@ -528,5 +528,107 @@ impl<'a> Iterator for DAffineIterator<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::Array;
+    use arrow_array::Float64Array;
+    use std::sync::Arc;
+
+    fn float_array(values: Vec<Option<f64>>) -> Arc<dyn Array> {
+        Arc::new(Float64Array::from(values)) as Arc<dyn Array>
+    }
+
+    #[test]
+    fn daffine2_iterator_handles_nulls() {
+        let args = vec![
+            float_array(vec![Some(1.0), Some(10.0)]),
+            float_array(vec![Some(2.0), Some(20.0)]),
+            float_array(vec![Some(3.0), Some(30.0)]),
+            float_array(vec![Some(4.0), None]),
+            float_array(vec![Some(5.0), Some(50.0)]),
+            float_array(vec![Some(6.0), Some(60.0)]),
+        ];
+
+        let mut iter = DAffine2Iterator::new(&args).unwrap();
+
+        let expected_first = glam::DAffine2 {
+            matrix2: glam::DMat2 {
+                x_axis: glam::DVec2 { x: 1.0, y: 2.0 },
+                y_axis: glam::DVec2 { x: 3.0, y: 4.0 },
+            },
+            translation: glam::DVec2 { x: 5.0, y: 6.0 },
+        };
+        assert_eq!(iter.next(), Some(Some(expected_first)));
+
+        // The second case contains NULL, so the result is NULL
+        assert_eq!(iter.next(), Some(None));
+    }
+
+    #[test]
+    fn daffine3_iterator_values() {
+        let values = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
+        let args = values
+            .iter()
+            .map(|value| float_array(vec![Some(*value)]))
+            .collect::<Vec<_>>();
+
+        let mut iter = DAffine3Iterator::new(&args).unwrap();
+        let expected = glam::DAffine3 {
+            matrix3: glam::DMat3::from_cols(
+                glam::DVec3::new(1.0, 2.0, 3.0),
+                glam::DVec3::new(4.0, 5.0, 6.0),
+                glam::DVec3::new(7.0, 8.0, 9.0),
+            ),
+            translation: glam::DVec3::new(10.0, 11.0, 12.0),
+        };
+
+        assert_eq!(iter.next(), Some(Some(expected)));
+    }
+
+    #[test]
+    fn daffine_iterator_from_scale() {
+        let scale_args = vec![
+            float_array(vec![Some(2.0), None]),
+            float_array(vec![Some(3.0), Some(4.0)]),
+        ];
+        let mut iter = DAffineIterator::from_scale_2d(&scale_args).unwrap();
+
+        let expected_scale =
+            DAffine::DAffine2(glam::DAffine2::from_scale(glam::DVec2::new(2.0, 3.0)));
+        assert_eq!(iter.next(), Some(Some(expected_scale)));
+
+        // The second case contains NULL, so the result is NULL
+        assert_eq!(iter.next(), Some(None));
+    }
+
+    #[test]
+    fn daffine_iterator_from_rotate() {
+        let angle = float_array(vec![Some(0.25), None]);
+        let mut iter = DAffineIterator::from_angle(&angle, RotateAxis::X).unwrap();
+        let expected_rotate = DAffine::DAffine3(glam::DAffine3::from_rotation_x(0.25));
+        assert_eq!(iter.next(), Some(Some(expected_rotate)));
+
+        // The second case contains NULL, so the result is NULL
+        assert_eq!(iter.next(), Some(None));
+    }
+
+    #[test]
+    fn daffine_crs_transform_changes_coords() {
+        let mut coord_2d = (1.0, 2.0);
+        let affine_2d = DAffine::DAffine2(glam::DAffine2::from_scale(glam::DVec2::new(2.0, 3.0)));
+        affine_2d.transform_coord(&mut coord_2d).unwrap();
+        assert_eq!(coord_2d, (2.0, 6.0));
+
+        let mut coord_3d = (1.0, 2.0, 3.0);
+        let affine_3d =
+            DAffine::DAffine3(glam::DAffine3::from_scale(glam::DVec3::new(2.0, 3.0, 4.0)));
+        affine_3d.transform_coord_3d(&mut coord_3d).unwrap();
+        assert_eq!(coord_3d, (2.0, 6.0, 12.0));
     }
 }
