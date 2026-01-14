@@ -165,33 +165,30 @@ impl KDBTree {
     }
 
     fn insert_rect(&mut self, rect: Rect<f32>) {
-        if self.items.len() < self.max_items_per_node || self.level >= self.max_levels {
-            self.items.push(rect);
-        } else {
-            if self.children.is_none() {
-                // Split over longer side
-                let split_x = self.extent.width() > self.extent.height();
-                let mut ok = self.split(split_x);
-                if !ok {
-                    // Try splitting by the other side
-                    ok = self.split(!split_x);
-                }
-
-                if !ok {
-                    // This could happen if all envelopes are the same.
-                    self.items.push(rect);
-                    return;
-                }
+        if self.children.is_none() {
+            if self.items.len() < self.max_items_per_node || self.level >= self.max_levels {
+                // This leaf node has enough capacity, insert into it.
+                self.items.push(rect);
+                return;
             }
 
-            // Insert into appropriate child
-            if let Some(ref mut children) = self.children {
-                let min_point = rect.min();
-                for child in children.iter_mut() {
-                    if rect_contains_point(child.extent(), &min_point) {
-                        child.insert_rect(rect);
-                        break;
-                    }
+            // Try splitting over longer side. If it does not work, fallback splitting
+            // over the shorter side.
+            let split_x = self.extent.width() > self.extent.height();
+            if !self.split(split_x) && !self.split(!split_x) {
+                // Splitting neither side worked. This could happen if all envelopes are the same.
+                self.items.push(rect);
+                return;
+            }
+        }
+
+        // Insert into appropriate child
+        if let Some(ref mut children) = self.children {
+            let min_point = rect.min();
+            for child in children.iter_mut() {
+                if rect_contains_point(child.extent(), &min_point) {
+                    child.insert_rect(rect);
+                    break;
                 }
             }
         }
@@ -266,7 +263,6 @@ impl KDBTree {
         }
     }
 
-    #[cfg(test)]
     pub fn collect_leaf_nodes(&self) -> Vec<&KDBTree> {
         let mut leaf_nodes = Vec::new();
         self.visit_leaf_nodes(&mut |kdb| {
@@ -494,6 +490,22 @@ impl KDBPartitioner {
     /// Get the number of leaf partitions in the tree.
     pub fn num_partitions(&self) -> usize {
         self.tree.num_leaf_nodes()
+    }
+
+    /// Write the tree structure in human-readable format for debugging purposes.
+    pub fn debug_print(&self, f: &mut impl std::fmt::Write) -> Result<()> {
+        let leaves = self.tree.collect_leaf_nodes();
+        for leaf in leaves {
+            let extent = format!(
+                "x: [{:.6}, {:.6}], y: [{:.6}, {:.6}]",
+                leaf.extent().min().x,
+                leaf.extent().max().x,
+                leaf.extent().min().y,
+                leaf.extent().max().y,
+            );
+            writeln!(f, "Leaf ID: {}, Extent: {}", leaf.leaf_id(), extent)?;
+        }
+        Ok(())
     }
 }
 
