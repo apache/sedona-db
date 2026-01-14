@@ -183,7 +183,7 @@ impl AggregateUdfTester {
         self.udf.create_groups_accumulator(self.accumulator_args()?)
     }
 
-    fn accumulator_args(&self) -> Result<AccumulatorArgs> {
+    fn accumulator_args(&self) -> Result<AccumulatorArgs<'_>> {
         Ok(AccumulatorArgs {
             return_field: self.udf.return_field(self.mock_schema.fields())?,
             schema: &self.mock_schema,
