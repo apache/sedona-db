@@ -298,7 +298,7 @@ impl ExecutionPlan for RandomGeometryExec {
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         // Error for an attempt to read an incorrect partition
-        if partition > 0 {
+        if partition >= self.builder.num_partitions {
             return sedona_internal_err!(
                 "Can't read partition {partition} from RandomGeometryExec"
             );
