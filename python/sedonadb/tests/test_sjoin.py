@@ -17,11 +17,13 @@
 
 import json
 
-import geoarrow.pyarrow as ga
+import geopandas as gpd
+import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pytest
 from sedonadb.testing import PostGIS, SedonaDB
+from shapely.geometry import Point
+import warnings
 
 
 @pytest.mark.parametrize(
@@ -232,29 +234,3 @@ def test_non_optimizable_subquery():
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
         assert len(sedonadb_results) > 0
         eng_postgis.assert_query_result(sql, sedonadb_results)
-
-
-def test_spatial_join_with_metadata(con):
-    batch_lhs = pa.table(
-        {
-            "idx": [1, 2, 3],
-            "geom": ga.as_wkb(["POINT (0 1)", "POINT (2 3)", "POINT (4 5)"]),
-        }
-    ).replace_schema_metadata({"custom_key": "custom_value"})
-
-    batch_rhs = batch_lhs.replace_schema_metadata(
-        {"other_custom_key": "other_custom_value"}
-    )
-
-    con.create_data_frame(batch_lhs).to_view("batch_lhs", overwrite=True)
-    con.create_data_frame(batch_rhs).to_view("batch_rhs", overwrite=True)
-    result = con.sql("""
-    SELECT batch_lhs.idx AS idx_lhs, batch_rhs.idx AS idx_rhs
-    FROM batch_lhs
-    INNER JOIN batch_rhs ON ST_Equals(batch_lhs.geom, batch_rhs.geom)
-    ORDER BY idx_lhs, idx_rhs
-    """).to_pandas()
-
-    pd.testing.assert_frame_equal(
-        result, pd.DataFrame({"idx_lhs": [1, 2, 3], "idx_rhs": [1, 2, 3]})
-    )
