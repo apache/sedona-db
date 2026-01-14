@@ -16,14 +16,15 @@
 // under the License.
 
 /// Most of the code in this module are copied from the `datafusion_physical_plan::joins::utils` module.
-/// https://github.com/apache/datafusion/blob/48.0.0/datafusion/physical-plan/src/joins/utils.rs
+/// https://github.com/apache/datafusion/blob/50.2.0/datafusion/physical-plan/src/joins/utils.rs
 use std::{ops::Range, sync::Arc};
 
 use arrow::array::{
     downcast_array, new_null_array, Array, BooleanBufferBuilder, RecordBatch, RecordBatchOptions,
     UInt32Builder, UInt64Builder,
 };
-use arrow::compute;
+use arrow::buffer::NullBuffer;
+use arrow::compute::{self, take};
 use arrow::datatypes::{ArrowNativeType, Schema, UInt32Type, UInt64Type};
 use arrow_array::{ArrowPrimitiveType, NativeAdapter, PrimitiveArray, UInt32Array, UInt64Array};
 use datafusion_common::cast::as_boolean_array;
@@ -112,6 +113,7 @@ pub(crate) fn apply_join_filter_to_indices(
         &probe_indices,
         filter.column_indices(),
         build_side,
+        JoinType::Inner,
     )?;
     let filter_result = filter
         .expression()
@@ -129,6 +131,7 @@ pub(crate) fn apply_join_filter_to_indices(
 
 /// Returns a new [RecordBatch] by combining the `left` and `right` according to `indices`.
 /// The resulting batch has [Schema] `schema`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_batch_from_indices(
     schema: &Schema,
     build_input_buffer: &RecordBatch,
@@ -137,6 +140,7 @@ pub(crate) fn build_batch_from_indices(
     probe_indices: &UInt32Array,
     column_indices: &[ColumnIndex],
     build_side: JoinSide,
+    join_type: JoinType,
 ) -> Result<RecordBatch> {
     if schema.fields().is_empty() {
         let options = RecordBatchOptions::new()
@@ -157,8 +161,12 @@ pub(crate) fn build_batch_from_indices(
 
     for column_index in column_indices {
         let array = if column_index.side == JoinSide::None {
-            // LeftMark join, the mark column is a true if the indices is not null, otherwise it will be false
-            Arc::new(compute::is_not_null(probe_indices)?)
+            // For mark joins, the mark column is a true if the indices is not null, otherwise it will be false
+            if join_type == JoinType::RightMark {
+                Arc::new(compute::is_not_null(build_indices)?)
+            } else {
+                Arc::new(compute::is_not_null(probe_indices)?)
+            }
         } else if column_index.side == build_side {
             let array = build_input_buffer.column(column_index.index);
             if array.is_empty() || build_indices.null_count() == build_indices.len() {
@@ -168,7 +176,7 @@ pub(crate) fn build_batch_from_indices(
                 assert_eq!(build_indices.null_count(), build_indices.len());
                 new_null_array(array.data_type(), build_indices.len())
             } else {
-                compute::take(array.as_ref(), build_indices, None)?
+                take(array.as_ref(), build_indices, None)?
             }
         } else {
             let array = probe_batch.column(column_index.index);
@@ -176,9 +184,10 @@ pub(crate) fn build_batch_from_indices(
                 assert_eq!(probe_indices.null_count(), probe_indices.len());
                 new_null_array(array.data_type(), probe_indices.len())
             } else {
-                compute::take(array.as_ref(), probe_indices, None)?
+                take(array.as_ref(), probe_indices, None)?
             }
         };
+
         columns.push(array);
     }
     Ok(RecordBatch::try_new(Arc::new(schema.clone()), columns)?)
@@ -226,7 +235,12 @@ pub(crate) fn adjust_indices_by_join_type(
             // the left_indices will not be used later for the `right anti` join
             Ok((left_indices, right_indices))
         }
-        JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark | JoinType::RightMark => {
+        JoinType::RightMark => {
+            let new_left_indices = get_mark_indices(&adjust_range, &right_indices);
+            let new_right_indices = adjust_range.map(|i| i as u32).collect();
+            Ok((new_left_indices, new_right_indices))
+        }
+        JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark => {
             // matched or unmatched left row will be produced in the end of loop
             // When visit the right batch, we can output the matched left row and don't need to wait the end of loop
             Ok((
@@ -328,17 +342,7 @@ pub(crate) fn get_anti_indices<T: ArrowPrimitiveType>(
 where
     NativeAdapter<T>: From<<T as ArrowPrimitiveType>::Native>,
 {
-    let mut bitmap = BooleanBufferBuilder::new(range.len());
-    bitmap.append_n(range.len(), false);
-    input_indices
-        .iter()
-        .flatten()
-        .map(|v| v.as_usize())
-        .filter(|v| range.contains(v))
-        .for_each(|v| {
-            bitmap.set_bit(v - range.start, true);
-        });
-
+    let bitmap = build_range_bitmap(&range, input_indices);
     let offset = range.start;
 
     // get the anti index
@@ -355,23 +359,43 @@ pub(crate) fn get_semi_indices<T: ArrowPrimitiveType>(
 where
     NativeAdapter<T>: From<<T as ArrowPrimitiveType>::Native>,
 {
-    let mut bitmap = BooleanBufferBuilder::new(range.len());
-    bitmap.append_n(range.len(), false);
-    input_indices
-        .iter()
-        .flatten()
-        .map(|v| v.as_usize())
-        .filter(|v| range.contains(v))
-        .for_each(|v| {
-            bitmap.set_bit(v - range.start, true);
-        });
-
+    let bitmap = build_range_bitmap(&range, input_indices);
     let offset = range.start;
-
     // get the semi index
     (range)
         .filter_map(|idx| (bitmap.get_bit(idx - offset)).then_some(T::Native::from_usize(idx)))
         .collect()
+}
+
+pub(crate) fn get_mark_indices<T: ArrowPrimitiveType, R: ArrowPrimitiveType>(
+    range: &Range<usize>,
+    input_indices: &PrimitiveArray<T>,
+) -> PrimitiveArray<R>
+where
+    NativeAdapter<T>: From<<T as ArrowPrimitiveType>::Native>,
+{
+    let mut bitmap = build_range_bitmap(range, input_indices);
+    PrimitiveArray::new(
+        vec![R::Native::default(); range.len()].into(),
+        Some(NullBuffer::new(bitmap.finish())),
+    )
+}
+
+fn build_range_bitmap<T: ArrowPrimitiveType>(
+    range: &Range<usize>,
+    input: &PrimitiveArray<T>,
+) -> BooleanBufferBuilder {
+    let mut builder = BooleanBufferBuilder::new(range.len());
+    builder.append_n(range.len(), false);
+
+    input.iter().flatten().for_each(|v| {
+        let idx = v.as_usize();
+        if range.contains(&idx) {
+            builder.set_bit(idx - range.start, true);
+        }
+    });
+
+    builder
 }
 
 /// Appends probe indices in order by considering the given build indices.
@@ -432,23 +456,24 @@ pub(crate) fn asymmetric_join_output_partitioning(
     left: &Arc<dyn ExecutionPlan>,
     right: &Arc<dyn ExecutionPlan>,
     join_type: &JoinType,
-) -> Partitioning {
-    match join_type {
+) -> Result<Partitioning> {
+    let result = match join_type {
         JoinType::Inner | JoinType::Right => adjust_right_output_partitioning(
             right.output_partitioning(),
             left.schema().fields().len(),
-        )
-        .unwrap_or_else(|_| Partitioning::UnknownPartitioning(1)),
-        JoinType::RightSemi | JoinType::RightAnti => right.output_partitioning().clone(),
+        )?,
+        JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark => {
+            right.output_partitioning().clone()
+        }
         JoinType::Left
         | JoinType::LeftSemi
         | JoinType::LeftAnti
         | JoinType::Full
-        | JoinType::LeftMark
-        | JoinType::RightMark => {
+        | JoinType::LeftMark => {
             Partitioning::UnknownPartitioning(right.output_partitioning().partition_count())
         }
-    }
+    };
+    Ok(result)
 }
 
 /// This function is copied from
