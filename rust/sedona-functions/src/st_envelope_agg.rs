@@ -18,7 +18,7 @@ use std::{iter::zip, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use crate::st_envelope::write_envelope;
-use arrow_array::{builder::BinaryBuilder, ArrayRef, BooleanArray};
+use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, BooleanArray};
 use arrow_schema::FieldRef;
 use datafusion_common::{
     error::{DataFusionError, Result},
@@ -217,6 +217,7 @@ impl BoundsGroupsAccumulator2D {
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
+        assert_eq!(self.offset, 0);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].len(), group_indices.len());
         if let Some(filter) = opt_filter {
@@ -231,10 +232,12 @@ impl BoundsGroupsAccumulator2D {
         let mut i = 0;
 
         if let Some(filter) = opt_filter {
+            assert_eq!(filter.null_count(), 0);
+
             let mut filter_iter = filter.iter();
             executor.execute_wkb_void(|maybe_item| {
                 if filter_iter.next().unwrap().unwrap() {
-                    let group_id = group_indices[i] - self.offset;
+                    let group_id = group_indices[i];
                     i += 1;
                     if let Some(item) = maybe_item {
                         geo_traits_update_xy_bounds(
@@ -244,13 +247,15 @@ impl BoundsGroupsAccumulator2D {
                         )
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                     }
+                } else {
+                    i += 1;
                 }
 
                 Ok(())
             })?;
         } else {
             executor.execute_wkb_void(|maybe_item| {
-                let group_id = group_indices[i] - self.offset;
+                let group_id = group_indices[i];
                 i += 1;
                 if let Some(item) = maybe_item {
                     geo_traits_update_xy_bounds(
@@ -277,7 +282,8 @@ impl BoundsGroupsAccumulator2D {
         let mut builder =
             BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES);
 
-        for (x, y) in zip(&self.xs[self.offset..], &self.ys[self.offset..]) {
+        let emit_range = self.offset..(self.offset + emit_size);
+        for (x, y) in zip(&self.xs[emit_range.clone()], &self.ys[emit_range.clone()]) {
             let written = write_envelope(&(*x).into(), y, &mut builder)?;
             if written {
                 builder.append_value([]);
@@ -441,9 +447,27 @@ mod test {
             &WKB_GEOMETRY,
         );
         let result = tester
-            .aggregate_groups(&batches, group_indices, None, vec![])
+            .aggregate_groups(&batches, group_indices.clone(), None, vec![])
             .unwrap();
+        assert_array_equal(&result, &expected);
 
+        // We should get the same answer even with a sequence of partial emits
+        let result = tester
+            .aggregate_groups(&batches, group_indices.clone(), None, vec![1, 1, 1, 1])
+            .unwrap();
+        assert_array_equal(&result, &expected);
+
+        // Also check with a filter (in this case, filter out all values except
+        // the middle two elements).
+        let filter = vec![false, false, true, true, false, false];
+        let expected = create_array(
+            &[None, Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"), None, None],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .aggregate_groups(&batches, group_indices.clone(), Some(&filter), vec![])
+            .unwrap();
         assert_array_equal(&result, &expected);
     }
 }

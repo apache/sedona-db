@@ -135,6 +135,9 @@ impl AggregateUdfTester {
         if let Some(filter) = opt_filter {
             assert_eq!(total_input_rows, filter.len());
         }
+        if !emit_sizes.is_empty() {
+            assert_eq!(emit_sizes.iter().sum::<usize>(), total_num_groups);
+        }
 
         let mut offset = 0;
         for batch in batches {
