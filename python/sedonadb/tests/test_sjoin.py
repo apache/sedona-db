@@ -270,7 +270,7 @@ def test_spatial_join_with_pandas_metadata(con):
     con.create_data_frame(pts_gdf).to_view("points", overwrite=True)
     con.create_data_frame(polys_gdf).to_view("polygons", overwrite=True)
 
-    # 4. Intersection
+    # 3. Intersection
     query = """
         SELECT p.idx
         FROM points AS p, polygons AS poly
