@@ -182,10 +182,6 @@ impl SpatialIndexBuilder {
 
         self.build_batch.geom_array.geometry_array = ensure_binary_array(&concat_array)?;
 
-        let (ffi_array, ffi_schema) =
-            arrow_array::ffi::to_ffi(&self.build_batch.geom_array.geometry_array.to_data())?;
-        // log::info!("Array num buffers in finish: {}", ffi_array.num_buffers());
-
         self.build_batch.geom_array.rects = indexed_batches
             .iter()
             .flat_map(|batch| batch.geom_array.rects.iter().cloned())

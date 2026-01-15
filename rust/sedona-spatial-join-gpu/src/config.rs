@@ -20,9 +20,6 @@ pub struct GpuSpatialJoinConfig {
     /// GPU device ID to use
     pub device_id: i32,
 
-    /// Maximum GPU memory to use (bytes, None = unlimited)
-    pub max_memory: Option<usize>,
-
     /// Fall back to CPU if GPU fails
     pub fallback_to_cpu: bool,
 }
@@ -31,7 +28,6 @@ impl Default for GpuSpatialJoinConfig {
     fn default() -> Self {
         Self {
             device_id: 0,
-            max_memory: None,
             fallback_to_cpu: true,
         }
     }

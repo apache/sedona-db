@@ -210,9 +210,9 @@ impl SpatialJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        println!("[CPU Join] Probe stream waiting for build index...");
+        log::debug!("[CPU Join] Probe stream waiting for build index...");
         let index = ready!(self.once_fut_spatial_index.get_shared(cx))?;
-        println!("[CPU Join] Spatial index received, starting probe phase");
+        log::debug!("[CPU Join] Spatial index received, starting probe phase");
         self.spatial_index = Some(index);
         self.state = SpatialJoinStreamState::FetchProbeBatch;
         Poll::Ready(Ok(StatefulStreamResult::Continue))
@@ -226,7 +226,7 @@ impl SpatialJoinStream {
         match result {
             Poll::Ready(Some(Ok(batch))) => {
                 let num_rows = batch.num_rows();
-                println!("[CPU Join] Fetched probe batch: {} rows", num_rows);
+                log::debug!("[CPU Join] Fetched probe batch: {} rows", num_rows);
                 match self.create_spatial_join_iterator(batch) {
                     Ok(iterator) => {
                         self.state = SpatialJoinStreamState::ProcessProbeBatch(iterator);
@@ -237,7 +237,7 @@ impl SpatialJoinStream {
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
             Poll::Ready(None) => {
-                println!("[CPU Join] All probe batches processed");
+                log::debug!("[CPU Join] All probe batches processed");
                 self.state = SpatialJoinStreamState::ExhaustedProbeSide;
                 Poll::Ready(Ok(StatefulStreamResult::Continue))
             }
@@ -269,7 +269,7 @@ impl SpatialJoinStream {
                     Ok(opt) => {
                         if let Some(ref batch) = opt {
                             let process_elapsed = process_start.elapsed();
-                            println!("[CPU Join] Produced result batch: {} rows in {:.3}s (index query + refinement)",
+                            log::debug!("[CPU Join] Produced result batch: {} rows in {:.3}s (index query + refinement)",
                                 batch.num_rows(), process_elapsed.as_secs_f64());
                         }
                         opt

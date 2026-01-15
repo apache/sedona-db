@@ -1154,11 +1154,6 @@ mod gpu_optimizer {
         // Create GPU spatial join configuration
         let gpu_config = GpuSpatialJoinConfig {
             device_id: sedona_options.spatial_join.gpu.device_id as i32,
-            max_memory: if sedona_options.spatial_join.gpu.max_memory_mb > 0 {
-                Some(sedona_options.spatial_join.gpu.max_memory_mb * 1024 * 1024)
-            } else {
-                None
-            },
             fallback_to_cpu: sedona_options.spatial_join.gpu.fallback_to_cpu,
         };
 

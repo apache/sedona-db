@@ -1349,10 +1349,7 @@ mod tests {
             gpu: sedona_common::option::GpuOptions {
                 enable: true,
                 fallback_to_cpu: false,
-                max_memory_mb: 8192,
-                min_rows_threshold: 0,
                 device_id: 0,
-                batch_size: 100,
             },
             ..Default::default()
         };

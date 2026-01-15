@@ -90,12 +90,12 @@ pub struct GpuSpatialJoinStream {
     #[allow(unused)]
     options: SpatialJoinOptions,
     /// Once future for the spatial index
-    once_fut_spatial_index: OnceFut<Arc<RwLock<SpatialIndex>>>,
+    once_fut_spatial_index: OnceFut<Arc<SpatialIndex>>,
     /// Once async for the spatial index, will be manually disposed by the last finished stream
     /// to avoid unnecessary memory usage.
-    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<RwLock<SpatialIndex>>>>>>,
+    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<SpatialIndex>>>>>,
     /// The spatial index
-    spatial_index: Option<Arc<RwLock<SpatialIndex>>>,
+    spatial_index: Option<Arc<SpatialIndex>>,
     /// The `on` spatial predicate evaluator
     evaluator: Arc<dyn OperandEvaluator>,
     /// The spatial predicate being evaluated
@@ -121,8 +121,8 @@ impl GpuSpatialJoinStream {
         probe_side_ordered: bool,
         join_metrics: GpuSpatialJoinMetrics,
         options: SpatialJoinOptions,
-        once_fut_spatial_index: OnceFut<Arc<RwLock<SpatialIndex>>>,
-        once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<RwLock<SpatialIndex>>>>>>,
+        once_fut_spatial_index: OnceFut<Arc<SpatialIndex>>,
+        once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<SpatialIndex>>>>>,
     ) -> Self {
         let evaluator = create_operand_evaluator(on, options.clone());
         Self {
@@ -257,7 +257,7 @@ impl GpuSpatialJoinStream {
 
                     let timer = self.join_metrics.filter_time.timer();
                     let (mut build_ids, mut probe_ids) = {
-                        match spatial_index.read().filter(&eval_batch.geom_array.rects) {
+                        match spatial_index.filter(&eval_batch.geom_array.rects) {
                             Ok((build_ids, probe_ids)) => (build_ids, probe_ids),
                             Err(e) => {
                                 return Poll::Ready(Err(e));
@@ -275,7 +275,7 @@ impl GpuSpatialJoinStream {
                             geoms.len(),
                             self.spatial_predicate
                         );
-                    if let Err(e) = spatial_index.read().refine_loaded(
+                    if let Err(e) = spatial_index.refine_loaded(
                         geoms,
                         &self.spatial_predicate,
                         &mut build_ids,
@@ -326,8 +326,7 @@ impl GpuSpatialJoinStream {
         let spatial_index = self
             .spatial_index
             .as_ref()
-            .expect("spatial_index should be created")
-            .read();
+            .expect("spatial_index should be created");
 
         // thread-safe update of visited left side bitmap
         // let visited_bitmap = spatial_index.visited_left_side();
@@ -372,7 +371,7 @@ impl GpuSpatialJoinStream {
 
         let (build_indices, probe_indices) = match filter {
             Some(filter) => apply_join_filter_to_indices(
-                &spatial_index.read().build_batch.batch,
+                &spatial_index.build_batch.batch,
                 &probe_eval_batch.batch,
                 build_indices_array,
                 probe_indices_array,
@@ -397,7 +396,7 @@ impl GpuSpatialJoinStream {
         // Build the final result batch
         let result_batch = build_batch_from_indices(
             schema,
-            &spatial_index.read().build_batch.batch,
+            &spatial_index.build_batch.batch,
             &probe_eval_batch.batch,
             &build_indices,
             &probe_indices,
@@ -420,7 +419,7 @@ impl GpuSpatialJoinStream {
             ));
         };
 
-        let is_last_stream = spatial_index.read().report_probe_completed();
+        let is_last_stream = spatial_index.report_probe_completed();
         if is_last_stream {
             // Drop the once async to avoid holding a long-living reference to the spatial index.
             // The spatial index will be dropped when this stream is dropped.
@@ -508,14 +507,14 @@ impl RecordBatchStream for GpuSpatialJoinStream {
 /// Iterator that processes unmatched build-side batches for outer joins
 pub(crate) struct UnmatchedBuildBatchIterator {
     /// The spatial index reference
-    spatial_index: Arc<RwLock<SpatialIndex>>,
+    spatial_index: Arc<SpatialIndex>,
     /// Empty right batch for joining
     empty_right_batch: RecordBatch,
 }
 
 impl UnmatchedBuildBatchIterator {
     pub(crate) fn new(
-        spatial_index: Arc<RwLock<SpatialIndex>>,
+        spatial_index: Arc<SpatialIndex>,
         empty_right_batch: RecordBatch,
     ) -> Result<Self> {
         Ok(Self {
@@ -531,7 +530,7 @@ impl UnmatchedBuildBatchIterator {
         column_indices: &[ColumnIndex],
         build_side: JoinSide,
     ) -> Result<Option<RecordBatch>> {
-        let spatial_index = self.spatial_index.as_ref().read();
+        let spatial_index = self.spatial_index.as_ref();
         let visited_left_side = spatial_index.visited_left_side();
         let Some(vec_visited_left_side) = visited_left_side else {
             return sedona_internal_err!("The bitmap for visited left side is not created");

@@ -22,7 +22,7 @@ pub async fn build_index(
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
     _gpu_join_config: GpuSpatialJoinConfig,
-) -> datafusion_common::Result<Arc<RwLock<SpatialIndex>>> {
+) -> datafusion_common::Result<Arc<SpatialIndex>> {
     let session_config = context.session_config();
     let sedona_options = session_config
         .options()
@@ -78,7 +78,7 @@ pub async fn build_index(
         );
         index_builder.add_partitions(build_partitions).await?;
         let res = index_builder.finish();
-        Ok(Arc::new(RwLock::new(res?)))
+        Ok(Arc::new(res?))
     } else {
         Err(DataFusionError::ResourcesExhausted("Memory limit exceeded while collecting indexed data. External spatial index builder is not yet implemented.".to_string()))
     }

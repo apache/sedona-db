@@ -247,7 +247,6 @@ async fn test_gpu_spatial_join_basic_correctness() {
 
         let config = GpuSpatialJoinConfig {
             device_id: 0,
-            max_memory: None,
             fallback_to_cpu: false,
         };
 
@@ -543,7 +542,6 @@ async fn test_gpu_spatial_join_correctness() {
 
         let config = GpuSpatialJoinConfig {
             device_id: 0,
-            max_memory: None,
             fallback_to_cpu: false,
         };
 
