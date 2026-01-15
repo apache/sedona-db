@@ -25,7 +25,10 @@ use datafusion_common::{
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::{BooleanOps, Intersects};
 use geo_traits::to_geo::ToGeoGeometry;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -36,8 +39,8 @@ use wkb::Endianness;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Intersection_Agg() implementation
-pub fn st_intersection_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STIntersectionAgg {})
+pub fn st_intersection_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    ItemCrsSedonaAccumulator::wrap_impl(STIntersectionAgg {})
 }
 
 #[derive(Debug)]
@@ -228,9 +231,11 @@ mod test {
     use super::*;
     use rstest::rstest;
     use sedona_functions::st_intersection_agg::st_intersection_agg_udf;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry_topologically},
+        create::create_scalar_item_crs,
+        testers::AggregateUdfTester,
     };
 
     #[rstest]
@@ -397,5 +402,27 @@ mod test {
             &tester.aggregate_wkt(multi_multi_case3).unwrap(),
             Some("MULTIPOLYGON(((3 3,4 3,4 4,3 4,3 3)),((13 13,14 13,14 14,13 14,13 13)))"),
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+
+        let mut udaf = st_intersection_agg_udf();
+        udaf.add_kernel(st_intersection_agg_impl());
+        let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batches = vec![
+            vec![Some("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")],
+            vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))")],
+        ];
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOLYGON(((1 1, 2 1, 2 2, 1 2, 1 1)))"),
+            None,
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 }

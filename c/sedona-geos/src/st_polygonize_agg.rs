@@ -213,8 +213,12 @@ mod tests {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
     use sedona_expr::aggregate_udf::SedonaAggregateUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::{
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry},
+        create::create_scalar_item_crs,
+        testers::AggregateUdfTester,
+    };
 
     use super::*;
 
@@ -456,5 +460,26 @@ mod tests {
 
         let result = tester.aggregate_wkt(batches).unwrap();
         assert_scalar_equal_wkb_geometry(&result, Some("GEOMETRYCOLLECTION EMPTY"));
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs() {
+        let sedona_type = WKB_GEOGRAPHY_ITEM_CRS.clone();
+        let udf = create_udf();
+        let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batches = vec![vec![
+            Some("LINESTRING (0 0, 10 0)"),
+            Some("LINESTRING (10 0, 10 10)"),
+            Some("LINESTRING (10 10, 0 0)"),
+        ]];
+        let expected = create_scalar_item_crs(
+            Some("GEOMETRYCOLLECTION (POLYGON ((10 0, 0 0, 10 10, 10 0)))"),
+            None,
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 }

@@ -25,7 +25,10 @@ use datafusion_common::{
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::BooleanOps;
 use geo_traits::to_geo::ToGeoGeometry;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -36,8 +39,8 @@ use wkb::Endianness;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Union_Agg() implementation
-pub fn st_union_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STUnionAgg {})
+pub fn st_union_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    ItemCrsSedonaAccumulator::wrap_impl(STUnionAgg {})
 }
 
 #[derive(Debug)]
@@ -222,9 +225,11 @@ mod test {
     use super::*;
     use rstest::rstest;
     use sedona_functions::st_union_agg::st_union_agg_udf;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry_topologically},
+        create::create_scalar_item_crs,
+        testers::AggregateUdfTester,
     };
 
     #[rstest]
@@ -383,5 +388,22 @@ mod test {
             &tester.aggregate_wkt(multi_multi_case3).unwrap(),
             Some("MULTIPOLYGON(((0 0, 4 0, 4 3, 7 3, 7 6, 10 6, 10 10, 6 10, 6 7, 3 7, 3 4, 0 4, 0 0)),((10 10, 14 10, 14 13, 17 13, 17 16, 20 16, 20 20, 16 20, 16 17, 13 17, 13 14, 10 14, 10 10)))"),
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let mut udaf = st_union_agg_udf();
+        udaf.add_kernel(st_union_agg_impl());
+        let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batches = vec![
+            vec![Some("POINT (0 1)"), Some("POINT (2 3)")],
+            vec![Some("POINT (4 5)"), Some("POINT (6 7)")],
+        ];
+        let expected =
+            create_scalar_item_crs(Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"), None, &WKB_GEOMETRY);
+
+        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 }
