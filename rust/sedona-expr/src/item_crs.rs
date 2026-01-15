@@ -122,17 +122,13 @@ impl SedonaScalarKernel for ItemCrsKernel {
 ///
 /// - Accumulators that return a non-spatial type whose value does not
 ///   depend on the input CRS only need to operate on the `item` portion
-///   of any item_crs input (e.g., ST_Union_Agg()).
+///   of any item_crs input (e.g., ST_Analyze_Agg()).
 /// - Accumulators that return a geometry or geography must also return
 ///   an item_crs type where the output CRSes are propagated from the
 ///   input.
+/// - CRSes within a single group must be compatible
 ///
 /// This accumulator provides an automatic wrapper enforcing these rules.
-/// It is appropriate for most aggregate functions except:
-///
-/// - Accumulators whose return value depends on the CRS
-/// - Accumulators whose return CRS is not strictly propagated from the
-///   CRSes of the arguments.
 #[derive(Debug)]
 pub struct ItemCrsSedonaAccumulator {
     inner: SedonaAccumulatorRef,
@@ -176,9 +172,7 @@ impl SedonaAccumulator for ItemCrsSedonaAccumulator {
         // We don't have any functions we can test this with yet, so for the moment only support
         // single-argument aggregations (slightly simpler).
         if args.len() != 1 {
-            return sedona_internal_err!(
-                "ItemCrsSedonaAccumulator can't be used for aggregate functions with >1 argument"
-            );
+            return Ok(None);
         }
 
         // This implementation doesn't apply to non-item crs types
