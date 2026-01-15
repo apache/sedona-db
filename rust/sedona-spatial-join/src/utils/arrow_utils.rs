@@ -27,7 +27,7 @@ pub(crate) fn get_record_batch_memory_size(batch: &RecordBatch) -> Result<usize>
 
     for array in batch.columns() {
         let array_data = array.to_data();
-        total_size += count_array_data_memory_size(&array_data)?;
+        total_size += get_array_data_memory_size(&array_data)?;
     }
 
     Ok(total_size)
@@ -39,7 +39,7 @@ pub(crate) fn get_record_batch_memory_size(batch: &RecordBatch) -> Result<usize>
 /// `array_data.get_slice_memory_size()`).
 pub(crate) fn get_array_memory_size(array: &ArrayRef) -> Result<usize> {
     let array_data = array.to_data();
-    let size = count_array_data_memory_size(&array_data)?;
+    let size = get_array_data_memory_size(&array_data)?;
     Ok(size)
 }
 
@@ -51,8 +51,11 @@ pub(crate) fn get_array_memory_size(array: &ArrayRef) -> Result<usize> {
 /// [`GenericByteViewArray`]: https://docs.rs/arrow/latest/arrow/array/struct.GenericByteViewArray.html
 pub const MAX_INLINE_VIEW_LEN: u32 = 12;
 
-/// Count the memory usage of `array_data` and its children recursively.
-fn count_array_data_memory_size(array_data: &ArrayData) -> core::result::Result<usize, ArrowError> {
+/// Compute the memory usage of `array_data` and its children recursively.
+fn get_array_data_memory_size(array_data: &ArrayData) -> core::result::Result<usize, ArrowError> {
+    // The `ArrayData::get_slice_memory_size` method does not account for the memory used by
+    // the values of BinaryView/Utf8View arrays, so we need to compute that using
+    // `get_binary_view_value_size` and add that to the total size.
     Ok(get_binary_view_value_size(array_data)? + array_data.get_slice_memory_size()?)
 }
 
@@ -150,6 +153,14 @@ mod tests {
         let size = get_array_memory_size(&array_ref).unwrap();
         // 83 (StringView) + 1 (Boolean values) = 84
         assert_eq!(size, 84);
+
+        let size = get_array_memory_size(&array_ref.slice(0, 1)).unwrap();
+        // 16 (StringView for one short element) + 1 (Boolean values) = 17
+        assert_eq!(size, 17);
+
+        let size = get_array_memory_size(&array_ref.slice(1, 1)).unwrap();
+        // 67 (StringView for one long element) + 1 (Boolean values) = 68
+        assert_eq!(size, 68);
     }
 
     #[test]
@@ -166,5 +177,15 @@ mod tests {
         // Data used: 51 ("Long string...")
         // Total: 83
         assert_eq!(size, 83);
+
+        let size = get_array_memory_size(&sliced_ref.slice(1, 1)).unwrap();
+        // Views: 1 * 16 = 16
+        // Data used: 51 ("Long string...")
+        // Total: 67
+        assert_eq!(size, 67);
+
+        // Empty slice
+        let size = get_array_memory_size(&sliced_ref.slice(2, 0)).unwrap();
+        assert_eq!(size, 0);
     }
 }
