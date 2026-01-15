@@ -61,8 +61,7 @@ use sedona_common::option::add_sedona_option_extension;
 
 let config = SessionConfig::new()
     .set_str("sedona.spatial_join.gpu.enable", "true")
-    .set_str("sedona.spatial_join.gpu.device_id", "0")
-    .set_str("sedona.spatial_join.gpu.batch_size", "8192");
+    .set_str("sedona.spatial_join.gpu.device_id", "0");
 
 let config = add_sedona_option_extension(config);
 let ctx = SessionContext::new_with_config(config);
@@ -74,10 +73,9 @@ let ctx = SessionContext::new_with_config(config);
 |--------|---------|-------------|
 | `sedona.spatial_join.gpu.enable` | `false` | Enable GPU acceleration |
 | `sedona.spatial_join.gpu.device_id` | `0` | GPU device ID to use |
-| `sedona.spatial_join.gpu.batch_size` | `8192` | Batch size for processing |
 | `sedona.spatial_join.gpu.fallback_to_cpu` | `true` | Fall back to CPU on GPU failure |
-| `sedona.spatial_join.gpu.max_memory_mb` | `0` | Max GPU memory in MB (0=unlimited) |
-| `sedona.spatial_join.gpu.min_rows_threshold` | `100000` | Minimum rows to use GPU |
+
+Note: To fully utilize GPU acceleration, you should increase the default batch size in DataFusion from 8192 to a very large number, e.g.,`SET datafusion.execution.batch_size = 2000000`.
 
 ## Testing
 

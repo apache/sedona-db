@@ -101,7 +101,7 @@ pub struct GpuSpatialJoinExec {
     cache: PlanProperties,
     /// Spatial index built asynchronously on first execute() call and shared across all partitions.
     /// Uses OnceAsync for lazy initialization coordinated via async runtime.
-    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<RwLock<SpatialIndex>>>>>>,
+    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<Arc<SpatialIndex>>>>>,
     /// Indicates if this SpatialJoin was converted from a HashJoin
     /// When true, we preserve HashJoin's equivalence properties and partitioning
     converted_from_hash_join: bool,

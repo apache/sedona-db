@@ -89,22 +89,11 @@ config_namespace! {
         /// Enable GPU-accelerated spatial joins (requires CUDA and GPU feature flag)
         pub enable: bool, default = false
 
-        /// Minimum number of rows to consider GPU execution
-        pub min_rows_threshold: usize, default = 100000
-
         /// GPU device ID to use (0 = first GPU, 1 = second, etc.)
         pub device_id: usize, default = 0
 
         /// Fall back to CPU if GPU initialization or execution fails
         pub fallback_to_cpu: bool, default = true
-
-        /// Maximum GPU memory to use in megabytes (0 = unlimited)
-        pub max_memory_mb: usize, default = 0
-
-        /// Batch size for GPU processing
-        /// Must be a very high value to saturate the GPU for best performance.
-        /// This value will overwrite datafusion.execution.batch_size
-        pub batch_size: usize, default = 2*1000*1000
     }
 }
 

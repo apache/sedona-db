@@ -146,7 +146,6 @@ async fn test_gpu_join_exec_creation() {
     // Create GPU spatial join configuration
     let config = GpuSpatialJoinConfig {
         device_id: 0,
-        max_memory: None,
         fallback_to_cpu: true,
     };
 
@@ -179,7 +178,6 @@ async fn test_gpu_join_exec_display() {
 
     let config = GpuSpatialJoinConfig {
         device_id: 0,
-        max_memory: None,
         fallback_to_cpu: true,
     };
 
@@ -227,7 +225,6 @@ async fn test_gpu_join_execution_with_fallback() {
 
     let config = GpuSpatialJoinConfig {
         device_id: 0,
-        max_memory: None,
         fallback_to_cpu: true,
     };
 
@@ -302,7 +299,6 @@ async fn test_gpu_join_with_empty_input() {
 
     let config = GpuSpatialJoinConfig {
         device_id: 0,
-        max_memory: None,
         fallback_to_cpu: true,
     };
 
