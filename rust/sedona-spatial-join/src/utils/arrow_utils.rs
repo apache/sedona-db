@@ -265,8 +265,8 @@ mod tests {
 
         // Slice: first struct row only
         let slice0 = struct_ref.slice(0, 1);
-        let expected_bv_slice0 = 1 * OFFSET_BYTES + 2 * VIEW_BYTES + long1.len();
-        let expected_i32_slice0 = 1 * OFFSET_BYTES + 3 * I32_BYTES;
+        let expected_bv_slice0 = OFFSET_BYTES + 2 * VIEW_BYTES + long1.len();
+        let expected_i32_slice0 = OFFSET_BYTES + 3 * I32_BYTES;
         assert_eq!(
             get_array_memory_size(&slice0).unwrap(),
             expected_bv_slice0 + expected_i32_slice0
@@ -274,8 +274,8 @@ mod tests {
 
         // Slice: second struct row only
         let slice1 = struct_ref.slice(1, 1);
-        let expected_bv_slice1 = 1 * OFFSET_BYTES + 1 * VIEW_BYTES + long2.len();
-        let expected_i32_slice1 = 1 * OFFSET_BYTES + 1 * I32_BYTES;
+        let expected_bv_slice1 = OFFSET_BYTES + VIEW_BYTES + long2.len();
+        let expected_i32_slice1 = OFFSET_BYTES + I32_BYTES;
         assert_eq!(
             get_array_memory_size(&slice1).unwrap(),
             expected_bv_slice1 + expected_i32_slice1
