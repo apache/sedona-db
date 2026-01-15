@@ -337,7 +337,7 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
     }
 
     fn size(&self) -> usize {
-        size_of::<BoundsAccumulator2D>()
+        size_of::<BoundsGroupsAccumulator2D>()
             + self.xs.capacity() * size_of::<Interval>()
             + self.ys.capacity() * size_of::<Interval>()
     }
