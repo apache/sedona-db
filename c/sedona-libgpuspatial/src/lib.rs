@@ -522,7 +522,7 @@ mod tests {
             .unwrap();
 
         let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects);
+        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects);
         let tester =
             ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
 
