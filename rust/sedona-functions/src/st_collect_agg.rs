@@ -413,6 +413,38 @@ mod test {
     }
 
     #[rstest]
+    fn udf_invoke_item_crs_idential_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batch0 = create_array_item_crs(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            [Some("EPSG:4326"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let batch1 = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [Some("EPSG:4326"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"),
+            Some("EPSG:4326"),
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(
+            &tester
+                .aggregate(&vec![batch0.clone(), batch1.clone()])
+                .unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
     fn udf_invoke_item_crs_multiple_compatible_crs() {
         let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
         let tester =
