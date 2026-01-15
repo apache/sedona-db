@@ -28,6 +28,7 @@ use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
+use crate::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
 use crate::scalar_udf::{IntoScalarKernelRefs, ScalarKernelRef, SedonaScalarKernel};
 
 /// Wrap a [SedonaScalarKernel] to provide Item CRS type support
@@ -111,6 +112,103 @@ impl SedonaScalarKernel for ItemCrsKernel {
         _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+    }
+}
+
+/// Wrap a [SedonaAccumulator] to provide Item CRS type support
+///
+/// Most accumulators that operate on geometry or geography in some way
+/// can also support Item CRS inputs:
+///
+/// - Accumulators that return a non-spatial type whose value does not
+///   depend on the input CRS only need to operate on the `item` portion
+///   of any item_crs input (e.g., ST_Union_Agg()).
+/// - Accumulators that return a geometry or geography must also return
+///   an item_crs type where the output CRSes are propagated from the
+///   input.
+///
+/// This accumulator provides an automatic wrapper enforcing these rules.
+/// It is appropriate for most aggregate functions except:
+///
+/// - Accumulators whose return value depends on the CRS
+/// - Accumulators whose return CRS is not strictly propagated from the
+///   CRSes of the arguments.
+#[derive(Debug)]
+pub struct ItemCrsAccumulator {
+    inner: SedonaAccumulatorRef,
+}
+
+impl ItemCrsAccumulator {
+    /// Create a new [SedonaAccumulatorRef] wrapping the input
+    ///
+    /// The resulting accumulator matches arguments of the input with ItemCrs inputs
+    /// but not those of the original accumulator (i.e., an aggregate function needs both
+    /// accumulators to support both type-level and item-level CRSes).
+    pub fn new_ref(inner: SedonaAccumulatorRef) -> SedonaAccumulatorRef {
+        Arc::new(Self { inner })
+    }
+
+    /// Wrap a vector of accumulators by appending all ItemCrs versions followed by
+    /// the contents of inner
+    ///
+    /// This is the recommended way to add accumulators when all of them should support
+    /// ItemCrs inputs.
+    pub fn wrap_impl(inner: impl IntoSedonaAccumulatorRefs) -> Vec<SedonaAccumulatorRef> {
+        let accumulators = inner.into_sedona_accumulator_refs();
+
+        let mut out = Vec::with_capacity(accumulators.len() * 2);
+
+        // Add ItemCrsAccumulators first (so they will be resolved last)
+        for inner_accumulator in &accumulators {
+            out.push(ItemCrsAccumulator::new_ref(inner_accumulator.clone()));
+        }
+
+        for inner_accumulator in accumulators {
+            out.push(inner_accumulator);
+        }
+
+        out
+    }
+}
+
+impl SedonaAccumulator for ItemCrsAccumulator {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        // TODO: Implement return_type_handle_item_crs for accumulators
+        let _ = args;
+        todo!("ItemCrsAccumulator::return_type")
+    }
+
+    fn accumulator(
+        &self,
+        args: &[SedonaType],
+        output_type: &SedonaType,
+    ) -> Result<Box<dyn datafusion_expr::Accumulator>> {
+        // TODO: Implement accumulator wrapper that handles item_crs
+        let _ = (args, output_type);
+        todo!("ItemCrsAccumulator::accumulator")
+    }
+
+    fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<arrow_schema::FieldRef>> {
+        // TODO: Implement state_fields for item_crs
+        let _ = args;
+        todo!("ItemCrsAccumulator::state_fields")
+    }
+}
+
+/// A trait for types that can be converted into a vector of [SedonaAccumulatorRef]
+pub trait IntoSedonaAccumulatorRefs {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef>;
+}
+
+impl IntoSedonaAccumulatorRefs for Vec<SedonaAccumulatorRef> {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        self
+    }
+}
+
+impl IntoSedonaAccumulatorRefs for SedonaAccumulatorRef {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        vec![self]
     }
 }
 
