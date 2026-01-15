@@ -175,3 +175,58 @@ pub(super) fn record_decompressor<'a, R: Read + Seek + Send + Sync + 'a>(
 
     Ok(decompressor)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{io::Cursor, sync::Arc};
+
+    use datafusion_datasource::PartitionedFile;
+    use las::{point::Format, Builder, Point, Writer};
+    use object_store::{memory::InMemory, path::Path, ObjectStore, PutPayload};
+
+    use crate::laz::reader::LazFileReaderFactory;
+
+    #[allow(static_mut_refs)]
+    #[tokio::test]
+    async fn reader_basic_e2e() {
+        // create laz file
+        static mut LAZ: Vec<u8> = Vec::new();
+
+        let mut builder = Builder::from((1, 4));
+        builder.point_format = Format::new(1).unwrap();
+        builder.point_format.is_compressed = true;
+        let header = builder.into_header().unwrap();
+        let write = unsafe { Cursor::new(&mut LAZ) };
+        let mut writer = Writer::new(write, header).unwrap();
+
+        let point = Point {
+            gps_time: Some(Default::default()),
+            ..Default::default()
+        };
+        writer.write_point(point).unwrap();
+
+        writer.close().unwrap();
+
+        // put to object store
+        let store = InMemory::new();
+        let location = Path::parse("test.laz").unwrap();
+        let payload = unsafe { PutPayload::from_static(&LAZ) };
+        store.put(&location, payload).await.unwrap();
+
+        // read batch with `LazFileReader`
+        let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
+            .create_reader(
+                PartitionedFile::new(location, unsafe { LAZ.len() as u64 }),
+                Default::default(),
+            )
+            .unwrap();
+        let metadata = laz_file_reader.get_metadata().await.unwrap();
+
+        let batch = laz_file_reader
+            .get_batch(&metadata.chunk_table[0])
+            .await
+            .unwrap();
+
+        assert_eq!(batch.num_rows(), 1);
+    }
+}

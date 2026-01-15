@@ -15,7 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, error::Error, io::Cursor, ops::Range, sync::Arc};
+use std::{
+    any::Any,
+    collections::HashMap,
+    error::Error,
+    io::{Cursor, Read},
+    ops::Range,
+    sync::Arc,
+};
 
 use arrow_schema::{DataType, Schema, SchemaRef};
 use datafusion_common::{
@@ -97,7 +104,7 @@ impl<'a> LazMetadataReader<'a> {
 
     /// Fetch header
     pub async fn fetch_header(&self) -> Result<Header, DataFusionError> {
-        fetch_header(self.store, self.object_meta, false)
+        fetch_header(self.store, self.object_meta)
             .await
             .map_err(DataFusionError::External)
     }
@@ -200,7 +207,6 @@ impl<'a> LazMetadataReader<'a> {
 pub(crate) async fn fetch_header(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
-    include_evlr: bool,
 ) -> Result<Header, Box<dyn Error + Send + Sync>> {
     let location = &object_meta.location;
 
@@ -210,9 +216,11 @@ pub(crate) async fn fetch_header(
     let raw_header = RawHeader::read_from(reader)?;
 
     let header_size = raw_header.header_size as u64;
-    let num_vlr = raw_header.number_of_variable_length_records;
     let offset_to_point_data = raw_header.offset_to_point_data as u64;
+    let num_vlr = raw_header.number_of_variable_length_records;
     let evlr = raw_header.evlr;
+
+    let mut builder = Builder::new(raw_header)?;
 
     // VLRs
     let bytes = store
@@ -220,36 +228,31 @@ pub(crate) async fn fetch_header(
         .await?;
     let mut reader = Cursor::new(bytes);
 
-    let mut builder = Builder::new(raw_header)?;
-    let mut position = 0;
     for _ in 0..num_vlr {
         let vlr = RawVlr::read_from(&mut reader, false).map(Vlr::new)?;
-        position += vlr.len(false) as u64;
         builder.vlrs.push(vlr);
     }
 
-    builder.padding = vec![0; (offset_to_point_data - (header_size + position)) as usize];
+    reader.read_to_end(&mut builder.vlr_padding)?;
 
     // EVLRs
-    if include_evlr {
-        if let Some(evlr) = evlr {
-            let mut start = evlr.start_of_first_evlr;
+    if let Some(evlr) = evlr {
+        let mut start = evlr.start_of_first_evlr;
 
-            for _ in 0..evlr.number_of_evlrs {
-                let mut end = start + 60;
+        for _ in 0..evlr.number_of_evlrs {
+            let mut end = start + 60;
 
-                let bytes = store.get_range(location, start..end).await?;
+            let bytes = store.get_range(location, start..end).await?;
 
-                end += u64::from_le_bytes(bytes[20..28].try_into()?);
+            end += u64::from_le_bytes(bytes[20..28].try_into()?);
 
-                let bytes = store.get_range(location, start..end).await?;
-                let mut reader = Cursor::new(bytes);
-                let evlr = RawVlr::read_from(&mut reader, true).map(Vlr::new)?;
+            let bytes = store.get_range(location, start..end).await?;
+            let mut reader = Cursor::new(bytes);
+            let evlr = RawVlr::read_from(&mut reader, true).map(Vlr::new)?;
 
-                builder.evlrs.push(evlr);
+            builder.evlrs.push(evlr);
 
-                start = end;
-            }
+            start = end;
         }
     }
 
@@ -346,7 +349,6 @@ pub(crate) async fn chunk_table(
         object_meta.size - 8..object_meta.size,
     ];
     let bytes = store.get_ranges(&object_meta.location, &ranges).await?;
-
     let mut table_offset = None;
 
     let table_offset1 = i64::from_le_bytes(bytes[0].to_vec().try_into().unwrap()) as u64;
@@ -362,18 +364,17 @@ pub(crate) async fn chunk_table(
         return Err("LAZ files without chunk table not supported (yet)".into());
     };
 
+    if table_offset > object_meta.size {
+        return Err("LAZ file chunk table position is missing/bad".into());
+    }
+
     let bytes = store
         .get_range(&object_meta.location, table_offset..table_offset + 8)
         .await?;
 
     let num_chunks = u32::from_le_bytes(bytes[4..].to_vec().try_into().unwrap()) as u64;
-
-    let bytes = store
-        .get_range(
-            &object_meta.location,
-            table_offset..table_offset + 8 + 8 * num_chunks,
-        )
-        .await?;
+    let range = table_offset..table_offset + 8 + 8 * num_chunks;
+    let bytes = store.get_range(&object_meta.location, range).await?;
 
     let mut reader = Cursor::new(bytes);
     let variable_size = laz_vlr.uses_variable_size_chunks();
@@ -402,4 +403,49 @@ pub(crate) async fn chunk_table(
     }
 
     Ok(chunks)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use las::{point::Format, Builder, Reader, Writer};
+    use object_store::{memory::InMemory, path::Path, ObjectStore, PutPayload};
+
+    use crate::laz::metadata::LazMetadataReader;
+
+    #[allow(static_mut_refs)]
+    #[tokio::test]
+    async fn header_basic_e2e() {
+        // create laz file
+        static mut LAZ: Vec<u8> = Vec::new();
+
+        let mut builder = Builder::from((1, 4));
+        builder.point_format = Format::new(1).unwrap();
+        builder.point_format.is_compressed = true;
+        let header = builder.into_header().unwrap();
+        let write = unsafe { Cursor::new(&mut LAZ) };
+        let mut writer = Writer::new(write, header).unwrap();
+
+        writer.close().unwrap();
+
+        // put to object store
+        let store = InMemory::new();
+        let location = Path::parse("test.laz").unwrap();
+        let payload = unsafe { PutPayload::from_static(&LAZ) };
+        store.put(&location, payload).await.unwrap();
+
+        // read with `LazMetadataReader`
+        let object_meta = store.head(&location).await.unwrap();
+        let metadata_reader = LazMetadataReader::new(&store, &object_meta);
+
+        // read with las `Reader`
+        let read = unsafe { Cursor::new(&mut LAZ) };
+        let reader = Reader::new(read).unwrap();
+
+        assert_eq!(
+            reader.header(),
+            &metadata_reader.fetch_header().await.unwrap()
+        );
+    }
 }
