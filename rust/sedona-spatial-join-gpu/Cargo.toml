@@ -75,11 +75,12 @@ geo-index = { workspace = true }
 float_next_after = { workspace = true }
 log = "0.4"
 fastrand = { workspace = true }
+rstest = "0.26.1"
 
 [dev-dependencies]
-criterion = { workspace = true }
 env_logger = { workspace = true }
 rand = { workspace = true }
+rstest = { workspace = true }
 
 sedona-testing = { workspace = true }
 sedona-geos = { workspace = true }

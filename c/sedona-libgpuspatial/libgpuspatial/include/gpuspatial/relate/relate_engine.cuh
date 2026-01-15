@@ -15,10 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 #pragma once
-#include "../rt/rt_engine.hpp"
 #include "gpuspatial/loader/device_geometries.cuh"
 #include "gpuspatial/relate/predicate.cuh"
-#include "gpuspatial/utils/queue.h"
+#include "gpuspatial/rt/rt_engine.hpp"
 
 #include "rmm/cuda_stream_view.hpp"
 
@@ -127,8 +126,8 @@ class RelateEngine {
                          ArrayView<uint32_t> poly_ids, int segs_per_aabb);
 
   size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
-                          const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-                          ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb);
+                         const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
+                         ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb);
 
   /**
    * Build BVH for a subset of polygons

@@ -243,7 +243,7 @@ impl SpatialJoinOptimizer {
                 // Try GPU path first if feature is enabled
                 // Need to downcast to SpatialJoinExec for GPU optimizer
                 if let Some(spatial_join_exec) =
-                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                    spatial_join.as_any().downcast_ref::<GpuSpatialJoinExec>()
                 {
                     if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
                     {
@@ -263,7 +263,7 @@ impl SpatialJoinOptimizer {
                 // Try GPU path first if feature is enabled
                 // Need to downcast to SpatialJoinExec for GPU optimizer
                 if let Some(spatial_join_exec) =
-                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                    spatial_join.as_any().downcast_ref::<GpuSpatialJoinExec>()
                 {
                     if let Some(gpu_join) = try_create_gpu_spatial_join(spatial_join_exec, config)?
                     {
@@ -1089,52 +1089,12 @@ fn is_spatial_predicate_supported(
 mod gpu_optimizer {
     use super::*;
     use datafusion_common::DataFusionError;
-    use sedona_libgpuspatial::GpuSpatialRelationPredicate;
-    use sedona_spatial_join_gpu::spatial_predicate::{
-        RelationPredicate as GpuJoinRelationPredicate, SpatialPredicate as GpuJoinSpatialPredicate,
-    };
     use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
-
-    fn convert_relation_type(t: &SpatialRelationType) -> Result<GpuSpatialRelationPredicate> {
-        match t {
-            SpatialRelationType::Equals => Ok(GpuSpatialRelationPredicate::Equals),
-            SpatialRelationType::Touches => Ok(GpuSpatialRelationPredicate::Touches),
-            SpatialRelationType::Contains => Ok(GpuSpatialRelationPredicate::Contains),
-            SpatialRelationType::Covers => Ok(GpuSpatialRelationPredicate::Covers),
-            SpatialRelationType::Intersects => Ok(GpuSpatialRelationPredicate::Intersects),
-            SpatialRelationType::Within => Ok(GpuSpatialRelationPredicate::Within),
-            SpatialRelationType::CoveredBy => Ok(GpuSpatialRelationPredicate::CoveredBy),
-            _ => {
-                // This should not happen as we check for supported predicates earlier
-                Err(DataFusionError::Execution(format!(
-                    "Unsupported spatial relation type for GPU: {:?}",
-                    t
-                )))
-            }
-        }
-    }
-    fn convert_predicate(p: &SpatialPredicate) -> Result<GpuJoinSpatialPredicate> {
-        match p {
-            SpatialPredicate::Relation(rp) => Ok(GpuJoinSpatialPredicate::Relation(
-                GpuJoinRelationPredicate {
-                    left: rp.left.clone(),
-                    right: rp.right.clone(),
-                    relation_type: convert_relation_type(&rp.relation_type)?,
-                },
-            )),
-            _ => {
-                // This should not happen as we check for supported predicates earlier
-                Err(DataFusionError::Execution(
-                    "Only relation predicates are supported on GPU".into(),
-                ))
-            }
-        }
-    }
 
     /// Attempt to create a GPU-accelerated spatial join.
     /// Returns None if GPU path is not applicable for this query.
     pub fn try_create_gpu_spatial_join(
-        spatial_join: &SpatialJoinExec,
+        spatial_join: &GpuSpatialJoinExec,
         config: &ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         let sedona_options = config
@@ -1160,9 +1120,9 @@ mod gpu_optimizer {
         let gpu_join = Arc::new(GpuSpatialJoinExec::try_new(
             left,
             right,
-            convert_predicate(&spatial_join.on)?,
+            spatial_join.on.clone(),
             spatial_join.filter.clone(),
-            spatial_join.join_type(),
+            &spatial_join.join_type,
             spatial_join.projection().cloned(),
             gpu_config,
         )?);
@@ -1174,6 +1134,7 @@ mod gpu_optimizer {
 // Re-export for use in main optimizer
 #[cfg(feature = "gpu")]
 use gpu_optimizer::try_create_gpu_spatial_join;
+use sedona_spatial_join_gpu::GpuSpatialJoinExec;
 
 // Stub for when GPU feature is disabled
 #[cfg(not(feature = "gpu"))]

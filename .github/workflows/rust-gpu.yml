@@ -63,9 +63,14 @@ jobs:
     # GPU tests are skipped (no GPU hardware for runtime execution)
     # TODO: Once GPU runner is ready, enable GPU tests with:
     #   runs-on: [self-hosted, gpu, linux, cuda]
-    name: "build"
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ "clippy", "docs", "test", "build" ]
+
+    name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: 0
       # Disable debug info completely to save disk space
@@ -111,19 +116,9 @@ jobs:
           android: true      # Remove Android SDK (not needed)
           dotnet: true       # Remove .NET runtime (not needed)
           haskell: true      # Remove Haskell toolchain (not needed)
-          large-packages: true   # Remove large packages to free more space
+          large-packages: false  # Keep essential packages including build-essential
           swap-storage: true     # Remove swap file to free space
           docker-images: true    # Remove docker images (not needed)
-
-      - name: Additional disk cleanup
-        run: |
-          # Remove additional unnecessary files
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
-          # Show available disk space
-          df -h
 
       # Install system dependencies including CUDA toolkit for compilation
       - name: Install system dependencies
@@ -151,9 +146,6 @@ jobs:
 
           # Install GEOS for spatial operations
           sudo apt-get install -y libgeos-dev
-
-          # Install zstd for nanoarrow IPC compression
-          sudo apt-get install -y libzstd-dev
 
           # Install CUDA toolkit for compilation (nvcc)
           # Note: CUDA compilation works without GPU hardware
@@ -187,7 +179,16 @@ jobs:
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build
-          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-4
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
+
+      # Install vcpkg dependencies from vcpkg.json manifest
+      - name: Install vcpkg dependencies
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ./vcpkg/vcpkg install abseil openssl
+          # Clean up vcpkg buildtrees and downloads to save space
+          rm -rf vcpkg/buildtrees
+          rm -rf vcpkg/downloads
 
       - name: Use stable Rust
         id: rust
@@ -203,13 +204,14 @@ jobs:
         run: |
           echo "=== Building libgpuspatial tests ==="
           cd c/sedona-libgpuspatial/libgpuspatial
-          mkdir -p build
-          cmake -DGPUSPATIAL_BUILD_TESTS=ON --preset=default-with-tests -S . -B build
+          mkdir build
+          cmake --preset=default-with-tests -S . -B build
           cmake --build build --target all
+
       # Build WITH GPU feature to compile CUDA code
       # CUDA compilation (nvcc) works without GPU hardware
       # Only GPU runtime execution requires actual GPU
-      - name: Build Rust libgpuspatial package
+      - name: Build libgpuspatial (with CUDA compilation)
         run: |
           echo "=== Building libgpuspatial WITH GPU feature ==="
           echo "Compiling CUDA code using nvcc (no GPU hardware needed for compilation)"
@@ -224,12 +226,3 @@ jobs:
       - name: Build GPU Spatial Join Package
         run: |
           cargo build --workspace --package sedona-spatial-join-gpu --features gpu --verbose
-
-      - name: Cleanup build artifacts to free disk space
-        run: |
-          # Remove CMake build intermediates to free disk space
-          find target -name "*.o" -delete 2>/dev/null || true
-          find target -name "*.ptx" -delete 2>/dev/null || true
-          find target -type d -name "_deps" -exec rm -rf {} + 2>/dev/null || true
-          # Show available disk space
-          df -h

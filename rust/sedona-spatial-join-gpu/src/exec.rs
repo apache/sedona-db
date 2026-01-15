@@ -123,7 +123,7 @@ impl GpuSpatialJoinExec {
         )
     }
 
-    /// Create a new SpatialJoinExec with additional options
+    /// Create a new GpuSpatialJoinExec with additional options
     #[allow(clippy::too_many_arguments)]
     pub fn try_new_with_options(
         left: Arc<dyn ExecutionPlan>,
@@ -203,7 +203,7 @@ impl GpuSpatialJoinExec {
     ///
     /// NOTICE: The implementation of this function should be identical to the one in
     /// [`datafusion_physical_plan::physical_plan::join::NestedLoopJoinExec::compute_properties`].
-    /// This is because SpatialJoinExec is transformed from NestedLoopJoinExec in physical plan
+    /// This is because GpuSpatialJoinExec is transformed from NestedLoopJoinExec in physical plan
     /// optimization phase. If the properties are not the same, the plan will be incorrect.
     ///
     /// When converted from HashJoin, we preserve HashJoin's equivalence properties by extracting

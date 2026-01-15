@@ -24,39 +24,39 @@
 
 # This function finds nanoarrow and sets any additional necessary environment variables.
 function(find_and_configure_nanoarrow)
-    if (NOT BUILD_SHARED_LIBS)
-        set(_exclude_from_all EXCLUDE_FROM_ALL FALSE)
-    else ()
-        set(_exclude_from_all EXCLUDE_FROM_ALL TRUE)
-    endif ()
+  if(NOT BUILD_SHARED_LIBS)
+    set(_exclude_from_all EXCLUDE_FROM_ALL FALSE)
+  else()
+    set(_exclude_from_all EXCLUDE_FROM_ALL TRUE)
+  endif()
 
-    # Currently we need to always build nanoarrow so we don't pickup a previous installed version
-    set(CPM_DOWNLOAD_nanoarrow ON)
-    rapids_cpm_find(nanoarrow
-            0.7.0.dev
-            GLOBAL_TARGETS
-            nanoarrow
-            CPM_ARGS
-            GIT_REPOSITORY
-            https://github.com/apache/arrow-nanoarrow.git
-            GIT_TAG
-            4bf5a9322626e95e3717e43de7616c0a256179eb
-            GIT_SHALLOW
-            FALSE
-            OPTIONS
-            "BUILD_SHARED_LIBS OFF"
-            "NANOARROW_NAMESPACE gpuspatial"
-            ${_exclude_from_all})
-    set_target_properties(nanoarrow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    if (TARGET nanoarrow_ipc) # Tests need this
-        target_compile_options(nanoarrow_ipc PRIVATE -Wno-conversion)
-    endif ()
-    target_compile_options(nanoarrow PRIVATE -Wno-conversion)
-    rapids_export_find_package_root(BUILD
-            nanoarrow
-            "${nanoarrow_BINARY_DIR}"
-            EXPORT_SET
-            gpuspatial-exports)
+  # Currently we need to always build nanoarrow so we don't pickup a previous installed version
+  set(CPM_DOWNLOAD_nanoarrow ON)
+  rapids_cpm_find(nanoarrow
+                  0.7.0.dev
+                  GLOBAL_TARGETS
+                  nanoarrow
+                  CPM_ARGS
+                  GIT_REPOSITORY
+                  https://github.com/apache/arrow-nanoarrow.git
+                  GIT_TAG
+                  4bf5a9322626e95e3717e43de7616c0a256179eb
+                  GIT_SHALLOW
+                  FALSE
+                  OPTIONS
+                  "BUILD_SHARED_LIBS OFF"
+                  "NANOARROW_NAMESPACE gpuspatial"
+                  ${_exclude_from_all})
+  set_target_properties(nanoarrow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if(TARGET nanoarrow_ipc) # Tests need this
+    target_compile_options(nanoarrow_ipc PRIVATE -Wno-conversion)
+  endif()
+  target_compile_options(nanoarrow PRIVATE -Wno-conversion)
+  rapids_export_find_package_root(BUILD
+                                  nanoarrow
+                                  "${nanoarrow_BINARY_DIR}"
+                                  EXPORT_SET
+                                  gpuspatial-exports)
 endfunction()
 
 find_and_configure_nanoarrow()
