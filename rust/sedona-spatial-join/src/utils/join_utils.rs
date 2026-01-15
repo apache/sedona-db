@@ -367,6 +367,13 @@ where
         .collect()
 }
 
+/// Returns an array for mark joins consisting of default values (zeros) with null/non-null markers.
+///
+/// For each index in `range`:
+/// - If the index appears in `input_indices`, the value is non-null (0)
+/// - If the index does not appear in `input_indices`, the value is null
+///
+/// This is used in mark joins to indicate which rows had matches.
 pub(crate) fn get_mark_indices<T: ArrowPrimitiveType, R: ArrowPrimitiveType>(
     range: &Range<usize>,
     input_indices: &PrimitiveArray<T>,

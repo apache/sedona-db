@@ -1029,6 +1029,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mark_join_via_correlated_exists_sql() -> Result<()> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
+
+        let mem_table_left: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+            left_schema.clone(),
+            left_partitions.clone(),
+        )?);
+        let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+            right_schema.clone(),
+            right_partitions.clone(),
+        )?);
+
+        // DataFusion doesn't have explicit SQL syntax for MARK joins. Predicate subqueries embedded
+        // in a more complex boolean expression (e.g. OR) are planned using a MARK join.
+        //
+        // Using EXISTS here (rather than IN) keeps the join filter as the pulled-up correlated
+        // predicate (ST_Intersects), which is what SpatialJoinExec can optimize.
+        let sql = "SELECT L.id FROM L WHERE L.id = 1 OR EXISTS (SELECT 1 FROM R WHERE ST_Intersects(L.geometry, R.geometry)) ORDER BY L.id";
+
+        let batch_size = 10;
+        let options = SpatialJoinOptions::default();
+
+        // Optimized plan should include a SpatialJoinExec with Mark join type.
+        let ctx = setup_context(Some(options), batch_size)?;
+        ctx.register_table("L", Arc::clone(&mem_table_left))?;
+        ctx.register_table("R", Arc::clone(&mem_table_right))?;
+        let df = ctx.sql(sql).await?;
+        let plan = df.clone().create_physical_plan().await?;
+        let spatial_join_execs = collect_spatial_join_exec(&plan)?;
+        assert!(
+            spatial_join_execs
+                .iter()
+                .any(|exec| matches!(*exec.join_type(), JoinType::LeftMark | JoinType::RightMark)),
+            "expected correlated IN-subquery to plan using a MARK join when optimized"
+        );
+        let actual_schema = df.schema().as_arrow().clone();
+        let actual_batches = df.collect().await?;
+        let actual_batch =
+            arrow::compute::concat_batches(&Arc::new(actual_schema), &actual_batches)?;
+
+        // Unoptimized plan should still contain a Mark join, but implemented as NestedLoopJoinExec.
+        let ctx_no_opt = setup_context(None, batch_size)?;
+        ctx_no_opt.register_table("L", mem_table_left)?;
+        ctx_no_opt.register_table("R", mem_table_right)?;
+        let df_no_opt = ctx_no_opt.sql(sql).await?;
+        let plan_no_opt = df_no_opt.clone().create_physical_plan().await?;
+        let nlj_execs = collect_nested_loop_join_exec(&plan_no_opt)?;
+        assert!(
+            nlj_execs
+                .iter()
+                .any(|exec| matches!(*exec.join_type(), JoinType::LeftMark | JoinType::RightMark)),
+            "expected correlated IN-subquery to plan using a MARK join when not optimized"
+        );
+        let expected_schema = df_no_opt.schema().as_arrow().clone();
+        let expected_batches = df_no_opt.collect().await?;
+        let expected_batch =
+            arrow::compute::concat_batches(&Arc::new(expected_schema), &expected_batches)?;
+
+        assert!(expected_batch.num_rows() > 0);
+        assert_eq!(expected_batch, actual_batch);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_geography_join_is_not_optimized() -> Result<()> {
         let options = SpatialJoinOptions::default();
         let ctx = setup_context(Some(options), 10)?;
@@ -1213,6 +1279,19 @@ mod tests {
         Ok(spatial_join_execs)
     }
 
+    fn collect_nested_loop_join_exec(
+        plan: &Arc<dyn ExecutionPlan>,
+    ) -> Result<Vec<&NestedLoopJoinExec>> {
+        let mut execs = Vec::new();
+        plan.apply(|node| {
+            if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
+                execs.push(exec);
+            }
+            Ok(TreeNodeRecursion::Continue)
+        })?;
+        Ok(execs)
+    }
+
     async fn test_mark_join(
         join_type: JoinType,
         options: SpatialJoinOptions,
@@ -1256,17 +1335,7 @@ mod tests {
         ctx_no_opt.register_table("R", mem_table_right)?;
         let df_no_opt = ctx_no_opt.sql(sql).await?;
         let plan_no_opt = df_no_opt.create_physical_plan().await?;
-        fn collect_nlj_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&NestedLoopJoinExec>> {
-            let mut execs = Vec::new();
-            plan.apply(|node| {
-                if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
-                    execs.push(exec);
-                }
-                Ok(TreeNodeRecursion::Continue)
-            })?;
-            Ok(execs)
-        }
-        let nlj_execs = collect_nlj_exec(&plan_no_opt)?;
+        let nlj_execs = collect_nested_loop_join_exec(&plan_no_opt)?;
         assert_eq!(nlj_execs.len(), 1);
         let original_nlj = nlj_execs[0];
         let mark_nlj = NestedLoopJoinExec::try_new(
