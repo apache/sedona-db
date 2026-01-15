@@ -17,12 +17,12 @@
 
 use std::{fmt::Debug, iter::zip, sync::Arc};
 
-use arrow_array::{ArrayRef, StructArray};
+use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
-    DataFusionError, Result, ScalarValue,
+    exec_err, DataFusionError, Result, ScalarValue,
 };
 use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::sedona_internal_err;
@@ -260,9 +260,18 @@ impl Accumulator for ItemCrsAccumulator {
         let crs_array = as_string_view_array(struct_array.column(1))?;
 
         // Check and track CRS values
-        for crs_value in crs_array.iter() {
-            let crs_str = crs_value.unwrap_or("0");
-            self.merge_crs(crs_str)?;
+        if let Some(struct_nulls) = struct_array.nulls() {
+            // Skip CRS values for null items
+            for (is_valid, crs_value) in zip(struct_nulls, crs_array.iter()) {
+                if is_valid {
+                    self.merge_crs(crs_value.unwrap_or("0"))?;
+                }
+            }
+        } else {
+            // No nulls
+            for crs_value in crs_array.iter() {
+                self.merge_crs(crs_value.unwrap_or("0"))?;
+            }
         }
 
         // Update the inner accumulator with just the item portion
@@ -308,9 +317,10 @@ impl Accumulator for ItemCrsAccumulator {
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
         // The CRS field is the last element of states
-        let crs_array = as_string_view_array(states.last().ok_or_else(|| {
-            DataFusionError::Internal("Expected at least one state field".to_string())
-        })?)?;
+        if states.is_empty() {
+            return sedona_internal_err!("Expected at least one state field");
+        }
+        let crs_array = as_string_view_array(states.last().unwrap())?;
 
         // Check and merge CRS values from the state
         for crs_str in crs_array.iter().flatten() {
@@ -326,7 +336,9 @@ impl Accumulator for ItemCrsAccumulator {
 impl ItemCrsAccumulator {
     /// Merge a CRS value into the accumulator's tracked CRS
     ///
-    /// Ensures all CRS values are compatible (equal or null/sentinel).
+    /// Ensures all CRS values are compatible. Here "0" means an explicit
+    /// null crs. This is because we have to serialize it somehow and None
+    /// is reserved for the "we haven't seen a CRS yet".
     fn merge_crs(&mut self, crs_str: &str) -> Result<()> {
         match &self.crs {
             None => {
@@ -335,16 +347,7 @@ impl ItemCrsAccumulator {
                 Ok(())
             }
             Some(existing) if existing == crs_str => {
-                // Same CRS, nothing to do
-                Ok(())
-            }
-            Some(existing) if existing == "0" => {
-                // Existing is sentinel, use the new value
-                self.crs = Some(crs_str.to_string());
-                Ok(())
-            }
-            Some(_) if crs_str == "0" => {
-                // New value is sentinel, keep existing
+                // CRS is byte-for-byte equal, nothing to do
                 Ok(())
             }
             Some(existing) => {
@@ -354,9 +357,11 @@ impl ItemCrsAccumulator {
                 if existing_crs == new_crs {
                     Ok(())
                 } else {
-                    Err(DataFusionError::Execution(format!(
-                        "CRS values not equal: {existing:?} vs {crs_str:?}",
-                    )))
+                    let existing_displ = existing_crs
+                        .map(|c| c.to_string())
+                        .unwrap_or("None".to_string());
+                    let new_displ = new_crs.map(|c| c.to_string()).unwrap_or("None".to_string());
+                    exec_err!("CRS values not equal: {existing_displ} vs {new_displ}")
                 }
             }
         }
