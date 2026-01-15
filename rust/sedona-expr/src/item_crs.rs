@@ -19,12 +19,12 @@ use std::{fmt::Debug, iter::zip, sync::Arc};
 
 use arrow_array::{ArrayRef, StructArray};
 use arrow_buffer::NullBuffer;
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
     DataFusionError, Result, ScalarValue,
 };
-use datafusion_expr::ColumnarValue;
+use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -134,11 +134,11 @@ impl SedonaScalarKernel for ItemCrsKernel {
 /// - Accumulators whose return CRS is not strictly propagated from the
 ///   CRSes of the arguments.
 #[derive(Debug)]
-pub struct ItemCrsAccumulator {
+pub struct ItemCrsSedonaAccumulator {
     inner: SedonaAccumulatorRef,
 }
 
-impl ItemCrsAccumulator {
+impl ItemCrsSedonaAccumulator {
     /// Create a new [SedonaAccumulatorRef] wrapping the input
     ///
     /// The resulting accumulator matches arguments of the input with ItemCrs inputs
@@ -160,7 +160,7 @@ impl ItemCrsAccumulator {
 
         // Add ItemCrsAccumulators first (so they will be resolved last)
         for inner_accumulator in &accumulators {
-            out.push(ItemCrsAccumulator::new_ref(inner_accumulator.clone()));
+            out.push(ItemCrsSedonaAccumulator::new_ref(inner_accumulator.clone()));
         }
 
         for inner_accumulator in accumulators {
@@ -171,9 +171,23 @@ impl ItemCrsAccumulator {
     }
 }
 
-impl SedonaAccumulator for ItemCrsAccumulator {
+impl SedonaAccumulator for ItemCrsSedonaAccumulator {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        // TODO: Implement return_type_handle_item_crs for accumulators
+        // We don't have any functions we can test this with yet, so for the moment only support
+        // single-argument aggregations (slightly simpler).
+        if args.len() != 1 {
+            return sedona_internal_err!(
+                "ItemCrsSedonaAccumulator can't be used for aggregate functions with >1 argument"
+            );
+        }
+
+        // This implementation doesn't apply to non-item crs types
+        if !ArgMatcher::is_item_crs().match_type(&args[0]) {
+            return Ok(None);
+        }
+
+        // TODO: strip any CRS that might be present from the input type, resolve the inner
+        // accumulator.
         let _ = args;
         todo!("ItemCrsAccumulator::return_type")
     }
@@ -183,15 +197,19 @@ impl SedonaAccumulator for ItemCrsAccumulator {
         args: &[SedonaType],
         output_type: &SedonaType,
     ) -> Result<Box<dyn datafusion_expr::Accumulator>> {
+        // TODO: strip any CRS that might be present from the input type, resolve the inner
+        // accumulator.
+
         // TODO: Implement accumulator wrapper that handles item_crs
         let _ = (args, output_type);
         todo!("ItemCrsAccumulator::accumulator")
     }
 
-    fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<arrow_schema::FieldRef>> {
-        // TODO: Implement state_fields for item_crs
-        let _ = args;
-        todo!("ItemCrsAccumulator::state_fields")
+    fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
+        // We need an extra state field to track the CRS of each group
+        let mut fields = self.inner.state_fields(args)?;
+        fields.push(Field::new("group_crs", DataType::Utf8View, true).into());
+        Ok(fields)
     }
 }
 
@@ -209,6 +227,48 @@ impl IntoSedonaAccumulatorRefs for Vec<SedonaAccumulatorRef> {
 impl IntoSedonaAccumulatorRefs for SedonaAccumulatorRef {
     fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
         vec![self]
+    }
+}
+
+#[derive(Debug)]
+struct ItemCrsAccumulator {
+    /// The wrapped inner accumulator
+    inner: Box<dyn Accumulator>,
+    /// If any rows have been encountered, the CRS (the literal string "0" is used
+    /// as a sentinel for "no CRS")
+    crs: Option<String>,
+}
+
+impl Accumulator for ItemCrsAccumulator {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        // TODO: Merge the
+        self.inner
+            .update_batch(&values[(values.len() - 1)..values.len()])?;
+        Ok(())
+    }
+
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        let inner_result = self.inner.evaluate()?;
+
+        // TODO: create an ItemCrs scalar value. A value of a Some("0") and None should
+        // both be translated to a crs value of None here.
+        todo!()
+    }
+
+    fn size(&self) -> usize {
+        self.inner.size() + size_of::<ItemCrsAccumulator>()
+    }
+
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        let mut inner_state = self.inner.state()?;
+        inner_state.push(ScalarValue::Utf8View(self.crs.clone()));
+        Ok(inner_state)
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        // TODO: assert that the CRS field (last element of states) is identical. It's OK
+        // to skip a null CRS in the state ("0" is the sentinal for a missing CRS).
+        self.inner.merge_batch(states)
     }
 }
 
