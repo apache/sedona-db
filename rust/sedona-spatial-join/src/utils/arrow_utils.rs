@@ -85,6 +85,8 @@ fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowErro
             .sum();
     }
 
+    // If this was not a BinaryView/Utf8View array, count the bytes of any BinaryView/Utf8View
+    // children, taking into account the slice of this array that applies to the child.
     for child in array_data.child_data() {
         result += get_binary_view_value_size(child)?;
     }
