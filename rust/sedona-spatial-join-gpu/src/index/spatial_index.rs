@@ -1,18 +1,16 @@
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::ensure_binary_array;
 use crate::operand_evaluator::OperandEvaluator;
-use crate::utils::once_fut::{OnceAsync, OnceFut};
 use crate::{operand_evaluator::create_operand_evaluator, spatial_predicate::SpatialPredicate};
 use arrow::array::BooleanBufferBuilder;
 use arrow_array::ArrayRef;
 use datafusion_common::{DataFusionError, Result};
 use geo_types::Rect;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use sedona_common::SpatialJoinOptions;
 use sedona_libgpuspatial::GpuSpatial;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{ready, Poll};
 
 pub struct SpatialIndex {
     /// The spatial predicate evaluator for the spatial predicate.
@@ -79,7 +77,7 @@ impl SpatialIndex {
     pub(crate) fn filter(&self, probe_rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
         let gs = &self.gpu_spatial.as_ref();
 
-        let (mut build_indices, mut probe_indices) = gs.probe(probe_rects).map_err(|e| {
+        let (build_indices, probe_indices) = gs.probe(probe_rects).map_err(|e| {
             DataFusionError::Execution(format!("GPU spatial query failed: {:?}", e))
         })?;
 
@@ -105,36 +103,6 @@ impl SpatialIndex {
                             e
                         ))
                     })?;
-                Ok(())
-            }
-            _ => Err(DataFusionError::NotImplemented(
-                "Only Relation predicate is supported for GPU spatial query".to_string(),
-            )),
-        }
-    }
-
-    pub(crate) fn refine(
-        &self,
-        probe_geoms: &arrow_array::ArrayRef,
-        predicate: &SpatialPredicate,
-        build_indices: &mut Vec<u32>,
-        probe_indices: &mut Vec<u32>,
-    ) -> Result<()> {
-        match predicate {
-            SpatialPredicate::Relation(rel_p) => {
-                let gs = &self.gpu_spatial.as_ref();
-                let geoms = ensure_binary_array(probe_geoms)?;
-
-                gs.refine(
-                    &self.build_batch.geom_array.geometry_array,
-                    &geoms,
-                    rel_p.relation_type,
-                    build_indices,
-                    probe_indices,
-                )
-                .map_err(|e| {
-                    DataFusionError::Execution(format!("GPU spatial refinement failed: {:?}", e))
-                })?;
                 Ok(())
             }
             _ => Err(DataFusionError::NotImplemented(

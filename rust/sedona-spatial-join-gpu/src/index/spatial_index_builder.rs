@@ -1,6 +1,5 @@
 use crate::index::ensure_binary_array;
 use crate::utils::join_utils::need_produce_result_in_final;
-use crate::utils::once_fut::OnceAsync;
 use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{spatial_index::SpatialIndex, BuildPartition},
@@ -15,7 +14,6 @@ use datafusion_common::{DataFusionError, JoinType};
 use datafusion_physical_plan::metrics;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, MetricBuilder};
 use futures::StreamExt;
-use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
 use sedona_common::SpatialJoinOptions;
 use sedona_libgpuspatial::GpuSpatial;

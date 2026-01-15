@@ -9,10 +9,8 @@ use datafusion_common::{DataFusionError, JoinType};
 use datafusion_execution::memory_pool::MemoryConsumer;
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
-use parking_lot::RwLock;
 use sedona_common::SedonaOptions;
 use std::sync::Arc;
-use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 pub async fn build_index(
     context: Arc<TaskContext>,
