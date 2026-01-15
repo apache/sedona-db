@@ -101,7 +101,9 @@ fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{BinaryViewArray, StringViewArray, StructArray};
+    use arrow_array::builder::{BinaryViewBuilder, ListBuilder};
+    use arrow_array::types::Int32Type;
+    use arrow_array::{BinaryViewArray, ListArray, StringViewArray, StructArray};
     use arrow_schema::{DataType, Field};
     use std::sync::Arc;
 
@@ -187,5 +189,103 @@ mod tests {
         // Empty slice
         let size = get_array_memory_size(&sliced_ref.slice(2, 0)).unwrap();
         assert_eq!(size, 0);
+    }
+
+    fn build_struct_with_list_of_view_and_list_of_i32(
+    ) -> (ArrayRef, &'static [u8], &'static [u8], &'static [u8]) {
+        let short: &'static [u8] = b"short";
+        let long1: &'static [u8] = b"Long string that is definitely longer than 12 bytes";
+        let long2: &'static [u8] = b"Another long string to make buffer larger";
+
+        // Build List<BinaryView> with two list items:
+        // 0: [short, long1]
+        // 1: [long2]
+        let mut bv_list_builder = ListBuilder::new(BinaryViewBuilder::new());
+        bv_list_builder.values().append_value(short);
+        bv_list_builder.values().append_value(long1);
+        bv_list_builder.append(true);
+        bv_list_builder.values().append_value(long2);
+        bv_list_builder.append(true);
+        let bv_list: ListArray = bv_list_builder.finish();
+        let bv_list_data_type = bv_list.data_type().clone();
+
+        // Build List<Int32> with two list items:
+        // 0: [1, 2, 3]
+        // 1: [4]
+        let i32_list: ListArray = ListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2), Some(3)]),
+            Some(vec![Some(4)]),
+        ]);
+        let i32_list_data_type = i32_list.data_type().clone();
+
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("bv_list", bv_list_data_type, false)),
+                Arc::new(bv_list) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("i32_list", i32_list_data_type, false)),
+                Arc::new(i32_list) as ArrayRef,
+            ),
+        ]);
+
+        (Arc::new(struct_array) as ArrayRef, short, long1, long2)
+    }
+
+    #[test]
+    fn test_struct_array_with_list_of_view_and_list_of_i32_memory_size() {
+        const VIEW_BYTES: usize = 16; // BinaryView/Utf8View: one u128 per value
+        const OFFSET_BYTES: usize = 4; // ListArray offsets are i32
+        const I32_BYTES: usize = 4;
+
+        let (struct_ref, _short, long1, long2) = build_struct_with_list_of_view_and_list_of_i32();
+
+        // Full array expected size:
+        // - bv list offsets: 2 * 4
+        // - bv views: 3 * 16
+        // - bv long bytes: long1 + long2 (short is inline)
+        // - i32 list offsets: 2 * 4
+        // - i32 values: 4 * 4
+        let expected_bv_full = 2 * OFFSET_BYTES + 3 * VIEW_BYTES + long1.len() + long2.len();
+        let expected_i32_full = 2 * OFFSET_BYTES + 4 * I32_BYTES;
+        assert_eq!(
+            get_array_memory_size(&struct_ref).unwrap(),
+            expected_bv_full + expected_i32_full
+        );
+    }
+
+    #[test]
+    #[ignore = "XFAIL: get_array_memory_size slice accounting for ListArray is incorrect/fragile"]
+    fn test_struct_array_with_list_of_view_and_list_of_i32_memory_size_slices_xfail() {
+        const VIEW_BYTES: usize = 16; // BinaryView/Utf8View: one u128 per value
+        const OFFSET_BYTES: usize = 4; // ListArray offsets are i32
+        const I32_BYTES: usize = 4;
+
+        let (struct_ref, _short, long1, long2) = build_struct_with_list_of_view_and_list_of_i32();
+
+        // Slice: first struct row only
+        let slice0 = struct_ref.slice(0, 1);
+        let expected_bv_slice0 = 1 * OFFSET_BYTES + 2 * VIEW_BYTES + long1.len();
+        let expected_i32_slice0 = 1 * OFFSET_BYTES + 3 * I32_BYTES;
+        assert_eq!(
+            get_array_memory_size(&slice0).unwrap(),
+            expected_bv_slice0 + expected_i32_slice0
+        );
+
+        // Slice: second struct row only
+        let slice1 = struct_ref.slice(1, 1);
+        let expected_bv_slice1 = 1 * OFFSET_BYTES + 1 * VIEW_BYTES + long2.len();
+        let expected_i32_slice1 = 1 * OFFSET_BYTES + 1 * I32_BYTES;
+        assert_eq!(
+            get_array_memory_size(&slice1).unwrap(),
+            expected_bv_slice1 + expected_i32_slice1
+        );
+
+        // Double slice should behave the same as slice(1, 1)
+        let double_slice = struct_ref.slice(0, 2).slice(1, 1);
+        assert_eq!(
+            get_array_memory_size(&double_slice).unwrap(),
+            expected_bv_slice1 + expected_i32_slice1
+        );
     }
 }
