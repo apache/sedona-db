@@ -28,7 +28,10 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_geometry::{
     bounds::geo_traits_update_xy_bounds,
     interval::{Interval, IntervalTrait},
@@ -44,7 +47,7 @@ use sedona_schema::{
 pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_envelope_agg",
-        vec![Arc::new(STEnvelopeAgg {})],
+        ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(STEnvelopeAgg {})]),
         Volatility::Immutable,
         Some(st_envelope_agg_doc()),
     )
@@ -182,8 +185,12 @@ impl Accumulator for BoundsAccumulator2D {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_testing::{
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry},
+        create::create_scalar,
+        testers::AggregateUdfTester,
+    };
 
     use super::*;
 
@@ -244,5 +251,21 @@ mod test {
                 .unwrap(),
             Some("LINESTRING (0 1, 1 1)"),
         );
+    }
+
+    #[test]
+    fn udf_invoke_item_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester =
+            AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batches = vec![
+            vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+        ];
+        let expected = create_scalar(Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"), &sedona_type);
+
+        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 }
