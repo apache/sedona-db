@@ -1535,6 +1535,16 @@ dependencies = [
 
 [[package]]
 name = "darling"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
+dependencies = [
+ "darling_core 0.20.11",
+ "darling_macro 0.20.11",
+]
+
+[[package]]
+name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -1559,6 +1569,20 @@ dependencies = [
 
 [[package]]
 name = "darling_core"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim 0.11.1",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "darling_core"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9865a50f7c335f53564bb694ef660825eb8610e0a53d3e11bf1b0d3df31e03b0"
@@ -1579,6 +1603,17 @@ dependencies = [
  "darling_core 0.13.4",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
+dependencies = [
+ "darling_core 0.20.11",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -3223,7 +3258,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -3772,6 +3807,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3872,6 +3916,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "nvml-wrapper"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9bff0aa1d48904a1385ea2a8b97576fbdcbc9a3cfccd0d31fe978e1c4038c5"
+dependencies = [
+ "bitflags",
+ "libloading 0.8.9",
+ "nvml-wrapper-sys",
+ "static_assertions",
+ "thiserror 1.0.69",
+ "wrapcenum-derive",
+]
+
+[[package]]
+name = "nvml-wrapper-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "698d45156f28781a4e79652b6ebe2eaa0589057d588d3aec1333f6466f13fcb5"
+dependencies = [
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -5278,13 +5345,16 @@ dependencies = [
  "arrow-schema",
  "bindgen",
  "cmake",
+ "geo",
  "log",
+ "nvml-wrapper",
  "sedona-expr",
  "sedona-geos",
  "sedona-schema",
  "sedona-testing",
  "thiserror 2.0.17",
  "which",
+ "wkt 0.14.0",
 ]
 
 [[package]]
@@ -5437,26 +5507,41 @@ dependencies = [
  "arrow-schema",
  "criterion",
  "datafusion",
+ "datafusion-catalog",
  "datafusion-common",
+ "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "env_logger 0.11.8",
+ "fastrand",
+ "float_next_after",
  "futures",
+ "geo",
+ "geo-index",
+ "geo-traits",
+ "geo-types",
  "log",
  "object_store",
  "parking_lot",
  "parquet",
- "rand 0.8.5",
+ "rand",
  "sedona-common",
  "sedona-expr",
+ "sedona-functions",
+ "sedona-geo",
+ "sedona-geo-generic-alg",
+ "sedona-geo-traits-ext",
+ "sedona-geometry",
  "sedona-geos",
  "sedona-libgpuspatial",
  "sedona-schema",
  "sedona-testing",
+ "sysinfo",
  "thiserror 2.0.17",
  "tokio",
+ "wkb",
 ]
 
 [[package]]
@@ -5519,6 +5604,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-ffi",
+ "env_logger 0.11.8",
  "futures",
  "libmimalloc-sys",
  "mimalloc",
@@ -5793,6 +5879,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5868,6 +5960,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.30.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a5b4ddaee55fb2bea2bf0e5000747e5f5c0de765e5a5ff87f4cd106439f4bb3"
+dependencies = [
+ "cfg-if",
+ "core-foundation-sys",
+ "libc",
+ "ntapi",
+ "once_cell",
+ "rayon",
+ "windows",
 ]
 
 [[package]]
@@ -6494,6 +6601,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
+name = "windows"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
+dependencies = [
+ "windows-core 0.52.0",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
+dependencies = [
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "windows-core"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6773,6 +6899,18 @@ dependencies = [
  "log",
  "num-traits",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "wrapcenum-derive"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a76ff259533532054cfbaefb115c613203c73707017459206380f03b3b3f266e"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
