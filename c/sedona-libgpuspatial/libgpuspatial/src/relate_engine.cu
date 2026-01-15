@@ -25,6 +25,7 @@
 #include "rt/shaders/shader_id.hpp"
 
 #include "rmm/cuda_stream_view.hpp"
+#include "rmm/device_scalar.hpp"
 #include "rmm/exec_policy.hpp"
 
 #include <thrust/remove.h>

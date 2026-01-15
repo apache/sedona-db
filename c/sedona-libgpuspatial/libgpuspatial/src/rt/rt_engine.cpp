@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include "../../include/gpuspatial/rt/rt_engine.hpp"
+#include "gpuspatial/rt/rt_engine.hpp"
 #include "gpuspatial/utils/cuda_utils.h"
 #include "gpuspatial/utils/exception.h"
 #include "gpuspatial/utils/logger.hpp"

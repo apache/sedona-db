@@ -176,7 +176,6 @@ impl ExecutionPlan for GeometryDataExec {
 }
 
 #[tokio::test]
-#[ignore] // Requires GPU hardware
 async fn test_gpu_spatial_join_basic_correctness() {
     let _ = env_logger::builder().is_test(true).try_init();
 
@@ -418,7 +417,6 @@ impl datafusion::physical_plan::ExecutionPlan for SingleBatchExec {
     }
 }
 #[tokio::test]
-#[ignore] // Requires GPU hardware
 async fn test_gpu_spatial_join_correctness() {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_geos::register::scalar_kernels;

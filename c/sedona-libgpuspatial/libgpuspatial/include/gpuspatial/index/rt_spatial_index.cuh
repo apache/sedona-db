@@ -20,7 +20,6 @@
 #include "gpuspatial/index/spatial_index.hpp"
 #include "gpuspatial/rt/rt_engine.hpp"
 #include "gpuspatial/utils/gpu_timer.hpp"
-#include "gpuspatial/utils/object_pool.hpp"
 #include "gpuspatial/utils/queue.h"
 
 #include "rmm/cuda_stream_pool.hpp"
