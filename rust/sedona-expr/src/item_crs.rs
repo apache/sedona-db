@@ -186,10 +186,25 @@ impl SedonaAccumulator for ItemCrsSedonaAccumulator {
             return Ok(None);
         }
 
-        // TODO: strip any CRS that might be present from the input type, resolve the inner
-        // accumulator.
-        let _ = args;
-        todo!("ItemCrsAccumulator::return_type")
+        // Strip any CRS that might be present from the input type
+        let item_arg_types = args
+            .iter()
+            .map(|arg_type| {
+                parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Resolve the inner accumulator's return type
+        if let Some(item_type) = self.inner.return_type(&item_arg_types)? {
+            let geo_matcher = ArgMatcher::is_geometry_or_geography();
+            if geo_matcher.match_type(&item_type) {
+                Ok(Some(SedonaType::new_item_crs(&item_type)?))
+            } else {
+                Ok(Some(item_type))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn accumulator(
@@ -197,12 +212,25 @@ impl SedonaAccumulator for ItemCrsSedonaAccumulator {
         args: &[SedonaType],
         output_type: &SedonaType,
     ) -> Result<Box<dyn datafusion_expr::Accumulator>> {
-        // TODO: strip any CRS that might be present from the input type, resolve the inner
-        // accumulator.
+        // Strip any CRS that might be present from the input type
+        let item_arg_types = args
+            .iter()
+            .map(|arg_type| {
+                parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        // TODO: Implement accumulator wrapper that handles item_crs
-        let _ = (args, output_type);
-        todo!("ItemCrsAccumulator::accumulator")
+        // Extract the item output type from the item_crs output type
+        let (item_output_type, _) = parse_item_crs_arg_type(output_type)?;
+
+        // Create the inner accumulator
+        let inner = self.inner.accumulator(&item_arg_types, &item_output_type)?;
+
+        Ok(Box::new(ItemCrsAccumulator {
+            inner,
+            item_output_type,
+            crs: None,
+        }))
     }
 
     fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -234,25 +262,55 @@ impl IntoSedonaAccumulatorRefs for SedonaAccumulatorRef {
 struct ItemCrsAccumulator {
     /// The wrapped inner accumulator
     inner: Box<dyn Accumulator>,
-    /// If any rows have been encountered, the CRS (the literal string "0" is used
+    /// The item output type (without the item_crs wrapper)
+    item_output_type: SedonaType,
+    /// If any rows have been encountered, the CRS (the literal string "\0" is used
     /// as a sentinel for "no CRS")
     crs: Option<String>,
 }
 
 impl Accumulator for ItemCrsAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        // TODO: Merge the
-        self.inner
-            .update_batch(&values[(values.len() - 1)..values.len()])?;
+        // The input is an item_crs struct array; extract the item and crs columns
+        let struct_array = as_struct_array(&values[0])?;
+        let item_array = struct_array.column(0).clone();
+        let crs_array = as_string_view_array(struct_array.column(1))?;
+
+        // Check and track CRS values
+        for crs_value in crs_array.iter() {
+            let crs_str = crs_value.unwrap_or("0");
+            self.merge_crs(crs_str)?;
+        }
+
+        // Update the inner accumulator with just the item portion
+        self.inner.update_batch(&[item_array])?;
         Ok(())
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let inner_result = self.inner.evaluate()?;
 
-        // TODO: create an ItemCrs scalar value. A value of a Some("0") and None should
-        // both be translated to a crs value of None here.
-        todo!()
+        // Convert the sentinel back to None
+        let crs_value = match &self.crs {
+            Some(s) if s == "0" => None,
+            Some(s) => Some(s.clone()),
+            None => None,
+        };
+
+        // Create the item_crs struct scalar
+        let item_crs_result = make_item_crs(
+            &self.item_output_type,
+            ColumnarValue::Scalar(inner_result),
+            &ColumnarValue::Scalar(ScalarValue::Utf8View(crs_value)),
+            None,
+        )?;
+
+        match item_crs_result {
+            ColumnarValue::Scalar(scalar) => Ok(scalar),
+            ColumnarValue::Array(_) => {
+                sedona_internal_err!("Expected scalar result from make_item_crs")
+            }
+        }
     }
 
     fn size(&self) -> usize {
@@ -266,9 +324,59 @@ impl Accumulator for ItemCrsAccumulator {
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        // TODO: assert that the CRS field (last element of states) is identical. It's OK
-        // to skip a null CRS in the state ("0" is the sentinal for a missing CRS).
-        self.inner.merge_batch(states)
+        // The CRS field is the last element of states
+        let crs_array = as_string_view_array(states.last().ok_or_else(|| {
+            DataFusionError::Internal("Expected at least one state field".to_string())
+        })?)?;
+
+        // Check and merge CRS values from the state
+        for crs_str in crs_array.iter().flatten() {
+            self.merge_crs(crs_str)?;
+        }
+
+        // Merge the inner state (excluding the CRS field)
+        let inner_states = &states[..states.len() - 1];
+        self.inner.merge_batch(inner_states)
+    }
+}
+
+impl ItemCrsAccumulator {
+    /// Merge a CRS value into the accumulator's tracked CRS
+    ///
+    /// Ensures all CRS values are compatible (equal or null/sentinel).
+    fn merge_crs(&mut self, crs_str: &str) -> Result<()> {
+        match &self.crs {
+            None => {
+                // First CRS value encountered
+                self.crs = Some(crs_str.to_string());
+                Ok(())
+            }
+            Some(existing) if existing == crs_str => {
+                // Same CRS, nothing to do
+                Ok(())
+            }
+            Some(existing) if existing == "0" => {
+                // Existing is sentinel, use the new value
+                self.crs = Some(crs_str.to_string());
+                Ok(())
+            }
+            Some(_) if crs_str == "0" => {
+                // New value is sentinel, keep existing
+                Ok(())
+            }
+            Some(existing) => {
+                // Check if CRSes are semantically equal
+                let existing_crs = deserialize_crs(existing)?;
+                let new_crs = deserialize_crs(crs_str)?;
+                if existing_crs == new_crs {
+                    Ok(())
+                } else {
+                    Err(DataFusionError::Execution(format!(
+                        "CRS values not equal: {existing:?} vs {crs_str:?}",
+                    )))
+                }
+            }
+        }
     }
 }
 
