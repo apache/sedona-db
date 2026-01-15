@@ -25,7 +25,10 @@ use datafusion_expr::{Accumulator, ColumnarValue};
 use geo_traits::Dimensions;
 use geos::Geom;
 use sedona_common::sedona_internal_err;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_geometry::wkb_factory::write_wkb_geometrycollection_header;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -34,8 +37,8 @@ use sedona_schema::{
 use wkb::reader::read_wkb;
 
 /// ST_Polygonize_Agg() aggregate implementation using GEOS
-pub fn st_polygonize_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STPolygonizeAgg {})
+pub fn st_polygonize_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    ItemCrsSedonaAccumulator::wrap_impl(STPolygonizeAgg {})
 }
 
 #[derive(Debug)]
@@ -218,7 +221,7 @@ mod tests {
     fn create_udf() -> SedonaAggregateUDF {
         SedonaAggregateUDF::new(
             "st_polygonize_agg",
-            vec![st_polygonize_agg_impl()],
+            st_polygonize_agg_impl(),
             datafusion_expr::Volatility::Immutable,
             None,
         )

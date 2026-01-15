@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::{
-    aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF},
+    aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAggregateUDF},
     scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF},
 };
 use datafusion_common::error::Result;
@@ -121,7 +121,7 @@ impl FunctionSet {
     pub fn add_aggregate_udf_kernel(
         &mut self,
         name: &str,
-        kernel: SedonaAccumulatorRef,
+        kernel: impl IntoSedonaAccumulatorRefs,
     ) -> Result<&SedonaAggregateUDF> {
         if let Some(function) = self.aggregate_udf_mut(name) {
             function.add_kernel(kernel);
@@ -148,7 +148,10 @@ mod tests {
     use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
     use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-    use crate::{aggregate_udf::SedonaAccumulator, scalar_udf::SimpleSedonaScalarKernel};
+    use crate::{
+        aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
+        scalar_udf::SimpleSedonaScalarKernel,
+    };
 
     use super::*;
 
@@ -217,7 +220,7 @@ mod tests {
         );
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct TestAccumulator {}
 
     impl SedonaAccumulator for TestAccumulator {
@@ -251,7 +254,7 @@ mod tests {
             Volatility::Immutable,
             None,
         );
-        let kernel = Arc::new(TestAccumulator {});
+        let kernel = TestAccumulator {};
 
         functions.insert_aggregate_udf(udaf);
         assert_eq!(functions.aggregate_udfs().collect::<Vec<_>>().len(), 1);
@@ -273,7 +276,7 @@ mod tests {
 
         let udaf2 = SedonaAggregateUDF::new(
             "simple_udaf2",
-            vec![kernel.clone()],
+            vec![Arc::new(kernel.clone())],
             Volatility::Immutable,
             None,
         );

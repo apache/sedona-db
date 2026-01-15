@@ -125,8 +125,10 @@ impl SedonaAggregateUDF {
     ///
     /// Because kernels are resolved in reverse order, the new kernel will take
     /// precedence over any previously added kernels that apply to the same types.
-    pub fn add_kernel(&mut self, kernel: SedonaAccumulatorRef) {
-        self.kernels.push(kernel);
+    pub fn add_kernel(&mut self, kernels: impl IntoSedonaAccumulatorRefs) {
+        for kernel in kernels.into_sedona_accumulator_refs() {
+            self.kernels.push(kernel);
+        }
     }
 
     // List the current kernels

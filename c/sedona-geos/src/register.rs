@@ -84,7 +84,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     )
 }
 
-pub fn aggregate_kernels() -> Vec<(&'static str, SedonaAccumulatorRef)> {
+pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
     define_aggregate_kernels!(
         "st_polygonize_agg" => crate::st_polygonize_agg::st_polygonize_agg_impl,
     )
