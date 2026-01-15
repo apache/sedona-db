@@ -194,9 +194,12 @@ impl SedonaAccumulator for ItemCrsSedonaAccumulator {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Resolve the inner accumulator's return type
+        // Resolve the inner accumulator's return type.
         if let Some(item_type) = self.inner.return_type(&item_arg_types)? {
             let geo_matcher = ArgMatcher::is_geometry_or_geography();
+
+            // If the inner output is item_crs, the output must also be item_crs. Otherwise
+            // the output is left as is.
             if geo_matcher.match_type(&item_type) {
                 Ok(Some(SedonaType::new_item_crs(&item_type)?))
             } else {
@@ -247,8 +250,9 @@ struct ItemCrsAccumulator {
     inner: Box<dyn Accumulator>,
     /// The item output type (without the item_crs wrapper)
     item_output_type: SedonaType,
-    /// If any rows have been encountered, the CRS (the literal string "\0" is used
-    /// as a sentinel for "no CRS")
+    /// If any rows have been encountered, the CRS (the literal string "0" is used
+    /// as a sentinel for "no CRS" because we have to serialize it (and None is
+    /// reserved for "we haven't seen any rows yet"))
     crs: Option<String>,
 }
 
@@ -281,6 +285,13 @@ impl Accumulator for ItemCrsAccumulator {
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let inner_result = self.inner.evaluate()?;
+
+        // If the output type is not item_crs, we can just return it
+        if !ArgMatcher::is_item_crs().match_type(&self.item_output_type) {
+            return Ok(inner_result);
+        }
+
+        // Otherwise, prepare the item_crs result
 
         // Convert the sentinel back to None
         let crs_value = match &self.crs {
