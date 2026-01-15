@@ -28,7 +28,7 @@ use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use crate::aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAccumulator, SedonaAccumulatorRef};
 use crate::scalar_udf::{IntoScalarKernelRefs, ScalarKernelRef, SedonaScalarKernel};
 
 /// Wrap a [SedonaScalarKernel] to provide Item CRS type support
@@ -238,23 +238,6 @@ impl SedonaAccumulator for ItemCrsSedonaAccumulator {
         let mut fields = self.inner.state_fields(args)?;
         fields.push(Field::new("group_crs", DataType::Utf8View, true).into());
         Ok(fields)
-    }
-}
-
-/// A trait for types that can be converted into a vector of [SedonaAccumulatorRef]
-pub trait IntoSedonaAccumulatorRefs {
-    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef>;
-}
-
-impl IntoSedonaAccumulatorRefs for Vec<SedonaAccumulatorRef> {
-    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
-        self
-    }
-}
-
-impl IntoSedonaAccumulatorRefs for SedonaAccumulatorRef {
-    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
-        vec![self]
     }
 }
 

@@ -245,7 +245,12 @@ mod tests {
         assert!(functions.aggregate_udf("simple_udaf").is_none());
         assert!(functions.aggregate_udf_mut("simple_udaf").is_none());
 
-        let udaf = SedonaAggregateUDF::new("simple_udaf", vec![], Volatility::Immutable, None);
+        let udaf = SedonaAggregateUDF::new(
+            "simple_udaf",
+            Vec::<SedonaAccumulatorRef>::new(),
+            Volatility::Immutable,
+            None,
+        );
         let kernel = Arc::new(TestAccumulator {});
 
         functions.insert_aggregate_udf(udaf);

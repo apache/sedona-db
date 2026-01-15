@@ -27,7 +27,39 @@ use sedona_schema::datatypes::SedonaType;
 
 use sedona_schema::matchers::ArgMatcher;
 
-pub type SedonaAccumulatorRef = Arc<dyn SedonaAccumulator + Send + Sync>;
+/// Shorthand for a [SedonaAccumulator] reference
+pub type SedonaAccumulatorRef = Arc<dyn SedonaAccumulator>;
+
+/// Helper to resolve an iterable of accumulators
+pub trait IntoSedonaAccumulatorRefs {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef>;
+}
+
+impl IntoSedonaAccumulatorRefs for SedonaAccumulatorRef {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        vec![self]
+    }
+}
+
+impl IntoSedonaAccumulatorRefs for Vec<SedonaAccumulatorRef> {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        self
+    }
+}
+
+impl<T: SedonaAccumulator + 'static> IntoSedonaAccumulatorRefs for T {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        vec![Arc::new(self)]
+    }
+}
+
+impl<T: SedonaAccumulator + 'static> IntoSedonaAccumulatorRefs for Vec<Arc<T>> {
+    fn into_sedona_accumulator_refs(self) -> Vec<SedonaAccumulatorRef> {
+        self.into_iter()
+            .map(|item| item as SedonaAccumulatorRef)
+            .collect()
+    }
+}
 
 /// Top-level aggregate user-defined function
 ///
@@ -59,7 +91,7 @@ impl SedonaAggregateUDF {
     /// Create a new SedonaAggregateUDF
     pub fn new(
         name: &str,
-        kernels: Vec<SedonaAccumulatorRef>,
+        kernels: impl IntoSedonaAccumulatorRefs,
         volatility: Volatility,
         documentation: Option<Documentation>,
     ) -> Self {
@@ -67,7 +99,7 @@ impl SedonaAggregateUDF {
         Self {
             name: name.to_string(),
             signature,
-            kernels,
+            kernels: kernels.into_sedona_accumulator_refs(),
             documentation,
         }
     }
@@ -86,7 +118,7 @@ impl SedonaAggregateUDF {
         documentation: Option<Documentation>,
     ) -> Self {
         let stub_kernel = StubAccumulator::new(name.to_string(), arg_matcher);
-        Self::new(name, vec![Arc::new(stub_kernel)], volatility, documentation)
+        Self::new(name, stub_kernel, volatility, documentation)
     }
 
     /// Add a new kernel to an Aggregate UDF
@@ -173,7 +205,7 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
     }
 }
 
-pub trait SedonaAccumulator: Debug {
+pub trait SedonaAccumulator: Debug + Send + Sync {
     /// Given input data types, calculate an output data type
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>>;
 
@@ -238,7 +270,12 @@ mod test {
     #[test]
     fn udaf_empty() -> Result<()> {
         // UDF with no implementations
-        let udf = SedonaAggregateUDF::new("empty", vec![], Volatility::Immutable, None);
+        let udf = SedonaAggregateUDF::new(
+            "empty",
+            Vec::<SedonaAccumulatorRef>::new(),
+            Volatility::Immutable,
+            None,
+        );
         assert_eq!(udf.name(), "empty");
         let err = udf.return_field(&[]).unwrap_err();
         assert_eq!(err.message(), "empty([]): No kernel matching arguments");

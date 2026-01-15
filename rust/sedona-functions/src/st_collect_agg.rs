@@ -29,7 +29,10 @@ use datafusion_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_geometry::{
     types::{GeometryTypeAndDimensions, GeometryTypeId},
     wkb_factory::{
@@ -48,12 +51,12 @@ use sedona_schema::{
 pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_collect_agg",
-        vec![
+        ItemCrsSedonaAccumulator::wrap_impl(vec![
             Arc::new(STCollectAggr {
                 is_geography: false,
             }),
             Arc::new(STCollectAggr { is_geography: true }),
-        ],
+        ]),
         Volatility::Immutable,
         Some(st_collect_agg_doc()),
     )
