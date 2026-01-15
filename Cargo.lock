@@ -5381,6 +5381,7 @@ dependencies = [
  "object_store",
  "sedona-expr",
  "sedona-geometry",
+ "tokio",
 ]
 
 [[package]]

@@ -127,8 +127,8 @@ impl ConfigField for LasExtraBytes {
 extensions_options! {
     /// The LAZ config options
     pub struct LazTableOptions {
-        pub point_encoding: LasPointEncoding, default = LasPointEncoding::Native
-        pub extra_bytes: LasExtraBytes, default = LasExtraBytes::Typed
+        pub point_encoding: LasPointEncoding, default = LasPointEncoding::default()
+        pub extra_bytes: LasExtraBytes, default = LasExtraBytes::default()
     }
 
 }
