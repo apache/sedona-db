@@ -513,7 +513,7 @@ impl GpuSpatialRefinerWrapper {
                 let ffi_schema_ptr: *const ArrowSchema =
                     transmute(&ffi_schema as *const FFI_ArrowSchema);
                 log::debug!("DEBUG FFI: Calling C++ refine function");
-                let mut new_len: u32 = 0;
+                let _new_len: u32 = 0;
                 if load_fn(
                     &self.refiner as *const _ as *mut _,
                     ffi_schema_ptr as *mut _,

@@ -40,9 +40,8 @@ use datafusion_common::{JoinSide, JoinType};
 use datafusion_physical_plan::handle_state;
 use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter, StatefulStreamResult};
 use futures::{ready, StreamExt};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
-use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
 /// Metrics for GPU spatial join operations
 pub(crate) struct GpuSpatialJoinMetrics {
@@ -236,7 +235,7 @@ impl GpuSpatialJoinStream {
     }
 
     fn process_probe_batch(&mut self) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        let (batch_opt, need_load) = {
+        let (batch_opt, _need_load) = {
             match &self.state {
                 SpatialJoinStreamState::ProcessProbeBatch(eval_batch) => {
                     let eval_batch = eval_batch.clone();

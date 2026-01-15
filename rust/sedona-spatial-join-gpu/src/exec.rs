@@ -44,7 +44,7 @@ use datafusion_physical_expr::Partitioning;
 use datafusion_physical_plan::joins::utils::{check_join_is_valid, ColumnIndex, JoinFilter};
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion_physical_plan::ExecutionPlanProperties;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use sedona_common::SedonaOptions;
 
 /// Extract equality join conditions from a JoinFilter

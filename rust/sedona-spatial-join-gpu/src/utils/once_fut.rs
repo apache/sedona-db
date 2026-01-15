@@ -150,6 +150,7 @@ impl<T: 'static> OnceFut<T> {
     }
 
     /// Get shared reference to the result of the computation if it is ready, without consuming it
+    #[allow(unused)]
     pub(crate) fn get_shared(&mut self, cx: &mut Context<'_>) -> Poll<Result<Arc<T>>> {
         if let OnceFutState::Pending(fut) = &mut self.state {
             let r = ready!(fut.poll_unpin(cx));
