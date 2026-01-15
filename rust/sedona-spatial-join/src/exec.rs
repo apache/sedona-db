@@ -227,6 +227,11 @@ impl SpatialJoinExec {
         self.projection.is_some()
     }
 
+    /// Get the projection indices
+    pub fn projection(&self) -> Option<&Vec<usize>> {
+        self.projection.as_ref()
+    }
+
     /// This function creates the cache object that stores the plan properties such as schema,
     /// equivalence properties, ordering, partitioning, etc.
     ///
