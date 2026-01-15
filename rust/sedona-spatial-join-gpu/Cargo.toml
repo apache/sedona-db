@@ -84,9 +84,3 @@ rand = { workspace = true }
 sedona-testing = { workspace = true }
 sedona-geos = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
-
-[[bench]]
-name = "gpu_spatial_join"
-harness = false
-required-features = ["gpu"]

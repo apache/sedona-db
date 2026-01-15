@@ -508,7 +508,7 @@ async fn test_gpu_spatial_join_correctness() {
             .find(|(k, _)| k == name)
             .map(|(_, kernel_ref)| kernel_ref)
             .unwrap();
-        let udf = SedonaScalarUDF::from_kernel(name, kernel.clone());
+        let udf = SedonaScalarUDF::from_impl(name, kernel.clone());
         let tester =
             ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         (*name, tester)

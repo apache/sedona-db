@@ -62,8 +62,8 @@ sedona-common = { path = "../sedona-common" }
 [dev-dependencies]
 env_logger = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-sedona-testing = { path = "../sedona-testing" }
-sedona-geos = { path = "../../c/sedona-geos" }
+sedona-testing = { workspace = true }
+sedona-geos = { workspace = true }
 sedona-schema = { path = "../sedona-schema" }
 sedona-expr = { path = "../sedona-expr" }
 
