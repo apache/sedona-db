@@ -34,7 +34,9 @@ pub(crate) fn get_record_batch_memory_size(batch: &RecordBatch) -> Result<usize>
 }
 
 /// Estimate the in-memory size of a given Arrow array. This function estimates the
-/// size as if the underlying buffers were copied to somewhere else and not shared.
+/// size as if the underlying buffers were copied to somewhere else and not shared,
+/// including the sizes of each BinaryView item (which is otherwise not counted by
+/// `array_data.get_slice_memory_size()`).
 pub(crate) fn get_array_memory_size(array: &ArrayRef) -> Result<usize> {
     let array_data = array.to_data();
     let size = count_array_data_memory_size(&array_data)?;
