@@ -312,10 +312,12 @@ impl Accumulator for CollectionAccumulator {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::{
         compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry},
-        create::{create_array_item_crs, create_scalar_item_crs},
+        create::{create_array, create_array_item_crs, create_scalar, create_scalar_item_crs},
         testers::AggregateUdfTester,
     };
 
@@ -397,19 +399,27 @@ mod test {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester =
             AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
 
-        let batches = vec![
-            vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
-            vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
-        ];
-        let expected =
-            create_scalar_item_crs(Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"), None, &WKB_GEOMETRY);
+        let batch0 = create_array(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            &sedona_type,
+        );
+        let batch1 = create_array(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            &sedona_type,
+        );
 
-        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
+        let batches = vec![batch0, batch1];
+        let expected = create_scalar(Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"), &sedona_type);
+
+        assert_scalar_equal(&tester.aggregate(&batches).unwrap(), &expected);
     }
 
     #[rstest]

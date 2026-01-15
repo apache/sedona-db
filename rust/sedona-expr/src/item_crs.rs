@@ -286,8 +286,11 @@ impl Accumulator for ItemCrsAccumulator {
     fn evaluate(&mut self) -> Result<ScalarValue> {
         let inner_result = self.inner.evaluate()?;
 
-        // If the output type is not item_crs, we can just return it
-        if !ArgMatcher::is_item_crs().match_type(&self.item_output_type) {
+        // If the output type is not geometry or geography we can just return it
+        if !matches!(
+            self.item_output_type,
+            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _)
+        ) {
             return Ok(inner_result);
         }
 
