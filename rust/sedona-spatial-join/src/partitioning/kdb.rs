@@ -165,33 +165,30 @@ impl KDBTree {
     }
 
     fn insert_rect(&mut self, rect: Rect<f32>) {
-        if self.items.len() < self.max_items_per_node || self.level >= self.max_levels {
-            self.items.push(rect);
-        } else {
-            if self.children.is_none() {
-                // Split over longer side
-                let split_x = self.extent.width() > self.extent.height();
-                let mut ok = self.split(split_x);
-                if !ok {
-                    // Try splitting by the other side
-                    ok = self.split(!split_x);
-                }
-
-                if !ok {
-                    // This could happen if all envelopes are the same.
-                    self.items.push(rect);
-                    return;
-                }
+        if self.children.is_none() {
+            if self.items.len() < self.max_items_per_node || self.level >= self.max_levels {
+                // This leaf node has enough capacity, insert into it.
+                self.items.push(rect);
+                return;
             }
 
-            // Insert into appropriate child
-            if let Some(ref mut children) = self.children {
-                let min_point = rect.min();
-                for child in children.iter_mut() {
-                    if rect_contains_point(child.extent(), &min_point) {
-                        child.insert_rect(rect);
-                        break;
-                    }
+            // Try splitting over longer side. If it does not work, fallback splitting
+            // over the shorter side.
+            let split_x = self.extent.width() > self.extent.height();
+            if !self.split(split_x) && !self.split(!split_x) {
+                // Splitting neither side worked. This could happen if all envelopes are the same.
+                self.items.push(rect);
+                return;
+            }
+        }
+
+        // Insert into appropriate child
+        if let Some(ref mut children) = self.children {
+            let min_point = rect.min();
+            for child in children.iter_mut() {
+                if rect_contains_point(child.extent(), &min_point) {
+                    child.insert_rect(rect);
+                    break;
                 }
             }
         }
@@ -266,7 +263,6 @@ impl KDBTree {
         }
     }
 
-    #[cfg(test)]
     pub fn collect_leaf_nodes(&self) -> Vec<&KDBTree> {
         let mut leaf_nodes = Vec::new();
         self.visit_leaf_nodes(&mut |kdb| {
@@ -495,6 +491,22 @@ impl KDBPartitioner {
     pub fn num_partitions(&self) -> usize {
         self.tree.num_leaf_nodes()
     }
+
+    /// Write the tree structure in human-readable format for debugging purposes.
+    pub fn debug_print(&self, f: &mut impl std::fmt::Write) -> Result<()> {
+        let leaves = self.tree.collect_leaf_nodes();
+        for leaf in leaves {
+            let extent = format!(
+                "x: [{:.6}, {:.6}], y: [{:.6}, {:.6}]",
+                leaf.extent().min().x,
+                leaf.extent().max().x,
+                leaf.extent().min().y,
+                leaf.extent().max().y,
+            );
+            writeln!(f, "Leaf ID: {}, Extent: {}", leaf.leaf_id(), extent)?;
+        }
+        Ok(())
+    }
 }
 
 impl SpatialPartitioner for KDBPartitioner {
@@ -549,6 +561,32 @@ mod tests {
     use sedona_geometry::interval::{Interval, IntervalTrait};
 
     use super::*;
+
+    fn assert_no_items_in_internal_nodes(tree: &KDBTree) {
+        fn walk(node: &KDBTree, internal_nodes: &mut usize, internal_items: &mut usize) {
+            if let Some(ref children) = node.children {
+                *internal_nodes += 1;
+                *internal_items += node.items.len();
+                assert_eq!(
+                    node.items.len(),
+                    0,
+                    "internal KDB node should not store items; otherwise leaf count can be lower than expected",
+                );
+                for child in children.iter() {
+                    walk(child, internal_nodes, internal_items);
+                }
+            }
+        }
+
+        let mut internal_nodes = 0;
+        let mut internal_items = 0;
+        walk(tree, &mut internal_nodes, &mut internal_items);
+        assert!(
+            internal_nodes > 0,
+            "test must create at least one internal node"
+        );
+        assert_eq!(internal_items, 0);
+    }
 
     #[test]
     fn test_kdb_insert_and_leaf_assignment() {
@@ -768,6 +806,33 @@ mod tests {
         let tree = KDBTree::try_new(5, 3, extent).unwrap();
         assert_eq!(tree.items.len(), 0);
         assert!(tree.is_leaf());
+    }
+
+    #[test]
+    fn test_kdb_partitioner_num_partitions_no_less_than_specified() {
+        let extent = BoundingBox::xy((0.0, 100.0), (0.0, 100.0));
+        let mut tree = KDBTree::try_new(2, 16, extent).unwrap();
+
+        // Insert enough non-empty, in-bounds boxes to force multiple splits.
+        // We vary both x and y because the root split axis depends on extent dimensions.
+        for i in 0..100 {
+            let x = (i % 10) as f64 * 10.0 + 1.0;
+            let y = (i / 10) as f64 * 10.0 + 1.0;
+            tree.insert(BoundingBox::xy((x, x + 0.5), (y, y + 0.5)))
+                .unwrap();
+        }
+
+        assert!(tree.num_leaf_nodes() > 1, "expected tree to split");
+        assert_no_items_in_internal_nodes(&tree);
+
+        let mut leaf_items = 0usize;
+        tree.visit_leaf_nodes(&mut |kdb| {
+            leaf_items += kdb.items.len();
+        });
+        assert_eq!(
+            leaf_items, 100,
+            "all inserted items should end up in leaves"
+        );
     }
 
     #[test]
