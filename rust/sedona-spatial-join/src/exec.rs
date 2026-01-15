@@ -1524,6 +1524,7 @@ mod tests {
     }
 
     #[cfg(feature = "gpu")]
+    #[ignore = "Need a proper GPU test environment to run this test"]
     #[tokio::test]
     async fn test_gpu_spatial_join_sql() -> Result<()> {
         use arrow_array::Int32Array;
