@@ -213,7 +213,7 @@ mod tests {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
     use sedona_expr::aggregate_udf::SedonaAggregateUDF;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry},
         create::create_scalar_item_crs,
@@ -464,7 +464,7 @@ mod tests {
 
     #[rstest]
     fn udf_invoke_item_crs() {
-        let sedona_type = WKB_GEOGRAPHY_ITEM_CRS.clone();
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
         let udf = create_udf();
         let tester = AggregateUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), sedona_type.clone());

@@ -418,7 +418,7 @@ mod test {
             vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))")],
         ];
         let expected = create_scalar_item_crs(
-            Some("MULTIPOLYGON(((1 1, 2 1, 2 2, 1 2, 1 1)))"),
+            Some("MULTIPOLYGON(((1 2, 1 1, 2 1, 2 2, 1 2)))"),
             None,
             &WKB_GEOMETRY,
         );

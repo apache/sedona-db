@@ -25,6 +25,7 @@ use datafusion_common::{
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::BooleanOps;
 use geo_traits::to_geo::ToGeoGeometry;
+use sedona_common::sedona_internal_err;
 use sedona_expr::{
     aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
     item_crs::ItemCrsSedonaAccumulator,
@@ -164,9 +165,7 @@ impl UnionAccumulator {
 impl Accumulator for UnionAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
-            return Err(DataFusionError::Internal(
-                "No input arrays provided to accumulator in update_batch".to_string(),
-            ));
+            return sedona_internal_err!("No input arrays provided to accumulator in update_batch");
         }
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
@@ -391,18 +390,22 @@ mod test {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
         let mut udaf = st_union_agg_udf();
         udaf.add_kernel(st_union_agg_impl());
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
 
         let batches = vec![
-            vec![Some("POINT (0 1)"), Some("POINT (2 3)")],
-            vec![Some("POINT (4 5)"), Some("POINT (6 7)")],
+            vec![Some("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")],
+            vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))")],
         ];
-        let expected =
-            create_scalar_item_crs(Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"), None, &WKB_GEOMETRY);
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOLYGON(((0 2, 0 0, 2 0, 2 1, 3 1, 3 3, 1 3, 1 2, 0 2)))"),
+            None,
+            &WKB_GEOMETRY,
+        );
 
         assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
