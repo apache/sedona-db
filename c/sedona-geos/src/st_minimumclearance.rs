@@ -22,14 +22,17 @@ use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
 /// ST_MinimumClearance() implementation using the geos crate
-pub fn st_minimum_clearance_impl() -> ScalarKernelRef {
-    Arc::new(STMinimumClearance {})
+pub fn st_minimum_clearance_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STMinimumClearance {})
 }
 
 #[derive(Debug)]
@@ -77,13 +80,16 @@ mod tests {
     use arrow_array::{create_array, ArrayRef};
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_minimumclearance", st_minimum_clearance_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Float64);

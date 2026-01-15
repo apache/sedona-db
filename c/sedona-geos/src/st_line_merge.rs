@@ -21,15 +21,18 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
-pub fn st_line_merge_impl() -> ScalarKernelRef {
-    Arc::new(STLineMerge {})
+pub fn st_line_merge_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STLineMerge {})
 }
 
 #[derive(Debug)]
@@ -116,7 +119,9 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -177,5 +182,22 @@ mod tests {
             .invoke_scalar_scalar(ScalarValue::Null, false)
             .unwrap();
         assert!(result.is_null());
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        use arrow_schema::DataType;
+
+        let udf = SedonaScalarUDF::from_impl("st_linemerge", st_line_merge_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Boolean)],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar("MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))", false)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 1 0, 1 1)");
     }
 }

@@ -23,7 +23,10 @@ use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use geos::{BufferParams, CapStyle, Geom, JoinStyle};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -46,8 +49,8 @@ use crate::geos_to_wkb::write_geos_geometry;
 /// - side: both, left, right
 /// - mitre_limit/miter_limit: numeric value
 /// - quad_segs/quadrant_segments: integer value
-pub fn st_buffer_impl() -> ScalarKernelRef {
-    Arc::new(STBuffer {})
+pub fn st_buffer_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STBuffer {})
 }
 
 #[derive(Debug)]
@@ -72,8 +75,8 @@ impl SedonaScalarKernel for STBuffer {
     }
 }
 
-pub fn st_buffer_style_impl() -> ScalarKernelRef {
-    Arc::new(STBufferStyle {})
+pub fn st_buffer_style_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STBufferStyle {})
 }
 #[derive(Debug)]
 struct STBufferStyle {}
@@ -296,7 +299,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -727,5 +730,18 @@ mod tests {
             (true, false),
             "Should handle complex string with both sides."
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester.invoke_scalar_scalar("POINT (0 0)", 1.0).unwrap();
+        assert!(!result.is_null());
     }
 }
