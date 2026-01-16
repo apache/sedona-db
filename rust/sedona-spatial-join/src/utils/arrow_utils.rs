@@ -15,10 +15,149 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow::array::{Array, ArrayData, RecordBatch};
+use std::sync::Arc;
+
+use arrow::array::{Array, ArrayData, BinaryViewArray, ListArray, RecordBatch, StringViewArray};
+use arrow_array::make_array;
 use arrow_array::ArrayRef;
+use arrow_array::StructArray;
 use arrow_schema::{ArrowError, DataType};
 use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
+
+/// Reconstruct `batch` to organize the payload buffers of each `StringViewArray` and
+/// `BinaryViewArray` in sequential order by calling `gc()` on them.
+///
+/// Note this is a workaround until <https://github.com/apache/arrow-rs/issues/7185> is
+/// available.
+///
+/// # Rationale
+///
+/// The `interleave` kernel does not reconstruct the inner buffers of view arrays by default,
+/// leading to non-sequential payload locations. A single payload buffer might be shared by
+/// multiple `RecordBatch`es or multiple rows in the same batch might reference scattered
+/// locations in a large buffer.
+///
+/// When writing each batch to disk, the writer has to write all referenced buffers. This
+/// causes extra disk reads and writes, and potentially execution failure (e.g. No space left
+/// on device).
+///
+/// # Example
+///
+/// Before interleaving:
+/// batch1 -> buffer1 (large)
+/// batch2 -> buffer2 (large)
+///
+/// interleaved_batch -> buffer1 (sparse access)
+///                   -> buffer2 (sparse access)
+///
+/// Then when spilling the interleaved batch, the writer has to write both buffer1 and buffer2
+/// entirely, even if only a few bytes are used.
+pub(crate) fn compact_batch(batch: RecordBatch) -> Result<RecordBatch> {
+    let mut new_columns: Vec<Arc<dyn Array>> = Vec::with_capacity(batch.num_columns());
+    let mut arr_mutated = false;
+
+    for array in batch.columns() {
+        let (new_array, mutated) = compact_array(Arc::clone(array))?;
+        new_columns.push(new_array);
+        arr_mutated |= mutated;
+    }
+
+    if arr_mutated {
+        Ok(RecordBatch::try_new(batch.schema(), new_columns)?)
+    } else {
+        Ok(batch)
+    }
+}
+
+/// Recursively compacts view arrays in `array` by calling `gc()` on them.
+/// Returns a tuple of the potentially new array and a boolean indicating
+/// whether any compaction was performed.
+pub(crate) fn compact_array(array: ArrayRef) -> Result<(ArrayRef, bool)> {
+    if let Some(view_array) = array.as_any().downcast_ref::<StringViewArray>() {
+        return Ok((Arc::new(view_array.gc()), true));
+    }
+    if let Some(view_array) = array.as_any().downcast_ref::<BinaryViewArray>() {
+        return Ok((Arc::new(view_array.gc()), true));
+    }
+
+    // Fast path for non-nested arrays
+    if !array.data_type().is_nested() {
+        return Ok((array, false));
+    }
+
+    // Avoid ArrayData -> ArrayRef roundtrips for commonly used data types,
+    // including StructArray and ListArray.
+
+    if let Some(struct_array) = array.as_any().downcast_ref::<StructArray>() {
+        let mut mutated = false;
+        let mut new_columns: Vec<ArrayRef> = Vec::with_capacity(struct_array.num_columns());
+        for col in struct_array.columns() {
+            let (new_col, col_mutated) = compact_array(Arc::clone(col))?;
+            mutated |= col_mutated;
+            new_columns.push(new_col);
+        }
+
+        if !mutated {
+            return Ok((array, false));
+        }
+
+        let rebuilt = StructArray::new(
+            struct_array.fields().clone(),
+            new_columns,
+            struct_array.nulls().cloned(),
+        );
+        return Ok((Arc::new(rebuilt), true));
+    }
+
+    if let Some(list_array) = array.as_any().downcast_ref::<ListArray>() {
+        let (new_values, mutated) = compact_array(list_array.values().clone())?;
+        if !mutated {
+            return Ok((array, false));
+        }
+
+        let DataType::List(field) = list_array.data_type() else {
+            // Defensive: this downcast should only succeed for DataType::List.
+            return sedona_internal_err!(
+                "ListArray has non-List data type: {:?}",
+                list_array.data_type()
+            );
+        };
+
+        let rebuilt = ListArray::new(
+            Arc::clone(field),
+            list_array.offsets().clone(),
+            new_values,
+            list_array.nulls().cloned(),
+        );
+        return Ok((Arc::new(rebuilt), true));
+    }
+
+    // For nested arrays (Map/Dictionary/etc.), recurse into children via ArrayData.
+    let data = array.to_data();
+    if data.child_data().is_empty() {
+        return Ok((array, false));
+    }
+
+    let mut mutated = false;
+    let mut new_child_data = Vec::with_capacity(data.child_data().len());
+    for child in data.child_data().iter() {
+        let child_array = make_array(child.clone());
+        let (new_child_array, child_mutated) = compact_array(child_array)?;
+        mutated |= child_mutated;
+        new_child_data.push(new_child_array.to_data());
+    }
+
+    if !mutated {
+        return Ok((array, false));
+    }
+
+    // Rebuild this array with identical buffers/nulls but replaced child_data.
+    let mut builder = data.into_builder();
+    builder = builder.child_data(new_child_data);
+    let new_data = builder.build()?;
+    Ok((make_array(new_data), true))
+}
 
 /// Estimate the in-memory size of a given RecordBatch. This function estimates the
 /// size as if the underlying buffers were copied to somewhere else and not shared.
@@ -101,10 +240,13 @@ fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::StringViewBuilder;
     use arrow_array::builder::{BinaryViewBuilder, ListBuilder};
     use arrow_array::types::Int32Type;
-    use arrow_array::{BinaryViewArray, ListArray, StringViewArray, StructArray};
-    use arrow_schema::{DataType, Field};
+    use arrow_array::{
+        BinaryViewArray, BooleanArray, ListArray, StringArray, StringViewArray, StructArray,
+    };
+    use arrow_schema::{DataType, Field, Schema};
     use std::sync::Arc;
 
     #[test]
@@ -287,5 +429,175 @@ mod tests {
             get_array_memory_size(&double_slice).unwrap(),
             expected_bv_slice1 + expected_i32_slice1
         );
+    }
+
+    #[test]
+    fn test_compact_batch_recurses_into_struct() {
+        let n = 256;
+        let long = "x".repeat(2048);
+
+        let mut builder = StringViewBuilder::with_capacity(n);
+        for i in 0..n {
+            builder.append_value(format!("batch0_{i}_{long}"));
+        }
+        let string_view_array: ArrayRef = Arc::new(builder.finish());
+        let boolean_array: ArrayRef = Arc::new(BooleanArray::from(vec![true; n]));
+        let struct_fields = vec![
+            Arc::new(Field::new("a", DataType::Utf8View, false)),
+            Arc::new(Field::new("b", DataType::Boolean, false)),
+        ];
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::clone(&struct_fields[0]),
+                Arc::clone(&string_view_array),
+            ),
+            (Arc::clone(&struct_fields[1]), Arc::clone(&boolean_array)),
+        ]);
+
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "s",
+            DataType::Struct(struct_fields.into()),
+            false,
+        )]));
+        let batch0 = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(struct_array) as ArrayRef],
+        )
+        .unwrap();
+        let sliced = batch0.slice(0, 1);
+
+        let before = sliced.get_array_memory_size();
+        let compacted = compact_batch(sliced.clone()).unwrap();
+        let after = compacted.get_array_memory_size();
+
+        assert_eq!(sliced.schema(), compacted.schema());
+        assert_eq!(sliced.num_rows(), compacted.num_rows());
+        assert!(
+            after < before,
+            "expected compaction to reduce memory: before={before}, after={after}"
+        );
+    }
+
+    #[test]
+    fn test_compact_batch_without_view_returns_input_as_is() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("flag", DataType::Boolean, true),
+        ]));
+
+        let ids: ArrayRef = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let names: ArrayRef = Arc::new(StringArray::from(vec![Some("a"), None, Some("c")]));
+        let flags: ArrayRef = Arc::new(BooleanArray::from(vec![Some(true), None, Some(false)]));
+
+        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, names, flags]).unwrap();
+        let original = batch.clone();
+
+        let compacted = compact_batch(batch).unwrap();
+
+        // A no-op compaction should preserve the exact schema/column Arcs.
+        assert!(Arc::ptr_eq(&original.schema(), &compacted.schema()));
+        for i in 0..original.num_columns() {
+            assert!(Arc::ptr_eq(original.column(i), compacted.column(i)));
+        }
+    }
+
+    #[test]
+    fn test_compact_array_compacts_struct_containnig_binary_view() {
+        let i32_values = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let mut bv_builder = BinaryViewBuilder::new();
+        bv_builder.append_value(b"short");
+        bv_builder.append_value(b"Long string that is definitely longer than 12 bytes");
+        bv_builder.append_value(b"Another long string to make buffer larger");
+        let bv: BinaryViewArray = bv_builder.finish();
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                i32_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("s", DataType::BinaryView, false)),
+                Arc::new(bv),
+            ),
+        ]);
+
+        let array: ArrayRef = Arc::new(struct_array);
+        let slice = array.slice(0, 2);
+        let before_size = get_array_memory_size(&array).unwrap();
+
+        let (compacted, mutated) = compact_array(Arc::new(slice)).unwrap();
+        assert!(mutated);
+
+        let after_size = get_array_memory_size(&compacted).unwrap();
+        assert!(after_size < before_size);
+    }
+
+    #[test]
+    fn test_compact_array_compacts_list_of_binary_view() {
+        // Build a List<BinaryView> with many long values. Then slice the list so it contains
+        // only one row; `compact_array` should compact the nested BinaryView values.
+        let n = 256;
+        let long = b"Long string that is definitely longer than 12 bytes";
+
+        let mut bv_list_builder = ListBuilder::new(BinaryViewBuilder::new());
+        for i in 0..n {
+            bv_list_builder
+                .values()
+                .append_value([long, i.to_string().as_bytes()].concat());
+            bv_list_builder.append(true);
+        }
+        let bv_list: ListArray = bv_list_builder.finish();
+        let sliced: ArrayRef = Arc::new(bv_list.slice(0, 1));
+        let before_size = get_array_memory_size(&sliced).unwrap();
+
+        let (compacted, mutated) = compact_array(Arc::clone(&sliced)).unwrap();
+        assert!(mutated);
+
+        let after_size = get_array_memory_size(&compacted).unwrap();
+        assert!(after_size <= before_size);
+    }
+
+    #[test]
+    fn test_compact_array_list_without_view_is_noop() {
+        let i32_list: ListArray = ListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2), Some(3)]),
+            Some(vec![Some(4)]),
+        ]);
+
+        let array: ArrayRef = Arc::new(i32_list);
+        let (compacted, mutated) = compact_array(Arc::clone(&array)).unwrap();
+        assert!(!mutated);
+        assert!(Arc::ptr_eq(&array, &compacted));
+    }
+
+    #[test]
+    fn test_compact_array_struct_without_view_is_noop() {
+        let i32_values = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let bool_values = Arc::new(BooleanArray::from(vec![true, false, true]));
+        let i32_list: ArrayRef = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2)]),
+            Some(vec![Some(3)]),
+            None,
+        ]));
+
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                i32_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Boolean, false)),
+                bool_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("c", i32_list.data_type().clone(), true)),
+                i32_list,
+            ),
+        ]);
+
+        let array: ArrayRef = Arc::new(struct_array);
+        let (compacted, mutated) = compact_array(Arc::clone(&array)).unwrap();
+        assert!(!mutated);
+        assert!(Arc::ptr_eq(&array, &compacted));
     }
 }
