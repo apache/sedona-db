@@ -1158,7 +1158,7 @@ mod tests {
                 .as_primitive::<arrow::datatypes::Int32Type>()
                 .value(i);
             assert_eq!(original_id, assembled_id,
-                "Data mismatch when mapping back from assembled batch row {i} to original batch {original_batch_idx} row {original_row_idx}");
+                       "Data mismatch when mapping back from assembled batch row {i} to original batch {original_batch_idx} row {original_row_idx}");
         }
     }
 }

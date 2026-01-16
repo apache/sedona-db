@@ -70,6 +70,23 @@ config_namespace! {
 
         /// Include tie-breakers in KNN join results when there are tied distances
         pub knn_include_tie_breakers: bool, default = false
+
+        /// GPU acceleration options
+        pub gpu: GpuOptions, default = GpuOptions::default()
+    }
+}
+
+config_namespace! {
+    /// Configuration options for GPU-accelerated spatial joins
+    pub struct GpuOptions {
+        /// Enable GPU-accelerated spatial joins (requires CUDA and GPU feature flag)
+        pub enable: bool, default = false
+
+        /// GPU device ID to use (0 = first GPU, 1 = second, etc.)
+        pub device_id: usize, default = 0
+
+        /// Fall back to CPU if GPU initialization or execution fails
+        pub fallback_to_cpu: bool, default = true
     }
 }
 
