@@ -132,63 +132,84 @@ impl BuildSideBatchesCollector {
         metrics_vec: Vec<CollectBuildSideMetrics>,
         concurrent: bool,
     ) -> Result<Vec<BuildPartition>> {
+        if concurrent {
+            self.collect_all_concurrently(streams, reservations, metrics_vec)
+                .await
+        } else {
+            self.collect_all_sequential(streams, reservations, metrics_vec)
+                .await
+        }
+    }
+
+    async fn collect_all_concurrently(
+        &self,
+        streams: Vec<SendableRecordBatchStream>,
+        reservations: Vec<MemoryReservation>,
+        metrics_vec: Vec<CollectBuildSideMetrics>,
+    ) -> Result<Vec<BuildPartition>> {
         if streams.is_empty() {
             return Ok(vec![]);
         }
 
-        if concurrent {
-            // Spawn all tasks to scan all build streams concurrently
-            let mut join_set = JoinSet::new();
-            for (partition_id, ((stream, metrics), reservation)) in streams
-                .into_iter()
-                .zip(metrics_vec)
-                .zip(reservations)
-                .enumerate()
-            {
-                let collector = self.clone();
-                let evaluator = Arc::clone(&self.evaluator);
-                join_set.spawn(async move {
-                    let evaluated_stream = create_evaluated_build_stream(
-                        stream,
-                        evaluator,
-                        metrics.time_taken.clone(),
-                    );
-                    let result = collector
-                        .collect(evaluated_stream, reservation, &metrics)
-                        .await;
-                    (partition_id, result)
-                });
-            }
-
-            // Wait for all async tasks to finish. Results may be returned in arbitrary order,
-            // so we need to reorder them by partition_id later.
-            let results = join_set.join_all().await;
-
-            // Reorder results according to partition ids
-            let mut partitions: Vec<Option<BuildPartition>> = Vec::with_capacity(results.len());
-            partitions.resize_with(results.len(), || None);
-            for result in results {
-                let (partition_id, partition_result) = result;
-                let partition = partition_result?;
-                partitions[partition_id] = Some(partition);
-            }
-
-            Ok(partitions.into_iter().map(|v| v.unwrap()).collect())
-        } else {
-            // Collect partitions sequentially (for JNI/embedded contexts)
-            let mut results = Vec::with_capacity(streams.len());
-            for ((stream, metrics), reservation) in
-                streams.into_iter().zip(metrics_vec).zip(reservations)
-            {
-                let evaluator = Arc::clone(&self.evaluator);
+        // Spawn a task for each stream to scan all streams concurrently
+        let mut join_set = JoinSet::new();
+        for (partition_id, ((stream, metrics), reservation)) in streams
+            .into_iter()
+            .zip(metrics_vec)
+            .zip(reservations)
+            .enumerate()
+        {
+            let collector = self.clone();
+            let evaluator = Arc::clone(&self.evaluator);
+            join_set.spawn(async move {
                 let evaluated_stream =
                     create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
-                let result = self
+                let result = collector
                     .collect(evaluated_stream, reservation, &metrics)
-                    .await?;
-                results.push(result);
-            }
-            Ok(results)
+                    .await;
+                (partition_id, result)
+            });
         }
+
+        // Wait for all async tasks to finish. Results may be returned in arbitrary order,
+        // so we need to reorder them by partition_id later.
+        let results = join_set.join_all().await;
+
+        // Reorder results according to partition ids
+        let mut partitions: Vec<Option<BuildPartition>> = Vec::with_capacity(results.len());
+        partitions.resize_with(results.len(), || None);
+        for result in results {
+            let (partition_id, partition_result) = result;
+            let partition = partition_result?;
+            partitions[partition_id] = Some(partition);
+        }
+
+        Ok(partitions.into_iter().map(|v| v.unwrap()).collect())
+    }
+
+    async fn collect_all_sequential(
+        &self,
+        streams: Vec<SendableRecordBatchStream>,
+        reservations: Vec<MemoryReservation>,
+        metrics_vec: Vec<CollectBuildSideMetrics>,
+    ) -> Result<Vec<BuildPartition>> {
+        if streams.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Collect partitions sequentially (for JNI/embedded contexts)
+        let mut results = Vec::with_capacity(streams.len());
+        for ((stream, metrics), reservation) in
+            streams.into_iter().zip(metrics_vec).zip(reservations)
+        {
+            let evaluator = Arc::clone(&self.evaluator);
+            let evaluated_stream =
+                create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
+            let result = self
+                .collect(evaluated_stream, reservation, &metrics)
+                .await?;
+            results.push(result);
+        }
+        Ok(results)
     }
 }
