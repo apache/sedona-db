@@ -33,6 +33,7 @@ use datafusion_execution::{
 use datafusion_physical_plan::stream::RecordBatchReceiverStreamBuilder;
 use futures::{FutureExt, StreamExt};
 use pin_project_lite::pin_project;
+use sedona_common::sedona_internal_err;
 
 use crate::evaluated_batch::{
     evaluated_batch_stream::EvaluatedBatchStream,
@@ -94,7 +95,11 @@ impl ExternalEvaluatedBatchStream {
             // file is provided. In that case, validate that the caller-provided evaluated schema
             // matches what would be derived from the spilled schema.
             let actual_schema = spilled_schema_to_evaluated_schema(&record_stream.schema())?;
-            assert_eq!(schema, actual_schema);
+            if schema != actual_schema {
+                return sedona_internal_err!(
+                    "Schema mismatch when creating ExternalEvaluatedBatchStream"
+                );
+            }
         }
         let evaluated_stream =
             RecordBatchToEvaluatedStream::try_spawned_evaluated_stream(Box::pin(record_stream))?;

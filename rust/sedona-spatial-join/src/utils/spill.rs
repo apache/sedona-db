@@ -123,10 +123,6 @@ impl RecordBatchSpillWriter {
         })?;
 
         self.metrics.spilled_rows.add(batch.num_rows());
-        self.metrics
-            .spilled_bytes
-            .add(get_record_batch_memory_size(batch)?);
-
         Ok(())
     }
 
