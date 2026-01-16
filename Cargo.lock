@@ -5542,6 +5542,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "wkb",
+ "wkt 0.14.0",
 ]
 
 [[package]]

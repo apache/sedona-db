@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::{
-    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
+    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate,
 };
 use arrow_schema::{Schema, SchemaRef};
 use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
@@ -1089,37 +1089,19 @@ fn is_spatial_predicate_supported(
 mod gpu_optimizer {
     use super::*;
     use datafusion_common::DataFusionError;
-    use sedona_libgpuspatial::GpuSpatialRelationPredicate;
+
     use sedona_spatial_join_gpu::spatial_predicate::{
         RelationPredicate as GpuJoinRelationPredicate, SpatialPredicate as GpuJoinSpatialPredicate,
     };
     use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
 
-    fn convert_relation_type(t: &SpatialRelationType) -> Result<GpuSpatialRelationPredicate> {
-        match t {
-            SpatialRelationType::Equals => Ok(GpuSpatialRelationPredicate::Equals),
-            SpatialRelationType::Touches => Ok(GpuSpatialRelationPredicate::Touches),
-            SpatialRelationType::Contains => Ok(GpuSpatialRelationPredicate::Contains),
-            SpatialRelationType::Covers => Ok(GpuSpatialRelationPredicate::Covers),
-            SpatialRelationType::Intersects => Ok(GpuSpatialRelationPredicate::Intersects),
-            SpatialRelationType::Within => Ok(GpuSpatialRelationPredicate::Within),
-            SpatialRelationType::CoveredBy => Ok(GpuSpatialRelationPredicate::CoveredBy),
-            _ => {
-                // This should not happen as we check for supported predicates earlier
-                Err(DataFusionError::Execution(format!(
-                    "Unsupported spatial relation type for GPU: {:?}",
-                    t
-                )))
-            }
-        }
-    }
     fn convert_predicate(p: &SpatialPredicate) -> Result<GpuJoinSpatialPredicate> {
         match p {
             SpatialPredicate::Relation(rp) => Ok(GpuJoinSpatialPredicate::Relation(
                 GpuJoinRelationPredicate {
                     left: rp.left.clone(),
                     right: rp.right.clone(),
-                    relation_type: convert_relation_type(&rp.relation_type)?,
+                    relation_type: rp.relation_type,
                 },
             )),
             _ => {
@@ -1174,6 +1156,7 @@ mod gpu_optimizer {
 // Re-export for use in main optimizer
 #[cfg(feature = "gpu")]
 use gpu_optimizer::try_create_gpu_spatial_join;
+use sedona_geometry::spatial_relation::SpatialRelationType;
 
 // Stub for when GPU feature is disabled
 #[cfg(not(feature = "gpu"))]
@@ -1208,7 +1191,7 @@ mod gpu_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial_predicate::{SpatialPredicate, SpatialRelationType};
+    use crate::spatial_predicate::SpatialPredicate;
     use arrow::datatypes::{DataType, Field, Schema};
     use datafusion_common::{JoinSide, ScalarValue};
     use datafusion_expr::Operator;

@@ -685,7 +685,7 @@ mod tests {
     use crate::{
         index::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         operand_evaluator::EvaluatedGeometryArray,
-        spatial_predicate::{KNNPredicate, RelationPredicate, SpatialRelationType},
+        spatial_predicate::{KNNPredicate, RelationPredicate},
     };
 
     use super::*;
@@ -697,6 +697,7 @@ mod tests {
     use datafusion_physical_expr::expressions::Column;
     use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
+    use sedona_geometry::spatial_relation::SpatialRelationType;
     use sedona_geometry::wkb_factory::write_wkb_empty_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;

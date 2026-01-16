@@ -40,140 +40,15 @@ use arrow::ipc::reader::StreamReader;
 use arrow_array::{Int32Array, RecordBatch};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_common::JoinType;
+use datafusion_common::{JoinType, ScalarValue};
 use datafusion_physical_expr::expressions::Column;
 use futures::StreamExt;
-use sedona_libgpuspatial::{GpuSpatial, GpuSpatialRelationPredicate};
+use sedona_geometry::spatial_relation::SpatialRelationType;
+use sedona_libgpuspatial::GpuSpatial;
 use sedona_spatial_join_gpu::spatial_predicate::{RelationPredicate, SpatialPredicate};
 use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
 use std::fs::File;
 use std::sync::Arc;
-
-/// Helper to create test geometry data
-#[allow(dead_code)]
-fn create_point_wkb(x: f64, y: f64) -> Vec<u8> {
-    let mut wkb = vec![0x01, 0x01, 0x00, 0x00, 0x00]; // Little endian point type
-    wkb.extend_from_slice(&x.to_le_bytes());
-    wkb.extend_from_slice(&y.to_le_bytes());
-    wkb
-}
-
-/// Mock execution plan that produces geometry data
-#[allow(dead_code)]
-struct GeometryDataExec {
-    schema: Arc<Schema>,
-    batch: RecordBatch,
-}
-
-#[allow(dead_code)]
-impl GeometryDataExec {
-    fn new(ids: Vec<i32>, geometries: Vec<Vec<u8>>) -> Self {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-            Field::new("geometry", DataType::Binary, false),
-        ]));
-
-        let id_array = Int32Array::from(ids);
-
-        // Build BinaryArray using builder to avoid lifetime issues
-        let mut builder = arrow_array::builder::BinaryBuilder::new();
-        for geom in geometries {
-            builder.append_value(&geom);
-        }
-        let geom_array = builder.finish();
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(id_array), Arc::new(geom_array)],
-        )
-        .unwrap();
-
-        Self { schema, batch }
-    }
-}
-
-impl std::fmt::Debug for GeometryDataExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GeometryDataExec")
-    }
-}
-
-impl datafusion::physical_plan::DisplayAs for GeometryDataExec {
-    fn fmt_as(
-        &self,
-        _t: datafusion::physical_plan::DisplayFormatType,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result {
-        write!(f, "GeometryDataExec")
-    }
-}
-
-impl ExecutionPlan for GeometryDataExec {
-    fn name(&self) -> &str {
-        "GeometryDataExec"
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn schema(&self) -> Arc<Schema> {
-        self.schema.clone()
-    }
-
-    fn properties(&self) -> &datafusion::physical_plan::PlanProperties {
-        unimplemented!("properties not needed for test")
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![]
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        _children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> datafusion_common::Result<Arc<dyn ExecutionPlan>> {
-        Ok(self)
-    }
-
-    fn execute(
-        &self,
-        _partition: usize,
-        _context: Arc<TaskContext>,
-    ) -> datafusion_common::Result<datafusion::physical_plan::SendableRecordBatchStream> {
-        use datafusion::physical_plan::{RecordBatchStream, SendableRecordBatchStream};
-        use futures::Stream;
-        use std::pin::Pin;
-        use std::task::{Context, Poll};
-
-        struct SingleBatchStream {
-            schema: Arc<Schema>,
-            batch: Option<RecordBatch>,
-        }
-
-        impl Stream for SingleBatchStream {
-            type Item = datafusion_common::Result<RecordBatch>;
-
-            fn poll_next(
-                mut self: Pin<&mut Self>,
-                _cx: &mut Context<'_>,
-            ) -> Poll<Option<Self::Item>> {
-                Poll::Ready(self.batch.take().map(Ok))
-            }
-        }
-
-        impl RecordBatchStream for SingleBatchStream {
-            fn schema(&self) -> Arc<Schema> {
-                self.schema.clone()
-            }
-        }
-
-        Ok(Box::pin(SingleBatchStream {
-            schema: self.schema.clone(),
-            batch: Some(self.batch.clone()),
-        }) as SendableRecordBatchStream)
-    }
-}
 
 #[tokio::test]
 async fn test_gpu_spatial_join_basic_correctness() {
@@ -256,7 +131,7 @@ async fn test_gpu_spatial_join_basic_correctness() {
                 SpatialPredicate::Relation(RelationPredicate::new(
                     Arc::new(left_col),
                     Arc::new(right_col),
-                    GpuSpatialRelationPredicate::Contains,
+                    SpatialRelationType::Contains,
                 )),
                 None,
                 &JoinType::Inner,
@@ -350,7 +225,7 @@ impl datafusion::physical_plan::DisplayAs for SingleBatchExec {
     }
 }
 
-impl datafusion::physical_plan::ExecutionPlan for SingleBatchExec {
+impl ExecutionPlan for SingleBatchExec {
     fn name(&self) -> &str {
         "SingleBatchExec"
     }
@@ -414,6 +289,34 @@ impl datafusion::physical_plan::ExecutionPlan for SingleBatchExec {
             schema: self.schema.clone(),
             batch: Some(self.batch.clone()),
         }) as SendableRecordBatchStream)
+    }
+}
+
+fn bbox_intersects(wkt_a: &str, wkt_b: &str) -> bool {
+    use geo::prelude::*; // Imports BoundingRect and Intersects traits
+    use geo::Geometry;
+    use wkt::TryFromWkt; // Trait for parsing WKT
+                         // 1. Parse WKT strings into Geo types
+                         // We use try_from_wkt_str which returns Result<Geometry<f64>, ...>
+    let geom_a: Geometry<f64> = match Geometry::try_from_wkt_str(wkt_a) {
+        Ok(g) => g,
+        Err(_) => return false, // Handle parse error (or panic/return Result)
+    };
+
+    let geom_b: Geometry<f64> = match Geometry::try_from_wkt_str(wkt_b) {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+
+    // 2. Calculate Bounding Boxes (Rect)
+    // bounding_rect() returns Option<Rect> (None if geometry is empty)
+    let bbox_a = geom_a.bounding_rect();
+    let bbox_b = geom_b.bounding_rect();
+
+    // 3. Check Intersection
+    match (bbox_a, bbox_b) {
+        (Some(rect_a), Some(rect_b)) => rect_a.intersects(&rect_b),
+        _ => false, // If either geometry is empty, they cannot intersect
     }
 }
 #[tokio::test]
@@ -488,9 +391,8 @@ async fn test_gpu_spatial_join_correctness() {
     let kernels = scalar_kernels();
     let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
 
-    let _cpu_testers: std::collections::HashMap<&str, ScalarUdfTester> = [
+    let cpu_testers: std::collections::HashMap<&str, ScalarUdfTester> = [
         "st_equals",
-        "st_disjoint",
         "st_touches",
         "st_contains",
         "st_covers",
@@ -516,18 +418,36 @@ async fn test_gpu_spatial_join_correctness() {
     // Note: Some predicates may not be fully implemented in GPU yet
     // Currently testing Intersects and Contains as known working predicates
     let predicates = vec![
-        (GpuSpatialRelationPredicate::Equals, "Equals"),
-        (GpuSpatialRelationPredicate::Disjoint, "Disjoint"),
-        (GpuSpatialRelationPredicate::Touches, "Touches"),
-        (GpuSpatialRelationPredicate::Contains, "Contains"),
-        (GpuSpatialRelationPredicate::Covers, "Covers"),
-        (GpuSpatialRelationPredicate::Intersects, "Intersects"),
-        (GpuSpatialRelationPredicate::Within, "Within"),
-        (GpuSpatialRelationPredicate::CoveredBy, "CoveredBy"),
+        (SpatialRelationType::Equals, "st_equals"),
+        (SpatialRelationType::Contains, "st_contains"),
+        (SpatialRelationType::Touches, "st_touches"),
+        (SpatialRelationType::Covers, "st_covers"),
+        (SpatialRelationType::Intersects, "st_intersects"),
+        (SpatialRelationType::Within, "st_within"),
+        (SpatialRelationType::CoveredBy, "st_coveredby"),
     ];
 
     for (gpu_predicate, predicate_name) in predicates {
         log::info!("Testing predicate: {}", predicate_name);
+        let mut ref_pairs: Vec<(usize, usize)> = Vec::new();
+        let cpu_tester = cpu_testers
+            .get(predicate_name)
+            .expect("CPU tester not found for predicate");
+
+        for (i, poly_wkt) in polygon_values.iter().enumerate() {
+            let poly_wkt = poly_wkt.unwrap();
+            for (j, point_wkt) in point_values.iter().enumerate() {
+                let point_wkt = point_wkt.unwrap();
+                if bbox_intersects(poly_wkt, point_wkt) {
+                    let cpu_result = cpu_tester
+                        .invoke_scalar_scalar(poly_wkt, point_wkt)
+                        .unwrap();
+                    if let ScalarValue::Boolean(Some(true)) = cpu_result {
+                        ref_pairs.push((i, j))
+                    }
+                }
+            }
+        }
 
         // Run GPU spatial join
         let left_plan =
@@ -563,7 +483,7 @@ async fn test_gpu_spatial_join_correctness() {
         let mut stream = gpu_join.execute(0, task_context).unwrap();
 
         // Collect GPU results
-        let mut gpu_result_pairs: Vec<(u32, u32)> = Vec::new();
+        let mut gpu_result_pairs: Vec<(usize, usize)> = Vec::new();
         while let Some(result) = stream.next().await {
             let batch = result.expect("GPU join failed");
 
@@ -580,9 +500,16 @@ async fn test_gpu_spatial_join_correctness() {
                 .unwrap();
 
             for i in 0..batch.num_rows() {
-                gpu_result_pairs.push((left_id_col.value(i) as u32, right_id_col.value(i) as u32));
+                gpu_result_pairs.push((
+                    left_id_col.value(i) as usize,
+                    right_id_col.value(i) as usize,
+                ));
             }
         }
+        ref_pairs.sort();
+        gpu_result_pairs.sort();
+        assert_eq!(ref_pairs, gpu_result_pairs);
+
         log::info!(
             "{} - GPU join: {} result rows",
             predicate_name,
