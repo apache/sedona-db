@@ -21,6 +21,7 @@ pub mod error;
 pub mod interval;
 pub mod is_empty;
 pub mod point_count;
+pub mod spatial_relation;
 pub mod transform;
 pub mod types;
 pub mod wkb_factory;

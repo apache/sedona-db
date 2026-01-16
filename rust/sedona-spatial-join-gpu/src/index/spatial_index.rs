@@ -25,7 +25,8 @@ use datafusion_common::{DataFusionError, Result};
 use geo_types::Rect;
 use parking_lot::Mutex;
 use sedona_common::SpatialJoinOptions;
-use sedona_libgpuspatial::GpuSpatial;
+use sedona_geometry::spatial_relation::SpatialRelationType;
+use sedona_libgpuspatial::{GpuSpatial, GpuSpatialRelationPredicate};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -113,7 +114,12 @@ impl SpatialIndex {
                 let geoms = ensure_binary_array(probe_geoms)?;
 
                 self.gpu_spatial
-                    .refine_loaded(&geoms, rel_p.relation_type, build_indices, probe_indices)
+                    .refine_loaded(
+                        &geoms,
+                        Self::convert_relation_type(&rel_p.relation_type)?,
+                        build_indices,
+                        probe_indices,
+                    )
                     .map_err(|e| {
                         DataFusionError::Execution(format!(
                             "GPU spatial refinement failed: {:?}",
@@ -125,6 +131,25 @@ impl SpatialIndex {
             _ => Err(DataFusionError::NotImplemented(
                 "Only Relation predicate is supported for GPU spatial query".to_string(),
             )),
+        }
+    }
+    // Translate Sedona SpatialRelationType to GpuSpatialRelationPredicate
+    fn convert_relation_type(t: &SpatialRelationType) -> Result<GpuSpatialRelationPredicate> {
+        match t {
+            SpatialRelationType::Equals => Ok(GpuSpatialRelationPredicate::Equals),
+            SpatialRelationType::Touches => Ok(GpuSpatialRelationPredicate::Touches),
+            SpatialRelationType::Contains => Ok(GpuSpatialRelationPredicate::Contains),
+            SpatialRelationType::Covers => Ok(GpuSpatialRelationPredicate::Covers),
+            SpatialRelationType::Intersects => Ok(GpuSpatialRelationPredicate::Intersects),
+            SpatialRelationType::Within => Ok(GpuSpatialRelationPredicate::Within),
+            SpatialRelationType::CoveredBy => Ok(GpuSpatialRelationPredicate::CoveredBy),
+            _ => {
+                // This should not happen as we check for supported predicates earlier
+                Err(DataFusionError::Execution(format!(
+                    "Unsupported spatial relation type for GPU: {:?}",
+                    t
+                )))
+            }
         }
     }
 }

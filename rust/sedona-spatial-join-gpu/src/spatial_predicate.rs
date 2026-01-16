@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use datafusion_common::JoinSide;
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_libgpuspatial::GpuSpatialRelationPredicate;
+use sedona_geometry::spatial_relation::SpatialRelationType;
 
 /// Spatial predicate is the join condition of a spatial join. It can be a distance predicate,
 /// a relation predicate, or a KNN predicate.
@@ -137,7 +137,7 @@ pub struct RelationPredicate {
     /// should be evaluated directly on the right side batches.
     pub right: Arc<dyn PhysicalExpr>,
     /// The spatial relation type.
-    pub relation_type: GpuSpatialRelationPredicate,
+    pub relation_type: SpatialRelationType,
 }
 
 impl RelationPredicate {
@@ -150,7 +150,7 @@ impl RelationPredicate {
     pub fn new(
         left: Arc<dyn PhysicalExpr>,
         right: Arc<dyn PhysicalExpr>,
-        relation_type: GpuSpatialRelationPredicate,
+        relation_type: SpatialRelationType,
     ) -> Self {
         Self {
             left,

@@ -25,7 +25,7 @@ use datafusion::physical_plan::{
 use datafusion_common::{JoinType, Result as DFResult};
 use datafusion_physical_expr::expressions::Column;
 use futures::{Stream, StreamExt};
-use sedona_libgpuspatial::GpuSpatialRelationPredicate;
+use sedona_geometry::spatial_relation::SpatialRelationType;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use sedona_spatial_join_gpu::spatial_predicate::{RelationPredicate, SpatialPredicate};
 use sedona_spatial_join_gpu::{GpuSpatialJoinConfig, GpuSpatialJoinExec};
@@ -156,7 +156,7 @@ async fn test_gpu_join_exec_creation() {
         SpatialPredicate::Relation(RelationPredicate::new(
             Arc::new(left_col),
             Arc::new(right_col),
-            GpuSpatialRelationPredicate::Contains,
+            SpatialRelationType::Contains,
         )),
         None,
         &JoinType::Inner,
@@ -188,7 +188,7 @@ async fn test_gpu_join_exec_display() {
             SpatialPredicate::Relation(RelationPredicate::new(
                 Arc::new(left_col),
                 Arc::new(right_col),
-                GpuSpatialRelationPredicate::Contains,
+                SpatialRelationType::Contains,
             )),
             None,
             &JoinType::Inner,
@@ -235,7 +235,7 @@ async fn test_gpu_join_execution_with_fallback() {
             SpatialPredicate::Relation(RelationPredicate::new(
                 Arc::new(left_col),
                 Arc::new(right_col),
-                GpuSpatialRelationPredicate::Contains,
+                SpatialRelationType::Contains,
             )),
             None,
             &JoinType::Inner,
@@ -309,7 +309,7 @@ async fn test_gpu_join_with_empty_input() {
             SpatialPredicate::Relation(RelationPredicate::new(
                 Arc::new(left_col),
                 Arc::new(right_col),
-                GpuSpatialRelationPredicate::Contains,
+                SpatialRelationType::Contains,
             )),
             None,
             &JoinType::Inner,

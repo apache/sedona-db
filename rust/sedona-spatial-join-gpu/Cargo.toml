@@ -81,6 +81,8 @@ rstest = "0.26.1"
 env_logger = { workspace = true }
 rand = { workspace = true }
 rstest = { workspace = true }
+geo = { workspace = true }
+wkt = { workspace = true }
 
 sedona-testing = { workspace = true }
 sedona-geos = { workspace = true }
