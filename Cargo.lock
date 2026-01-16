@@ -5122,6 +5122,7 @@ dependencies = [
  "geo-types",
  "geojson",
  "rstest",
+ "sedona-common",
  "sedona-expr",
  "sedona-functions",
  "sedona-geo-generic-alg",

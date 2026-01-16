@@ -29,7 +29,10 @@ use datafusion_expr::{
 };
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF};
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_geometry::{
     types::{GeometryTypeAndDimensions, GeometryTypeId},
     wkb_factory::{
@@ -48,12 +51,12 @@ use sedona_schema::{
 pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_collect_agg",
-        vec![
+        ItemCrsSedonaAccumulator::wrap_impl(vec![
             Arc::new(STCollectAggr {
                 is_geography: false,
             }),
             Arc::new(STCollectAggr { is_geography: true }),
-        ],
+        ]),
         Volatility::Immutable,
         Some(st_collect_agg_doc()),
     )
@@ -309,8 +312,14 @@ impl Accumulator for CollectionAccumulator {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
+    use sedona_testing::{
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry},
+        create::{create_array, create_array_item_crs, create_scalar, create_scalar_item_crs},
+        testers::AggregateUdfTester,
+    };
 
     use super::*;
 
@@ -387,5 +396,148 @@ mod test {
         let tester =
             AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOGRAPHY);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batch0 = create_array(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            &sedona_type,
+        );
+        let batch1 = create_array(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            &sedona_type,
+        );
+
+        let batches = vec![batch0, batch1];
+        let expected = create_scalar(Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"), &sedona_type);
+
+        assert_scalar_equal(&tester.aggregate(&batches).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs_idential_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batch0 = create_array_item_crs(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            [Some("EPSG:4326"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let batch1 = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [Some("EPSG:4326"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"),
+            Some("EPSG:4326"),
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(
+            &tester
+                .aggregate(&vec![batch0.clone(), batch1.clone()])
+                .unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs_multiple_compatible_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batch0 = create_array_item_crs(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            [Some("OGC:CRS84"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let batch1 = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [Some("EPSG:4326"), None, Some("OGC:CRS84")],
+            &WKB_GEOMETRY,
+        );
+
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOINT (0 1, 2 3, 4 5, 6 7)"),
+            Some("OGC:CRS84"),
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(
+            &tester
+                .aggregate(&vec![batch0.clone(), batch1.clone()])
+                .unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs_incompatible_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester =
+            AggregateUdfTester::new(st_collect_agg_udf().into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batch0 = create_array_item_crs(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            [Some("OGC:CRS84"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+
+        // We should error if we see incompatible CRSes between batches
+        let batch1_other_crs = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [Some("EPSG:3857"), None, Some("EPSG:3857")],
+            &WKB_GEOMETRY,
+        );
+        let err = tester
+            .aggregate(&vec![batch0.clone(), batch1_other_crs.clone()])
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: ogc:crs84 vs epsg:3857"
+        );
+
+        // We should error if we see incompatible CRSes between batches (None
+        // should be considered an incompatible CRS)
+        let batch1_other_crs = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [None, None, None],
+            &WKB_GEOMETRY,
+        );
+        let err = tester
+            .aggregate(&vec![batch0.clone(), batch1_other_crs.clone()])
+            .unwrap_err();
+        assert_eq!(err.message(), "CRS values not equal: ogc:crs84 vs None");
+
+        // Or if we see incompatible CRSes in a single batch
+        let batch0_incompatible_crses = create_array_item_crs(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            [Some("OGC:CRS84"), None, Some("EPSG:3857")],
+            &WKB_GEOMETRY,
+        );
+
+        let err = tester
+            .aggregate(&vec![batch0_incompatible_crses.clone()])
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS values not equal: ogc:crs84 vs epsg:3857"
+        );
     }
 }

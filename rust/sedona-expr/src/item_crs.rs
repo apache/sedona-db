@@ -17,17 +17,18 @@
 
 use std::{fmt::Debug, iter::zip, sync::Arc};
 
-use arrow_array::{ArrayRef, StructArray};
+use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::NullBuffer;
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
-    DataFusionError, Result, ScalarValue,
+    exec_err, DataFusionError, Result, ScalarValue,
 };
-use datafusion_expr::ColumnarValue;
+use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::sedona_internal_err;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
+use crate::aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAccumulator, SedonaAccumulatorRef};
 use crate::scalar_udf::{IntoScalarKernelRefs, ScalarKernelRef, SedonaScalarKernel};
 
 /// Wrap a [SedonaScalarKernel] to provide Item CRS type support
@@ -111,6 +112,267 @@ impl SedonaScalarKernel for ItemCrsKernel {
         _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+    }
+}
+
+/// Wrap a [SedonaAccumulator] to provide Item CRS type support
+///
+/// Most accumulators that operate on geometry or geography in some way
+/// can also support Item CRS inputs:
+///
+/// - Accumulators that return a non-spatial type whose value does not
+///   depend on the input CRS only need to operate on the `item` portion
+///   of any item_crs input (e.g., ST_Analyze_Agg()).
+/// - Accumulators that return a geometry or geography must also return
+///   an item_crs type where the output CRSes are propagated from the
+///   input.
+/// - CRSes within a single group must be compatible
+///
+/// This accumulator provides an automatic wrapper enforcing these rules.
+#[derive(Debug)]
+pub struct ItemCrsSedonaAccumulator {
+    inner: SedonaAccumulatorRef,
+}
+
+impl ItemCrsSedonaAccumulator {
+    /// Create a new [SedonaAccumulatorRef] wrapping the input
+    ///
+    /// The resulting accumulator matches arguments of the input with ItemCrs inputs
+    /// but not those of the original accumulator (i.e., an aggregate function needs both
+    /// accumulators to support both type-level and item-level CRSes).
+    pub fn new_ref(inner: SedonaAccumulatorRef) -> SedonaAccumulatorRef {
+        Arc::new(Self { inner })
+    }
+
+    /// Wrap a vector of accumulators by appending all ItemCrs versions followed by
+    /// the contents of inner
+    ///
+    /// This is the recommended way to add accumulators when all of them should support
+    /// ItemCrs inputs.
+    pub fn wrap_impl(inner: impl IntoSedonaAccumulatorRefs) -> Vec<SedonaAccumulatorRef> {
+        let accumulators = inner.into_sedona_accumulator_refs();
+
+        let mut out = Vec::with_capacity(accumulators.len() * 2);
+
+        // Add ItemCrsAccumulators first (so they will be resolved last)
+        for inner_accumulator in &accumulators {
+            out.push(ItemCrsSedonaAccumulator::new_ref(inner_accumulator.clone()));
+        }
+
+        for inner_accumulator in accumulators {
+            out.push(inner_accumulator);
+        }
+
+        out
+    }
+}
+
+impl SedonaAccumulator for ItemCrsSedonaAccumulator {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        // We don't have any functions we can test this with yet, so for the moment only support
+        // single-argument aggregations (slightly simpler).
+        if args.len() != 1 {
+            return Ok(None);
+        }
+
+        // This implementation doesn't apply to non-item crs types
+        if !ArgMatcher::is_item_crs().match_type(&args[0]) {
+            return Ok(None);
+        }
+
+        // Strip any CRS that might be present from the input type
+        let item_arg_types = args
+            .iter()
+            .map(|arg_type| {
+                parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Resolve the inner accumulator's return type.
+        if let Some(item_type) = self.inner.return_type(&item_arg_types)? {
+            let geo_matcher = ArgMatcher::is_geometry_or_geography();
+
+            // If the inner output is item_crs, the output must also be item_crs. Otherwise
+            // the output is left as is.
+            if geo_matcher.match_type(&item_type) {
+                Ok(Some(SedonaType::new_item_crs(&item_type)?))
+            } else {
+                Ok(Some(item_type))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn accumulator(
+        &self,
+        args: &[SedonaType],
+        output_type: &SedonaType,
+    ) -> Result<Box<dyn datafusion_expr::Accumulator>> {
+        // Strip any CRS that might be present from the input type
+        let item_arg_types = args
+            .iter()
+            .map(|arg_type| {
+                parse_item_crs_arg_type_strip_crs(arg_type).map(|(item_type, _)| item_type)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Extract the item output type from the item_crs output type
+        let (item_output_type, _) = parse_item_crs_arg_type(output_type)?;
+
+        // Create the inner accumulator
+        let inner = self.inner.accumulator(&item_arg_types, &item_output_type)?;
+
+        Ok(Box::new(ItemCrsAccumulator {
+            inner,
+            item_output_type,
+            crs: None,
+        }))
+    }
+
+    fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
+        // We need an extra state field to track the CRS of each group
+        let mut fields = self.inner.state_fields(args)?;
+        fields.push(Field::new("group_crs", DataType::Utf8View, true).into());
+        Ok(fields)
+    }
+}
+
+#[derive(Debug)]
+struct ItemCrsAccumulator {
+    /// The wrapped inner accumulator
+    inner: Box<dyn Accumulator>,
+    /// The item output type (without the item_crs wrapper)
+    item_output_type: SedonaType,
+    /// If any rows have been encountered, the CRS (the literal string "0" is used
+    /// as a sentinel for "no CRS" because we have to serialize it (and None is
+    /// reserved for "we haven't seen any rows yet"))
+    crs: Option<String>,
+}
+
+impl Accumulator for ItemCrsAccumulator {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        // The input is an item_crs struct array; extract the item and crs columns
+        let struct_array = as_struct_array(&values[0])?;
+        let item_array = struct_array.column(0).clone();
+        let crs_array = as_string_view_array(struct_array.column(1))?;
+
+        // Check and track CRS values
+        if let Some(struct_nulls) = struct_array.nulls() {
+            // Skip CRS values for null items
+            for (is_valid, crs_value) in zip(struct_nulls, crs_array.iter()) {
+                if is_valid {
+                    self.merge_crs(crs_value.unwrap_or("0"))?;
+                }
+            }
+        } else {
+            // No nulls
+            for crs_value in crs_array.iter() {
+                self.merge_crs(crs_value.unwrap_or("0"))?;
+            }
+        }
+
+        // Update the inner accumulator with just the item portion
+        self.inner.update_batch(&[item_array])?;
+        Ok(())
+    }
+
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        let inner_result = self.inner.evaluate()?;
+
+        // If the output type is not geometry or geography we can just return it
+        if !matches!(
+            self.item_output_type,
+            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _)
+        ) {
+            return Ok(inner_result);
+        }
+
+        // Otherwise, prepare the item_crs result
+
+        // Convert the sentinel back to None
+        let crs_value = match &self.crs {
+            Some(s) if s == "0" => None,
+            Some(s) => Some(s.clone()),
+            None => None,
+        };
+
+        // Create the item_crs struct scalar
+        let item_crs_result = make_item_crs(
+            &self.item_output_type,
+            ColumnarValue::Scalar(inner_result),
+            &ColumnarValue::Scalar(ScalarValue::Utf8View(crs_value)),
+            None,
+        )?;
+
+        match item_crs_result {
+            ColumnarValue::Scalar(scalar) => Ok(scalar),
+            ColumnarValue::Array(_) => {
+                sedona_internal_err!("Expected scalar result from make_item_crs")
+            }
+        }
+    }
+
+    fn size(&self) -> usize {
+        self.inner.size() + size_of::<ItemCrsAccumulator>()
+    }
+
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        let mut inner_state = self.inner.state()?;
+        inner_state.push(ScalarValue::Utf8View(self.crs.clone()));
+        Ok(inner_state)
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        // The CRS field is the last element of states
+        if states.is_empty() {
+            return sedona_internal_err!("Expected at least one state field");
+        }
+        let crs_array = as_string_view_array(states.last().unwrap())?;
+
+        // Check and merge CRS values from the state
+        for crs_str in crs_array.iter().flatten() {
+            self.merge_crs(crs_str)?;
+        }
+
+        // Merge the inner state (excluding the CRS field)
+        let inner_states = &states[..states.len() - 1];
+        self.inner.merge_batch(inner_states)
+    }
+}
+
+impl ItemCrsAccumulator {
+    /// Merge a CRS value into the accumulator's tracked CRS
+    ///
+    /// Ensures all CRS values are compatible. Here "0" means an explicit
+    /// null crs. This is because we have to serialize it somehow and None
+    /// is reserved for the "we haven't seen a CRS yet".
+    fn merge_crs(&mut self, crs_str: &str) -> Result<()> {
+        match &self.crs {
+            None => {
+                // First CRS value encountered
+                self.crs = Some(crs_str.to_string());
+                Ok(())
+            }
+            Some(existing) if existing == crs_str => {
+                // CRS is byte-for-byte equal, nothing to do
+                Ok(())
+            }
+            Some(existing) => {
+                // Check if CRSes are semantically equal
+                let existing_crs = deserialize_crs(existing)?;
+                let new_crs = deserialize_crs(crs_str)?;
+                if existing_crs == new_crs {
+                    Ok(())
+                } else {
+                    let existing_displ = existing_crs
+                        .map(|c| c.to_string())
+                        .unwrap_or("None".to_string());
+                    let new_displ = new_crs.map(|c| c.to_string()).unwrap_or("None".to_string());
+                    exec_err!("CRS values not equal: {existing_displ} vs {new_displ}")
+                }
+            }
+        }
     }
 }
 

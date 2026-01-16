@@ -25,7 +25,11 @@ use datafusion_common::{
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::BooleanOps;
 use geo_traits::to_geo::ToGeoGeometry;
-use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef};
+use sedona_common::sedona_internal_err;
+use sedona_expr::{
+    aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef},
+    item_crs::ItemCrsSedonaAccumulator,
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -36,8 +40,8 @@ use wkb::Endianness;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Union_Agg() implementation
-pub fn st_union_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STUnionAgg {})
+pub fn st_union_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    ItemCrsSedonaAccumulator::wrap_impl(STUnionAgg {})
 }
 
 #[derive(Debug)]
@@ -161,9 +165,7 @@ impl UnionAccumulator {
 impl Accumulator for UnionAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
-            return Err(DataFusionError::Internal(
-                "No input arrays provided to accumulator in update_batch".to_string(),
-            ));
+            return sedona_internal_err!("No input arrays provided to accumulator in update_batch");
         }
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
@@ -222,9 +224,11 @@ mod test {
     use super::*;
     use rstest::rstest;
     use sedona_functions::st_union_agg::st_union_agg_udf;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_scalar_equal_wkb_geometry_topologically, testers::AggregateUdfTester,
+        compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry_topologically},
+        create::create_scalar_item_crs,
+        testers::AggregateUdfTester,
     };
 
     #[rstest]
@@ -383,5 +387,26 @@ mod test {
             &tester.aggregate_wkt(multi_multi_case3).unwrap(),
             Some("MULTIPOLYGON(((0 0, 4 0, 4 3, 7 3, 7 6, 10 6, 10 10, 6 10, 6 7, 3 7, 3 4, 0 4, 0 0)),((10 10, 14 10, 14 13, 17 13, 17 16, 20 16, 20 20, 16 20, 16 17, 13 17, 13 14, 10 14, 10 10)))"),
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs() {
+        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+        let mut udaf = st_union_agg_udf();
+        udaf.add_kernel(st_union_agg_impl());
+        let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
+        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+
+        let batches = vec![
+            vec![Some("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")],
+            vec![Some("POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))")],
+        ];
+        let expected = create_scalar_item_crs(
+            Some("MULTIPOLYGON(((0 2, 0 0, 2 0, 2 1, 3 1, 3 3, 1 3, 1 2, 0 2)))"),
+            None,
+            &WKB_GEOMETRY,
+        );
+
+        assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 }

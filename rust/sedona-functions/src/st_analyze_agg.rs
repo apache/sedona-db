@@ -32,6 +32,7 @@ use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Vol
 use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
+use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometryAnalysis;
 use sedona_geometry::interval::IntervalTrait;
@@ -49,7 +50,7 @@ use crate::executor::WkbExecutor;
 pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_analyze_agg",
-        vec![Arc::new(STAnalyzeAgg {})],
+        ItemCrsSedonaAccumulator::wrap_impl(STAnalyzeAgg {}),
         Volatility::Immutable,
         Some(st_analyze_agg_doc()),
     )
@@ -469,7 +470,7 @@ mod test {
     use arrow_json::ArrayWriter;
     use arrow_schema::Schema;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::AggregateUdfTester;
     use serde_json::Value;
 
@@ -537,7 +538,10 @@ mod test {
     }
 
     #[rstest]
-    fn analyze_linestring(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn analyze_linestring(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let mut udaf = st_analyze_agg_udf();
         udaf.add_kernel(st_analyze_agg_impl());
 
