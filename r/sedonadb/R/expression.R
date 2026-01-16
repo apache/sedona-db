@@ -158,6 +158,28 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
   )
 }
 
+sd_eval <- function(stream, exprs, env = parent.frame()) {
+  stream <- nanoarrow::as_nanoarrow_array_stream(
+    stream,
+    geometry_schema = geoarrow::geoarrow_wkb()
+  )
+  expr_ctx <- sd_expr_ctx(stream$get_schema(), env)
+  sd_exprs <- lapply(exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+  exprs_names <- names(exprs)
+  if (!is.null(exprs_names)) {
+    for (i in seq_along(sd_exprs)) {
+      name <- exprs_names[i]
+      if (!is.na(name) && name != "") {
+        sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+      }
+    }
+  }
+
+  stream_out <- nanoarrow::nanoarrow_allocate_array_stream()
+  expr_ctx$factory$evaluate_scalar(sd_exprs, stream, stream_out)
+  stream_out
+}
+
 sd_eval_expr_inner <- function(expr, expr_ctx) {
   if (rlang::is_call(expr)) {
     # Extract `pkg::fun` or `fun` if this is a usual call (e.g., not

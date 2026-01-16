@@ -310,6 +310,18 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_transmute` <- function(self) {
+  function(`ctx`, `exprs_sexp`) {
+    `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_transmute__impl,
+      `self`,
+      `ctx`,
+      `exprs_sexp`
+    ))
+  }
+}
+
 `.savvy_wrap_InternalDataFrame` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
@@ -327,6 +339,7 @@ class(`InternalContext`) <- c(
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
+  e$`transmute` <- `InternalDataFrame_transmute`(ptr)
 
   class(e) <- c(
     "sedonadb::InternalDataFrame",
@@ -448,6 +461,18 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
   }
 }
 
+`SedonaDBExprFactory_evaluate_scalar` <- function(self) {
+  function(`exprs_sexp`, `stream_in`, `stream_out`) {
+    .Call(
+      savvy_SedonaDBExprFactory_evaluate_scalar__impl,
+      `self`,
+      `exprs_sexp`,
+      `stream_in`,
+      `stream_out`
+    )
+  }
+}
+
 `SedonaDBExprFactory_scalar_function` <- function(self) {
   function(`name`, `args`) {
     .savvy_wrap_SedonaDBExpr(.Call(
@@ -465,6 +490,7 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
   e$`aggregate_function` <- `SedonaDBExprFactory_aggregate_function`(ptr)
   e$`binary` <- `SedonaDBExprFactory_binary`(ptr)
   e$`column` <- `SedonaDBExprFactory_column`(ptr)
+  e$`evaluate_scalar` <- `SedonaDBExprFactory_evaluate_scalar`(ptr)
   e$`scalar_function` <- `SedonaDBExprFactory_scalar_function`(ptr)
 
   class(e) <- c(
