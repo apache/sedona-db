@@ -23,6 +23,7 @@ use arrow_array::ArrayRef;
 use arrow_array::StructArray;
 use arrow_schema::{ArrowError, DataType};
 use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
 
 /// Reconstruct `batch` to organize the payload buffers of each `StringViewArray` and
 /// `BinaryViewArray` in sequential order by calling `gc()` on them.
@@ -117,7 +118,10 @@ pub(crate) fn compact_array(array: ArrayRef) -> Result<(ArrayRef, bool)> {
 
         let DataType::List(field) = list_array.data_type() else {
             // Defensive: this downcast should only succeed for DataType::List.
-            return Ok((array, false));
+            return sedona_internal_err!(
+                "ListArray has non-List data type: {:?}",
+                list_array.data_type()
+            );
         };
 
         let rebuilt = ListArray::new(
