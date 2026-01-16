@@ -602,12 +602,11 @@ mod tests {
 
         let evaluated_batch = create_test_evaluated_batch()?;
         writer.append(&evaluated_batch)?;
+        writer.finish()?;
 
         // Verify spill metrics were updated
         assert!(metrics.spilled_rows.value() > 0);
         assert!(metrics.spilled_bytes.value() > 0);
-
-        writer.finish()?;
 
         // Verify spill file count was updated
         assert_eq!(metrics.spill_file_count.value(), 1);
