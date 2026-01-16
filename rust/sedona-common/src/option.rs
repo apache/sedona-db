@@ -70,6 +70,13 @@ config_namespace! {
 
         /// Include tie-breakers in KNN join results when there are tied distances
         pub knn_include_tie_breakers: bool, default = false
+
+        /// The minimum number of geometry pairs per chunk required to enable parallel
+        /// refinement during the spatial join operation. When the refinement phase has
+        /// fewer geometry pairs than this threshold, it will run sequentially instead
+        /// of spawning parallel tasks. Higher values reduce parallelization overhead
+        /// for small datasets, while lower values enable more fine-grained parallelism.
+        pub parallel_refinement_chunk_size: usize, default = 8192
     }
 }
 

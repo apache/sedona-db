@@ -15,14 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    ops::Range,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use datafusion_common::Result;
+use datafusion_common::{DataFusionError, Result};
+use datafusion_common_runtime::JoinSet;
 use datafusion_execution::memory_pool::{MemoryPool, MemoryReservation};
 use float_next_after::NextAfter;
 use geo::BoundingRect;
@@ -44,7 +48,7 @@ use crate::{
         knn_adapter::{KnnComponents, SedonaKnnAdapter},
         IndexQueryResult, QueryResultMetrics,
     },
-    operand_evaluator::{create_operand_evaluator, OperandEvaluator},
+    operand_evaluator::{create_operand_evaluator, distance_value_at, OperandEvaluator},
     refine::{create_refiner, IndexQueryResultRefiner},
     spatial_predicate::SpatialPredicate,
     utils::concurrent_reservation::ConcurrentReservation,
@@ -54,6 +58,7 @@ use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMo
 
 pub struct SpatialIndex {
     pub(crate) schema: SchemaRef,
+    pub(crate) options: SpatialJoinOptions,
 
     /// The spatial predicate evaluator for the spatial predicate.
     pub(crate) evaluator: Arc<dyn OperandEvaluator>,
@@ -125,6 +130,7 @@ impl SpatialIndex {
             .then(|| KnnComponents::new(0, &[], memory_pool.clone()).unwrap());
         Self {
             schema,
+            options,
             evaluator,
             refiner,
             refiner_reservation,
@@ -178,6 +184,7 @@ impl SpatialIndex {
     /// # Returns
     /// * `JoinResultMetrics` containing the number of actual matches (`count`) and the number
     ///   of candidates from the filter phase (`candidate_count`)
+    #[allow(unused)]
     pub(crate) fn query(
         &self,
         probe_wkb: &Wkb,
@@ -407,6 +414,177 @@ impl SpatialIndex {
             count: final_results.len(),
             candidate_count,
         })
+    }
+
+    /// Query the spatial index with a batch of probe geometries to find matching build-side geometries.
+    ///
+    /// This method iterates over the probe geometries in the given range of the evaluated batch.
+    /// For each probe geometry, it performs the two-phase spatial join query:
+    /// 1. **Filter phase**: Uses the R-tree index with the probe geometry's bounding rectangle
+    ///    to quickly identify candidate geometries.
+    /// 2. **Refinement phase**: Evaluates the exact spatial predicate on candidates to determine
+    ///    actual matches.
+    ///
+    /// # Arguments
+    /// * `evaluated_batch` - The batch containing probe geometries and their bounding rectangles
+    /// * `range` - The range of rows in the evaluated batch to process
+    /// * `max_result_size` - The maximum number of results to collect before stopping. If the
+    ///   number of results exceeds this limit, the method returns early.
+    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
+    ///   pairs for each matching build-side geometry
+    /// * `probe_indices` - Output vector that will be populated with the indices of probe geometries
+    ///   that have matches each probe geometry processed
+    ///
+    /// # Returns
+    /// * A tuple containing:
+    ///   - `QueryResultMetrics`: Aggregated metrics (total matches and candidates) for the processed rows
+    ///   - `usize`: The index of the next row to process (exclusive end of the processed range)
+    pub(crate) async fn query_batch(
+        self: &Arc<Self>,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        range: Range<usize>,
+        max_result_size: usize,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+        probe_indices: &mut Vec<u32>,
+    ) -> Result<(QueryResultMetrics, usize)> {
+        if range.is_empty() {
+            return Ok((
+                QueryResultMetrics {
+                    count: 0,
+                    candidate_count: 0,
+                },
+                range.start,
+            ));
+        }
+
+        let rects = evaluated_batch.rects();
+        let dist = evaluated_batch.distance();
+        let mut total_candidates_count = 0;
+        let mut total_count = 0;
+        let mut current_row_idx = range.start;
+        for row_idx in range {
+            current_row_idx = row_idx;
+            let Some(probe_rect) = rects[row_idx] else {
+                continue;
+            };
+
+            let min = probe_rect.min();
+            let max = probe_rect.max();
+            let mut candidates = self.rtree.search(min.x, min.y, max.x, max.y);
+            if candidates.is_empty() {
+                continue;
+            }
+
+            let Some(probe_wkb) = evaluated_batch.wkb(row_idx) else {
+                return sedona_internal_err!(
+                    "Failed to get WKB for row {} in evaluated batch",
+                    row_idx
+                );
+            };
+
+            // Sort and dedup candidates to avoid duplicate results when we index one geometry
+            // using several boxes.
+            candidates.sort_unstable();
+            candidates.dedup();
+
+            let distance = match dist {
+                Some(dist_array) => distance_value_at(dist_array, row_idx)?,
+                None => None,
+            };
+
+            // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
+            let refine_chunk_size = self.options.parallel_refinement_chunk_size;
+            if refine_chunk_size == 0 || candidates.len() < refine_chunk_size * 2 {
+                // For small candidate sets, use refine synchronously
+                let metrics =
+                    self.refine(probe_wkb, &candidates, &distance, build_batch_positions)?;
+                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
+                total_count += metrics.count;
+                total_candidates_count += metrics.candidate_count;
+            } else {
+                // For large candidate sets, spawn several tasks to parallelize refinement
+                let (metrics, positions) = self
+                    .refine_concurrently(
+                        evaluated_batch,
+                        row_idx,
+                        &candidates,
+                        distance,
+                        refine_chunk_size,
+                    )
+                    .await?;
+                build_batch_positions.extend(positions);
+                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
+                total_count += metrics.count;
+                total_candidates_count += metrics.candidate_count;
+            }
+
+            if total_count >= max_result_size {
+                break;
+            }
+        }
+
+        let end_idx = current_row_idx + 1;
+        Ok((
+            QueryResultMetrics {
+                count: total_count,
+                candidate_count: total_candidates_count,
+            },
+            end_idx,
+        ))
+    }
+
+    async fn refine_concurrently(
+        self: &Arc<Self>,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        row_idx: usize,
+        candidates: &[u32],
+        distance: Option<f64>,
+        refine_chunk_size: usize,
+    ) -> Result<(QueryResultMetrics, Vec<(i32, i32)>)> {
+        let mut join_set = JoinSet::new();
+        for (i, chunk) in candidates.chunks(refine_chunk_size).enumerate() {
+            let cloned_evaluated_batch = Arc::clone(evaluated_batch);
+            let chunk = chunk.to_vec();
+            let index_ref = Arc::clone(self);
+            join_set.spawn(async move {
+                let Some(probe_wkb) = cloned_evaluated_batch.wkb(row_idx) else {
+                    return (
+                        i,
+                        sedona_internal_err!(
+                            "Failed to get WKB for row {} in evaluated batch",
+                            row_idx
+                        ),
+                    );
+                };
+                let mut local_positions: Vec<(i32, i32)> = Vec::with_capacity(chunk.len());
+                let res = index_ref.refine(probe_wkb, &chunk, &distance, &mut local_positions);
+                (i, res.map(|r| (r, local_positions)))
+            });
+        }
+
+        // Collect the results in order
+        let mut refine_results = Vec::with_capacity(join_set.len());
+        refine_results.resize_with(join_set.len(), || None);
+        while let Some(res) = join_set.join_next().await {
+            let (chunk_idx, refine_res) =
+                res.map_err(|e| DataFusionError::External(Box::new(e)))?;
+            let (metrics, positions) = refine_res?;
+            refine_results[chunk_idx] = Some((metrics, positions));
+        }
+
+        let mut total_metrics = QueryResultMetrics {
+            count: 0,
+            candidate_count: 0,
+        };
+        let mut all_positions = Vec::with_capacity(candidates.len());
+        for res in refine_results {
+            let (metrics, positions) = res.expect("All chunks should be processed");
+            total_metrics.count += metrics.count;
+            total_metrics.candidate_count += metrics.candidate_count;
+            all_positions.extend(positions);
+        }
+
+        Ok((total_metrics, all_positions))
     }
 
     fn refine(
@@ -1232,9 +1410,6 @@ mod tests {
         assert!(build_positions.len() <= 3);
         assert!(result.count > 0);
         assert!(result.count <= 3);
-
-        println!("KNN Geometry test - found {} results", result.count);
-        println!("Result positions: {build_positions:?}");
     }
 
     #[test]
@@ -1315,8 +1490,6 @@ mod tests {
 
         // Should return results
         assert!(!build_positions.is_empty());
-
-        println!("KNN with mixed geometries: {build_positions:?}");
 
         // Should work with mixed geometry types
         assert!(result.count > 0);
@@ -1517,5 +1690,292 @@ mod tests {
         assert_eq!(result.count, 0);
         assert_eq!(result.candidate_count, 0);
         assert!(build_positions.is_empty());
+    }
+
+    async fn setup_index_for_batch_test(
+        build_geoms: &[Option<&str>],
+        options: SpatialJoinOptions,
+    ) -> Arc<SpatialIndex> {
+        let memory_pool = Arc::new(GreedyMemoryPool::new(100 * 1024 * 1024));
+        let metrics = SpatialJoinBuildMetrics::default();
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("left", 0)),
+            Arc::new(Column::new("right", 0)),
+            SpatialRelationType::Intersects,
+        ));
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+
+        let mut builder = SpatialIndexBuilder::new(
+            schema,
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            1,
+            memory_pool,
+            metrics,
+        )
+        .unwrap();
+
+        let geom_array = create_array(build_geoms, &WKB_GEOMETRY);
+        let batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(geom_array.clone())],
+        )
+        .unwrap();
+        let evaluated_batch = EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY).unwrap(),
+        };
+
+        builder.add_batch(evaluated_batch).unwrap();
+        Arc::new(builder.finish().unwrap())
+    }
+
+    fn create_probe_batch(probe_geoms: &[Option<&str>]) -> Arc<EvaluatedBatch> {
+        let geom_array = create_array(probe_geoms, &WKB_GEOMETRY);
+        let batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(geom_array.clone())],
+        )
+        .unwrap();
+        Arc::new(EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY).unwrap(),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_empty_results() {
+        let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
+        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+
+        // Probe with geometries that don't intersect
+        let probe_geoms = &[Some("POINT (10 10)"), Some("POINT (20 20)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 0);
+        assert_eq!(build_batch_positions.len(), 0);
+        assert_eq!(probe_indices.len(), 0);
+        assert_eq!(next_idx, 2);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_max_result_size() {
+        let build_geoms = &[
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+        ];
+        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+
+        // Probe with geometry that intersects all 3
+        let probe_geoms = &[Some("POINT (0 0)"), Some("POINT (0 0)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        // Case 1: Max result size is large enough
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                10,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+        assert_eq!(metrics.count, 6); // 2 probes * 3 matches
+        assert_eq!(next_idx, 2);
+        assert_eq!(probe_indices, vec![0, 0, 0, 1, 1, 1]);
+
+        // Case 2: Max result size is small (stops after first probe)
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                2, // Stop after 2 results
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        // It should process the first probe, find 3 matches.
+        // Since 3 >= 2, it should stop.
+        assert_eq!(metrics.count, 3);
+        assert_eq!(next_idx, 1); // Only processed 1 probe
+        assert_eq!(probe_indices, vec![0, 0, 0]);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_parallel_refinement() {
+        // Create enough build geometries to trigger parallel refinement
+        // We need candidates.len() >= chunk_size * 2
+        // Let's set chunk_size = 2, so we need >= 4 candidates.
+        let build_geoms = vec![Some("POINT (0 0)"); 10];
+        let options = SpatialJoinOptions {
+            parallel_refinement_chunk_size: 2,
+            ..Default::default()
+        };
+
+        let index = setup_index_for_batch_test(&build_geoms, options).await;
+
+        // Probe with a geometry that intersects all build geometries
+        let probe_geoms = &[Some("POLYGON ((-1 -1, 1 -1, 1 1, -1 1, -1 -1))")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..1,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 10);
+        assert_eq!(build_batch_positions.len(), 10);
+        assert_eq!(probe_indices, vec![0; 10]);
+        assert_eq!(next_idx, 1);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_empty_range() {
+        let build_geoms = &[Some("POINT (0 0)")];
+        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+        let probe_geoms = &[Some("POINT (0 0)"), Some("POINT (0 0)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+
+        // Query with empty range
+        for empty_ranges in [0..0, 1..1, 2..2] {
+            let (metrics, next_idx) = index
+                .query_batch(
+                    &probe_batch,
+                    empty_ranges.clone(),
+                    usize::MAX,
+                    &mut build_batch_positions,
+                    &mut probe_indices,
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(metrics.count, 0);
+            assert_eq!(next_idx, empty_ranges.end);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_range_offset() {
+        let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
+        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+
+        // Probe with 3 geometries:
+        // 0: POINT (0 0) - matches build[0] (should be skipped)
+        // 1: POINT (0 0) - matches build[0]
+        // 2: POINT (1 1) - matches build[1]
+        let probe_geoms = &[
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+            Some("POINT (1 1)"),
+        ];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+
+        // Query with range 1..3 (skipping the first probe)
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                1..3,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 2);
+        assert_eq!(next_idx, 3);
+
+        // probe_indices should contain indices relative to the batch start (1 and 2)
+        assert_eq!(probe_indices, vec![1, 2]);
+
+        // build_batch_positions should contain matches for probe 1 and probe 2
+        // probe 1 matches build 0 (0, 0)
+        // probe 2 matches build 1 (0, 1)
+        // Note: build_batch_positions contains (batch_idx, row_idx)
+        // Since we have 1 batch, batch_idx is 0.
+        assert_eq!(build_batch_positions, vec![(0, 0), (0, 1)]);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_zero_parallel_refinement_chunk_size() {
+        let build_geoms = &[
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+        ];
+        let options = SpatialJoinOptions {
+            // force synchronous refinement
+            parallel_refinement_chunk_size: 0,
+            ..Default::default()
+        };
+
+        let index = setup_index_for_batch_test(build_geoms, options).await;
+        let probe_geoms = &[Some("POINT (0 0)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+
+        let result = index
+            .query_batch(
+                &probe_batch,
+                0..1,
+                10,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        let (metrics, _) = result.unwrap();
+        assert_eq!(metrics.count, 3);
     }
 }
