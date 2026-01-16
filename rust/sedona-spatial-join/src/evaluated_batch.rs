@@ -27,7 +27,7 @@ use crate::{
 
 /// EvaluatedBatch contains the original record batch from the input stream and the evaluated
 /// geometry array.
-pub(crate) struct EvaluatedBatch {
+pub struct EvaluatedBatch {
     /// Original record batch polled from the stream
     pub batch: RecordBatch,
     /// Evaluated geometry array, containing the geometry array containing geometries to be joined,
@@ -65,4 +65,5 @@ impl EvaluatedBatch {
     }
 }
 
-pub(crate) mod evaluated_batch_stream;
+pub mod evaluated_batch_stream;
+pub mod spill;

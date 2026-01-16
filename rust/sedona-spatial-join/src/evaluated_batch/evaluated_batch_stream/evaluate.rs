@@ -169,13 +169,13 @@ mod tests {
 
     use super::schema_contains_view_types;
 
-    fn schema(fields: Vec<Field>) -> SchemaRef {
+    fn make_schema(fields: Vec<Field>) -> SchemaRef {
         Arc::new(Schema::new(fields))
     }
 
     #[test]
     fn test_schema_contains_view_types_top_level() {
-        let schema_ref = schema(vec![
+        let schema_ref = make_schema(vec![
             Field::new("a", DataType::Utf8View, true),
             Field::new("b", DataType::BinaryView, true),
         ]);
@@ -183,7 +183,7 @@ mod tests {
         assert!(schema_contains_view_types(&schema_ref));
 
         // Similar shape but without view types
-        let schema_no_view = schema(vec![
+        let schema_no_view = make_schema(vec![
             Field::new("a", DataType::Utf8, true),
             Field::new("b", DataType::Binary, true),
         ]);
@@ -202,7 +202,7 @@ mod tests {
             true,
         );
 
-        let schema_ref = schema(vec![nested]);
+        let schema_ref = make_schema(vec![nested]);
         assert!(schema_contains_view_types(&schema_ref));
 
         // Nested struct without any view types
@@ -211,7 +211,7 @@ mod tests {
             DataType::Struct(Fields::from(vec![Field::new("v", DataType::Utf8, true)])),
             true,
         );
-        let schema_no_view = schema(vec![nested_no_view]);
+        let schema_no_view = make_schema(vec![nested_no_view]);
         assert!(!schema_contains_view_types(&schema_no_view));
     }
 }
