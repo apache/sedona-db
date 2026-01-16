@@ -49,6 +49,10 @@ pub struct EvaluatedBatchSpillWriter {
     data_inner_fields: Fields,
 }
 
+const SPILL_FIELD_DATA_INDEX: usize = 0;
+const SPILL_FIELD_GEOM_INDEX: usize = 1;
+const SPILL_FIELD_DIST_INDEX: usize = 2;
+
 impl EvaluatedBatchSpillWriter {
     /// Create a new SpillWriter
     pub fn try_new(
@@ -185,7 +189,7 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
 ) -> Result<EvaluatedBatch> {
     // Extract the data struct array (column 0) and convert back to the original RecordBatch
     let data_array = record_batch
-        .column(0)
+        .column(SPILL_FIELD_DATA_INDEX)
         .as_any()
         .downcast_ref::<StructArray>()
         .ok_or_else(|| {
@@ -208,16 +212,16 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
     let batch = RecordBatch::try_new(data_schema, data_columns)?;
 
     // Extract the geometry array (column 1)
-    let geom_array = Arc::clone(record_batch.column(1));
+    let geom_array = Arc::clone(record_batch.column(SPILL_FIELD_GEOM_INDEX));
 
     // Determine the SedonaType from the geometry field in the record batch schema
     let schema = record_batch.schema();
-    let geom_field = schema.field(1);
+    let geom_field = schema.field(SPILL_FIELD_GEOM_INDEX);
     let sedona_type = SedonaType::from_storage_field(geom_field)?;
 
     // Extract the distance array (column 3) and convert back to ColumnarValue
     let dist_array = record_batch
-        .column(2)
+        .column(SPILL_FIELD_DIST_INDEX)
         .as_any()
         .downcast_ref::<Float64Array>()
         .ok_or_else(|| {
@@ -244,7 +248,9 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         if all_same {
             Some(ColumnarValue::Scalar(ScalarValue::Float64(first_value)))
         } else {
-            Some(ColumnarValue::Array(Arc::clone(record_batch.column(2))))
+            Some(ColumnarValue::Array(Arc::clone(
+                record_batch.column(SPILL_FIELD_DIST_INDEX),
+            )))
         }
     } else {
         None
@@ -262,7 +268,7 @@ pub(crate) fn spilled_schema_to_evaluated_schema(spilled_schema: &SchemaRef) -> 
         return Ok(SchemaRef::new(Schema::empty()));
     }
 
-    let data_field = spilled_schema.field(0);
+    let data_field = spilled_schema.field(SPILL_FIELD_DATA_INDEX);
     let inner_fields = match data_field.data_type() {
         DataType::Struct(fields) => fields.clone(),
         _ => {
@@ -403,9 +409,18 @@ mod tests {
 
         // Verify the spill schema has the expected structure
         assert_eq!(writer.spill_schema.fields().len(), 3);
-        assert_eq!(writer.spill_schema.field(0).name(), "data");
-        assert_eq!(writer.spill_schema.field(1).name(), "geom");
-        assert_eq!(writer.spill_schema.field(2).name(), "dist");
+        assert_eq!(
+            writer.spill_schema.field(SPILL_FIELD_DATA_INDEX).name(),
+            "data"
+        );
+        assert_eq!(
+            writer.spill_schema.field(SPILL_FIELD_GEOM_INDEX).name(),
+            "geom"
+        );
+        assert_eq!(
+            writer.spill_schema.field(SPILL_FIELD_DIST_INDEX).name(),
+            "dist"
+        );
 
         Ok(())
     }
