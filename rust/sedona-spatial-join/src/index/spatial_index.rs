@@ -427,13 +427,15 @@ impl SpatialIndex {
     ///
     /// # Arguments
     /// * `evaluated_batch` - The batch containing probe geometries and their bounding rectangles
-    /// * `range` - The range of rows in the evaluated batch to process
+    /// * `range` - The range of rows in the evaluated batch to process.
     /// * `max_result_size` - The maximum number of results to collect before stopping. If the
     ///   number of results exceeds this limit, the method returns early.
     /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
-    ///   pairs for each matching build-side geometry
-    /// * `probe_indices` - Output vector that will be populated with the indices of probe geometries
-    ///   that have matches each probe geometry processed
+    ///   pairs for each matching build-side geometry.
+    /// * `probe_indices` - Output vector that will be populated with the probe row index (in
+    ///   `evaluated_batch`) for each match appended to `build_batch_positions`.
+    ///   This means the probe index is repeated `N` times when a probe geometry produces `N` matches,
+    ///   keeping `probe_indices.len()` in sync with `build_batch_positions.len()`.
     ///
     /// # Returns
     /// * A tuple containing:
