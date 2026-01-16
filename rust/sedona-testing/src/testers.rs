@@ -16,13 +16,15 @@
 // under the License.
 use std::{iter::zip, sync::Arc};
 
-use arrow_array::{ArrayRef, RecordBatch};
+use arrow_array::{ArrayRef, BooleanArray, RecordBatch};
 use arrow_schema::{DataType, FieldRef, Schema};
-use datafusion_common::{config::ConfigOptions, Result, ScalarValue};
+use datafusion_common::{
+    arrow::compute::kernels::concat::concat, config::ConfigOptions, Result, ScalarValue,
+};
 use datafusion_expr::{
     function::{AccumulatorArgs, StateFieldsArgs},
-    Accumulator, AggregateUDF, ColumnarValue, Expr, Literal, ReturnFieldArgs, ScalarFunctionArgs,
-    ScalarUDF,
+    Accumulator, AggregateUDF, ColumnarValue, EmitTo, Expr, GroupsAccumulator, Literal,
+    ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF,
 };
 use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
 use sedona_common::sedona_internal_err;
@@ -49,23 +51,34 @@ use crate::{
 pub struct AggregateUdfTester {
     udf: AggregateUDF,
     arg_types: Vec<SedonaType>,
+    mock_schema: Schema,
+    mock_exprs: Vec<Arc<dyn PhysicalExpr>>,
 }
 
 impl AggregateUdfTester {
     /// Create a new tester
     pub fn new(udf: AggregateUDF, arg_types: Vec<SedonaType>) -> Self {
-        Self { udf, arg_types }
+        let arg_fields = arg_types
+            .iter()
+            .map(|sedona_type| sedona_type.to_storage_field("", true).map(Arc::new))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        let mock_schema = Schema::new(arg_fields);
+
+        let mock_exprs = (0..arg_types.len())
+            .map(|i| -> Arc<dyn PhysicalExpr> { Arc::new(Column::new("col", i)) })
+            .collect::<Vec<_>>();
+        Self {
+            udf,
+            arg_types,
+            mock_schema,
+            mock_exprs,
+        }
     }
 
     /// Compute the return type
     pub fn return_type(&self) -> Result<SedonaType> {
-        let arg_fields = self
-            .arg_types
-            .iter()
-            .map(|arg_type| arg_type.to_storage_field("", true).map(Arc::new))
-            .collect::<Result<Vec<_>>>()?;
-
-        let out_field = self.udf.return_field(&arg_fields)?;
+        let out_field = self.udf.return_field(&self.mock_schema.fields)?;
         SedonaType::from_storage_field(&out_field)
     }
 
@@ -105,43 +118,111 @@ impl AggregateUdfTester {
         state_accumulator.evaluate()
     }
 
+    /// Perform a simple grouped aggregation
+    ///
+    /// Each batch in batches is accumulated with its own groups accumulator
+    /// and serialized into its own state, after which the state resulting
+    /// from each batch is merged into the final groups accumulator. This
+    /// has the effect of testing the pieces of a groups accumulator in a
+    /// predictable/debug-friendly (if artificial) way.
+    pub fn aggregate_groups(
+        &self,
+        batches: &Vec<ArrayRef>,
+        group_indices: Vec<usize>,
+        opt_filter: Option<&Vec<bool>>,
+        emit_sizes: Vec<usize>,
+    ) -> Result<ArrayRef> {
+        let state_schema = Arc::new(Schema::new(self.state_fields()?));
+        let mut state_accumulator = self.new_groups_accumulator()?;
+        let total_num_groups = group_indices.iter().max().unwrap_or(&0) + 1;
+
+        // Check input
+        let total_input_rows: usize = batches.iter().map(|a| a.len()).sum();
+        assert_eq!(total_input_rows, group_indices.len());
+        if let Some(filter) = opt_filter {
+            assert_eq!(total_input_rows, filter.len());
+        }
+        if !emit_sizes.is_empty() {
+            assert_eq!(emit_sizes.iter().sum::<usize>(), total_num_groups);
+        }
+
+        let mut offset = 0;
+        for batch in batches {
+            let mut batch_accumulator = self.new_groups_accumulator()?;
+            let opt_filter_array = opt_filter.map(|filter_vec| {
+                filter_vec[offset..(offset + batch.len())]
+                    .iter()
+                    .collect::<BooleanArray>()
+            });
+            batch_accumulator.update_batch(
+                std::slice::from_ref(batch),
+                &group_indices[offset..(offset + batch.len())],
+                opt_filter_array.as_ref(),
+                total_num_groups,
+            )?;
+            offset += batch.len();
+
+            // For the state accumulator the input is ordered such that
+            // each row is group i for i in (0..total_num_groups)
+            let state_batch = RecordBatch::try_new(
+                state_schema.clone(),
+                batch_accumulator.state(datafusion_expr::EmitTo::All)?,
+            )?;
+            state_accumulator.merge_batch(
+                state_batch.columns(),
+                &(0..total_num_groups).collect::<Vec<_>>(),
+                None,
+                total_num_groups,
+            )?;
+        }
+
+        if emit_sizes.is_empty() {
+            state_accumulator.evaluate(datafusion_expr::EmitTo::All)
+        } else {
+            let arrays = emit_sizes
+                .iter()
+                .map(|emit_size| state_accumulator.evaluate(EmitTo::First(*emit_size)))
+                .collect::<Result<Vec<_>>>()?;
+            let arrays_ref = arrays.iter().map(|a| a.as_ref()).collect::<Vec<_>>();
+            Ok(concat(&arrays_ref)?)
+        }
+    }
+
     fn new_accumulator(&self) -> Result<Box<dyn Accumulator>> {
-        let mock_schema = Schema::new(self.arg_fields());
-        let exprs = (0..self.arg_types.len())
-            .map(|i| -> Arc<dyn PhysicalExpr> { Arc::new(Column::new("col", i)) })
-            .collect::<Vec<_>>();
-        let accumulator_args = AccumulatorArgs {
-            return_field: self.udf.return_field(mock_schema.fields())?,
-            schema: &mock_schema,
+        let accumulator_args = self.accumulator_args()?;
+        self.udf.accumulator(accumulator_args)
+    }
+
+    fn new_groups_accumulator(&self) -> Result<Box<dyn GroupsAccumulator>> {
+        assert!(self
+            .udf
+            .groups_accumulator_supported(self.accumulator_args()?));
+        self.udf.create_groups_accumulator(self.accumulator_args()?)
+    }
+
+    fn accumulator_args(&self) -> Result<AccumulatorArgs<'_>> {
+        Ok(AccumulatorArgs {
+            return_field: self.udf.return_field(self.mock_schema.fields())?,
+            schema: &self.mock_schema,
             ignore_nulls: true,
             order_bys: &[],
             is_reversed: false,
             name: "",
             is_distinct: false,
-            exprs: &exprs,
+            exprs: &self.mock_exprs,
             expr_fields: &[],
-        };
-
-        self.udf.accumulator(accumulator_args)
+        })
     }
 
     fn state_fields(&self) -> Result<Vec<FieldRef>> {
         let state_field_args = StateFieldsArgs {
             name: "",
-            input_fields: &self.arg_fields(),
-            return_field: self.udf.return_field(&self.arg_fields())?,
+            input_fields: self.mock_schema.fields(),
+            return_field: self.udf.return_field(self.mock_schema.fields())?,
             ordering_fields: &[],
             is_distinct: false,
         };
         self.udf.state_fields(state_field_args)
-    }
-
-    fn arg_fields(&self) -> Vec<FieldRef> {
-        self.arg_types
-            .iter()
-            .map(|sedona_type| sedona_type.to_storage_field("", true).map(Arc::new))
-            .collect::<Result<Vec<_>>>()
-            .unwrap()
     }
 }
 
