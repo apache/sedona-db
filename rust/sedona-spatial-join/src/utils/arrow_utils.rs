@@ -243,8 +243,10 @@ mod tests {
     use arrow::array::StringViewBuilder;
     use arrow_array::builder::{BinaryViewBuilder, ListBuilder};
     use arrow_array::types::Int32Type;
-    use arrow_array::{BinaryViewArray, BooleanArray, ListArray, StringViewArray, StructArray};
-    use arrow_schema::{DataType, Field};
+    use arrow_array::{
+        BinaryViewArray, BooleanArray, ListArray, StringArray, StringViewArray, StructArray,
+    };
+    use arrow_schema::{DataType, Field, Schema};
     use std::sync::Arc;
 
     #[test]
@@ -474,5 +476,128 @@ mod tests {
             after < before,
             "expected compaction to reduce memory: before={before}, after={after}"
         );
+    }
+
+    #[test]
+    fn test_compact_batch_without_view_returns_input_as_is() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("flag", DataType::Boolean, true),
+        ]));
+
+        let ids: ArrayRef = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let names: ArrayRef = Arc::new(StringArray::from(vec![Some("a"), None, Some("c")]));
+        let flags: ArrayRef = Arc::new(BooleanArray::from(vec![Some(true), None, Some(false)]));
+
+        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, names, flags]).unwrap();
+        let original = batch.clone();
+
+        let compacted = compact_batch(batch).unwrap();
+
+        // A no-op compaction should preserve the exact schema/column Arcs.
+        assert!(Arc::ptr_eq(&original.schema(), &compacted.schema()));
+        for i in 0..original.num_columns() {
+            assert!(Arc::ptr_eq(original.column(i), compacted.column(i)));
+        }
+    }
+
+    #[test]
+    fn test_compact_array_compacts_struct_containnig_binary_view() {
+        let i32_values = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let mut bv_builder = BinaryViewBuilder::new();
+        bv_builder.append_value(b"short");
+        bv_builder.append_value(b"Long string that is definitely longer than 12 bytes");
+        bv_builder.append_value(b"Another long string to make buffer larger");
+        let bv: BinaryViewArray = bv_builder.finish();
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                i32_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("s", DataType::BinaryView, false)),
+                Arc::new(bv),
+            ),
+        ]);
+
+        let array: ArrayRef = Arc::new(struct_array);
+        let slice = array.slice(0, 2);
+        let before_size = get_array_memory_size(&array).unwrap();
+
+        let (compacted, mutated) = compact_array(Arc::new(slice)).unwrap();
+        assert!(mutated);
+
+        let after_size = get_array_memory_size(&compacted).unwrap();
+        assert!(after_size < before_size);
+    }
+
+    #[test]
+    fn test_compact_array_compacts_list_of_binary_view() {
+        // Build a List<BinaryView> with many long values. Then slice the list so it contains
+        // only one row; `compact_array` should compact the nested BinaryView values.
+        let n = 256;
+        let long = b"Long string that is definitely longer than 12 bytes";
+
+        let mut bv_list_builder = ListBuilder::new(BinaryViewBuilder::new());
+        for i in 0..n {
+            bv_list_builder
+                .values()
+                .append_value([long, i.to_string().as_bytes()].concat());
+            bv_list_builder.append(true);
+        }
+        let bv_list: ListArray = bv_list_builder.finish();
+        let sliced: ArrayRef = Arc::new(bv_list.slice(0, 1));
+        let before_size = get_array_memory_size(&sliced).unwrap();
+
+        let (compacted, mutated) = compact_array(Arc::clone(&sliced)).unwrap();
+        assert!(mutated);
+
+        let after_size = get_array_memory_size(&compacted).unwrap();
+        assert!(after_size <= before_size);
+    }
+
+    #[test]
+    fn test_compact_array_list_without_view_is_noop() {
+        let i32_list: ListArray = ListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2), Some(3)]),
+            Some(vec![Some(4)]),
+        ]);
+
+        let array: ArrayRef = Arc::new(i32_list);
+        let (compacted, mutated) = compact_array(Arc::clone(&array)).unwrap();
+        assert!(!mutated);
+        assert!(Arc::ptr_eq(&array, &compacted));
+    }
+
+    #[test]
+    fn test_compact_array_struct_without_view_is_noop() {
+        let i32_values = Arc::new(arrow_array::Int32Array::from(vec![1, 2, 3]));
+        let bool_values = Arc::new(BooleanArray::from(vec![true, false, true]));
+        let i32_list: ArrayRef = Arc::new(ListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2)]),
+            Some(vec![Some(3)]),
+            None,
+        ]));
+
+        let struct_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("a", DataType::Int32, false)),
+                i32_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("b", DataType::Boolean, false)),
+                bool_values as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("c", i32_list.data_type().clone(), true)),
+                i32_list,
+            ),
+        ]);
+
+        let array: ArrayRef = Arc::new(struct_array);
+        let (compacted, mutated) = compact_array(Arc::clone(&array)).unwrap();
+        assert!(!mutated);
+        assert!(Arc::ptr_eq(&array, &compacted));
     }
 }
