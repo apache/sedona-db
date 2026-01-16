@@ -132,6 +132,10 @@ impl BuildSideBatchesCollector {
         metrics_vec: Vec<CollectBuildSideMetrics>,
         concurrent: bool,
     ) -> Result<Vec<BuildPartition>> {
+        if streams.is_empty() {
+            return Ok(vec![]);
+        }
+
         if concurrent {
             self.collect_all_concurrently(streams, reservations, metrics_vec)
                 .await
@@ -147,10 +151,6 @@ impl BuildSideBatchesCollector {
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
     ) -> Result<Vec<BuildPartition>> {
-        if streams.is_empty() {
-            return Ok(vec![]);
-        }
-
         // Spawn a task for each stream to scan all streams concurrently
         let mut join_set = JoinSet::new();
         for (partition_id, ((stream, metrics), reservation)) in streams
@@ -193,10 +193,6 @@ impl BuildSideBatchesCollector {
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
     ) -> Result<Vec<BuildPartition>> {
-        if streams.is_empty() {
-            return Ok(vec![]);
-        }
-
         // Collect partitions sequentially (for JNI/embedded contexts)
         let mut results = Vec::with_capacity(streams.len());
         for ((stream, metrics), reservation) in
