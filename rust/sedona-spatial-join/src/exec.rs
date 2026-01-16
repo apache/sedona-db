@@ -630,13 +630,14 @@ mod tests {
     use sedona_testing::datagen::RandomPartitionedDataBuilder;
     use tokio::sync::OnceCell;
 
+    use super::*;
     use crate::register_spatial_join_optimizer;
     use sedona_common::{
         option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
         SpatialLibrary,
     };
-
-    use super::*;
+    #[cfg(feature = "gpu")]
+    use sedona_spatial_join_gpu::GpuSpatialJoinExec;
 
     type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
 
@@ -1291,10 +1292,60 @@ mod tests {
         Ok(result_batch)
     }
 
+    #[cfg(feature = "gpu")]
+    async fn run_gpu_spatial_join_query(
+        left_schema: &SchemaRef,
+        right_schema: &SchemaRef,
+        left_partitions: Vec<Vec<RecordBatch>>,
+        right_partitions: Vec<Vec<RecordBatch>>,
+        options: Option<SpatialJoinOptions>,
+        batch_size: usize,
+        sql: &str,
+    ) -> Result<RecordBatch> {
+        let mem_table_left: Arc<dyn TableProvider> =
+            Arc::new(MemTable::try_new(left_schema.to_owned(), left_partitions)?);
+        let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+            right_schema.to_owned(),
+            right_partitions,
+        )?);
+
+        let is_optimized_spatial_join = options.is_some();
+        let ctx = setup_context(options, batch_size)?;
+        ctx.register_table("L", Arc::clone(&mem_table_left))?;
+        ctx.register_table("R", Arc::clone(&mem_table_right))?;
+        let df = ctx.sql(sql).await?;
+        let actual_schema = df.schema().as_arrow().clone();
+        let plan = df.clone().create_physical_plan().await?;
+        let spatial_join_execs = collect_gpu_spatial_join_exec(&plan)?;
+        if is_optimized_spatial_join {
+            assert_eq!(spatial_join_execs.len(), 1);
+        } else {
+            assert!(spatial_join_execs.is_empty());
+        }
+        let result_batches = df.collect().await?;
+        let result_batch =
+            arrow::compute::concat_batches(&Arc::new(actual_schema), &result_batches)?;
+        Ok(result_batch)
+    }
+
     fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
         let mut spatial_join_execs = Vec::new();
         plan.apply(|node| {
             if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+                spatial_join_execs.push(spatial_join_exec);
+            }
+            Ok(TreeNodeRecursion::Continue)
+        })?;
+        Ok(spatial_join_execs)
+    }
+
+    #[cfg(feature = "gpu")]
+    fn collect_gpu_spatial_join_exec(
+        plan: &Arc<dyn ExecutionPlan>,
+    ) -> Result<Vec<&GpuSpatialJoinExec>> {
+        let mut spatial_join_execs = Vec::new();
+        plan.apply(|node| {
+            if let Some(spatial_join_exec) = node.as_any().downcast_ref::<GpuSpatialJoinExec>() {
                 spatial_join_execs.push(spatial_join_exec);
             }
             Ok(TreeNodeRecursion::Continue)
@@ -1615,7 +1666,7 @@ mod tests {
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
-        let result = run_spatial_join_query(
+        let result = run_gpu_spatial_join_query(
             &polygon_schema,
             &point_schema,
             polygon_partitions.clone(),
@@ -1646,7 +1697,7 @@ mod tests {
         arrow::util::pretty::print_batches(&explain_batches)?;
 
         // Now run the actual query
-        let result = run_spatial_join_query(
+        let result = run_gpu_spatial_join_query(
             &polygon_schema,
             &point_schema,
             polygon_partitions.clone(),
