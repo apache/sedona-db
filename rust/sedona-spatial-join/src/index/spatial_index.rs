@@ -600,7 +600,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
         assert_eq!(index.schema(), schema);
@@ -663,7 +663,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -764,7 +764,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -850,7 +850,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -946,7 +946,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -1092,7 +1092,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -1206,7 +1206,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -1291,7 +1291,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -1377,7 +1377,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 
@@ -1493,7 +1493,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch);
+        builder.add_batch(indexed_batch).unwrap();
 
         let index = builder.finish().unwrap();
 

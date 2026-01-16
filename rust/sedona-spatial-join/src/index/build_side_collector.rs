@@ -112,7 +112,7 @@ impl BuildSideBatchesCollector {
                 geom_array,
             };
 
-            let in_mem_size = build_side_batch.in_mem_size();
+            let in_mem_size = build_side_batch.in_mem_size()?;
             metrics.num_batches.add(1);
             metrics.num_rows.add(build_side_batch.num_rows());
             metrics.total_size_bytes.add(in_mem_size);
