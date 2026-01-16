@@ -14,7 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, fmt::Debug, sync::Arc};
+
+use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_array::RecordBatchReader;
 use arrow_schema::SchemaRef;
@@ -49,8 +50,13 @@ pub struct RecordBatchReaderProvider {
 unsafe impl Sync for RecordBatchReaderProvider {}
 
 impl RecordBatchReaderProvider {
+    /// Create a new RecordBatchReaderProvider from an existing RecordBatchReader
+    ///
+    /// Schema metadata is stripped if provided. While schema metadata is supported
+    /// in theory in DataFusion, it causes issues with schema equivalence in some
+    /// corner cases: https://github.com/apache/sedona-db/issues/477.
     pub fn new(reader: Box<dyn RecordBatchReader + Send>) -> Self {
-        let schema = reader.schema();
+        let schema = schema_ref_strip_metadata(reader.schema());
         Self {
             reader: Mutex::new(Some(reader)),
             schema,
@@ -294,6 +300,19 @@ impl ExecutionPlan for RecordBatchReaderExec {
                 Ok(Box::pin(record_batch_stream))
             }
         }
+    }
+}
+
+/// Strips metadata from a SchemaRef if needed
+fn schema_ref_strip_metadata(schema_ref: SchemaRef) -> SchemaRef {
+    if schema_ref.metadata().is_empty() {
+        schema_ref
+    } else {
+        schema_ref
+            .as_ref()
+            .clone()
+            .with_metadata(HashMap::new())
+            .into()
     }
 }
 

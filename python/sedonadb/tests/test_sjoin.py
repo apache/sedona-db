@@ -14,9 +14,16 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import pytest
+
 import json
+import warnings
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import pytest
 from sedonadb.testing import PostGIS, SedonaDB
+from shapely.geometry import Point
 
 
 @pytest.mark.parametrize(
@@ -394,3 +401,48 @@ def test_non_optimizable_subquery():
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
         assert len(sedonadb_results) > 0
         eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+def test_spatial_join_with_pandas_metadata(con):
+    # Previous versions of SedonaDB failed to execute this because of a mismatched
+    # schema. Attempts to simplify this reproducer weren't able to recreate the
+    # initial error (PhysicalOptimizer rule 'join_selection' failed).
+    # https://github.com/apache/sedona-db/issues/477
+
+    # 1. Generate Data
+    n_points = 1000
+    n_polys = 10
+
+    # Points
+    rng = np.random.Generator(np.random.MT19937(49791))
+    lons = rng.uniform(-6, 2, n_points)
+    lats = rng.uniform(50, 59, n_points)
+    pts_df = pd.DataFrame(
+        {"idx": range(n_points), "geometry": [Point(x, y) for x, y in zip(lons, lats)]}
+    )
+    pts_gdf = gpd.GeoDataFrame(pts_df, crs="EPSG:4326")
+
+    # Polygons (Centers buffered)
+    plons = rng.uniform(-6, 2, n_polys)
+    plats = rng.uniform(50, 59, n_polys)
+    poly_centers = gpd.GeoDataFrame(
+        {"geometry": [Point(x, y) for x, y in zip(plons, plats)]}, crs="EPSG:4326"
+    )
+    # Simple buffer in degrees (test data so we don't need the GeoPandas warning here)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        polys_gdf = poly_centers.buffer(0.1).to_frame(name="geometry")
+
+    # 2. Load
+    con.create_data_frame(pts_gdf).to_view("points", overwrite=True)
+    con.create_data_frame(polys_gdf).to_view("polygons", overwrite=True)
+
+    # 3. Intersection
+    query = """
+        SELECT p.idx
+        FROM points AS p, polygons AS poly
+        WHERE ST_Intersects(p.geometry, poly.geometry)
+    """
+
+    res = con.sql(query).to_pandas()
+    pd.testing.assert_frame_equal(res, pd.DataFrame({"idx": [304, 342, 490, 705]}))
