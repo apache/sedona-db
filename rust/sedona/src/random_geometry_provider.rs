@@ -35,9 +35,12 @@ use datafusion::{
 };
 use datafusion_common::{plan_err, DataFusionError, ScalarValue};
 use geo_types::Rect;
+use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use serde::{Deserialize, Serialize};
+
+use crate::record_batch_reader_provider::RowLimitedIterator;
 
 /// A table function that refers to a table of random geometries
 ///
@@ -84,7 +87,7 @@ pub struct RandomGeometryProvider {
     builder: RandomPartitionedDataBuilder,
     num_partitions: usize,
     rows_per_batch: usize,
-    target_rows: usize,
+    num_rows: usize,
 }
 
 impl RandomGeometryProvider {
@@ -94,7 +97,7 @@ impl RandomGeometryProvider {
     /// Parameters that affect the number of partitions or rows have different defaults that
     /// always override that of the builder (unless manually specified in the option). This
     /// reflects the SQL use case where often the parameter that needs tweaking is the number
-    /// of total rows, which in this case can be set with `{"target_rows": 2048}`. The number
+    /// of total rows, which in this case can be set with `{"num_rows": 2048}`. The number
     /// of total rows will always be a multiple of the batch size times the number of partitions,
     /// whose defaults to 1024 and 1, respectively.
     ///
@@ -104,7 +107,7 @@ impl RandomGeometryProvider {
             match serde_json::from_str::<RandomGeometryFunctionOptions>(&options_str) {
                 Ok(options) => Some(options),
                 Err(e) => {
-                    return plan_err!("Failed to parse options: {e}\nOption were: {options_str}")
+                    return plan_err!("Failed to parse options: {e}\nOptions were: {options_str}")
                 }
             }
         } else {
@@ -113,7 +116,7 @@ impl RandomGeometryProvider {
 
         let mut num_partitions = 1;
         let mut rows_per_batch = 1024;
-        let mut target_rows = 1024;
+        let mut num_rows = 1024;
 
         if let Some(options) = options {
             if let Some(opt_num_partitions) = options.num_partitions {
@@ -124,11 +127,22 @@ impl RandomGeometryProvider {
                 rows_per_batch = opt_rows_per_batch;
             }
 
-            if let Some(opt_target_rows) = options.target_rows {
-                target_rows = opt_target_rows;
+            if let Some(opt_num_rows) = options.num_rows {
+                num_rows = opt_num_rows;
             }
+
+            // Unlike the Rust version, where we almost always want a set seed by default,
+            // in SQL, Python, and R we want this to behave like random() be non-deterministic.
             if let Some(seed) = options.seed {
                 builder = builder.seed(seed);
+            } else {
+                builder = builder.seed(
+                    (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        % u32::MAX as u128) as u64,
+                );
             }
             if let Some(null_rate) = options.null_rate {
                 builder = builder.null_rate(null_rate);
@@ -140,28 +154,31 @@ impl RandomGeometryProvider {
                 let bounds = Rect::new((bounds.0, bounds.1), (bounds.2, bounds.3));
                 builder = builder.bounds(bounds);
             }
-            if let Some(size_range) = options.size_range {
+            if let Some(size_range) = options.size {
                 builder = builder.size_range(size_range);
             }
-            if let Some(vertices_range) = options.vertices_per_linestring_range {
+            if let Some(vertices_range) = options.num_vertices {
                 builder = builder.vertices_per_linestring_range(vertices_range);
             }
             if let Some(empty_rate) = options.empty_rate {
                 builder = builder.empty_rate(empty_rate);
             }
-            if let Some(hole_rate) = options.polygon_hole_rate {
+            if let Some(hole_rate) = options.hole_rate {
                 builder = builder.polygon_hole_rate(hole_rate);
             }
-            if let Some(parts_range) = options.num_parts_range {
+            if let Some(parts_range) = options.num_parts {
                 builder = builder.num_parts_range(parts_range);
             }
         }
+
+        // Check options early to provide an error at a more relevant place
+        builder.validate()?;
 
         Ok(RandomGeometryProvider {
             builder,
             num_partitions,
             rows_per_batch,
-            target_rows,
+            num_rows,
         })
     }
 }
@@ -187,14 +204,14 @@ impl TableProvider for RandomGeometryProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let builder = builder_with_partition_sizes(
+        let (builder, last_partition_rows) = builder_with_partition_sizes(
             self.builder.clone(),
             self.rows_per_batch,
             self.num_partitions,
-            self.target_rows,
+            self.num_rows,
         );
 
-        let exec = Arc::new(RandomGeometryExec::new(builder));
+        let exec = Arc::new(RandomGeometryExec::new(builder, last_partition_rows));
 
         // We're required to handle the projection or we'll get an execution error
         if let Some(projection) = projection {
@@ -216,11 +233,12 @@ impl TableProvider for RandomGeometryProvider {
 #[derive(Debug)]
 struct RandomGeometryExec {
     builder: RandomPartitionedDataBuilder,
+    last_partition_rows: usize,
     properties: PlanProperties,
 }
 
 impl RandomGeometryExec {
-    pub fn new(builder: RandomPartitionedDataBuilder) -> Self {
+    pub fn new(builder: RandomPartitionedDataBuilder, last_partition_rows: usize) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(builder.schema().clone()),
             Partitioning::UnknownPartitioning(builder.num_partitions),
@@ -230,6 +248,7 @@ impl RandomGeometryExec {
 
         Self {
             builder,
+            last_partition_rows,
             properties,
         }
     }
@@ -237,7 +256,11 @@ impl RandomGeometryExec {
 
 impl DisplayAs for RandomGeometryExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "RecordBatchReaderExec")
+        write!(
+            f,
+            "RandomGeometryExec: builder={:?}, last_partition_rows={}",
+            self.builder, self.last_partition_rows
+        )
     }
 }
 
@@ -274,56 +297,108 @@ impl ExecutionPlan for RandomGeometryExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Error for an attempt to read an incorrect partition
+        if partition >= self.builder.num_partitions {
+            return sedona_internal_err!(
+                "Can't read partition {partition} from RandomGeometryExec"
+            );
+        }
+
         let rng = RandomPartitionedDataBuilder::default_rng(self.builder.seed + partition as u64);
         let reader = self.builder.partition_reader(rng, partition);
-        let iter = reader.map(|item| match item {
-            Ok(batch) => Ok(batch),
-            Err(e) => Err(DataFusionError::from(e)),
-        });
 
-        let stream = Box::pin(futures::stream::iter(iter));
-        let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
-        Ok(Box::pin(record_batch_stream))
+        // If this is the last partition, limit the number of rows from the reader
+        if partition == (self.builder.num_partitions - 1) {
+            let iter = Box::new(RowLimitedIterator::new(reader, self.last_partition_rows));
+
+            let stream = Box::pin(futures::stream::iter(iter));
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            Ok(Box::pin(record_batch_stream))
+        } else {
+            let iter = reader.map(|item| match item {
+                Ok(batch) => Ok(batch),
+                Err(e) => Err(DataFusionError::from(e)),
+            });
+
+            let stream = Box::pin(futures::stream::iter(iter));
+            let record_batch_stream = RecordBatchStreamAdapter::new(self.schema(), stream);
+            Ok(Box::pin(record_batch_stream))
+        }
     }
 }
 
 /// These options only exist as a mechanism to deserialize JSON options
 ///
 /// See the [RandomPartitionedDataBuilder] for definitive documentation of these
-/// values.
+/// values. Compared to the lower-level class, these have slightly more compact
+/// argument names (whereas the lower level class has more descriptive names
+/// for Rust where autocomplete is available to help).
 #[derive(Serialize, Deserialize, Default)]
 struct RandomGeometryFunctionOptions {
     num_partitions: Option<usize>,
     rows_per_batch: Option<usize>,
-    target_rows: Option<usize>,
+    num_rows: Option<usize>,
     seed: Option<u64>,
     null_rate: Option<f64>,
     geom_type: Option<GeometryTypeId>,
     bounds: Option<(f64, f64, f64, f64)>,
-    size_range: Option<(f64, f64)>,
-    vertices_per_linestring_range: Option<(usize, usize)>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    size: Option<(f64, f64)>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    num_vertices: Option<(usize, usize)>,
     empty_rate: Option<f64>,
-    polygon_hole_rate: Option<f64>,
-    num_parts_range: Option<(usize, usize)>,
+    hole_rate: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_scalar_or_range")]
+    num_parts: Option<(usize, usize)>,
 }
 
 fn builder_with_partition_sizes(
     builder: RandomPartitionedDataBuilder,
     batch_size: usize,
     partitions: usize,
-    target_rows: usize,
-) -> RandomPartitionedDataBuilder {
+    num_rows: usize,
+) -> (RandomPartitionedDataBuilder, usize) {
     let rows_for_one_batch_per_partition = batch_size * partitions;
-    let batches_per_partition = if target_rows.is_multiple_of(rows_for_one_batch_per_partition) {
-        target_rows / rows_for_one_batch_per_partition
+    let batches_per_partition = if num_rows.is_multiple_of(rows_for_one_batch_per_partition) {
+        num_rows / rows_for_one_batch_per_partition
     } else {
-        target_rows / rows_for_one_batch_per_partition + 1
+        num_rows / rows_for_one_batch_per_partition + 1
     };
 
-    builder
+    let builder_out = builder
         .rows_per_batch(batch_size)
         .num_partitions(partitions)
-        .batches_per_partition(batches_per_partition)
+        .batches_per_partition(batches_per_partition);
+    let normal_partition_rows = batches_per_partition * batch_size;
+    let remainder = (normal_partition_rows * partitions) - num_rows;
+    let last_partition_rows = if remainder == 0 {
+        normal_partition_rows
+    } else {
+        normal_partition_rows - remainder
+    };
+    (builder_out, last_partition_rows)
+}
+
+/// Helper to make specifying scalar ranges more concise when only one value is needed
+fn deserialize_scalar_or_range<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<(T, T)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Copy,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum ScalarOrRange<T> {
+        Scalar(T),
+        Range((T, T)),
+    }
+
+    match Option::<ScalarOrRange<T>>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(ScalarOrRange::Scalar(val)) => Ok(Some((val, val))),
+        Some(ScalarOrRange::Range(range)) => Ok(Some(range)),
+    }
 }
 
 #[cfg(test)]
@@ -341,6 +416,7 @@ mod test {
         let builder = RandomPartitionedDataBuilder::new()
             .num_partitions(4)
             .batches_per_partition(2)
+            .seed(3840)
             .rows_per_batch(1024);
         let (expected_schema, expected_results) = builder.build().unwrap();
         assert_eq!(expected_results.len(), 4);
@@ -351,7 +427,8 @@ mod test {
         let provider = RandomGeometryProvider::try_new(
             builder,
             Some(
-                r#"{"target_rows": 8192, "num_partitions": 4, "rows_per_batch": 1024}"#.to_string(),
+                r#"{"num_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}"#
+                    .to_string(),
             ),
         )
         .unwrap();
@@ -367,7 +444,7 @@ mod test {
         ctx.register_udtf("sd_random_geometry", Arc::new(RandomGeometryFunction {}));
         let df = ctx
             .sql(r#"
-        SELECT * FROM sd_random_geometry('{"target_rows": 8192, "num_partitions": 4, "rows_per_batch": 1024}')
+        SELECT * FROM sd_random_geometry('{"num_rows": 8192, "num_partitions": 4, "seed": 3840, "rows_per_batch": 1024}')
             "#)
             .await
             .unwrap();
@@ -385,24 +462,44 @@ mod test {
         // an exact number of rows
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 8192, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string(),
-            ),
+            Some(r#"{"num_rows": 8192, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
         assert_eq!(df.count().await.unwrap(), 8192);
 
-        // If the batch size * num_partitions doesn't fit evenly, we should have more rows
-        // than target_rows
+        // If the batch size * num_partitions doesn't fit evenly, we should still get the
+        // exact number of target rows
         let provider = RandomGeometryProvider::try_new(
             RandomPartitionedDataBuilder::new(),
-            Some(
-                r#"{"target_rows": 9000, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string(),
-            ),
+            Some(r#"{"num_rows": 9000, "num_partitions": 2, "rows_per_batch": 1024}"#.to_string()),
         )
         .unwrap();
         let df = ctx.read_table(Arc::new(provider)).unwrap();
-        assert_eq!(df.count().await.unwrap(), 8192 + (2 * 1024));
+        assert_eq!(df.count().await.unwrap(), 9000);
+    }
+
+    #[tokio::test]
+    async fn provider_with_scalar_size() {
+        let ctx = SessionContext::new();
+
+        // Test that a scalar value for size works (gets converted to (value, value))
+        let provider = RandomGeometryProvider::try_new(
+            RandomPartitionedDataBuilder::new(),
+            Some(r#"{"num_rows": 1024, "size": 0.5}"#.to_string()),
+        )
+        .unwrap();
+
+        let df = ctx.read_table(Arc::new(provider)).unwrap();
+        assert_eq!(df.count().await.unwrap(), 1024);
+
+        // Test that a range value for size still works
+        let provider = RandomGeometryProvider::try_new(
+            RandomPartitionedDataBuilder::new(),
+            Some(r#"{"num_rows": 1024, "size": [0.1, 0.5]}"#.to_string()),
+        )
+        .unwrap();
+        let df = ctx.read_table(Arc::new(provider)).unwrap();
+        assert_eq!(df.count().await.unwrap(), 1024);
     }
 }
