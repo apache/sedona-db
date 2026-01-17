@@ -202,7 +202,7 @@ impl GpuSpatial {
     }
 
     /// Clear previous build data
-    pub fn clear(&mut self) -> Result<()> {
+    pub fn index_clear(&mut self) -> Result<()> {
         #[cfg(not(gpu_available))]
         {
             Err(GpuSpatialError::GpuNotAvailable)
@@ -220,7 +220,7 @@ impl GpuSpatial {
         }
     }
 
-    pub fn push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
+    pub fn index_push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
         #[cfg(not(gpu_available))]
         {
             let _ = rects;
@@ -237,7 +237,7 @@ impl GpuSpatial {
         }
     }
 
-    pub fn finish_building(&mut self) -> Result<()> {
+    pub fn index_finish_building(&mut self) -> Result<()> {
         #[cfg(not(gpu_available))]
         return Err(GpuSpatialError::GpuNotAvailable);
 
@@ -288,7 +288,25 @@ impl GpuSpatial {
         }
     }
 
-    pub fn load_build_array(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
+    pub fn refiner_clear(&mut self) -> Result<()> {
+        #[cfg(not(gpu_available))]
+        {
+            Err(GpuSpatialError::GpuNotAvailable)
+        }
+        #[cfg(gpu_available)]
+        {
+            let refiner = self
+                .refiner
+                .as_mut()
+                .ok_or_else(|| GpuSpatialError::Init("GPU refiner is not available".into()))?;
+
+            // Clear previous build data
+            refiner.clear();
+            Ok(())
+        }
+    }
+
+    pub fn refiner_push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
         #[cfg(not(gpu_available))]
         {
             let _ = array;
@@ -301,7 +319,23 @@ impl GpuSpatial {
                 .as_ref()
                 .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
 
-            refiner.load_build_array(array)
+            refiner.push_build(array)
+        }
+    }
+
+    pub fn refiner_finish_building(&mut self) -> Result<()> {
+        #[cfg(not(gpu_available))]
+        {
+            Err(GpuSpatialError::GpuNotAvailable)
+        }
+        #[cfg(gpu_available)]
+        {
+            let refiner = self
+                .refiner
+                .as_mut()
+                .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
+
+            refiner.finish_building()
         }
     }
 
@@ -420,8 +454,10 @@ mod tests {
                 polygon.bounding_rect()
             })
             .collect();
-        gs.push_build(&rects).expect("Failed to push build data");
-        gs.finish_building().expect("Failed to finish building");
+        gs.index_push_build(&rects)
+            .expect("Failed to push build data");
+        gs.index_finish_building()
+            .expect("Failed to finish building");
         let point_values = &[
             Some("POINT (30 20)"),
             Some("POINT (20 20)"),
@@ -473,8 +509,10 @@ mod tests {
                 polygon.bounding_rect().unwrap()
             })
             .collect();
-        gs.push_build(&rects).expect("Failed to push build data");
-        gs.finish_building().expect("Failed to finish building");
+        gs.index_push_build(&rects)
+            .expect("Failed to push build data");
+        gs.index_finish_building()
+            .expect("Failed to finish building");
         let point_values = &[
             Some("POINT (30 20)"),
             Some("POINT (20 20)"),

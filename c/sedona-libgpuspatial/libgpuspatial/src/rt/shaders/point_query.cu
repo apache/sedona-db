@@ -52,6 +52,9 @@ extern "C" __global__ void __raygen__gpuspatial() {
   for (uint32_t i = optixGetLaunchIndex().x; i < params.points.size();
        i += optixGetLaunchDimensions().x) {
     const auto& p = params.points[i];
+    if (p.empty()) {
+      continue;
+    }
 
     float3 origin{0, 0, 0};
 

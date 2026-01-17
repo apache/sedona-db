@@ -483,8 +483,8 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::handleBuildPoint(SpatialIndexContext& ctx,
     launch_params.point_ids = ArrayView<index_t>(point_ids);
 
     CUDA_CHECK(cudaMemcpyAsync(ctx.launch_params_buffer.data(), &launch_params,
-                           sizeof(launch_params_t), cudaMemcpyHostToDevice,
-                           ctx.stream));
+                               sizeof(launch_params_t), cudaMemcpyHostToDevice,
+                               ctx.stream));
 
     filter(ctx, dim_x);
 
@@ -589,11 +589,10 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::allocateResultBuffer(SpatialIndexContext& 
   ctx.timer.start(ctx.stream);
 #endif
 
-  uint64_t n_bytes = (uint64_t)capacity * 2 * sizeof(index_t);
   GPUSPATIAL_LOG_INFO(
       "RTSpatialIndex %p (Free %zu MB), Allocate result buffer, memory consumption %zu MB, capacity %u",
-      this, rmm::available_device_memory().first / 1024 / 1024, n_bytes / 1024 / 1024,
-      capacity);
+      this, rmm::available_device_memory().first / 1024 / 1024,
+      (uint64_t)capacity * 2 * sizeof(index_t) / 1024 / 1024, capacity);
 
   ctx.build_indices.Init(ctx.stream, capacity);
   ctx.probe_indices.resize(capacity, ctx.stream);

@@ -136,9 +136,13 @@ enum GpuSpatialRelationPredicate {
 struct GpuSpatialRefiner {
   int (*init)(struct GpuSpatialRefiner* self, struct GpuSpatialRefinerConfig* config);
 
-  int (*load_build_array)(struct GpuSpatialRefiner* self,
-                          const struct ArrowSchema* schema1,
-                          const struct ArrowArray* array1);
+  int (*clear)(struct GpuSpatialRefiner* self);
+
+  int (*push_build)(struct GpuSpatialRefiner* self,
+                    const struct ArrowSchema* build_schema,
+                    const struct ArrowArray* build_array);
+
+  int (*finish_building)(struct GpuSpatialRefiner* self);
 
   int (*refine_loaded)(struct GpuSpatialRefiner* self,
                        const struct ArrowSchema* probe_schema,

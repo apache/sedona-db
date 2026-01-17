@@ -60,20 +60,34 @@ void RTSpatialRefiner::Init(const Config* config) {
   thread_pool_ = std::make_shared<ThreadPool>(config_.parsing_threads);
   stream_pool_ = std::make_unique<rmm::cuda_stream_pool>(config_.concurrency);
   CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, config_.stack_size_bytes));
-}
+  wkb_loader_ = std::make_unique<loader_t>(thread_pool_);
 
-void RTSpatialRefiner::Clear() { build_geometries_.Clear(rmm::cuda_stream_default); }
-
-void RTSpatialRefiner::LoadBuildArray(const ArrowSchema* build_schema,
-                                      const ArrowArray* build_array) {
-  CUDA_CHECK(cudaSetDevice(device_id_));
-  auto stream = rmm::cuda_stream_default;
-  ParallelWkbLoader<point_t, index_t> wkb_loader(thread_pool_);
   ParallelWkbLoader<point_t, index_t>::Config loader_config;
 
-  wkb_loader.Init(loader_config);
-  wkb_loader.Parse(stream, build_schema, build_array, 0, build_array->length);
-  build_geometries_ = std::move(wkb_loader.Finish(stream));
+  loader_config.memory_quota = config_.wkb_parser_memory_quota;
+
+  wkb_loader_->Init(loader_config);
+  Clear();
+}
+
+void RTSpatialRefiner::Clear() {
+  CUDA_CHECK(cudaGetDevice(&device_id_));
+  auto stream = rmm::cuda_stream_default;
+  wkb_loader_->Clear(stream);
+  build_geometries_.Clear(stream);
+}
+
+void RTSpatialRefiner::PushBuild(const ArrowSchema* build_schema,
+                                 const ArrowArray* build_array) {
+  CUDA_CHECK(cudaSetDevice(device_id_));
+  auto stream = rmm::cuda_stream_default;
+
+  wkb_loader_->Parse(stream, build_schema, build_array, 0, build_array->length);
+}
+
+void RTSpatialRefiner::FinishBuilding() {
+  auto stream = rmm::cuda_stream_default;
+  build_geometries_ = std::move(wkb_loader_->Finish(stream));
 }
 
 uint32_t RTSpatialRefiner::Refine(const ArrowSchema* probe_schema,

@@ -93,8 +93,10 @@ class RTSpatialRefiner : public SpatialRefiner {
 
   void Clear() override;
 
-  void LoadBuildArray(const ArrowSchema* build_schema,
+  void PushBuild(const ArrowSchema* build_schema,
                       const ArrowArray* build_array) override;
+
+  void FinishBuilding() override;
 
   uint32_t Refine(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
                   Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
@@ -109,6 +111,7 @@ class RTSpatialRefiner : public SpatialRefiner {
   RTSpatialRefinerConfig config_;
   std::unique_ptr<rmm::cuda_stream_pool> stream_pool_;
   std::shared_ptr<ThreadPool> thread_pool_;
+  std::unique_ptr<ParallelWkbLoader<point_t, index_t>> wkb_loader_;
   dev_geometries_t build_geometries_;
   int device_id_;
 

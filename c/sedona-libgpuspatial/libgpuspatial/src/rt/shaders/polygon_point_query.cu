@@ -91,10 +91,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
     assert(params.uniq_polygon_ids[reordered_polygon_idx] == polygon_idx);
 
     auto handle_point = [&](const point_t& p, uint32_t point_part_id, int& IM) {
-      float3 origin;
-      // each polygon takes a z-plane
-      origin.x = p.x();
-      origin.y = p.y();
+      assert(!p.empty());
       // cast ray toward positive x-axis
       float3 dir = {1, 0, 0};
       const auto& polygon = polygons[polygon_idx];
@@ -122,6 +119,10 @@ extern "C" __global__ void __raygen__gpuspatial() {
       IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
       uint32_t ring = 0;
       locator.Init();
+      float3 origin;
+      // each polygon takes a z-plane
+      origin.x = p.x();
+      origin.y = p.y();
       origin.z = polygon_idx;
       // test exterior
       optixTrace(params.handle, origin, dir, tmin, tmax, 0, OptixVisibilityMask(255),

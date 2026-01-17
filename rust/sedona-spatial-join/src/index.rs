@@ -16,15 +16,19 @@
 // under the License.
 
 pub(crate) mod build_side_collector;
+pub(crate) mod cpu_spatial_index;
+pub(crate) mod cpu_spatial_index_builder;
+pub(crate) mod gpu_spatial_index;
+pub(crate) mod gpu_spatial_index_builder;
 mod knn_adapter;
 pub(crate) mod spatial_index;
-pub(crate) mod spatial_index_builder;
 
 pub(crate) use build_side_collector::{
     BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
 };
+pub use cpu_spatial_index_builder::CPUSpatialIndexBuilder;
 pub use spatial_index::SpatialIndex;
-pub use spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+pub use spatial_index::SpatialJoinBuildMetrics;
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query

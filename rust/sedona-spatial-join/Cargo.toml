@@ -33,12 +33,14 @@ result_large_err = "allow"
 [features]
 default = []
 backtrace = ["datafusion-common/backtrace"]
-gpu = ["sedona-spatial-join-gpu/gpu", "sedona-libgpuspatial/gpu"]
+# Enable GPU acceleration (requires CUDA toolkit and sedona-libgpuspatial with gpu feature)
+gpu = ["sedona-libgpuspatial/gpu"]
 
 [dependencies]
 arrow = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
@@ -69,10 +71,7 @@ geos = { workspace = true }
 float_next_after = { workspace = true }
 fastrand = { workspace = true }
 log = "0.4"
-
-# GPU spatial join (optional)
-sedona-spatial-join-gpu = { workspace = true, optional = true }
-sedona-libgpuspatial = { workspace = true, optional = true }
+sedona-libgpuspatial = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

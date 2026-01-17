@@ -294,7 +294,7 @@ impl GpuSpatialIndexFloat2DWrapper {
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     log::error!("DEBUG FFI: probe failed: {}", error_string);
-                    return Err(GpuSpatialError::PushStream(error_string));
+                    return Err(GpuSpatialError::Probe(error_string));
                 }
                 log::debug!("DEBUG FFI: probe C++ call succeeded");
             }
@@ -451,7 +451,9 @@ impl GpuSpatialRefinerWrapper {
     ) -> Result<Self, GpuSpatialError> {
         let mut refiner = GpuSpatialRefiner {
             init: None,
-            load_build_array: None,
+            clear: None,
+            push_build: None,
+            finish_building: None,
             refine_loaded: None,
             refine: None,
             release: None,
@@ -491,6 +493,16 @@ impl GpuSpatialRefinerWrapper {
         })
     }
 
+    pub fn clear(&self) {
+        log::debug!("DEBUG FFI: clear called");
+        if let Some(clear_fn) = self.refiner.clear {
+            unsafe {
+                clear_fn(&self.refiner as *const _ as *mut _);
+            }
+            log::debug!("DEBUG FFI: clear completed");
+        }
+    }
+
     /// # Loads a build array into the GPU spatial refiner
     /// This function loads an array of geometries into the GPU spatial refiner
     /// for parsing and loading on the GPU side.
@@ -498,15 +510,12 @@ impl GpuSpatialRefinerWrapper {
     /// * `array` - The array of geometries to load.
     /// # Returns
     /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
-    pub fn load_build_array(&self, array: &ArrayRef) -> Result<(), GpuSpatialError> {
-        log::debug!(
-            "DEBUG FFI: load_build_array called with array={}",
-            array.len(),
-        );
+    pub fn push_build(&self, array: &ArrayRef) -> Result<(), GpuSpatialError> {
+        log::debug!("DEBUG FFI: push_build called with array={}", array.len(),);
 
         let (ffi_array, ffi_schema) = arrow_array::ffi::to_ffi(&array.to_data())?;
         log::debug!("DEBUG FFI: FFI conversion successful");
-        if let Some(load_fn) = self.refiner.load_build_array {
+        if let Some(load_fn) = self.refiner.push_build {
             unsafe {
                 let ffi_array_ptr: *const ArrowArray =
                     transmute(&ffi_array as *const FFI_ArrowArray);
@@ -523,10 +532,28 @@ impl GpuSpatialRefinerWrapper {
                     let error_message = self.refiner.last_error;
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
-                    log::error!("DEBUG FFI: load_build_array failed: {}", error_string);
-                    return Err(GpuSpatialError::PushStream(error_string));
+                    log::error!("DEBUG FFI: push_build failed: {}", error_string);
+                    return Err(GpuSpatialError::PushBuild(error_string));
                 }
-                log::debug!("DEBUG FFI: load_build_array C++ call succeeded");
+                log::debug!("DEBUG FFI: push_build C++ call succeeded");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn finish_building(&self) -> Result<(), GpuSpatialError> {
+        log::debug!("DEBUG FFI: finish_building called");
+
+        if let Some(finish_building_fn) = self.refiner.finish_building {
+            unsafe {
+                if finish_building_fn(&self.refiner as *const _ as *mut _) != 0 {
+                    let error_message = self.refiner.last_error;
+                    let c_str = std::ffi::CStr::from_ptr(error_message);
+                    let error_string = c_str.to_string_lossy().into_owned();
+                    log::error!("DEBUG FFI: finish_building failed: {}", error_string);
+                    return Err(GpuSpatialError::FinishBuild(error_string));
+                }
+                log::debug!("DEBUG FFI: finish_building C++ call succeeded");
             }
         }
         Ok(())
@@ -584,7 +611,7 @@ impl GpuSpatialRefinerWrapper {
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     log::error!("DEBUG FFI: refine failed: {}", error_string);
-                    return Err(GpuSpatialError::PushStream(error_string));
+                    return Err(GpuSpatialError::Refine(error_string));
                 }
                 log::debug!("DEBUG FFI: refine C++ call succeeded");
                 // Update the lengths of the output index vectors
@@ -656,7 +683,7 @@ impl GpuSpatialRefinerWrapper {
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     log::error!("DEBUG FFI: refine failed: {}", error_string);
-                    return Err(GpuSpatialError::PushStream(error_string));
+                    return Err(GpuSpatialError::Refine(error_string));
                 }
                 log::debug!("DEBUG FFI: refine C++ call succeeded");
                 // Update the lengths of the output index vectors
@@ -673,7 +700,9 @@ impl Default for GpuSpatialRefinerWrapper {
         GpuSpatialRefinerWrapper {
             refiner: GpuSpatialRefiner {
                 init: None,
-                load_build_array: None,
+                clear: None,
+                push_build: None,
+                finish_building: None,
                 refine_loaded: None,
                 refine: None,
                 release: None,

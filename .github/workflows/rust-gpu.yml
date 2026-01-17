@@ -27,7 +27,6 @@ on:
       - main
     paths:
       - 'c/sedona-libgpuspatial/**'
-      - 'rust/sedona-spatial-join-gpu/**'
       - '.github/workflows/rust-gpu.yml'
 
   push:
@@ -35,7 +34,6 @@ on:
       - main
     paths:
       - 'c/sedona-libgpuspatial/**'
-      - 'rust/sedona-spatial-join-gpu/**'
       - '.github/workflows/rust-gpu.yml'
 
 concurrency:
@@ -219,4 +217,4 @@ jobs:
       - name: Build GPU Spatial Join Package
         if: matrix.name == 'build_package'
         run: |
-          cargo build --workspace --package sedona-spatial-join-gpu --features gpu --verbose
+          cargo build --workspace --package sedona-spatial-join --features gpu --verbose

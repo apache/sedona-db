@@ -141,6 +141,8 @@ class Box {
 
   DEV_HOST_INLINE scalar_t get_min(int dim) const { return min_.get_coordinate(dim); }
 
+  DEV_HOST_INLINE bool valid() const { return !min_.empty() && !max_.empty(); }
+
   DEV_HOST_INLINE const point_t& get_max() const { return max_; }
 
   DEV_HOST_INLINE scalar_t get_max(int dim) const { return max_.get_coordinate(dim); }

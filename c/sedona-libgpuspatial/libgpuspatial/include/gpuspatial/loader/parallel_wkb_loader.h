@@ -134,7 +134,7 @@ struct HostParsedGeometries {
 
   void AddGeometry(const GeoArrowGeometryView* geom) {
     if (geom == nullptr) {
-      throw std::runtime_error("Null geometry not supported yet");
+      addNullEntry();
       return;
     }
 
@@ -408,6 +408,49 @@ struct HostParsedGeometries {
       }
     }
     return node + 1;
+  }
+
+  void addNullEntry() {
+    // 1. Maintain MBR alignment if this type has MBRs
+    if (create_mbr) {
+      mbr_t empty_mbr;
+      empty_mbr.set_empty();
+      mbrs.push_back(empty_mbr);
+    }
+
+    // 2. Push zero-placeholders to maintain offset alignment
+    if (has_geometry_collection) {
+      // Null collection => 0 sub-geometries
+      num_geoms.push_back(0);
+    } else {
+      switch (type) {
+        case GeometryType::kPoint: {
+          // Push NaN point to represent empty/null
+          POINT_T p;
+          p.set_empty();
+          vertices.push_back(p);
+          break;
+        }
+        case GeometryType::kLineString:
+          num_points.push_back(0);
+          break;
+        case GeometryType::kPolygon:
+          num_rings.push_back(0);
+          break;
+        case GeometryType::kMultiPoint:
+          num_points.push_back(0);
+          break;
+        case GeometryType::kMultiLineString:
+          num_parts.push_back(0);
+          break;
+        case GeometryType::kMultiPolygon:
+          num_parts.push_back(0);
+          break;
+        default:
+          throw std::runtime_error(
+              "Null geometry encountered for unsupported geometry type");
+      }
+    }
   }
 };
 

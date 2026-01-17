@@ -99,6 +99,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
            multi_polygon_idx);
 
     auto handle_point = [&](const point_t& p, uint32_t point_part_id, int& IM) {
+      assert(!p.empty());
       float3 origin;
       // each polygon takes a z-plane
       origin.x = p.x();

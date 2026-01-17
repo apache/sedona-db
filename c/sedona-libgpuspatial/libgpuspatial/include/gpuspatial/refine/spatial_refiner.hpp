@@ -37,8 +37,10 @@ class SpatialRefiner {
 
   virtual void Clear() = 0;
 
-  virtual void LoadBuildArray(const ArrowSchema* build_schema,
-                              const ArrowArray* build_array) = 0;
+  virtual void PushBuild(const ArrowSchema* build_schema,
+                         const ArrowArray* build_array) = 0;
+
+  virtual void FinishBuilding() = 0;
 
   virtual uint32_t Refine(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
                           Predicate predicate, uint32_t* build_indices,

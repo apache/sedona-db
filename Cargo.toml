@@ -38,7 +38,6 @@ members = [
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
-    "rust/sedona-spatial-join-gpu",
     "rust/sedona-testing",
     "rust/sedona",
     "sedona-cli",
@@ -148,9 +147,6 @@ sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functi
 sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
 sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
-
-# GPU spatial join
-sedona-spatial-join-gpu = { version = "0.3.0", path = "rust/sedona-spatial-join-gpu" }
 
 # C wrapper crates
 sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }

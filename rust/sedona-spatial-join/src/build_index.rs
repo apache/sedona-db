@@ -24,10 +24,11 @@ use datafusion_expr::JoinType;
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use sedona_common::SedonaOptions;
 
+use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
+use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
 use crate::{
     index::{
-        BuildSideBatchesCollector, CollectBuildSideMetrics, SpatialIndex, SpatialIndexBuilder,
-        SpatialJoinBuildMetrics,
+        BuildSideBatchesCollector, CPUSpatialIndexBuilder, CollectBuildSideMetrics, SpatialIndex,
     },
     operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
@@ -47,7 +48,8 @@ pub async fn build_index(
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
-) -> Result<SpatialIndex> {
+    use_gpu: bool,
+) -> Result<SpatialIndexRef> {
     let session_config = context.session_config();
     let sedona_options = session_config
         .options()
@@ -79,17 +81,33 @@ pub async fn build_index(
         .iter()
         .any(|partition| partition.build_side_batch_stream.is_external());
     if !contains_external_stream {
-        let mut index_builder = SpatialIndexBuilder::new(
-            build_schema,
-            spatial_predicate,
-            sedona_options.spatial_join,
-            join_type,
-            probe_threads_count,
-            Arc::clone(memory_pool),
-            SpatialJoinBuildMetrics::new(0, &metrics),
-        )?;
-        index_builder.add_partitions(build_partitions).await?;
-        index_builder.finish()
+        if use_gpu {
+            log::info!("Start building GPU spatial index for build side.");
+            let mut index_builder = GPUSpatialIndexBuilder::new(
+                build_schema,
+                spatial_predicate,
+                sedona_options.spatial_join,
+                join_type,
+                probe_threads_count,
+                Arc::clone(memory_pool),
+                SpatialJoinBuildMetrics::new(0, &metrics),
+            );
+            index_builder.add_partitions(build_partitions).await?;
+            index_builder.finish()
+        } else {
+            log::info!("Start building CPU spatial index for build side.");
+            let mut index_builder = CPUSpatialIndexBuilder::new(
+                build_schema,
+                spatial_predicate,
+                sedona_options.spatial_join,
+                join_type,
+                probe_threads_count,
+                Arc::clone(memory_pool),
+                SpatialJoinBuildMetrics::new(0, &metrics),
+            )?;
+            index_builder.add_partitions(build_partitions).await?;
+            index_builder.finish()
+        }
     } else {
         Err(DataFusionError::ResourcesExhausted("Memory limit exceeded while collecting indexed data. External spatial index builder is not yet implemented.".to_string()))
     }

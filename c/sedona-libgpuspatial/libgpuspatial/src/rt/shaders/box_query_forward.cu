@@ -64,6 +64,9 @@ extern "C" __global__ void __raygen__gpuspatial() {
   for (uint32_t i = optixGetLaunchIndex().x; i < params.rects2.size();
        i += optixGetLaunchDimensions().x) {
     const auto& rect2 = params.rects2[i];
+
+    if (!rect2.valid()) continue;
+
     auto aabb2 = rect2.ToOptixAabb();
     gpuspatial::detail::RayParams<n_dim> ray_params(aabb2, true);
     float3 origin{0, 0, 0}, dir{0, 0, 0};

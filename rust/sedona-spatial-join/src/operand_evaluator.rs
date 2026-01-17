@@ -106,6 +106,34 @@ pub struct EvaluatedGeometryArray {
 }
 
 impl EvaluatedGeometryArray {
+    #[cfg(feature = "gpu")]
+    /// Expand the box by two ULPs to ensure the resulting f32 box covers a f64 point that
+    /// is covered by the original f64 box.
+    fn make_conservative_box(
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+    ) -> (f32, f32, f32, f32) {
+        let mut new_min_x = min_x as f32;
+        let mut new_min_y = min_y as f32;
+        let mut new_max_x = max_x as f32;
+        let mut new_max_y = max_y as f32;
+
+        for _ in 0..2 {
+            new_min_x = new_min_x.next_after(f32::NEG_INFINITY);
+            new_min_y = new_min_y.next_after(f32::NEG_INFINITY);
+            new_max_x = new_max_x.next_after(f32::INFINITY);
+            new_max_y = new_max_y.next_after(f32::INFINITY);
+        }
+
+        debug_assert!((new_min_x as f64) <= min_x);
+        debug_assert!((new_min_y as f64) <= min_y);
+        debug_assert!((new_max_x as f64) >= max_x);
+        debug_assert!((new_max_y as f64) >= max_y);
+
+        (new_min_x, new_min_y, new_max_x, new_max_y)
+    }
     pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
@@ -115,10 +143,34 @@ impl EvaluatedGeometryArray {
                 if let Some(rect) = wkb.bounding_rect() {
                     let min = rect.min();
                     let max = rect.max();
-                    // f64_box_to_f32 will ensure the resulting `f32` box is no smaller than the `f64` box.
-                    let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min.x, min.y, max.x, max.y);
-                    let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
-                    Some(rect)
+                    #[cfg(feature = "gpu")]
+                    {
+                        use wkb::reader::GeometryType;
+                        // For point geometries, we can directly cast f64 to f32 without expanding the box.
+                        // This enables libgpuspatial to treat the Rect as point for faster processing.
+                        if wkb.geometry_type() == GeometryType::Point {
+                            Some(Rect::new(
+                                coord!(x: min.x as f32, y: min.y as f32),
+                                coord!(x: max.x as f32, y: max.y as f32),
+                            ))
+                        } else {
+                            let (min_x, min_y, max_x, max_y) =
+                                Self::make_conservative_box(min.x, min.y, max.x, max.y);
+                            Some(Rect::new(
+                                coord!(x: min_x, y: min_y),
+                                coord!(x: max_x, y: max_y),
+                            ))
+                        }
+                    }
+                    #[cfg(not(feature = "gpu"))]
+                    {
+                        // f64_box_to_f32 will ensure the resulting `f32` box is no smaller than the `f64` box.
+                        let (min_x, min_y, max_x, max_y) =
+                            f64_box_to_f32(min.x, min.y, max.x, max.y);
+                        let rect =
+                            Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
+                        Some(rect)
+                    }
                 } else {
                     None
                 }

@@ -454,7 +454,8 @@ void TestJoinerLoaded(ArrowSchema* build_schema, std::vector<ArrowArray*>& build
                                         uniq_build_schema.get()));
   // Start stream processing
 
-  rt_refiner->LoadBuildArray(uniq_build_schema.get(), uniq_build_array.get());
+  rt_refiner->PushBuild(uniq_build_schema.get(), uniq_build_array.get());
+  rt_refiner->FinishBuilding();
 
   for (auto& array : probe_arrays) {
     geoarrow::geos::GeometryVector geom_stream(handle.handle);
