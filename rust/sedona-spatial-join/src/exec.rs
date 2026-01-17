@@ -1135,6 +1135,24 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_parallel_refinement_for_large_candidate_set() -> Result<()> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_test_data_with_size_range((1.0, 50.0), WKB_GEOMETRY)?;
+
+        for max_batch_size in [10, 30, 100] {
+            let options = SpatialJoinOptions {
+                execution_mode: ExecutionMode::PrepareNone,
+                parallel_refinement_chunk_size: 10,
+                ..Default::default()
+            };
+            test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
+                "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id").await?;
+        }
+
+        Ok(())
+    }
+
     async fn test_with_join_types(join_type: JoinType) -> Result<RecordBatch> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_empty_partitions()?;
