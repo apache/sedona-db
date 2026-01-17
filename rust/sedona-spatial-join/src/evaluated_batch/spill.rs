@@ -64,7 +64,7 @@ impl EvaluatedBatchSpillWriter {
         metrics: SpillMetrics,
         batch_size_threshold: Option<usize>,
     ) -> Result<Self> {
-        // Construct schema of record batches to be written. The written batches is augmented from the original record batches.
+        // Construct schema of record batches to be written. The written batches are augmented from the original record batches.
         let data_inner_fields = schema.fields().clone();
         let data_struct_field =
             Field::new("data", DataType::Struct(data_inner_fields.clone()), false);
@@ -123,9 +123,7 @@ impl EvaluatedBatchSpillWriter {
                     }
                 }
                 _ => {
-                    return Err(DataFusionError::Internal(
-                        "Distance columnar value is not a Float64Array".to_string(),
-                    ));
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
                 }
             },
             Some(ColumnarValue::Array(array)) => {
