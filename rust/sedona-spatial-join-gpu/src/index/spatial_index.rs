@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::ensure_binary_array;
 use crate::operand_evaluator::OperandEvaluator;
 use crate::{operand_evaluator::create_operand_evaluator, spatial_predicate::SpatialPredicate};
 use arrow::array::BooleanBufferBuilder;
@@ -111,11 +110,9 @@ impl SpatialIndex {
     ) -> Result<()> {
         match predicate {
             SpatialPredicate::Relation(rel_p) => {
-                let geoms = ensure_binary_array(probe_geoms)?;
-
                 self.gpu_spatial
                     .refine_loaded(
-                        &geoms,
+                        probe_geoms,
                         Self::convert_relation_type(&rel_p.relation_type)?,
                         build_indices,
                         probe_indices,

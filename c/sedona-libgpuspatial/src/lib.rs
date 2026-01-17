@@ -127,7 +127,6 @@ pub struct GpuSpatial {
     index: Option<GpuSpatialIndexFloat2DWrapper>,
     #[cfg(gpu_available)]
     refiner: Option<GpuSpatialRefinerWrapper>,
-    initialized: bool,
 }
 
 impl GpuSpatial {
@@ -143,7 +142,6 @@ impl GpuSpatial {
                 rt_engine: None,
                 index: None,
                 refiner: None,
-                initialized: false,
             })
         }
     }
@@ -179,7 +177,6 @@ impl GpuSpatial {
                 GpuSpatialRefinerWrapper::try_new(self.rt_engine.as_ref().unwrap(), concurrency)?;
             self.refiner = Some(refiner);
 
-            self.initialized = true;
             Ok(())
         }
     }
@@ -204,10 +201,6 @@ impl GpuSpatial {
         }
     }
 
-    pub fn is_initialized(&self) -> bool {
-        self.initialized
-    }
-
     /// Clear previous build data
     pub fn clear(&mut self) -> Result<()> {
         #[cfg(not(gpu_available))]
@@ -216,10 +209,6 @@ impl GpuSpatial {
         }
         #[cfg(gpu_available)]
         {
-            if !self.initialized {
-                return Err(GpuSpatialError::Init("GpuSpatial not initialized".into()));
-            }
-
             let index = self
                 .index
                 .as_mut()
@@ -272,7 +261,7 @@ impl GpuSpatial {
                 .index
                 .as_ref()
                 .ok_or_else(|| GpuSpatialError::Init("GPU index not available".into()))?;
-            // Create context
+
             let mut ctx = GpuSpatialIndexContext {
                 last_error: std::ptr::null(),
                 build_indices: std::ptr::null_mut(),
@@ -280,16 +269,22 @@ impl GpuSpatial {
             };
             index.create_context(&mut ctx);
 
-            // Push stream data (probe side) and perform join
-            unsafe {
-                index.probe(&mut ctx, rects.as_ptr() as *const f32, rects.len() as u32)?;
-            }
+            let result = (|| -> Result<(Vec<u32>, Vec<u32>)> {
+                unsafe {
+                    // If this fails, it returns Err from the *closure*, not the function
+                    index.probe(&mut ctx, rects.as_ptr() as *const f32, rects.len() as u32)?;
+                }
 
-            // Get results
-            let build_indices = index.get_build_indices_buffer(&mut ctx).to_vec();
-            let probe_indices = index.get_probe_indices_buffer(&mut ctx).to_vec();
+                // Copy results
+                let build_indices = index.get_build_indices_buffer(&mut ctx).to_vec();
+                let probe_indices = index.get_probe_indices_buffer(&mut ctx).to_vec();
+
+                Ok((build_indices, probe_indices))
+            })();
+
             index.destroy_context(&mut ctx);
-            Ok((build_indices, probe_indices))
+
+            result
         }
     }
 

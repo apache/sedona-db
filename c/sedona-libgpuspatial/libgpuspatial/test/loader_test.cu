@@ -45,6 +45,7 @@ TYPED_TEST(WKBLoaderTest, Point) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
   nanoarrow::UniqueArrayStream stream;
+  nanoarrow::UniqueSchema schema;
   ArrayStreamFromWKT({{"POINT (0 0)"},
                       {"POINT (10 20)", "POINT (-5.5 -12.3)"},
                       {"POINT (100 -50)", "POINT (3.1415926535 2.7182818284)",
@@ -62,11 +63,14 @@ TYPED_TEST(WKBLoaderTest, Point) {
     nanoarrow::UniqueArray array;
     ArrowError error;
     ArrowErrorSet(&error, "");
-    EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+        << error.message;
+    ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+        << error.message;
     if (array->length == 0) {
       break;
     }
-    loader.Parse(cuda_stream, array.get(), 0, array->length);
+    loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   }
 
   auto geometries = loader.Finish(cuda_stream);
@@ -103,13 +107,17 @@ TYPED_TEST(WKBLoaderTest, MultiPoint) {
 
   while (1) {
     nanoarrow::UniqueArray array;
+    nanoarrow::UniqueSchema schema;
     ArrowError error;
     ArrowErrorSet(&error, "");
-    EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+    << error.message;
+    ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+        << error.message;
     if (array->length == 0) {
       break;
     }
-    loader.Parse(cuda_stream, array.get(), 0, array->length);
+    loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   }
 
   auto geometries = loader.Finish(cuda_stream);
@@ -145,6 +153,7 @@ TYPED_TEST(WKBLoaderTest, PointMultiPoint) {
   using point_t = typename TypeParam::first_type;
   using index_t = typename TypeParam::second_type;
   nanoarrow::UniqueArrayStream stream;
+  nanoarrow::UniqueSchema schema;
   ArrayStreamFromWKT({{"POINT (1 2)", "MULTIPOINT ((3 4), (5 6))"},
                       {"POINT (7 8)", "MULTIPOINT ((9 10))"},
                       {"MULTIPOINT EMPTY", "POINT (11 12)"}},
@@ -158,11 +167,14 @@ TYPED_TEST(WKBLoaderTest, PointMultiPoint) {
     nanoarrow::UniqueArray array;
     ArrowError error;
     ArrowErrorSet(&error, "");
-    EXPECT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+    ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+    << error.message;
+    ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+        << error.message;
     if (array->length == 0) {
       break;
     }
-    loader.Parse(cuda_stream, array.get(), 0, array->length);
+    loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   }
 
   auto geometries = loader.Finish(cuda_stream);
@@ -207,6 +219,7 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderWithHoles) {
       GEOARROW_TYPE_WKB, stream.get());
 
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
@@ -215,9 +228,12 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderWithHoles) {
 
   loader.Init();
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+    << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
 
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto geometries = loader.Finish(cuda_stream);
 
   auto points = TestUtils::ToVector(cuda_stream, geometries.get_points());
@@ -327,17 +343,21 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygon) {
       GEOARROW_TYPE_WKB, stream.get());
 
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+    << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
 
   ParallelWkbLoader<point_t, index_t> loader;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
 
   auto geometries = loader.Finish(cuda_stream);
   const auto& offsets = geometries.get_offsets();
@@ -431,6 +451,7 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
       GEOARROW_TYPE_WKB, stream.get());
 
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
@@ -438,9 +459,12 @@ TYPED_TEST(WKBLoaderTest, PolygonWKBLoaderMultipolygonLocate) {
   rmm::cuda_stream cuda_stream;
 
   loader.Init();
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+    << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
 
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
 
   auto geometries = loader.Finish(cuda_stream);
   const auto& offsets = geometries.get_offsets();
@@ -498,18 +522,21 @@ TYPED_TEST(WKBLoaderTest, MixTypes) {
       },
       GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
-
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
 
   ParallelWkbLoader<point_t, index_t> loader;
 
   loader.Init();
 
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto geometries = loader.Finish(cuda_stream);
   const auto& offsets = geometries.get_offsets();
 
@@ -598,19 +625,22 @@ TYPED_TEST(WKBLoaderTest, GeomCollection) {
         "MULTIPOLYGON(((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 30, 15 5), (20 15, 35 15, 35 25, 20 25, 20 15)))"}},
       GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
   rmm::cuda_stream cuda_stream;
-
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
 
   ParallelWkbLoader<point_t, index_t> loader;
   typename ParallelWkbLoader<point_t, index_t>::Config config;
 
   loader.Init(config);
 
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto geometries = loader.Finish(cuda_stream);
 
   const auto& offsets = geometries.get_offsets();

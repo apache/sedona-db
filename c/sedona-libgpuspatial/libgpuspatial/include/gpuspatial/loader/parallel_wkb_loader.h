@@ -556,7 +556,6 @@ class ParallelWkbLoader {
       : thread_pool_(thread_pool) {}
 
   void Init(const Config& config = Config()) {
-    ArrowArrayViewInitFromType(&array_view_, NANOARROW_TYPE_BINARY);
     config_ = config;
     Clear(rmm::cuda_stream_default);
   }
@@ -566,24 +565,31 @@ class ParallelWkbLoader {
     geoms_.Clear(stream);
   }
 
-  void Parse(rmm::cuda_stream_view stream, const ArrowArray* array, int64_t offset,
-             int64_t length) {
+  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
+             const ArrowArray* array, int64_t offset, int64_t length) {
     auto begin = thrust::make_counting_iterator<int64_t>(offset);
     auto end = begin + length;
 
-    Parse(stream, array, begin, end);
+    Parse(stream, schema, array, begin, end);
   }
 
   template <typename OFFSET_IT>
-  void Parse(rmm::cuda_stream_view stream, const ArrowArray* array, OFFSET_IT begin,
-             OFFSET_IT end) {
+  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
+             const ArrowArray* array, OFFSET_IT begin, OFFSET_IT end) {
+    // ArrowArrayViewInitFromType(array_view_.get(), NANOARROW_TYPE_BINARY);
+    ArrowError arrow_error;
+
+    if (ArrowArrayViewInitFromSchema(array_view_.get(), schema, &arrow_error) !=
+        NANOARROW_OK) {
+      throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
+                               std::string(arrow_error.message));
+    }
     using host_geometries_t = detail::HostParsedGeometries<POINT_T, INDEX_T>;
 
     size_t num_offsets = std::distance(begin, end);
     if (num_offsets == 0) return;
 
-    ArrowError arrow_error;
-    if (ArrowArrayViewSetArray(&array_view_, array, &arrow_error) != NANOARROW_OK) {
+    if (ArrowArrayViewSetArray(array_view_.get(), array, &arrow_error) != NANOARROW_OK) {
       throw std::runtime_error("ArrowArrayViewSetArray error " +
                                std::string(arrow_error.message));
     }
@@ -646,10 +652,10 @@ class ParallelWkbLoader {
             auto arrow_offset = begin[work_offset];
 
             // handle null value
-            if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
+            if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
               local_geoms.AddGeometry(nullptr);
             } else {
-              auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, arrow_offset);
+              auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
               GeoArrowGeometryView geom;
 
               GEOARROW_THROW_NOT_OK(
@@ -789,7 +795,8 @@ class ParallelWkbLoader {
 
  private:
   Config config_;
-  ArrowArrayView array_view_;
+  nanoarrow::UniqueArrayView array_view_;
+  // ArrowArrayView array_view_;
   GeometryType geometry_type_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
   std::shared_ptr<ThreadPool> thread_pool_;
@@ -826,10 +833,10 @@ class ParallelWkbLoader {
           auto arrow_offset = begin[work_offset];
 
           // handle null value
-          if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
+          if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
             continue;
           }
-          auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, arrow_offset);
+          auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
           auto* s = (struct detail::WKBReaderPrivate*)reader.private_data;
 
           s->data = item.data.as_uint8;
@@ -896,8 +903,8 @@ class ParallelWkbLoader {
     size_t total_bytes = 0;
     for (auto it = begin; it != end; ++it) {
       auto offset = *it;
-      if (!ArrowArrayViewIsNull(&array_view_, offset)) {
-        auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, offset);
+      if (!ArrowArrayViewIsNull(array_view_.get(), offset)) {
+        auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), offset);
         total_bytes += item.size_bytes - 1      // byte order
                        - 2 * sizeof(uint32_t);  // type + size
       }

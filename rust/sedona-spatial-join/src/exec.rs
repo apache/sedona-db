@@ -1583,6 +1583,7 @@ mod tests {
         use sedona_testing::create::create_array_storage;
         if !GpuSpatial::is_gpu_available() {
             log::warn!("GPU not available, skipping test");
+            return Ok(());
         }
         // Create guaranteed-to-intersect test data
         // 3 polygons and 5 points where 4 points are inside polygons

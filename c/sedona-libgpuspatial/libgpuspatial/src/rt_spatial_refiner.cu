@@ -72,7 +72,7 @@ void RTSpatialRefiner::LoadBuildArray(const ArrowSchema* build_schema,
   ParallelWkbLoader<point_t, index_t>::Config loader_config;
 
   wkb_loader.Init(loader_config);
-  wkb_loader.Parse(stream, build_array, 0, build_array->length);
+  wkb_loader.Parse(stream, build_schema, build_array, 0, build_array->length);
   build_geometries_ = std::move(wkb_loader.Finish(stream));
 }
 
@@ -95,7 +95,8 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* probe_schema,
   loader_config.memory_quota = config_.wkb_parser_memory_quota / config_.concurrency;
 
   loader.Init(loader_config);
-  loader.Parse(ctx.cuda_stream, probe_array, probe_indices_map.h_uniq_indices.begin(),
+  loader.Parse(ctx.cuda_stream, probe_schema, probe_array,
+               probe_indices_map.h_uniq_indices.begin(),
                probe_indices_map.h_uniq_indices.end());
   auto probe_geoms = std::move(loader.Finish(ctx.cuda_stream));
 
@@ -171,12 +172,12 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* schema1, const ArrowArray* 
   loader_t::Config loader_config;
   loader_config.memory_quota = config_.wkb_parser_memory_quota / config_.concurrency;
   loader.Init(loader_config);
-  loader.Parse(ctx.cuda_stream, array1, indices_map1.h_uniq_indices.begin(),
+  loader.Parse(ctx.cuda_stream, schema1, array1, indices_map1.h_uniq_indices.begin(),
                indices_map1.h_uniq_indices.end());
   auto geoms1 = std::move(loader.Finish(ctx.cuda_stream));
 
   loader.Clear(ctx.cuda_stream);
-  loader.Parse(ctx.cuda_stream, array2, indices_map2.h_uniq_indices.begin(),
+  loader.Parse(ctx.cuda_stream, schema2, array2, indices_map2.h_uniq_indices.begin(),
                indices_map2.h_uniq_indices.end());
   auto geoms2 = std::move(loader.Finish(ctx.cuda_stream));
 

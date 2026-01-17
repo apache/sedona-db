@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::index::ensure_binary_array;
 use crate::utils::join_utils::need_produce_result_in_final;
 use crate::{
     evaluated_batch::EvaluatedBatch,
@@ -195,7 +194,7 @@ impl SpatialIndexBuilder {
 
         let concat_array = concat(&references)?;
 
-        self.build_batch.geom_array.geometry_array = ensure_binary_array(&concat_array)?;
+        self.build_batch.geom_array.geometry_array = concat_array;
 
         self.build_batch.geom_array.rects = indexed_batches
             .iter()
