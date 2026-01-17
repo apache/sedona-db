@@ -90,7 +90,7 @@ pub(crate) fn create_operand_evaluator(
 }
 
 /// Result of evaluating a geometry batch.
-pub(crate) struct EvaluatedGeometryArray {
+pub struct EvaluatedGeometryArray {
     /// The array of geometries produced by evaluating the geometry expression.
     pub geometry_array: ArrayRef,
     /// The rects of the geometries in the geometry array. The length of this array is equal to the number of geometries.

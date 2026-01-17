@@ -39,4 +39,5 @@ pub(crate) trait EvaluatedBatchStream: Stream<Item = Result<EvaluatedBatch>> {
 pub(crate) type SendableEvaluatedBatchStream = Pin<Box<dyn EvaluatedBatchStream + Send>>;
 
 pub(crate) mod evaluate;
+pub mod external;
 pub(crate) mod in_mem;

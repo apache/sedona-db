@@ -5404,6 +5404,7 @@ dependencies = [
  "geos",
  "once_cell",
  "parking_lot",
+ "pin-project-lite",
  "rand",
  "rstest",
  "sedona-common",

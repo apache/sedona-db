@@ -140,7 +140,7 @@ impl BuildSideBatchesCollector {
             self.collect_all_concurrently(streams, reservations, metrics_vec)
                 .await
         } else {
-            self.collect_all_sequential(streams, reservations, metrics_vec)
+            self.collect_all_sequentially(streams, reservations, metrics_vec)
                 .await
         }
     }
@@ -187,7 +187,7 @@ impl BuildSideBatchesCollector {
         Ok(partitions.into_iter().map(|v| v.unwrap()).collect())
     }
 
-    async fn collect_all_sequential(
+    async fn collect_all_sequentially(
         &self,
         streams: Vec<SendableRecordBatchStream>,
         reservations: Vec<MemoryReservation>,

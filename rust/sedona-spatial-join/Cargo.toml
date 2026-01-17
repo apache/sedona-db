@@ -45,6 +45,7 @@ datafusion-physical-plan = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-common-runtime = { workspace = true }
 futures = { workspace = true }
+pin-project-lite = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 geo = { workspace = true }
@@ -88,4 +89,14 @@ harness = false
 [[bench]]
 name = "flat"
 path = "bench/partitioning/flat.rs"
+harness = false
+
+[[bench]]
+name = "evaluated_batch_spill"
+path = "bench/evaluated_batch/spill.rs"
+harness = false
+
+[[bench]]
+name = "external_evaluated_batch_stream"
+path = "bench/evaluated_batch/external_evaluated_batch_stream.rs"
 harness = false

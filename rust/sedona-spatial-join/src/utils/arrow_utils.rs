@@ -21,9 +21,20 @@ use arrow::array::{Array, ArrayData, BinaryViewArray, ListArray, RecordBatch, St
 use arrow_array::make_array;
 use arrow_array::ArrayRef;
 use arrow_array::StructArray;
+use arrow_schema::SchemaRef;
 use arrow_schema::{ArrowError, DataType};
 use datafusion_common::Result;
 use sedona_common::sedona_internal_err;
+
+/// Checks if the schema contains any view types (Utf8View or BinaryView). Batches
+/// with view types may need special handling (e.g. compaction) before spilling
+/// or holding in memory for extended periods.
+pub(crate) fn schema_contains_view_types(schema: &SchemaRef) -> bool {
+    schema
+        .flattened_fields()
+        .iter()
+        .any(|field| matches!(field.data_type(), DataType::Utf8View | DataType::BinaryView))
+}
 
 /// Reconstruct `batch` to organize the payload buffers of each `StringViewArray` and
 /// `BinaryViewArray` in sequential order by calling `gc()` on them.
@@ -246,8 +257,54 @@ mod tests {
     use arrow_array::{
         BinaryViewArray, BooleanArray, ListArray, StringArray, StringViewArray, StructArray,
     };
-    use arrow_schema::{DataType, Field, Schema};
+    use arrow_schema::{DataType, Field, Fields, Schema};
     use std::sync::Arc;
+
+    fn make_schema(fields: Vec<Field>) -> SchemaRef {
+        Arc::new(Schema::new(fields))
+    }
+
+    #[test]
+    fn test_schema_contains_view_types_top_level() {
+        let schema_ref = make_schema(vec![
+            Field::new("a", DataType::Utf8View, true),
+            Field::new("b", DataType::BinaryView, true),
+        ]);
+
+        assert!(schema_contains_view_types(&schema_ref));
+
+        // Similar shape but without view types
+        let schema_no_view = make_schema(vec![
+            Field::new("a", DataType::Utf8, true),
+            Field::new("b", DataType::Binary, true),
+        ]);
+        assert!(!schema_contains_view_types(&schema_no_view));
+    }
+
+    #[test]
+    fn test_schema_contains_view_types_nested() {
+        let nested = Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![Field::new(
+                "v",
+                DataType::Utf8View,
+                true,
+            )])),
+            true,
+        );
+
+        let schema_ref = make_schema(vec![nested]);
+        assert!(schema_contains_view_types(&schema_ref));
+
+        // Nested struct without any view types
+        let nested_no_view = Field::new(
+            "s",
+            DataType::Struct(Fields::from(vec![Field::new("v", DataType::Utf8, true)])),
+            true,
+        );
+        let schema_no_view = make_schema(vec![nested_no_view]);
+        assert!(!schema_contains_view_types(&schema_no_view));
+    }
 
     #[test]
     fn test_string_view_array_memory_size() {
@@ -523,12 +580,12 @@ mod tests {
 
         let array: ArrayRef = Arc::new(struct_array);
         let slice = array.slice(0, 2);
-        let before_size = get_array_memory_size(&array).unwrap();
+        let before_size = slice.get_array_memory_size();
 
         let (compacted, mutated) = compact_array(Arc::new(slice)).unwrap();
         assert!(mutated);
 
-        let after_size = get_array_memory_size(&compacted).unwrap();
+        let after_size = compacted.get_array_memory_size();
         assert!(after_size < before_size);
     }
 
@@ -548,12 +605,12 @@ mod tests {
         }
         let bv_list: ListArray = bv_list_builder.finish();
         let sliced: ArrayRef = Arc::new(bv_list.slice(0, 1));
-        let before_size = get_array_memory_size(&sliced).unwrap();
+        let before_size = sliced.get_array_memory_size();
 
         let (compacted, mutated) = compact_array(Arc::clone(&sliced)).unwrap();
         assert!(mutated);
 
-        let after_size = get_array_memory_size(&compacted).unwrap();
+        let after_size = compacted.get_array_memory_size();
         assert!(after_size <= before_size);
     }
 
