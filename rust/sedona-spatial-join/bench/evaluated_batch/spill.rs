@@ -71,6 +71,7 @@ fn write_spill_file(
     schema: SchemaRef,
     metrics_set: &ExecutionPlanMetricsSet,
     sedona_type: &SedonaType,
+    compression: SpillCompression,
     evaluated_batch: &EvaluatedBatch,
 ) -> Arc<datafusion_execution::disk_manager::RefCountedTempFile> {
     let metrics = SpillMetrics::new(metrics_set, 0);
@@ -79,7 +80,7 @@ fn write_spill_file(
         schema,
         sedona_type,
         "bench_spill",
-        SpillCompression::Uncompressed,
+        compression,
         metrics,
         None,
     )
@@ -99,98 +100,109 @@ fn bench_spill_writer_and_reader(c: &mut Criterion) {
     let schema = make_schema();
     let metrics_set = ExecutionPlanMetricsSet::new();
 
+    let compressions = [
+        ("uncompressed", SpillCompression::Uncompressed),
+        ("lz4", SpillCompression::Lz4Frame),
+    ];
+
     for (label, sedona_type) in [("wkb", WKB_GEOMETRY), ("wkb_view", WKB_VIEW_GEOMETRY)] {
         let evaluated_batch = make_evaluated_batch(ROWS, &sedona_type);
 
-        // Prepare a stable spill file for read benchmarks.
-        let spill_file = write_spill_file(
-            Arc::clone(&env),
-            Arc::clone(&schema),
-            &metrics_set,
-            &sedona_type,
-            &evaluated_batch,
-        );
+        for (compression_label, compression) in compressions {
+            // Prepare a stable spill file for read benchmarks.
+            let spill_file = write_spill_file(
+                Arc::clone(&env),
+                Arc::clone(&schema),
+                &metrics_set,
+                &sedona_type,
+                compression,
+                &evaluated_batch,
+            );
 
-        let mut group = c.benchmark_group(format!("evaluated_batch_spill/{label}"));
-        group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
+            let mut group =
+                c.benchmark_group(format!("evaluated_batch_spill/{label}/{compression_label}"));
+            group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                "spill_writer",
-                format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
-            ),
-            &evaluated_batch,
-            |b, batch| {
-                b.iter(|| {
-                    let metrics = SpillMetrics::new(&metrics_set, 0);
-                    let mut writer = EvaluatedBatchSpillWriter::try_new(
-                        Arc::clone(&env),
-                        Arc::clone(&schema),
-                        &sedona_type,
-                        "bench_spill",
-                        SpillCompression::Uncompressed,
-                        metrics,
-                        None,
-                    )
-                    .expect("failed to create spill writer");
+            group.bench_with_input(
+                BenchmarkId::new(
+                    "spill_writer",
+                    format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
+                ),
+                &evaluated_batch,
+                |b, batch| {
+                    b.iter(|| {
+                        let metrics = SpillMetrics::new(&metrics_set, 0);
+                        let mut writer = EvaluatedBatchSpillWriter::try_new(
+                            Arc::clone(&env),
+                            Arc::clone(&schema),
+                            &sedona_type,
+                            "bench_spill",
+                            compression,
+                            metrics,
+                            None,
+                        )
+                        .expect("failed to create spill writer");
 
-                    for _ in 0..BATCHES_PER_FILE {
-                        writer.append(black_box(batch)).unwrap();
-                    }
+                        for _ in 0..BATCHES_PER_FILE {
+                            writer.append(black_box(batch)).unwrap();
+                        }
 
-                    let file = writer.finish().unwrap();
-                    black_box(file);
-                })
-            },
-        );
+                        let file = writer.finish().unwrap();
+                        black_box(file);
+                    })
+                },
+            );
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                "spill_reader",
-                format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
-            ),
-            &spill_file,
-            |b, file| {
-                b.iter(|| {
-                    let mut reader = EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
-                        .expect("failed to create spill reader");
-                    let mut rows = 0usize;
+            group.bench_with_input(
+                BenchmarkId::new(
+                    "spill_reader",
+                    format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
+                ),
+                &spill_file,
+                |b, file| {
+                    b.iter(|| {
+                        let mut reader =
+                            EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
+                                .expect("failed to create spill reader");
+                        let mut rows = 0usize;
 
-                    while let Some(batch) = reader.next_batch() {
-                        let batch = batch.expect("failed to read evaluated batch");
-                        rows += batch.num_rows();
-                        black_box(batch);
-                    }
+                        while let Some(batch) = reader.next_batch() {
+                            let batch = batch.expect("failed to read evaluated batch");
+                            rows += batch.num_rows();
+                            black_box(batch);
+                        }
 
-                    black_box(rows);
-                })
-            },
-        );
+                        black_box(rows);
+                    })
+                },
+            );
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                "spill_reader_raw",
-                format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
-            ),
-            &spill_file,
-            |b, file| {
-                b.iter(|| {
-                    let mut reader = EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
-                        .expect("failed to create spill reader");
-                    let mut rows = 0usize;
+            group.bench_with_input(
+                BenchmarkId::new(
+                    "spill_reader_raw",
+                    format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
+                ),
+                &spill_file,
+                |b, file| {
+                    b.iter(|| {
+                        let mut reader =
+                            EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
+                                .expect("failed to create spill reader");
+                        let mut rows = 0usize;
 
-                    while let Some(batch) = reader.next_raw_batch() {
-                        let batch = batch.expect("failed to read record batch");
-                        rows += batch.num_rows();
-                        black_box(batch);
-                    }
+                        while let Some(batch) = reader.next_raw_batch() {
+                            let batch = batch.expect("failed to read record batch");
+                            rows += batch.num_rows();
+                            black_box(batch);
+                        }
 
-                    black_box(rows);
-                })
-            },
-        );
+                        black_box(rows);
+                    })
+                },
+            );
 
-        group.finish();
+            group.finish();
+        }
     }
 }
 

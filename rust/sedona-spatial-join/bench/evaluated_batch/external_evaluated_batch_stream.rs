@@ -70,6 +70,7 @@ fn write_spill_file(
     schema: SchemaRef,
     metrics_set: &ExecutionPlanMetricsSet,
     sedona_type: &SedonaType,
+    compression: SpillCompression,
     evaluated_batch: &EvaluatedBatch,
 ) -> Arc<datafusion_execution::disk_manager::RefCountedTempFile> {
     let metrics = SpillMetrics::new(metrics_set, 0);
@@ -78,7 +79,7 @@ fn write_spill_file(
         schema,
         sedona_type,
         "bench_external_stream",
-        SpillCompression::Uncompressed,
+        compression,
         metrics,
         None,
     )
@@ -98,50 +99,62 @@ fn bench_external_evaluated_batch_stream(c: &mut Criterion) {
     let schema = make_schema();
     let metrics_set = ExecutionPlanMetricsSet::new();
 
+    let compressions = [
+        ("uncompressed", SpillCompression::Uncompressed),
+        ("lz4", SpillCompression::Lz4Frame),
+    ];
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("failed to create tokio runtime");
 
     for (label, sedona_type) in [("wkb", WKB_GEOMETRY), ("wkb_view", WKB_VIEW_GEOMETRY)] {
         let evaluated_batch = make_evaluated_batch(ROWS, &sedona_type);
-        let spill_file = write_spill_file(
-            Arc::clone(&env),
-            Arc::clone(&schema),
-            &metrics_set,
-            &sedona_type,
-            &evaluated_batch,
-        );
 
-        let mut group = c.benchmark_group(format!("external_evaluated_batch_stream/{label}"));
-        group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
+        for (compression_label, compression) in compressions {
+            let spill_file = write_spill_file(
+                Arc::clone(&env),
+                Arc::clone(&schema),
+                &metrics_set,
+                &sedona_type,
+                compression,
+                &evaluated_batch,
+            );
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                "external_stream",
-                format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
-            ),
-            &spill_file,
-            |b, file| {
-                b.iter(|| {
-                    runtime.block_on(async {
-                        let stream =
-                            ExternalEvaluatedBatchStream::try_from_spill_file(Arc::clone(file))
-                                .expect("failed to create external evaluated batch stream");
-                        futures::pin_mut!(stream);
+            let mut group = c.benchmark_group(format!(
+                "external_evaluated_batch_stream/{label}/{compression_label}"
+            ));
+            group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
 
-                        let mut rows = 0usize;
-                        while let Some(batch) = stream.next().await {
-                            let batch = batch.expect("failed to read evaluated batch from stream");
-                            rows += batch.num_rows();
-                            black_box(batch);
-                        }
-                        black_box(rows);
+            group.bench_with_input(
+                BenchmarkId::new(
+                    "external_stream",
+                    format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
+                ),
+                &spill_file,
+                |b, file| {
+                    b.iter(|| {
+                        runtime.block_on(async {
+                            let stream =
+                                ExternalEvaluatedBatchStream::try_from_spill_file(Arc::clone(file))
+                                    .expect("failed to create external evaluated batch stream");
+                            futures::pin_mut!(stream);
+
+                            let mut rows = 0usize;
+                            while let Some(batch) = stream.next().await {
+                                let batch =
+                                    batch.expect("failed to read evaluated batch from stream");
+                                rows += batch.num_rows();
+                                black_box(batch);
+                            }
+                            black_box(rows);
+                        })
                     })
-                })
-            },
-        );
+                },
+            );
 
-        group.finish();
+            group.finish();
+        }
     }
 }
 
