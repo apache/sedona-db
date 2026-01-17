@@ -28,7 +28,9 @@ use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
 use datafusion_physical_plan::metrics::SpillMetrics;
 
-use crate::utils::arrow_utils::{compact_batch, get_record_batch_memory_size};
+use crate::utils::arrow_utils::{
+    compact_batch, get_record_batch_memory_size, schema_contains_view_types,
+};
 
 /// Generic Arrow IPC stream spill writer for [`RecordBatch`].
 ///
@@ -38,6 +40,7 @@ pub(crate) struct RecordBatchSpillWriter {
     writer: StreamWriter<File>,
     metrics: SpillMetrics,
     batch_size_threshold: Option<usize>,
+    gc_view_arrays: bool,
 }
 
 impl RecordBatchSpillWriter {
@@ -58,11 +61,14 @@ impl RecordBatchSpillWriter {
         let writer = StreamWriter::try_new_with_options(file, schema.as_ref(), write_options)?;
         metrics.spill_file_count.add(1);
 
+        let gc_view_arrays = schema_contains_view_types(&schema);
+
         Ok(Self {
             in_progress_file,
             writer,
             metrics,
             batch_size_threshold,
+            gc_view_arrays,
         })
     }
 
@@ -71,7 +77,7 @@ impl RecordBatchSpillWriter {
     /// If `batch_size_threshold` is configured and the in-memory size of the batch exceeds the
     /// threshold, this will automatically split the batch into smaller slices and (optionally)
     /// compact each slice before writing.
-    pub fn write_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+    pub fn write_batch(&mut self, batch: RecordBatch) -> Result<()> {
         let num_rows = batch.num_rows();
         if num_rows == 0 {
             // Preserve "empty batch" semantics: callers may rely on spilling and reading back a
@@ -79,14 +85,13 @@ impl RecordBatchSpillWriter {
             return self.write_one_batch(batch);
         }
 
-        let rows_per_split = self.calculate_rows_per_split(batch, num_rows)?;
+        let rows_per_split = self.calculate_rows_per_split(&batch, num_rows)?;
         if rows_per_split < num_rows {
             let mut offset = 0;
             while offset < num_rows {
                 let length = std::cmp::min(rows_per_split, num_rows - offset);
                 let slice = batch.slice(offset, length);
-                let compacted = compact_batch(slice)?;
-                self.write_one_batch(&compacted)?;
+                self.write_one_batch(slice)?;
                 offset += length;
             }
         } else {
@@ -113,8 +118,15 @@ impl RecordBatchSpillWriter {
         Ok(std::cmp::max(1, rows))
     }
 
-    fn write_one_batch(&mut self, batch: &RecordBatch) -> Result<()> {
-        self.writer.write(batch).map_err(|e| {
+    fn write_one_batch(&mut self, batch: RecordBatch) -> Result<()> {
+        // Writing record batches containing sparse binary view arrays may lead to excessive
+        // disk usage and slow read performance later. Compact such batches before writing.
+        let batch = if self.gc_view_arrays {
+            compact_batch(batch)?
+        } else {
+            batch
+        };
+        self.writer.write(&batch).map_err(|e| {
             DataFusionError::Execution(format!(
                 "Failed to write RecordBatch to spill file {:?}: {}",
                 self.in_progress_file.path(),
@@ -170,6 +182,7 @@ impl RecordBatchSpillReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::builder::BinaryViewBuilder;
     use arrow_array::{Int32Array, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
@@ -201,6 +214,24 @@ mod tests {
         RecordBatch::try_new(create_test_schema(), vec![Arc::new(ids), Arc::new(names)]).unwrap()
     }
 
+    fn create_test_binary_view_batch(num_rows: usize, value_len: usize) -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "payload",
+            DataType::BinaryView,
+            false,
+        )]));
+
+        let mut builder = BinaryViewBuilder::new();
+        for i in 0..num_rows {
+            let byte = b'a' + (i % 26) as u8;
+            let bytes = vec![byte; value_len];
+            builder.append_value(bytes.as_slice());
+        }
+
+        let array = Arc::new(builder.finish());
+        RecordBatch::try_new(schema, vec![array]).unwrap()
+    }
+
     #[test]
     fn test_record_batch_spill_empty_batch_round_trip() -> Result<()> {
         let env = create_test_runtime_env()?;
@@ -218,7 +249,7 @@ mod tests {
         )?;
 
         let empty = create_test_record_batch(0);
-        writer.write_batch(&empty)?;
+        writer.write_batch(empty)?;
         let file = writer.finish()?;
 
         assert_eq!(metrics.spill_file_count.value(), 1);
@@ -251,8 +282,8 @@ mod tests {
 
         let batch1 = create_test_record_batch(5);
         let batch2 = create_test_record_batch(3);
-        writer.write_batch(&batch1)?;
-        writer.write_batch(&batch2)?;
+        writer.write_batch(batch1)?;
+        writer.write_batch(batch2)?;
 
         let file = writer.finish()?;
 
@@ -290,7 +321,7 @@ mod tests {
         )?;
 
         let batch = create_test_record_batch(10);
-        writer.write_batch(&batch)?;
+        writer.write_batch(batch)?;
         let file = writer.finish()?;
 
         // Rows should reflect the logical input rows, even if internally split.
@@ -304,6 +335,47 @@ mod tests {
             total_rows += batch?.num_rows();
         }
         assert_eq!(total_rows, 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_record_batch_spill_sliced_binary_view_not_excessive() -> Result<()> {
+        let env = create_test_runtime_env()?;
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = SpillMetrics::new(&metrics_set, 0);
+
+        // Use a long payload so the view-value buffers dominate overhead, making the
+        // size comparison stable across platforms.
+        const NUM_ROWS: usize = 100;
+        const NUM_SLICES: usize = 10;
+        const VALUE_LEN: usize = 8 * 1024;
+
+        let batch = create_test_binary_view_batch(NUM_ROWS, VALUE_LEN);
+        let batch_size = get_record_batch_memory_size(&batch)?;
+
+        let mut writer = RecordBatchSpillWriter::try_new(
+            env,
+            batch.schema(),
+            "test_record_batch_spill_sliced_binary_view",
+            SpillCompression::Uncompressed,
+            metrics.clone(),
+            None,
+        )?;
+
+        let rows_per_slice = NUM_ROWS / NUM_SLICES;
+        assert_eq!(rows_per_slice * NUM_SLICES, NUM_ROWS);
+        for i in 0..NUM_SLICES {
+            let slice = batch.slice(i * rows_per_slice, rows_per_slice);
+            writer.write_batch(slice)?;
+        }
+
+        let file = writer.finish()?;
+        let spill_size = file.current_disk_usage() as usize;
+        assert!(
+            spill_size <= (batch_size as f64 * 1.2) as usize,
+            "spill file unexpectedly large for sliced BinaryView batch: spill_size={spill_size}, batch_size={batch_size}"
+        );
 
         Ok(())
     }

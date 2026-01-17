@@ -18,7 +18,7 @@
 use std::hint::black_box;
 use std::sync::Arc;
 
-use arrow_array::{BinaryArray, Int32Array, RecordBatch, StringArray};
+use arrow_array::{Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use datafusion::config::SpillCompression;
@@ -27,13 +27,14 @@ use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use futures::StreamExt;
-use sedona_schema::datatypes::WKB_GEOMETRY;
+use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
 use sedona_spatial_join::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
 use sedona_spatial_join::evaluated_batch::spill::EvaluatedBatchSpillWriter;
 use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
+use sedona_testing::create::create_array_storage;
 
-const ROWS: usize = 1024;
+const ROWS: usize = 8192;
 const BATCHES_PER_FILE: usize = 64;
 
 fn make_schema() -> SchemaRef {
@@ -43,7 +44,7 @@ fn make_schema() -> SchemaRef {
     ]))
 }
 
-fn make_evaluated_batch(num_rows: usize) -> EvaluatedBatch {
+fn make_evaluated_batch(num_rows: usize, sedona_type: &SedonaType) -> EvaluatedBatch {
     let schema = make_schema();
     let ids: Vec<i32> = (0..num_rows).map(|v| v as i32).collect();
     let id_array = Arc::new(Int32Array::from(ids));
@@ -51,14 +52,12 @@ fn make_evaluated_batch(num_rows: usize) -> EvaluatedBatch {
     let batch = RecordBatch::try_new(schema, vec![id_array, name_array])
         .expect("failed to build record batch for benchmark");
 
-    let point_wkb: &[u8] = &[
-        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 240, 63, 0, 0, 0, 0, 0, 0, 0, 64,
-    ];
-    let geom_array = Arc::new(BinaryArray::from_iter_values(std::iter::repeat_n(
-        point_wkb, num_rows,
-    )));
+    // Use sedona-testing helpers so this benchmark stays focused on spill + stream I/O.
+    // This builds either a Binary (WKB_GEOMETRY) or BinaryView (WKB_VIEW_GEOMETRY) array.
+    let wkt_values = vec![Some("POINT (0 0)"); num_rows];
+    let geom_array = create_array_storage(&wkt_values, sedona_type);
 
-    let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)
+    let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, sedona_type)
         .expect("failed to build geometry array for benchmark");
 
     geom_array.distance = Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(10.0))));
@@ -70,13 +69,14 @@ fn write_spill_file(
     env: Arc<RuntimeEnv>,
     schema: SchemaRef,
     metrics_set: &ExecutionPlanMetricsSet,
+    sedona_type: &SedonaType,
     evaluated_batch: &EvaluatedBatch,
 ) -> Arc<datafusion_execution::disk_manager::RefCountedTempFile> {
     let metrics = SpillMetrics::new(metrics_set, 0);
     let mut writer = EvaluatedBatchSpillWriter::try_new(
         env,
         schema,
-        &WKB_GEOMETRY,
+        sedona_type,
         "bench_external_stream",
         SpillCompression::Uncompressed,
         metrics,
@@ -96,50 +96,53 @@ fn write_spill_file(
 fn bench_external_evaluated_batch_stream(c: &mut Criterion) {
     let env = Arc::new(RuntimeEnv::default());
     let schema = make_schema();
-    let evaluated_batch = make_evaluated_batch(ROWS);
     let metrics_set = ExecutionPlanMetricsSet::new();
-
-    let spill_file = write_spill_file(
-        Arc::clone(&env),
-        Arc::clone(&schema),
-        &metrics_set,
-        &evaluated_batch,
-    );
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("failed to create tokio runtime");
 
-    let mut group = c.benchmark_group("external_evaluated_batch_stream");
-    group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
+    for (label, sedona_type) in [("wkb", WKB_GEOMETRY), ("wkb_view", WKB_VIEW_GEOMETRY)] {
+        let evaluated_batch = make_evaluated_batch(ROWS, &sedona_type);
+        let spill_file = write_spill_file(
+            Arc::clone(&env),
+            Arc::clone(&schema),
+            &metrics_set,
+            &sedona_type,
+            &evaluated_batch,
+        );
 
-    group.bench_with_input(
-        BenchmarkId::new(
-            "external_stream",
-            format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
-        ),
-        &spill_file,
-        |b, file| {
-            b.iter(|| {
-                runtime.block_on(async {
-                    let stream =
-                        ExternalEvaluatedBatchStream::try_from_spill_file(Arc::clone(file))
-                            .expect("failed to create external evaluated batch stream");
-                    futures::pin_mut!(stream);
+        let mut group = c.benchmark_group(format!("external_evaluated_batch_stream/{label}"));
+        group.throughput(Throughput::Elements((ROWS * BATCHES_PER_FILE) as u64));
 
-                    let mut rows = 0usize;
-                    while let Some(batch) = stream.next().await {
-                        let batch = batch.expect("failed to read evaluated batch from stream");
-                        rows += batch.num_rows();
-                        black_box(batch);
-                    }
-                    black_box(rows);
+        group.bench_with_input(
+            BenchmarkId::new(
+                "external_stream",
+                format!("rows_{ROWS}_batches_{BATCHES_PER_FILE}"),
+            ),
+            &spill_file,
+            |b, file| {
+                b.iter(|| {
+                    runtime.block_on(async {
+                        let stream =
+                            ExternalEvaluatedBatchStream::try_from_spill_file(Arc::clone(file))
+                                .expect("failed to create external evaluated batch stream");
+                        futures::pin_mut!(stream);
+
+                        let mut rows = 0usize;
+                        while let Some(batch) = stream.next().await {
+                            let batch = batch.expect("failed to read evaluated batch from stream");
+                            rows += batch.num_rows();
+                            black_box(batch);
+                        }
+                        black_box(rows);
+                    })
                 })
-            })
-        },
-    );
+            },
+        );
 
-    group.finish();
+        group.finish();
+    }
 }
 
 criterion_group!(

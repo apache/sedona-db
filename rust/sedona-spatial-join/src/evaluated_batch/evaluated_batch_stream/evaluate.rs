@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use arrow_array::RecordBatch;
-use arrow_schema::{DataType, SchemaRef};
 use datafusion_common::Result;
 use datafusion_physical_plan::{metrics, SendableRecordBatchStream};
 use futures::{Stream, StreamExt};
@@ -30,7 +29,7 @@ use crate::evaluated_batch::{
     EvaluatedBatch,
 };
 use crate::operand_evaluator::{EvaluatedGeometryArray, OperandEvaluator};
-use crate::utils::arrow_utils::compact_batch;
+use crate::utils::arrow_utils::{compact_batch, schema_contains_view_types};
 
 /// An evaluator that can evaluate geometry expressions on record batches
 /// and produces evaluated geometry arrays.
@@ -84,14 +83,6 @@ impl<E: Evaluator> EvaluateOperandBatchStream<E> {
             gc_view_arrays,
         }
     }
-}
-
-/// Checks if the schema contains any view types (Utf8View or BinaryView).
-fn schema_contains_view_types(schema: &SchemaRef) -> bool {
-    schema
-        .flattened_fields()
-        .iter()
-        .any(|field| matches!(field.data_type(), DataType::Utf8View | DataType::BinaryView))
 }
 
 impl<E: Evaluator> EvaluatedBatchStream for EvaluateOperandBatchStream<E> {
@@ -159,59 +150,4 @@ pub(crate) fn create_evaluated_probe_stream(
         evaluation_time,
         false,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
-
-    use super::schema_contains_view_types;
-
-    fn make_schema(fields: Vec<Field>) -> SchemaRef {
-        Arc::new(Schema::new(fields))
-    }
-
-    #[test]
-    fn test_schema_contains_view_types_top_level() {
-        let schema_ref = make_schema(vec![
-            Field::new("a", DataType::Utf8View, true),
-            Field::new("b", DataType::BinaryView, true),
-        ]);
-
-        assert!(schema_contains_view_types(&schema_ref));
-
-        // Similar shape but without view types
-        let schema_no_view = make_schema(vec![
-            Field::new("a", DataType::Utf8, true),
-            Field::new("b", DataType::Binary, true),
-        ]);
-        assert!(!schema_contains_view_types(&schema_no_view));
-    }
-
-    #[test]
-    fn test_schema_contains_view_types_nested() {
-        let nested = Field::new(
-            "s",
-            DataType::Struct(Fields::from(vec![Field::new(
-                "v",
-                DataType::Utf8View,
-                true,
-            )])),
-            true,
-        );
-
-        let schema_ref = make_schema(vec![nested]);
-        assert!(schema_contains_view_types(&schema_ref));
-
-        // Nested struct without any view types
-        let nested_no_view = Field::new(
-            "s",
-            DataType::Struct(Fields::from(vec![Field::new("v", DataType::Utf8, true)])),
-            true,
-        );
-        let schema_no_view = make_schema(vec![nested_no_view]);
-        assert!(!schema_contains_view_types(&schema_no_view));
-    }
 }

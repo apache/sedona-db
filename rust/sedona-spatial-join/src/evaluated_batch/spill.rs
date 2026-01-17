@@ -94,7 +94,7 @@ impl EvaluatedBatchSpillWriter {
         let record_batch = self.spilled_record_batch(evaluated_batch)?;
 
         // Splitting/compaction and spill bytes/rows metrics are handled by `RecordBatchSpillWriter`.
-        self.inner.write_batch(&record_batch)?;
+        self.inner.write_batch(record_batch)?;
         Ok(())
     }
 
