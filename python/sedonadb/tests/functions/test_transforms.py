@@ -192,3 +192,71 @@ def test_st_translate(eng, geom, dx, dy, expected):
         f"SELECT ST_Translate({geom_or_null(geom)}, {val_or_null(dx)}, {val_or_null(dy)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "dx", "dy", "expected"),
+    [
+        # Nulls
+        (None, None, None, None, None),
+        (None, 1.0, 2.0, 3.0, None),
+        ("POINT Z (0 1 2)", None, 2.0, 3.0, None),
+        ("POINT Z (0 1 2)", 1.0, None, 3.0, None),
+        ("POINT Z (0 1 2)", 1.0, 2.0, None, None),
+        ("POINT Z (0 1 2)", 1.0, 2.0, 3.0, "POINT (1 3 5)"),  # Positives
+        ("POINT Z (0 1 2)", -1.0, -2.0, -3.0, "POINT (-1 -1 -1)"),  # Negatives
+        ("POINT Z (0 1 2)", 0.0, 0.0, 0.0, "POINT (0 1 2)"),  # Zeroes
+        ("POINT Z (0 1 2)", 1, 2, 3, "POINT (1 3 5)"),  # Integers
+        ("POINT (0 1 2)", 1.0, 2.0, 3.0, "POINT (1 3 2)"),  # 2D
+        ("POINT M (0 1 2)", 1.0, 2.0, 3.0, "POINT M (1 3 5)"),  # M
+        ("POINT ZM (0 1 2 3)", 1.0, 2.0, 3.0, "POINT ZM (1 3 5 3)"),  # ZM
+        # Not points
+        ("LINESTRING Z (0 1 2, 2 3 4)", 1.0, 2.0, 3.0, "LINESTRING Z (1 3 5, 3 5 7)"),
+        (
+            "POLYGON Z ((0 0 0, 1 0 2, 0 1 2, 0 0 0))",
+            1.0,
+            2.0,
+            3.0,
+            "POLYGON Z ((1 2 3, 2 2 5, 1 3 5, 1 2 3))",
+        ),
+        ("MULTIPOINT Z (0 1 2, 2 3 4)", 1.0, 2.0, 3.0, "MULTIPOINT Z (1 3 5, 3 5 7)"),
+        (
+            "MULTILINESTRING Z ((0 1 2, 2 3 4))",
+            1.0,
+            2.0,
+            3.0,
+            "MULTILINESTRING Z ((1 3 5, 3 5 7))",
+        ),
+        (
+            "MULTIPOLYGON Z (((0 0 0, 1 0 2, 0 1 2, 0 0 0)))",
+            1.0,
+            2.0,
+            3.0,
+            "MULTIPOLYGON Z (((1 2 3, 2 2 5, 1 3 5, 1 2 3)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION Z (POINT Z (0 1 2))",
+            1.0,
+            2.0,
+            3.0,
+            "GEOMETRYCOLLECTION Z (POINT Z (1 3 5))",
+        ),
+        # WKT output of geoarrow-c is causing this (both correctly output
+        # empties)
+        ("POINT EMPTY", 1.0, 2.0, 3.0, "POINT (nan nan)"),
+        ("POINT Z EMPTY", 1.0, 2.0, 3.0, "POINT Z (nan nan nan)"),
+        ("LINESTRING EMPTY", 1.0, 2.0, 3.0, "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", 1.0, 2.0, 3.0, "POLYGON EMPTY"),
+        ("MULTIPOINT EMPTY", 1.0, 2.0, 3.0, "MULTIPOINT EMPTY"),
+        ("MULTILINESTRING EMPTY", 1.0, 2.0, 3.0, "MULTILINESTRING EMPTY"),
+        ("MULTIPOLYGON EMPTY", 1.0, 2.0, 3.0, "MULTIPOLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", 1.0, 2.0, 3.0, "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_translate_3d(eng, geom, dx, dy, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Translate({geom_or_null(geom)}, {val_or_null(dx)}, {val_or_null(dy)})",
+        expected,
+    )
