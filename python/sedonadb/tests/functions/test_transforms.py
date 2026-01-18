@@ -196,7 +196,7 @@ def test_st_translate(eng, geom, dx, dy, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "dx", "dy", "expected"),
+    ("geom", "dx", "dy", "dz", "expected"),
     [
         # Nulls
         (None, None, None, None, None),
@@ -204,12 +204,12 @@ def test_st_translate(eng, geom, dx, dy, expected):
         ("POINT Z (0 1 2)", None, 2.0, 3.0, None),
         ("POINT Z (0 1 2)", 1.0, None, 3.0, None),
         ("POINT Z (0 1 2)", 1.0, 2.0, None, None),
-        ("POINT Z (0 1 2)", 1.0, 2.0, 3.0, "POINT (1 3 5)"),  # Positives
-        ("POINT Z (0 1 2)", -1.0, -2.0, -3.0, "POINT (-1 -1 -1)"),  # Negatives
-        ("POINT Z (0 1 2)", 0.0, 0.0, 0.0, "POINT (0 1 2)"),  # Zeroes
-        ("POINT Z (0 1 2)", 1, 2, 3, "POINT (1 3 5)"),  # Integers
-        ("POINT (0 1 2)", 1.0, 2.0, 3.0, "POINT (1 3 2)"),  # 2D
-        ("POINT M (0 1 2)", 1.0, 2.0, 3.0, "POINT M (1 3 5)"),  # M
+        ("POINT Z (0 1 2)", 1.0, 2.0, 3.0, "POINT Z (1 3 5)"),  # Positives
+        ("POINT Z (0 1 2)", -1.0, -2.0, -3.0, "POINT Z (-1 -1 -1)"),  # Negatives
+        ("POINT Z (0 1 2)", 0.0, 0.0, 0.0, "POINT Z (0 1 2)"),  # Zeroes
+        ("POINT Z (0 1 2)", 1, 2, 3, "POINT Z (1 3 5)"),  # Integers
+        ("POINT (0 1)", 1.0, 2.0, 3.0, "POINT (1 3)"),  # 2D
+        ("POINT M (0 1 2)", 1.0, 2.0, 3.0, "POINT M (1 3 2)"),  # M
         ("POINT ZM (0 1 2 3)", 1.0, 2.0, 3.0, "POINT ZM (1 3 5 3)"),  # ZM
         # Not points
         ("LINESTRING Z (0 1 2, 2 3 4)", 1.0, 2.0, 3.0, "LINESTRING Z (1 3 5, 3 5 7)"),
@@ -254,9 +254,9 @@ def test_st_translate(eng, geom, dx, dy, expected):
         ("GEOMETRYCOLLECTION EMPTY", 1.0, 2.0, 3.0, "GEOMETRYCOLLECTION EMPTY"),
     ],
 )
-def test_st_translate_3d(eng, geom, dx, dy, expected):
+def test_st_translate_3d(eng, geom, dx, dy, dz, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_Translate({geom_or_null(geom)}, {val_or_null(dx)}, {val_or_null(dy)})",
+        f"SELECT ST_Translate({geom_or_null(geom)}, {val_or_null(dx)}, {val_or_null(dy)}, {val_or_null(dz)})",
         expected,
     )
