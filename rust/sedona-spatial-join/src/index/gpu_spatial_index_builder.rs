@@ -110,6 +110,7 @@ impl GPUSpatialIndexBuilder {
                 self.reservation,
             )?));
         }
+        let build_timer = self.metrics.build_time.timer();
 
         let mut gs = GpuSpatial::new()
             .and_then(|mut gs| {
@@ -122,8 +123,6 @@ impl GPUSpatialIndexBuilder {
             .map_err(|e| {
                 DataFusionError::Execution(format!("Failed to initialize GPU context {e:?}"))
             })?;
-
-        let build_timer = self.metrics.build_time.timer();
 
         // Concat indexed batches into a single batch to reduce build time
         if self.options.gpu.concat_build {

@@ -119,6 +119,9 @@ impl From<GpuSpatialRelationPredicate> for GpuSpatialRelationPredicateWrapper {
     }
 }
 
+/// Global shared GPU RT engine. Building an instance is expensive, so we share it across all GpuSpatial instances.
+#[cfg(gpu_available)]
+static GLOBAL_RT_ENGINE: Mutex<Option<Arc<Mutex<GpuSpatialRTEngineWrapper>>>> = Mutex::new(None);
 /// High-level wrapper for GPU spatial operations
 pub struct GpuSpatial {
     #[cfg(gpu_available)]
@@ -156,15 +159,27 @@ impl GpuSpatial {
         #[cfg(gpu_available)]
         {
             // Get PTX path from OUT_DIR
-            let out_path = std::path::PathBuf::from(env!("OUT_DIR"));
-            let ptx_root = out_path.join("share/gpuspatial/shaders");
-            let ptx_root_str = ptx_root
-                .to_str()
-                .ok_or_else(|| GpuSpatialError::Init("Invalid PTX path".to_string()))?;
+            // Acquire the lock for the global shared engine
+            let mut global_engine_guard = GLOBAL_RT_ENGINE.lock().unwrap();
 
-            let rt_engine = GpuSpatialRTEngineWrapper::try_new(device_id, ptx_root_str)?;
+            // Initialize the global engine if it hasn't been initialized yet
+            if global_engine_guard.is_none() {
+                // Get PTX path from OUT_DIR
+                let out_path = std::path::PathBuf::from(env!("OUT_DIR"));
+                let ptx_root = out_path.join("share/gpuspatial/shaders");
+                let ptx_root_str = ptx_root
+                    .to_str()
+                    .ok_or_else(|| GpuSpatialError::Init("Invalid PTX path".to_string()))?;
 
-            self.rt_engine = Some(Arc::new(Mutex::new(rt_engine)));
+                let rt_engine = GpuSpatialRTEngineWrapper::try_new(device_id, ptx_root_str)?;
+                *global_engine_guard = Some(Arc::new(Mutex::new(rt_engine)));
+            }
+
+            // Get a clone of the Arc to the shared engine
+            // safe to unwrap here because we just ensured it is Some
+            let rt_engine_ref = global_engine_guard.as_ref().unwrap().clone();
+            // Assign to self
+            self.rt_engine = Some(rt_engine_ref);
 
             let index = GpuSpatialIndexFloat2DWrapper::try_new(
                 self.rt_engine.as_ref().unwrap(),
