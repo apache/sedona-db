@@ -16,22 +16,22 @@
 // under the License.
 use std::sync::{Arc, OnceLock};
 
-use crate::{
-    index::IndexQueryResult,
-    refine::{
-        exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
-        IndexQueryResultRefiner,
-    },
-    spatial_predicate::SpatialPredicate,
-};
 use datafusion_common::Result;
 use geo::{Contains, Relate, Within};
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use sedona_geo_generic_alg::{line_measures::DistanceExt, Intersects};
-use sedona_geometry::spatial_relation::SpatialRelationType;
 use wkb::reader::Wkb;
+
+use crate::{
+    index::IndexQueryResult,
+    refine::{
+        exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
+        IndexQueryResultRefiner,
+    },
+    spatial_predicate::{SpatialPredicate, SpatialRelationType},
+};
 
 /// Geo-specific optimal mode selector that chooses the best execution mode
 /// based on probe-side geometry complexity.
@@ -376,7 +376,7 @@ impl_relate_evaluator!(GeoEquals, is_equal_topo);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial_predicate::{DistancePredicate, RelationPredicate};
+    use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
     use datafusion_physical_expr::expressions::{Column, Literal};

@@ -670,6 +670,7 @@ mod tests {
 
     use super::*;
     use crate::index::spatial_index::SpatialIndexRef;
+    use crate::spatial_predicate::SpatialRelationType;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;
@@ -678,7 +679,6 @@ mod tests {
     use datafusion_physical_expr::expressions::Column;
     use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
-    use sedona_geometry::spatial_relation::SpatialRelationType;
     use sedona_geometry::wkb_factory::write_wkb_empty_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;

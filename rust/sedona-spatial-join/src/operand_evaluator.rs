@@ -163,6 +163,7 @@ impl EvaluatedGeometryArray {
                     }
                     #[cfg(not(feature = "gpu"))]
                     {
+                        use geo_index::rtree::util::f64_box_to_f32;
                         // f64_box_to_f32 will ensure the resulting `f32` box is no smaller than the `f64` box.
                         let (min_x, min_y, max_x, max_y) =
                             f64_box_to_f32(min.x, min.y, max.x, max.y);

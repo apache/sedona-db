@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::{
-    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate,
+    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
 use arrow_schema::{Schema, SchemaRef};
 use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
@@ -1114,9 +1114,6 @@ fn is_spatial_predicate_supported_on_gpu(spatial_predicate: &SpatialPredicate) -
         SpatialPredicate::KNearestNeighbors(_) => false,
     }
 }
-
-// Re-export for use in main optimizer
-use sedona_geometry::spatial_relation::SpatialRelationType;
 
 #[cfg(test)]
 mod tests {

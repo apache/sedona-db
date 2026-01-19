@@ -19,23 +19,23 @@ use std::sync::{
     Arc, OnceLock,
 };
 
+use datafusion_common::{DataFusionError, Result};
+use geos::{Geom, PreparedGeometry};
+use parking_lot::Mutex;
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
+use sedona_expr::statistics::GeoStatistics;
+use sedona_geos::wkb_to_geos::GEOSWkbFactory;
+use wkb::reader::Wkb;
+
 use crate::{
     index::IndexQueryResult,
     refine::{
         exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
     },
-    spatial_predicate::{RelationPredicate, SpatialPredicate},
+    spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
     utils::init_once_array::InitOnceArray,
 };
-use datafusion_common::{DataFusionError, Result};
-use geos::{Geom, PreparedGeometry};
-use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
-use sedona_expr::statistics::GeoStatistics;
-use sedona_geometry::spatial_relation::SpatialRelationType;
-use sedona_geos::wkb_to_geos::GEOSWkbFactory;
-use wkb::reader::Wkb;
 
 /// GEOS-specific optimal mode selector that chooses the best execution mode
 /// based on geometry complexity statistics.
@@ -578,7 +578,7 @@ mod tests {
     }
 
     // Test cases for execution mode selection
-    use crate::spatial_predicate::{DistancePredicate, RelationPredicate};
+    use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
     use datafusion_physical_expr::expressions::{Column, Literal};

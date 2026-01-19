@@ -22,21 +22,21 @@ use std::{
     },
 };
 
+use datafusion_common::{DataFusionError, Result};
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions, TgIndexType};
+use sedona_expr::statistics::GeoStatistics;
+use sedona_tg::tg::{self, BinaryPredicate};
+use wkb::reader::Wkb;
+
 use crate::{
     index::IndexQueryResult,
     refine::{
         exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
     },
-    spatial_predicate::{RelationPredicate, SpatialPredicate},
+    spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
     utils::init_once_array::InitOnceArray,
 };
-use datafusion_common::{DataFusionError, Result};
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions, TgIndexType};
-use sedona_expr::statistics::GeoStatistics;
-use sedona_geometry::spatial_relation::SpatialRelationType;
-use sedona_tg::tg::{self, BinaryPredicate};
-use wkb::reader::Wkb;
 
 /// TG-specific optimal mode selector that chooses the best execution mode
 /// based on geometry complexity and TG library characteristics.
@@ -353,7 +353,7 @@ fn create_evaluator(predicate: &SpatialPredicate) -> Result<Box<dyn TgPredicateE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial_predicate::{DistancePredicate, RelationPredicate};
+    use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
     use datafusion_physical_expr::expressions::{Column, Literal};
