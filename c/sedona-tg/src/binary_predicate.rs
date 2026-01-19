@@ -20,49 +20,49 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{item_crs::ItemCrsKernel, scalar_udf::{ScalarKernelRef, SedonaScalarKernel}};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{executor::TgGeomExecutor, tg};
 
 /// ST_Equals() implementation using tg
-pub fn st_equals_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Equals>::default())
+pub fn st_equals_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Equals>::default())
 }
 
 /// ST_Intersects() implementation using tg
-pub fn st_intersects_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Intersects>::default())
+pub fn st_intersects_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Intersects>::default())
 }
 
 /// ST_Disjoint() implementation using tg
-pub fn st_disjoint_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Disjoint>::default())
+pub fn st_disjoint_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Disjoint>::default())
 }
 
 /// ST_Contains() implementation using tg
-pub fn st_contains_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Contains>::default())
+pub fn st_contains_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Contains>::default())
 }
 
 /// ST_Within() implementation using tg
-pub fn st_within_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Within>::default())
+pub fn st_within_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Within>::default())
 }
 
 /// ST_Covers() implementation using tg
-pub fn st_covers_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Covers>::default())
+pub fn st_covers_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Covers>::default())
 }
 
 /// ST_CoveredBy() implementation using tg
-pub fn st_covered_by_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::CoveredBy>::default())
+pub fn st_covered_by_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::CoveredBy>::default())
 }
 
 /// ST_Touches() implementation using tg
-pub fn st_touches_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Touches>::default())
+pub fn st_touches_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Touches>::default())
 }
 
 #[derive(Debug, Default)]
