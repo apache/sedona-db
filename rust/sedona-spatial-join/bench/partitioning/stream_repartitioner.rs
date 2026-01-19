@@ -17,7 +17,7 @@
 
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::Duration;
 
@@ -28,7 +28,6 @@ use arrow_array::{
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use datafusion::config::SpillCompression;
-use datafusion_common::Result;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use futures::executor::block_on;
@@ -42,8 +41,7 @@ use sedona_spatial_join::evaluated_batch::{
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_spatial_join::partitioning::PartitionedSide;
 use sedona_spatial_join::partitioning::{
-    kdb::KDBPartitioner, stream_repartitioner::StreamRepartitioner, SpatialPartition,
-    SpatialPartitioner,
+    kdb::KDBPartitioner, stream_repartitioner::StreamRepartitioner, SpatialPartitioner,
 };
 
 const RNG_SEED: u64 = 0x05ED_04A5;
@@ -204,7 +202,7 @@ fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send 
     )
     .expect("kdb builder should succeed");
 
-    Arc::new(LockedPartitioner::new(partitioner))
+    Arc::new(partitioner)
 }
 
 fn random_bbox(extent: &BoundingBox, rng: &mut StdRng) -> BoundingBox {
@@ -243,34 +241,4 @@ fn in_memory_stream(
     batches: Vec<EvaluatedBatch>,
 ) -> SendableEvaluatedBatchStream {
     Box::pin(InMemoryEvaluatedBatchStream::new(schema, batches))
-}
-
-/// Wraps [`KDBPartitioner`] in a mutex so it can satisfy `Send + Sync` for benchmarking.
-struct LockedPartitioner {
-    inner: Mutex<KDBPartitioner>,
-}
-
-impl LockedPartitioner {
-    fn new(partitioner: KDBPartitioner) -> Self {
-        Self {
-            inner: Mutex::new(partitioner),
-        }
-    }
-}
-
-impl SpatialPartitioner for LockedPartitioner {
-    fn num_regular_partitions(&self) -> usize {
-        self.inner.lock().expect("mutex poisoned").num_partitions()
-    }
-
-    fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        self.inner.lock().expect("mutex poisoned").partition(bbox)
-    }
-
-    fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
-        self.inner
-            .lock()
-            .expect("mutex poisoned")
-            .partition_no_multi(bbox)
-    }
 }
