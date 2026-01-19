@@ -585,7 +585,8 @@ SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1
 
 #### Description
 
-Construct a Geometry from WKB.
+Construct a Geometry from WKB. By default, input is validated and invalid WKB raises an error.
+Pass `false` as the `validate` argument to skip validation for efficiency; invalid WKB then results in undefined behavior.
 
 Since: v0.1.
 
@@ -593,9 +594,14 @@ Since: v0.1.
 
 `ST_GeomFromWKB (Wkb: Binary)`
 
+or
+
+`ST_GeomFromWKB (Wkb: Binary, validate: Boolean)`
+
 #### Arguments
 
   * **WKB**: binary: Well-known binary representation of the geometry.
+  * **validate**: boolean: If false, skip WKB validation (invalid input is undefined behavior).
 
 #### SQL Example
 
