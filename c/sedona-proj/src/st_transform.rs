@@ -16,16 +16,18 @@
 // under the License.
 use crate::transform::{ProjCrsEngine, ProjCrsEngineBuilder};
 use arrow_array::builder::BinaryBuilder;
+use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::{plan_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use geo_traits::to_geo::ToGeoGeometry;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::transform::{transform, CachingCrsEngine, CrsEngine, CrsTransform};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
-use sedona_schema::crs::deserialize_crs;
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::crs::{CoordinateReferenceSystem, Crs, deserialize_crs};
+use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
 use sedona_schema::matchers::ArgMatcher;
 use std::cell::OnceCell;
 use std::rc::Rc;
@@ -38,6 +40,155 @@ struct STTransform {}
 /// ST_Transform() implementation using the proj crate
 pub fn st_transform_impl() -> ScalarKernelRef {
     Arc::new(STTransform {})
+}
+
+
+
+enum CrsInput<'a> {
+    Crs(&'a Crs),
+    Scalar(&'a ScalarValue),
+    Array(Option<&'a ArrayRef>),
+    ItemCrs(Option<&'a ArrayRef>),
+    Unsupported(&'a SedonaType),
+}
+
+impl<'a> CrsInput<'a> {
+    fn from_arg(arg_type: &'a SedonaType, scalar_arg: Option<&'a ScalarValue>) -> Self {
+        if ArgMatcher::is_item_crs().match_type(arg_type) {
+            Self::ItemCrs(None)
+        } else if ArgMatcher::is_numeric().match_type(arg_type)
+            || ArgMatcher::is_string().match_type(arg_type)
+        {
+            if let Some(scalar_crs) = scalar_arg {
+                CrsInput::Scalar(scalar_crs)
+            } else {
+                CrsInput::Array(None)
+            }
+        } else {
+            match arg_type {
+                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => CrsInput::Crs(crs),
+                other => Self::Unsupported(other),
+            }
+        }
+    }
+}
+
+enum STTransformImpl {
+    NoOp,
+    OutputIsAllNull,
+    ScalarToScalar(String, String),
+    ScalarToItemCrs(String),
+    ItemCrsToScalar(String),
+    ItemCrsToItemCrs,
+}
+
+impl STTransformImpl {
+    fn try_from_types_and_scalar_args(
+        arg_types: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<Self>> {
+        if Self::is_transform_to(arg_types) {
+            let crs_from_string = Self::parse_crs_from_type(&arg_types[0])?;
+
+            if let Some(crs_to_scalar) = scalar_args[1] {
+                if let Some(crs_to_string) = Self::parse_crs_from_scalar_value(crs_to_scalar)? {
+                    Ok(Some(Self::ScalarToScalar(crs_from_string, crs_to_string)))
+                } else {
+                    Ok(Some(Self::OutputIsAllNull))
+                }
+            } else {
+                Ok(Some(Self::ScalarToItemCrs(crs_from_string)))
+            }
+        } else if Self::is_transform_from_item_crs_to(arg_types) {
+            if let Some(crs_to_scalar) = scalar_args[1] {
+                if let Some(crs_to_string) = Self::parse_crs_from_scalar_value(crs_to_scalar)? {
+                    Ok(Some(Self::ItemCrsToScalar(crs_to_string)))
+                } else {
+                    Ok(Some(Self::OutputIsAllNull))
+                }
+            } else {
+                Ok(Some(Self::ItemCrsToItemCrs))
+            }
+        } else if Self::is_transform_from_to(arg_types) {
+            todo!()
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn try_from_types_and_args(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result<Self> {
+        let scalar_args = args
+            .iter()
+            .map(|arg| match arg {
+                ColumnarValue::Array(_) => None,
+                ColumnarValue::Scalar(scalar_value) => Some(scalar_value),
+            })
+            .collect::<Vec<_>>();
+
+        if let Some(out) = Self::try_from_types_and_scalar_args(arg_types, &scalar_args)? {
+            Ok(out)
+        } else {
+            sedona_internal_err!("ST_Transform invoked with in compatible arguments")
+        }
+    }
+
+    fn is_transform_to(arg_types: &[SedonaType]) -> bool {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::or(vec![ArgMatcher::is_integer(), ArgMatcher::is_string()]),
+            ],
+            // We'll compute the actual type separately
+            SedonaType::Arrow(DataType::Null),
+        );
+
+        matcher.matches(arg_types)
+    }
+
+    fn is_transform_from_to(arg_types: &[SedonaType]) -> bool {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::or(vec![ArgMatcher::is_integer(), ArgMatcher::is_string()]),
+                ArgMatcher::or(vec![ArgMatcher::is_integer(), ArgMatcher::is_string()]),
+            ],
+            // We'll compute the actual type separately
+            SedonaType::Arrow(DataType::Null),
+        );
+
+        matcher.matches(arg_types)
+    }
+
+    fn is_transform_from_item_crs_to(arg_types: &[SedonaType]) -> bool {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_item_crs(),
+                ArgMatcher::or(vec![ArgMatcher::is_integer(), ArgMatcher::is_string()]),
+            ],
+            // We'll compute the actual type separately
+            SedonaType::Arrow(DataType::Null),
+        );
+
+        matcher.matches(arg_types)
+    }
+
+    fn parse_crs_from_type(sedona_type: &SedonaType) -> Result<String> {
+        match sedona_type {
+            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
+                Ok(crs.to_crs_string())
+            }
+            SedonaType::Wkb(_, None) | SedonaType::WkbView(_, None) => Ok("0".to_string()),
+            _ => sedona_internal_err!("Can't parse CRS from SedonaType {sedona_type:?}"),
+        }
+    }
+
+    fn parse_crs_from_scalar_value(scalar_arg: &ScalarValue) -> Result<Option<String>> {
+        if let ScalarValue::Utf8(maybe_to_crs_str) = scalar_arg.cast_to(&DataType::Utf8)? {
+            Ok(maybe_to_crs_str)
+        } else {
+            sedona_internal_err!("Expected scalar cast to utf8 to be a ScalarValue::Utf8")
+        }
+    }
 }
 
 /// Configure the global PROJ engine
@@ -113,6 +264,130 @@ thread_local! {
     };
 }
 
+#[derive(Debug)]
+struct STTransformTo {}
+
+impl SedonaScalarKernel for STTransformTo {
+    fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>, DataFusionError> {
+        sedona_internal_err!("Return type should only be called with args")
+    }
+
+    fn return_type_from_args_and_scalars(
+        &self,
+        arg_types: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::or(vec![ArgMatcher::is_integer(), ArgMatcher::is_string()]),
+            ],
+            // We'll compute the actual return type based on scalar arguments (if present) or
+            // return item_crs (if not).
+            SedonaType::Wkb(Edges::Planar, None),
+        );
+
+        if !matcher.matches(arg_types) {
+            return Ok(None);
+        }
+
+        if let Some(to_crs_scalar) = scalar_args[1] {
+            if let ScalarValue::Utf8(maybe_to_crs_str) = to_crs_scalar.cast_to(&DataType::Utf8)? {
+                match maybe_to_crs_str {
+                    Some(to_crs_str) => {
+                        let to_crs = deserialize_crs(&to_crs_str)?;
+                        Ok(Some(SedonaType::Wkb(Edges::Planar, to_crs)))
+                    }
+                    None => Ok(Some(WKB_GEOMETRY)),
+                }
+            } else {
+                sedona_internal_err!("Expected scalar cast to utf8 to be a ScalarValue::Utf8")
+            }
+        } else {
+            Ok(Some(WKB_GEOMETRY_ITEM_CRS.clone()))
+        }
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("invoke_batch should only be called with args")
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+    ) -> Result<ColumnarValue> {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+struct STTransformFromTo {}
+
+impl SedonaScalarKernel for STTransformFromTo {
+    fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>, DataFusionError> {
+        sedona_internal_err!("Return type should only be called with args")
+    }
+
+    fn return_type_from_args_and_scalars(
+        &self,
+        arg_types: &[SedonaType],
+        scalar_args: &[Option<&ScalarValue>],
+    ) -> Result<Option<SedonaType>> {
+        todo!()
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("invoke_batch should only be called with args")
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+    ) -> Result<ColumnarValue> {
+        todo!()
+    }
+}
+
+fn parse_crs_from_columnar_value(scalar_arg: &ScalarValue) -> Result<Option<String>> {
+    if let ScalarValue::Utf8(maybe_to_crs_str) = scalar_arg.cast_to(&DataType::Utf8)? {
+        Ok(maybe_to_crs_str)
+    } else {
+        sedona_internal_err!("Expected scalar cast to utf8 to be a ScalarValue::Utf8")
+    }
+}
+
+fn parse_crs_from_type(sedona_type: &SedonaType) -> Result<Option<String>> {
+    match sedona_type {
+        SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
+            Ok(Some(crs.to_crs_string()))
+        }
+        SedonaType::Wkb(_, None) | SedonaType::WkbView(_, None) => Ok(None),
+        _ => sedona_internal_err!("Can't parse CRS from SedonaType {sedona_type:?}"),
+    }
+}
+
+fn parse_crs_from_scalar_value(scalar_arg: &ScalarValue) -> Result<Option<String>> {
+    if let ScalarValue::Utf8(maybe_to_crs_str) = scalar_arg.cast_to(&DataType::Utf8)? {
+        Ok(maybe_to_crs_str)
+    } else {
+        sedona_internal_err!("Expected scalar cast to utf8 to be a ScalarValue::Utf8")
+    }
+}
+
 struct TransformArgIndexes {
     wkb: usize,
     first_crs: usize,
@@ -148,10 +423,9 @@ fn define_arg_indexes(arg_types: &[SedonaType], indexes: &mut TransformArgIndexe
 
 impl SedonaScalarKernel for STTransform {
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>, DataFusionError> {
-        Err(DataFusionError::Internal(
-            "Return type should only be called with args".to_string(),
-        ))
+        sedona_internal_err!("Return type should only be called with args")
     }
+
     fn return_type_from_args_and_scalars(
         &self,
         arg_types: &[SedonaType],
@@ -230,7 +504,7 @@ impl SedonaScalarKernel for STTransform {
         };
 
         with_global_proj_engine(|engine| {
-            let crs_from_geo = parse_source_crs(&arg_types[indexes.wkb])?;
+            let crs_from_geo = parse_crs_from_type(&arg_types[indexes.wkb])?;
 
             let transform = match &second_crs {
                 Some(to_crs) => get_transform_crs_to_crs(engine, &first_crs, to_crs)?,
@@ -287,15 +561,6 @@ fn invoke_scalar(wkb: &Wkb, trans: &dyn CrsTransform, builder: &mut BinaryBuilde
         .map_err(|err| DataFusionError::Execution(format!("Transform error: {err}")))?;
     builder.append_value([]);
     Ok(())
-}
-
-fn parse_source_crs(source_type: &SedonaType) -> Result<Option<String>> {
-    match source_type {
-        SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-            Ok(Some(crs.to_crs_string()))
-        }
-        _ => Ok(None),
-    }
 }
 
 fn to_crs_str(scalar_arg: &ScalarValue) -> Option<String> {
