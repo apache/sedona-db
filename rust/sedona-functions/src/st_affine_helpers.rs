@@ -17,7 +17,6 @@
 use arrow_array::types::Float64Type;
 use arrow_array::Array;
 use arrow_array::PrimitiveArray;
-use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::ScalarValue;
@@ -26,13 +25,13 @@ use sedona_common::sedona_internal_err;
 use sedona_geometry::transform::CrsTransform;
 use std::sync::Arc;
 
-#[derive(Clone)]
-enum FloatArg {
-    Array(PrimitiveArray<Float64Type>),
+#[derive(Clone, Copy)]
+enum FloatArg<'a> {
+    Array(&'a PrimitiveArray<Float64Type>),
     Scalar(Option<f64>),
 }
 
-impl FloatArg {
+impl<'a> FloatArg<'a> {
     fn is_null(&self, i: usize) -> bool {
         match self {
             FloatArg::Array(values) => values.is_null(i),
@@ -56,29 +55,28 @@ impl FloatArg {
     }
 }
 
-fn float_arg_from_columnar(arg: &ColumnarValue) -> Result<FloatArg> {
-    let casted = arg.cast_to(&DataType::Float64, None)?;
-    match casted {
-        ColumnarValue::Array(array) => Ok(FloatArg::Array(as_float64_array(&array)?.clone())),
-        ColumnarValue::Scalar(ScalarValue::Float64(value)) => Ok(FloatArg::Scalar(value)),
+fn float_arg_from_columnar<'a>(arg: &'a ColumnarValue) -> Result<FloatArg<'a>> {
+    match arg {
+        ColumnarValue::Array(array) => Ok(FloatArg::Array(as_float64_array(array)?)),
+        ColumnarValue::Scalar(ScalarValue::Float64(value)) => Ok(FloatArg::Scalar(*value)),
         ColumnarValue::Scalar(ScalarValue::Null) => Ok(FloatArg::Scalar(None)),
         _ => sedona_internal_err!("Invalid scalar type for affine argument"),
     }
 }
 
-pub(crate) struct DAffine2Iterator {
+pub(crate) struct DAffine2Iterator<'a> {
     index: usize,
-    a: FloatArg,
-    b: FloatArg,
-    d: FloatArg,
-    e: FloatArg,
-    x_offset: FloatArg,
-    y_offset: FloatArg,
+    a: FloatArg<'a>,
+    b: FloatArg<'a>,
+    d: FloatArg<'a>,
+    e: FloatArg<'a>,
+    x_offset: FloatArg<'a>,
+    y_offset: FloatArg<'a>,
     no_null: bool,
 }
 
-impl DAffine2Iterator {
-    pub(crate) fn new(array_args: &[ColumnarValue]) -> Result<Self> {
+impl<'a> DAffine2Iterator<'a> {
+    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
         if array_args.len() != 6 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
@@ -122,7 +120,7 @@ impl DAffine2Iterator {
     }
 }
 
-impl Iterator for DAffine2Iterator {
+impl<'a> Iterator for DAffine2Iterator<'a> {
     // As this needs to distinguish NULL, next() returns Some(Some(value))
     type Item = Option<glam::DAffine2>;
 
@@ -153,25 +151,25 @@ impl Iterator for DAffine2Iterator {
     }
 }
 
-pub(crate) struct DAffine3Iterator {
+pub(crate) struct DAffine3Iterator<'a> {
     index: usize,
-    a: FloatArg,
-    b: FloatArg,
-    c: FloatArg,
-    d: FloatArg,
-    e: FloatArg,
-    f: FloatArg,
-    g: FloatArg,
-    h: FloatArg,
-    i: FloatArg,
-    x_offset: FloatArg,
-    y_offset: FloatArg,
-    z_offset: FloatArg,
+    a: FloatArg<'a>,
+    b: FloatArg<'a>,
+    c: FloatArg<'a>,
+    d: FloatArg<'a>,
+    e: FloatArg<'a>,
+    f: FloatArg<'a>,
+    g: FloatArg<'a>,
+    h: FloatArg<'a>,
+    i: FloatArg<'a>,
+    x_offset: FloatArg<'a>,
+    y_offset: FloatArg<'a>,
+    z_offset: FloatArg<'a>,
     no_null: bool,
 }
 
-impl DAffine3Iterator {
-    pub(crate) fn new(array_args: &[ColumnarValue]) -> Result<Self> {
+impl<'a> DAffine3Iterator<'a> {
+    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
         if array_args.len() != 12 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
@@ -240,7 +238,7 @@ impl DAffine3Iterator {
     }
 }
 
-impl Iterator for DAffine3Iterator {
+impl<'a> Iterator for DAffine3Iterator<'a> {
     // As this needs to distinguish NULL, next() returns Some(Some(value))
     type Item = Option<glam::DAffine3>;
 

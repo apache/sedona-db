@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::builder::BinaryBuilder;
+use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
@@ -124,10 +125,15 @@ impl SedonaScalarKernel for STAffine {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
+        let casted_args = args[1..]
+            .iter()
+            .map(|arg| arg.cast_to(&DataType::Float64, None))
+            .collect::<Result<Vec<ColumnarValue>>>()?;
+
         let mut affine_iter = if self.is_3d {
-            st_affine_helpers::DAffineIterator::new_3d(&args[1..])?
+            st_affine_helpers::DAffineIterator::new_3d(&casted_args)?
         } else {
-            st_affine_helpers::DAffineIterator::new_2d(&args[1..])?
+            st_affine_helpers::DAffineIterator::new_2d(&casted_args)?
         };
 
         executor.execute_wkb_void(|maybe_wkb| {
