@@ -25,7 +25,6 @@ use datafusion_common::{
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
 use float_next_after::NextAfter;
-use geo_index::rtree::util::f64_box_to_f32;
 use geo_types::{coord, Rect};
 use sedona_functions::executor::IterGeo;
 use sedona_geo_generic_alg::BoundingRect;

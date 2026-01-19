@@ -18,45 +18,18 @@
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
-use datafusion_common::{DataFusionError, Result};
-use datafusion_common_runtime::JoinSet;
-use datafusion_execution::memory_pool::{MemoryPool, MemoryReservation};
-use float_next_after::NextAfter;
-use geo::BoundingRect;
-use geo_index::rtree::{
-    distance::{DistanceMetric, GeometryAccessor},
-    util::f64_box_to_f32,
-};
-use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
-use geo_index::IndexableNum;
+use datafusion_common::Result;
 use geo_types::Rect;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
-use sedona_geo::to_geo::item_to_geometry;
-use std::{
-    ops::Range,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::{ops::Range, sync::Arc};
 use wkb::reader::Wkb;
 
-use crate::{
-    evaluated_batch::EvaluatedBatch,
-    index::{
-        knn_adapter::{KnnComponents, SedonaKnnAdapter},
-        IndexQueryResult, QueryResultMetrics,
-    },
-    operand_evaluator::{create_operand_evaluator, distance_value_at, OperandEvaluator},
-    refine::{create_refiner, IndexQueryResultRefiner},
-    spatial_predicate::SpatialPredicate,
-    utils::concurrent_reservation::ConcurrentReservation,
-};
+use crate::{evaluated_batch::EvaluatedBatch, index::QueryResultMetrics};
 use arrow::array::BooleanBufferBuilder;
 use datafusion_physical_plan::metrics;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, MetricBuilder};
-use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
+use sedona_common::ExecutionMode;
 
 /// Metrics for the build phase of the spatial join.
 #[derive(Clone, Debug, Default)]
@@ -76,15 +49,7 @@ impl SpatialJoinBuildMetrics {
     }
 }
 
-#[async_trait]
 pub trait SpatialIndex {
-    fn schema(&self) -> SchemaRef;
-
-    /// Get all the indexed batches.
-    fn get_num_indexed_batches(&self) -> usize;
-
-    /// Get the batch at the given index.
-    fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
     /// Query the spatial index with a probe geometry to find matching build-side geometries.
     ///
     /// This method implements a two-phase spatial join query:
@@ -137,7 +102,17 @@ pub trait SpatialIndex {
         include_tie_breakers: bool,
         build_batch_positions: &mut Vec<(i32, i32)>,
     ) -> Result<QueryResultMetrics>;
+}
+#[async_trait]
+pub(crate) trait SpatialIndexInternal {
+    fn schema(&self) -> SchemaRef;
 
+    #[allow(dead_code)] // used in some tests
+    /// Get the number of indexed batches.
+    fn get_num_indexed_batches(&self) -> usize;
+
+    /// Get the batch at the given index.
+    fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
     /// Query the spatial index with a batch of probe geometries to find matching build-side geometries.
     ///
     /// This method iterates over the probe geometries in the given range of the evaluated batch.
@@ -195,4 +170,46 @@ pub trait SpatialIndex {
     fn get_actual_execution_mode(&self) -> ExecutionMode;
 }
 
-pub type SpatialIndexRef = Arc<dyn SpatialIndex + Send + Sync>;
+pub(crate) trait SpatialIndexFull: SpatialIndex + SpatialIndexInternal {}
+
+impl<T> SpatialIndexFull for T where T: SpatialIndex + SpatialIndexInternal {}
+
+pub(crate) type SpatialIndexRef = Arc<dyn SpatialIndexFull + Send + Sync>;
+
+/// Public Wrapper of SpatialIndex
+#[derive(Clone)]
+pub struct SpatialIndexHandle {
+    pub(crate) inner: SpatialIndexRef,
+}
+
+impl SpatialIndex for SpatialIndexHandle {
+    fn query(
+        &self,
+        probe_wkb: &Wkb,
+        probe_rect: &Rect<f32>,
+        distance: &Option<f64>,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+    ) -> Result<QueryResultMetrics> {
+        // Forward the call to the internal Arc
+        self.inner
+            .query(probe_wkb, probe_rect, distance, build_batch_positions)
+    }
+
+    fn query_knn(
+        &self,
+        probe_wkb: &Wkb,
+        k: u32,
+        use_spheroid: bool,
+        include_tie_breakers: bool,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+    ) -> Result<QueryResultMetrics> {
+        // Forward the call
+        self.inner.query_knn(
+            probe_wkb,
+            k,
+            use_spheroid,
+            include_tie_breakers,
+            build_batch_positions,
+        )
+    }
+}

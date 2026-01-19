@@ -17,7 +17,6 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 
@@ -31,7 +30,6 @@ use std::sync::{atomic::AtomicUsize, Arc};
 
 use crate::index::cpu_spatial_index::CPUSpatialIndex;
 use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
-use crate::index::SpatialIndex;
 use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{knn_adapter::KnnComponents, BuildPartition},

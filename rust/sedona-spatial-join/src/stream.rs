@@ -39,7 +39,6 @@ use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_p
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::spatial_index::SpatialIndexRef;
-use crate::index::SpatialIndex;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{

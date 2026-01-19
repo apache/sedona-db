@@ -20,10 +20,8 @@ use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
 use crate::operand_evaluator::EvaluatedGeometryArray;
 use crate::utils::join_utils::need_produce_result_in_final;
 use crate::{
-    evaluated_batch::EvaluatedBatch,
-    index::{spatial_index::SpatialIndex, BuildPartition},
-    operand_evaluator::create_operand_evaluator,
-    spatial_predicate::SpatialPredicate,
+    evaluated_batch::EvaluatedBatch, index::BuildPartition,
+    operand_evaluator::create_operand_evaluator, spatial_predicate::SpatialPredicate,
 };
 use arrow::array::BooleanBufferBuilder;
 use arrow::compute::concat;
@@ -128,7 +126,7 @@ impl GPUSpatialIndexBuilder {
         let build_timer = self.metrics.build_time.timer();
 
         // Concat indexed batches into a single batch to reduce build time
-        if (self.options.gpu.concat_build) {
+        if self.options.gpu.concat_build {
             let all_record_batches: Vec<&RecordBatch> = self
                 .indexed_batches
                 .iter()
@@ -156,7 +154,7 @@ impl GPUSpatialIndexBuilder {
                 batch,
                 geom_array: EvaluatedGeometryArray {
                     geometry_array: Arc::new(concat_array),
-                    rects: rects,
+                    rects,
                     distance: None,
                     wkbs: vec![],
                 },

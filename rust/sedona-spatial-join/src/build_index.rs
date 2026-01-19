@@ -25,22 +25,15 @@ use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use sedona_common::SedonaOptions;
 
 use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
-use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
+use crate::index::spatial_index::{SpatialIndexHandle, SpatialIndexRef, SpatialJoinBuildMetrics};
 use crate::{
-    index::{
-        BuildSideBatchesCollector, CPUSpatialIndexBuilder, CollectBuildSideMetrics, SpatialIndex,
-    },
+    index::{BuildSideBatchesCollector, CPUSpatialIndexBuilder, CollectBuildSideMetrics},
     operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
 };
 
-/// Build a spatial index from the build side streams.
-///
-/// This function reads the `concurrent_build_side_collection` configuration from the context
-/// to determine whether to collect build side partitions concurrently (using spawned tasks)
-/// or sequentially (for JNI/embedded contexts without async runtime support).
 #[allow(clippy::too_many_arguments)]
-pub async fn build_index(
+pub(crate) async fn build_index_internal(
     context: Arc<TaskContext>,
     build_schema: SchemaRef,
     build_streams: Vec<SendableRecordBatchStream>,
@@ -111,4 +104,34 @@ pub async fn build_index(
     } else {
         Err(DataFusionError::ResourcesExhausted("Memory limit exceeded while collecting indexed data. External spatial index builder is not yet implemented.".to_string()))
     }
+}
+
+/// Build a spatial index from the build side streams.
+///
+/// This function reads the `concurrent_build_side_collection` configuration from the context
+/// to determine whether to collect build side partitions concurrently (using spawned tasks)
+/// or sequentially (for JNI/embedded contexts without async runtime support).
+#[allow(clippy::too_many_arguments)]
+pub async fn build_index(
+    context: Arc<TaskContext>,
+    build_schema: SchemaRef,
+    build_streams: Vec<SendableRecordBatchStream>,
+    spatial_predicate: SpatialPredicate,
+    join_type: JoinType,
+    probe_threads_count: usize,
+    metrics: ExecutionPlanMetricsSet,
+    use_gpu: bool,
+) -> Result<SpatialIndexHandle> {
+    let inner = build_index_internal(
+        context,
+        build_schema,
+        build_streams,
+        spatial_predicate,
+        join_type,
+        probe_threads_count,
+        metrics,
+        use_gpu,
+    )
+    .await?;
+    Ok(SpatialIndexHandle { inner })
 }

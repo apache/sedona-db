@@ -16,18 +16,16 @@
 // under the License.
 
 use crate::evaluated_batch::EvaluatedBatch;
+use crate::index::spatial_index::{SpatialIndex, SpatialIndexInternal};
 use crate::index::QueryResultMetrics;
 use crate::operand_evaluator::OperandEvaluator;
-use crate::utils::concurrent_reservation::ConcurrentReservation;
-use crate::{
-    operand_evaluator::create_operand_evaluator, spatial_predicate::SpatialPredicate, SpatialIndex,
-};
+use crate::{operand_evaluator::create_operand_evaluator, spatial_predicate::SpatialPredicate};
 use arrow::array::BooleanBufferBuilder;
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result};
-use datafusion_execution::memory_pool::{MemoryPool, MemoryReservation};
+use datafusion_execution::memory_pool::MemoryReservation;
 use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::{ExecutionMode, SpatialJoinOptions};
@@ -38,9 +36,10 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use wkb::reader::Wkb;
+
 pub struct GPUSpatialIndex {
     pub(crate) schema: SchemaRef,
-    pub(crate) options: SpatialJoinOptions,
+    pub(crate) _options: SpatialJoinOptions,
     /// The spatial predicate evaluator for the spatial predicate.
     #[allow(dead_code)] // reserved for GPU-based distance evaluation
     pub(crate) evaluator: Arc<dyn OperandEvaluator>,
@@ -71,13 +70,13 @@ impl GPUSpatialIndex {
         schema: SchemaRef,
         options: SpatialJoinOptions,
         probe_threads_counter: AtomicUsize,
-        mut reservation: MemoryReservation,
+        reservation: MemoryReservation,
     ) -> Result<Self> {
         let evaluator = create_operand_evaluator(&spatial_predicate, options.clone());
 
         Ok(Self {
             schema,
-            options,
+            _options: options,
             evaluator,
             spatial_predicate,
             gpu_spatial: Arc::new(
@@ -91,6 +90,7 @@ impl GPUSpatialIndex {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         spatial_predicate: SpatialPredicate,
         schema: SchemaRef,
@@ -105,7 +105,7 @@ impl GPUSpatialIndex {
     ) -> Result<Self> {
         Ok(Self {
             schema,
-            options,
+            _options: options,
             evaluator,
             spatial_predicate,
             gpu_spatial,
@@ -117,7 +117,7 @@ impl GPUSpatialIndex {
         })
     }
 
-    pub(crate) fn refine_loaded(
+    fn refine_loaded(
         &self,
         probe_geoms: &ArrayRef,
         predicate: &SpatialPredicate,
@@ -168,7 +168,7 @@ impl GPUSpatialIndex {
 }
 
 #[async_trait]
-impl SpatialIndex for GPUSpatialIndex {
+impl SpatialIndexInternal for GPUSpatialIndex {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -177,39 +177,6 @@ impl SpatialIndex for GPUSpatialIndex {
     }
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch {
         &self.indexed_batches[batch_idx].batch
-    }
-    #[allow(unused)]
-    fn query(
-        &self,
-        probe_wkb: &Wkb,
-        probe_rect: &Rect<f32>,
-        distance: &Option<f64>,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        let _ = (probe_wkb, probe_rect, distance, build_batch_positions);
-        Err(DataFusionError::NotImplemented(
-            "Serial query is not implemented for GPU spatial index".to_string(),
-        ))
-    }
-
-    fn query_knn(
-        &self,
-        probe_wkb: &Wkb,
-        k: u32,
-        use_spheroid: bool,
-        include_tie_breakers: bool,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        let _ = (
-            probe_wkb,
-            k,
-            use_spheroid,
-            include_tie_breakers,
-            build_batch_positions,
-        );
-        Err(DataFusionError::NotImplemented(
-            "KNN query is not implemented for GPU spatial index".to_string(),
-        ))
     }
     async fn query_batch(
         &self,
@@ -268,7 +235,7 @@ impl SpatialIndex for GPUSpatialIndex {
         Ok((
             QueryResultMetrics {
                 count: total_count,
-                candidate_count: candidate_count,
+                candidate_count,
             },
             range.end,
         ))
@@ -295,5 +262,42 @@ impl SpatialIndex for GPUSpatialIndex {
 
     fn get_actual_execution_mode(&self) -> ExecutionMode {
         ExecutionMode::PrepareBuild // GPU-based spatial index is always on PrepareBuild mode
+    }
+}
+
+#[async_trait]
+impl SpatialIndex for GPUSpatialIndex {
+    #[allow(unused)]
+    fn query(
+        &self,
+        probe_wkb: &Wkb,
+        probe_rect: &Rect<f32>,
+        distance: &Option<f64>,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+    ) -> Result<QueryResultMetrics> {
+        let _ = (probe_wkb, probe_rect, distance, build_batch_positions);
+        Err(DataFusionError::NotImplemented(
+            "Serial query is not implemented for GPU spatial index".to_string(),
+        ))
+    }
+
+    fn query_knn(
+        &self,
+        probe_wkb: &Wkb,
+        k: u32,
+        use_spheroid: bool,
+        include_tie_breakers: bool,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+    ) -> Result<QueryResultMetrics> {
+        let _ = (
+            probe_wkb,
+            k,
+            use_spheroid,
+            include_tie_breakers,
+            build_batch_positions,
+        );
+        Err(DataFusionError::NotImplemented(
+            "KNN query is not implemented for GPU spatial index".to_string(),
+        ))
     }
 }

@@ -255,7 +255,7 @@ impl SpatialJoinOptimizer {
             if let Some(spatial_join) =
                 self.try_convert_hash_join_to_spatial(hash_join, &sedona_options.spatial_join)?
             {
-                if let Some(spatial_join_exec) =
+                if let Some(_spatial_join_exec) =
                     spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
                 {
                     return Ok(Transformed::yes(spatial_join));
@@ -1081,7 +1081,7 @@ fn is_using_gpu(
     join_opts: &SpatialJoinOptions,
 ) -> Result<bool> {
     if join_opts.gpu.enable {
-        if is_spatial_predicate_supported_on_gpu(&spatial_predicate) {
+        if is_spatial_predicate_supported_on_gpu(spatial_predicate) {
             return Ok(true);
         } else if join_opts.gpu.fallback_to_cpu {
             log::warn!(
