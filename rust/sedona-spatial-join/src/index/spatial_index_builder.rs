@@ -282,7 +282,7 @@ impl SpatialIndexBuilder {
             data_id_to_batch_pos: batch_pos_vec,
             indexed_batches: self.indexed_batches,
             geom_idx_vec,
-            visited_left_side,
+            visited_build_side: visited_left_side,
             probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
             knn_components,
             reservation: self.reservation,

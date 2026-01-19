@@ -89,7 +89,7 @@ pub struct SpatialIndex {
     pub(crate) geom_idx_vec: Vec<usize>,
 
     /// Shared bitmap builders for visited left indices, one per batch
-    pub(crate) visited_left_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
+    pub(crate) visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
 
     /// Counter of running probe-threads, potentially able to update `bitmap`.
     /// Each time a probe thread finished probing the index, it will decrement the counter.
@@ -138,7 +138,7 @@ impl SpatialIndex {
             data_id_to_batch_pos: Vec::new(),
             indexed_batches: Vec::new(),
             geom_idx_vec: Vec::new(),
-            visited_left_side: None,
+            visited_build_side: None,
             probe_threads_counter,
             knn_components,
             reservation,
@@ -659,8 +659,8 @@ impl SpatialIndex {
 
     /// Get the bitmaps for tracking visited left-side indices. The bitmaps will be updated
     /// by the spatial join stream when producing output batches during index probing phase.
-    pub(crate) fn visited_left_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
-        self.visited_left_side.as_ref()
+    pub(crate) fn visited_build_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
+        self.visited_build_side.as_ref()
     }
 
     /// Decrements counter of running threads, and returns `true`
