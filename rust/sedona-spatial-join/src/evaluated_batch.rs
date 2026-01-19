@@ -16,6 +16,7 @@
 // under the License.
 
 use arrow_array::RecordBatch;
+use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
 use geo::Rect;
@@ -45,6 +46,10 @@ impl EvaluatedBatch {
         let record_batch_size = get_record_batch_memory_size(&self.batch)?;
         let geom_array_size = self.geom_array.in_mem_size()?;
         Ok(record_batch_size + geom_array_size)
+    }
+
+    pub fn schema(&self) -> SchemaRef {
+        self.batch.schema()
     }
 
     pub fn num_rows(&self) -> usize {

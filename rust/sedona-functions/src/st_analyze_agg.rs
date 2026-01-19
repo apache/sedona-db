@@ -33,7 +33,7 @@ use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
-use sedona_geometry::analyze::GeometryAnalysis;
+use sedona_geometry::analyze::GeometrySummary;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -245,25 +245,29 @@ impl AnalyzeAccumulator {
         }
     }
 
-    pub fn update_statistics(&mut self, geom: &Wkb, size_bytes: usize) -> Result<()> {
+    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
         // Get geometry analysis information
-        let analysis = sedona_geometry::analyze::analyze_geometry(geom)
+        let summary = sedona_geometry::analyze::analyze_geometry(geom)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
+        self.ingest_geometry_summary(&summary);
+
+        Ok(())
+    }
+
+    pub fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
         // Start with a clone of the current stats
         let mut stats = self.stats.clone();
 
         // Update each component of the statistics
-        stats = self.update_basic_counts(stats, size_bytes);
-        stats = self.update_geometry_type_counts(stats, &analysis);
-        stats = self.update_point_count(stats, analysis.point_count);
-        stats = self.update_envelope_info(stats, &analysis);
-        stats = self.update_geometry_types(stats, analysis.geometry_type);
+        stats = self.update_basic_counts(stats, summary.size_bytes);
+        stats = self.update_geometry_type_counts(stats, summary);
+        stats = self.update_point_count(stats, summary.point_count);
+        stats = self.update_envelope_info(stats, summary);
+        stats = self.update_geometry_types(stats, summary.geometry_type);
 
         // Assign the updated stats back to self.stats
         self.stats = stats;
-
-        Ok(())
     }
 
     pub fn finish(self) -> GeoStatistics {
@@ -283,7 +287,7 @@ impl AnalyzeAccumulator {
     fn update_geometry_type_counts(
         &self,
         stats: GeoStatistics,
-        analysis: &GeometryAnalysis,
+        analysis: &GeometrySummary,
     ) -> GeoStatistics {
         // Add the counts from analysis to existing stats
         let puntal = stats.puntal_count().unwrap_or(0) + analysis.puntal_count;
@@ -308,7 +312,7 @@ impl AnalyzeAccumulator {
     fn update_envelope_info(
         &self,
         stats: GeoStatistics,
-        analysis: &GeometryAnalysis,
+        analysis: &GeometrySummary,
     ) -> GeoStatistics {
         // The bbox is directly available on analysis, not wrapped in an Option
         let bbox = &analysis.bbox;
@@ -367,7 +371,7 @@ impl AnalyzeAccumulator {
     fn execute_update(&mut self, executor: WkbExecutor) -> Result<()> {
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.update_statistics(&item, item.buf().len())?;
+                self.update_statistics(&item)?;
             }
             Ok(())
         })?;
