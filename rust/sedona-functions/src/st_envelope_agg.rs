@@ -352,7 +352,7 @@ mod test {
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
         create::{create_array, create_scalar},
         testers::AggregateUdfTester,
     };
