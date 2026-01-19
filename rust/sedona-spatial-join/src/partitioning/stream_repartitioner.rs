@@ -58,11 +58,20 @@ pub struct SpilledPartitions {
     partitions: Vec<Option<SpilledPartition>>,
 }
 
-/// Spill metadata captured for a single spatial partition.
+/// Metadata and spill files produced for a single spatial partition.
+///
+/// A `SpilledPartition` corresponds to one logical spatial partition (including
+/// special partitions such as `None` or `Multi`) after the stream repartitioner
+/// has flushed in-memory data to disk. It tracks the set of temporary spill
+/// files that hold the partition's rows, along with aggregated geospatial
+/// statistics and the total number of rows written.
 #[derive(Debug, Clone)]
 pub struct SpilledPartition {
+    /// Temporary spill files containing the rows assigned to this partition.
     spill_files: Vec<Arc<RefCountedTempFile>>,
+    /// Aggregated geospatial statistics computed over all rows in this partition.
     geo_statistics: GeoStatistics,
+    /// Total number of rows that were written into `spill_files`.
     num_rows: usize,
 }
 
@@ -219,7 +228,7 @@ impl SpilledPartitions {
         }
     }
 
-    /// Is the spill files still present and can be taken away
+    /// Are the spill files still present and can they be taken away?
     pub fn can_take_spilled_partition(&self, partition: SpatialPartition) -> bool {
         let Some(slot) = self.slots.slot(partition) else {
             return false;

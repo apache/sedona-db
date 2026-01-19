@@ -134,8 +134,7 @@ fn random_evaluated_batch(
 }
 
 fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut StdRng) -> RecordBatch {
-    let ids =
-        Int64Array::from_iter_values((0..rows).map(|_| rng.random_range(0..1_000_000) as i64));
+    let ids = Int64Array::from_iter_values((0..rows).map(|_| rng.random_range(0..1_000_000_i64)));
     let words = StringArray::from_iter_values((0..rows).map(|_| random_string(rng)));
     let dates = Date32Array::from_iter_values((0..rows).map(|_| rng.random_range(18_000..20_000)));
     let timestamps = TimestampMicrosecondArray::from_iter_values(
