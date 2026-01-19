@@ -89,6 +89,9 @@ config_namespace! {
         /// Enable GPU-accelerated spatial joins (requires CUDA and GPU feature flag)
         pub enable: bool, default = false
 
+        // Concatenate all geometries on the build-side into a single buffer for GPU processing
+        pub concat_build: bool, default = true
+
         /// GPU device ID to use (0 = first GPU, 1 = second, etc.)
         pub device_id: usize, default = 0
 

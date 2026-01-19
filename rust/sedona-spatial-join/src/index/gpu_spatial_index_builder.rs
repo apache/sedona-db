@@ -17,6 +17,7 @@
 
 use crate::index::gpu_spatial_index::GPUSpatialIndex;
 use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
+use crate::operand_evaluator::EvaluatedGeometryArray;
 use crate::utils::join_utils::need_produce_result_in_final;
 use crate::{
     evaluated_batch::EvaluatedBatch,
@@ -50,8 +51,6 @@ pub struct GPUSpatialIndexBuilder {
     indexed_batches: Vec<EvaluatedBatch>,
     /// Memory reservation for tracking the memory usage of the spatial index
     reservation: MemoryReservation,
-    /// Memory pool for managing the memory usage of the spatial index
-    memory_pool: Arc<dyn MemoryPool>,
 }
 
 impl GPUSpatialIndexBuilder {
@@ -76,7 +75,6 @@ impl GPUSpatialIndexBuilder {
             metrics,
             indexed_batches: vec![],
             reservation,
-            memory_pool,
         }
     }
     /// Build visited bitmaps for tracking left-side indices in outer joins.
@@ -128,6 +126,44 @@ impl GPUSpatialIndexBuilder {
             })?;
 
         let build_timer = self.metrics.build_time.timer();
+
+        // Concat indexed batches into a single batch to reduce build time
+        if (self.options.gpu.concat_build) {
+            let all_record_batches: Vec<&RecordBatch> = self
+                .indexed_batches
+                .iter()
+                .map(|batch| &batch.batch)
+                .collect();
+            let schema = all_record_batches[0].schema();
+            let batch =
+                arrow::compute::concat_batches(&schema, all_record_batches).map_err(|e| {
+                    DataFusionError::Execution(format!("Failed to concatenate left batches: {}", e))
+                })?;
+
+            let references: Vec<&dyn arrow::array::Array> = self
+                .indexed_batches
+                .iter()
+                .map(|batch| batch.geom_array.geometry_array.as_ref())
+                .collect();
+
+            let concat_array = concat(&references)?;
+            let rects = self
+                .indexed_batches
+                .iter()
+                .flat_map(|batch| batch.geom_array.rects.iter().cloned())
+                .collect();
+            let eval_batch = EvaluatedBatch {
+                batch,
+                geom_array: EvaluatedGeometryArray {
+                    geometry_array: Arc::new(concat_array),
+                    rects: rects,
+                    distance: None,
+                    wkbs: vec![],
+                },
+            };
+            self.indexed_batches.clear();
+            self.indexed_batches.push(eval_batch);
+        }
 
         let mut data_id_to_batch_pos: Vec<(i32, i32)> = Vec::with_capacity(
             self.indexed_batches

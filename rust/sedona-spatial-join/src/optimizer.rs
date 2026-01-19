@@ -1081,13 +1081,9 @@ fn is_using_gpu(
     join_opts: &SpatialJoinOptions,
 ) -> Result<bool> {
     if join_opts.gpu.enable {
-        println!("Trying to use GPU for spatial join");
         if is_spatial_predicate_supported_on_gpu(&spatial_predicate) {
             return Ok(true);
         } else if join_opts.gpu.fallback_to_cpu {
-            println!(
-                "Fallback to CPU spatial join as the spatial predicate is not supported on GPU"
-            );
             log::warn!(
                 "Falling back to CPU spatial join as the spatial predicate is not supported on GPU"
             );

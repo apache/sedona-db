@@ -102,7 +102,7 @@ pub struct EvaluatedGeometryArray {
     /// but we'll only allow accessing Wkb<'a> where 'a is the lifetime of the GeometryBatchResult to make
     /// the interfaces safe. The buffers in `geometry_array` are allocated on the heap and won't be moved when
     /// the GeometryBatchResult is moved, so we don't need to worry about pinning.
-    wkbs: Vec<Option<Wkb<'static>>>,
+    pub wkbs: Vec<Option<Wkb<'static>>>,
 }
 
 impl EvaluatedGeometryArray {
