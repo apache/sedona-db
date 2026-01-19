@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::{builder::BinaryBuilder, Array};
+use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{
@@ -125,18 +125,16 @@ impl SedonaScalarKernel for STAffine {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let array_args = args[1..]
+        // TODO: For simplicity, can we also move this casting to new_3d() and new_2d()
+        let casted_args = args[1..]
             .iter()
-            .map(|arg| {
-                arg.cast_to(&DataType::Float64, None)?
-                    .to_array(executor.num_iterations())
-            })
-            .collect::<Result<Vec<Arc<dyn Array>>>>()?;
+            .map(|arg| arg.cast_to(&DataType::Float64, None))
+            .collect::<Result<Vec<ColumnarValue>>>()?;
 
         let mut affine_iter = if self.is_3d {
-            st_affine_helpers::DAffineIterator::new_3d(&array_args)?
+            st_affine_helpers::DAffineIterator::new_3d(&casted_args)?
         } else {
-            st_affine_helpers::DAffineIterator::new_2d(&array_args)?
+            st_affine_helpers::DAffineIterator::new_2d(&casted_args)?
         };
 
         executor.execute_wkb_void(|maybe_wkb| {
@@ -159,6 +157,7 @@ impl SedonaScalarKernel for STAffine {
 
 #[cfg(test)]
 mod tests {
+    use arrow_array::Array;
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ColumnarValue, ScalarUDF};
     use rstest::rstest;

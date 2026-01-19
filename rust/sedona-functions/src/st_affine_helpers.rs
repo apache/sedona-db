@@ -19,34 +19,80 @@ use arrow_array::Array;
 use arrow_array::PrimitiveArray;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
+use datafusion_common::ScalarValue;
+use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_geometry::transform::CrsTransform;
 use std::sync::Arc;
 
+#[derive(Clone, Copy)]
+enum FloatArg<'a> {
+    Array(&'a PrimitiveArray<Float64Type>),
+    Scalar(Option<f64>),
+}
+
+impl<'a> FloatArg<'a> {
+    fn is_null(&self, i: usize) -> bool {
+        match self {
+            FloatArg::Array(values) => values.is_null(i),
+            FloatArg::Scalar(value) => value.is_none(),
+        }
+    }
+
+    fn value(&self, i: usize) -> f64 {
+        match self {
+            FloatArg::Array(values) => values.value(i),
+            FloatArg::Scalar(Some(value)) => *value,
+            FloatArg::Scalar(None) => 0.0,
+        }
+    }
+
+    fn no_nulls(&self) -> bool {
+        match self {
+            FloatArg::Array(values) => values.null_count() == 0,
+            FloatArg::Scalar(value) => value.is_some(),
+        }
+    }
+}
+
+fn float_arg_from_array<'a>(array: &'a Arc<dyn Array>) -> Result<FloatArg<'a>> {
+    Ok(FloatArg::Array(as_float64_array(array)?))
+}
+
+fn float_arg_from_columnar<'a>(arg: &'a ColumnarValue) -> Result<FloatArg<'a>> {
+    match arg {
+        ColumnarValue::Array(array) => float_arg_from_array(array),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Float64(value) => Ok(FloatArg::Scalar(*value)),
+            ScalarValue::Null => Ok(FloatArg::Scalar(None)),
+            _ => sedona_internal_err!("Invalid scalar type for affine argument"),
+        },
+    }
+}
+
 pub(crate) struct DAffine2Iterator<'a> {
     index: usize,
-    a: &'a PrimitiveArray<Float64Type>,
-    b: &'a PrimitiveArray<Float64Type>,
-    d: &'a PrimitiveArray<Float64Type>,
-    e: &'a PrimitiveArray<Float64Type>,
-    x_offset: &'a PrimitiveArray<Float64Type>,
-    y_offset: &'a PrimitiveArray<Float64Type>,
+    a: FloatArg<'a>,
+    b: FloatArg<'a>,
+    d: FloatArg<'a>,
+    e: FloatArg<'a>,
+    x_offset: FloatArg<'a>,
+    y_offset: FloatArg<'a>,
     no_null: bool,
 }
 
 impl<'a> DAffine2Iterator<'a> {
-    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
         if array_args.len() != 6 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
-        let a = as_float64_array(&array_args[0])?;
-        let b = as_float64_array(&array_args[1])?;
-        let d = as_float64_array(&array_args[2])?;
-        let e = as_float64_array(&array_args[3])?;
-        let x_offset = as_float64_array(&array_args[4])?;
-        let y_offset = as_float64_array(&array_args[5])?;
-
+        let a = float_arg_from_columnar(&array_args[0])?;
+        let b = float_arg_from_columnar(&array_args[1])?;
+        let d = float_arg_from_columnar(&array_args[2])?;
+        let e = float_arg_from_columnar(&array_args[3])?;
+        let x_offset = float_arg_from_columnar(&array_args[4])?;
+        let y_offset = float_arg_from_columnar(&array_args[5])?;
         Ok(Self {
             index: 0,
             a,
@@ -55,12 +101,12 @@ impl<'a> DAffine2Iterator<'a> {
             e,
             x_offset,
             y_offset,
-            no_null: a.null_count() == 0
-                && b.null_count() == 0
-                && d.null_count() == 0
-                && e.null_count() == 0
-                && x_offset.null_count() == 0
-                && y_offset.null_count() == 0,
+            no_null: a.no_nulls()
+                && b.no_nulls()
+                && d.no_nulls()
+                && e.no_nulls()
+                && x_offset.no_nulls()
+                && y_offset.no_nulls(),
         })
     }
 
@@ -111,39 +157,39 @@ impl<'a> Iterator for DAffine2Iterator<'a> {
 
 pub(crate) struct DAffine3Iterator<'a> {
     index: usize,
-    a: &'a PrimitiveArray<Float64Type>,
-    b: &'a PrimitiveArray<Float64Type>,
-    c: &'a PrimitiveArray<Float64Type>,
-    d: &'a PrimitiveArray<Float64Type>,
-    e: &'a PrimitiveArray<Float64Type>,
-    f: &'a PrimitiveArray<Float64Type>,
-    g: &'a PrimitiveArray<Float64Type>,
-    h: &'a PrimitiveArray<Float64Type>,
-    i: &'a PrimitiveArray<Float64Type>,
-    x_offset: &'a PrimitiveArray<Float64Type>,
-    y_offset: &'a PrimitiveArray<Float64Type>,
-    z_offset: &'a PrimitiveArray<Float64Type>,
+    a: FloatArg<'a>,
+    b: FloatArg<'a>,
+    c: FloatArg<'a>,
+    d: FloatArg<'a>,
+    e: FloatArg<'a>,
+    f: FloatArg<'a>,
+    g: FloatArg<'a>,
+    h: FloatArg<'a>,
+    i: FloatArg<'a>,
+    x_offset: FloatArg<'a>,
+    y_offset: FloatArg<'a>,
+    z_offset: FloatArg<'a>,
     no_null: bool,
 }
 
 impl<'a> DAffine3Iterator<'a> {
-    pub(crate) fn new(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
         if array_args.len() != 12 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
 
-        let a = as_float64_array(&array_args[0])?;
-        let b = as_float64_array(&array_args[1])?;
-        let c = as_float64_array(&array_args[2])?;
-        let d = as_float64_array(&array_args[3])?;
-        let e = as_float64_array(&array_args[4])?;
-        let f = as_float64_array(&array_args[5])?;
-        let g = as_float64_array(&array_args[6])?;
-        let h = as_float64_array(&array_args[7])?;
-        let i = as_float64_array(&array_args[8])?;
-        let x_offset = as_float64_array(&array_args[9])?;
-        let y_offset = as_float64_array(&array_args[10])?;
-        let z_offset = as_float64_array(&array_args[11])?;
+        let a = float_arg_from_columnar(&array_args[0])?;
+        let b = float_arg_from_columnar(&array_args[1])?;
+        let c = float_arg_from_columnar(&array_args[2])?;
+        let d = float_arg_from_columnar(&array_args[3])?;
+        let e = float_arg_from_columnar(&array_args[4])?;
+        let f = float_arg_from_columnar(&array_args[5])?;
+        let g = float_arg_from_columnar(&array_args[6])?;
+        let h = float_arg_from_columnar(&array_args[7])?;
+        let i = float_arg_from_columnar(&array_args[8])?;
+        let x_offset = float_arg_from_columnar(&array_args[9])?;
+        let y_offset = float_arg_from_columnar(&array_args[10])?;
+        let z_offset = float_arg_from_columnar(&array_args[11])?;
 
         Ok(Self {
             index: 0,
@@ -159,18 +205,18 @@ impl<'a> DAffine3Iterator<'a> {
             x_offset,
             y_offset,
             z_offset,
-            no_null: a.null_count() == 0
-                && b.null_count() == 0
-                && c.null_count() == 0
-                && d.null_count() == 0
-                && e.null_count() == 0
-                && f.null_count() == 0
-                && g.null_count() == 0
-                && h.null_count() == 0
-                && i.null_count() == 0
-                && x_offset.null_count() == 0
-                && y_offset.null_count() == 0
-                && z_offset.null_count() == 0,
+            no_null: a.no_nulls()
+                && b.no_nulls()
+                && c.no_nulls()
+                && d.no_nulls()
+                && e.no_nulls()
+                && f.no_nulls()
+                && g.no_nulls()
+                && h.no_nulls()
+                && i.no_nulls()
+                && x_offset.no_nulls()
+                && y_offset.no_nulls()
+                && z_offset.no_nulls(),
         })
     }
 
@@ -402,14 +448,22 @@ pub(crate) enum DAffineIterator<'a> {
     DAffine2Scale(DAffine2ScaleIterator<'a>),
     DAffine3Scale(DAffine3ScaleIterator<'a>),
     DAffineRotate(DAffineRotateIterator<'a>),
+    // Short-circuit when any scalar affine argument is NULL; avoids holding args and always yields NULL.
+    Null,
 }
 
 impl<'a> DAffineIterator<'a> {
-    pub(crate) fn new_2d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+    pub(crate) fn new_2d(array_args: &'a [ColumnarValue]) -> Result<Self> {
+        if has_null_scalar(array_args) {
+            return Ok(Self::Null);
+        }
         Ok(Self::DAffine2(DAffine2Iterator::new(array_args)?))
     }
 
-    pub(crate) fn new_3d(array_args: &'a [Arc<dyn Array>]) -> Result<Self> {
+    pub(crate) fn new_3d(array_args: &'a [ColumnarValue]) -> Result<Self> {
+        if has_null_scalar(array_args) {
+            return Ok(Self::Null);
+        }
         Ok(Self::DAffine3(DAffine3Iterator::new(array_args)?))
     }
 
@@ -527,8 +581,14 @@ impl<'a> Iterator for DAffineIterator<'a> {
                     None => None,
                 }
             }
+            DAffineIterator::Null => Some(None),
         }
     }
+}
+
+fn has_null_scalar(args: &[ColumnarValue]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg, ColumnarValue::Scalar(ScalarValue::Null)))
 }
 
 #[cfg(test)]
@@ -542,15 +602,19 @@ mod tests {
         Arc::new(Float64Array::from(values)) as Arc<dyn Array>
     }
 
+    fn float_columnar(values: Vec<Option<f64>>) -> ColumnarValue {
+        ColumnarValue::Array(float_array(values))
+    }
+
     #[test]
     fn daffine2_iterator_handles_nulls() {
         let args = vec![
-            float_array(vec![Some(1.0), Some(10.0)]),
-            float_array(vec![Some(2.0), Some(20.0)]),
-            float_array(vec![Some(3.0), Some(30.0)]),
-            float_array(vec![Some(4.0), None]),
-            float_array(vec![Some(5.0), Some(50.0)]),
-            float_array(vec![Some(6.0), Some(60.0)]),
+            float_columnar(vec![Some(1.0), Some(10.0)]),
+            float_columnar(vec![Some(2.0), Some(20.0)]),
+            float_columnar(vec![Some(3.0), Some(30.0)]),
+            float_columnar(vec![Some(4.0), None]),
+            float_columnar(vec![Some(5.0), Some(50.0)]),
+            float_columnar(vec![Some(6.0), Some(60.0)]),
         ];
 
         let mut iter = DAffine2Iterator::new(&args).unwrap();
@@ -575,7 +639,7 @@ mod tests {
         ];
         let args = values
             .iter()
-            .map(|value| float_array(vec![Some(*value)]))
+            .map(|value| float_columnar(vec![Some(*value)]))
             .collect::<Vec<_>>();
 
         let mut iter = DAffine3Iterator::new(&args).unwrap();
