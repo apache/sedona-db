@@ -1163,7 +1163,8 @@ mod tests {
     use arrow::array::Int32Array;
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow_array::cast::AsArray;
-    use rand::Rng;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     fn create_test_batches(
         num_batches: usize,
@@ -1404,12 +1405,13 @@ mod tests {
         let max_batch_size_range = 1..100;
         let match_probability = 0.5;
         let num_matches_range = 1..100;
-        for _ in 0..1000 {
+        for seed in 0..1000 {
             fuzz_produce_probe_indices(
                 num_rows_range.clone(),
                 max_batch_size_range.clone(),
                 match_probability,
                 num_matches_range.clone(),
+                seed,
             );
         }
     }
@@ -1419,8 +1421,9 @@ mod tests {
         max_batch_size_range: Range<usize>,
         match_probability: f64,
         num_matches_range: Range<usize>,
+        seed: u64,
     ) {
-        let mut rng = rand::rng();
+        let mut rng = StdRng::seed_from_u64(seed);
         let num_rows = rng.random_range(num_rows_range);
         let max_batch_size = rng.random_range(max_batch_size_range);
         let mut probe_indices = Vec::with_capacity(num_rows);
