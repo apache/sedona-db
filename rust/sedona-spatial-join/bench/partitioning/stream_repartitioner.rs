@@ -46,7 +46,7 @@ use sedona_spatial_join::partitioning::{
     SpatialPartitioner,
 };
 
-const RNG_SEED: u64 = 0x5ED0_4A5;
+const RNG_SEED: u64 = 0x05ED_04A5;
 const NUM_BATCHES: usize = 50;
 const ROWS_PER_BATCH: usize = 8192;
 const SAMPLE_FOR_PARTITIONER: usize = 1_000;
@@ -135,11 +135,12 @@ fn random_evaluated_batch(
 }
 
 fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut StdRng) -> RecordBatch {
-    let ids = Int64Array::from_iter_values((0..rows).map(|_| rng.gen_range(0..1_000_000) as i64));
+    let ids =
+        Int64Array::from_iter_values((0..rows).map(|_| rng.random_range(0..1_000_000) as i64));
     let words = StringArray::from_iter_values((0..rows).map(|_| random_string(rng)));
-    let dates = Date32Array::from_iter_values((0..rows).map(|_| rng.gen_range(18_000..20_000)));
+    let dates = Date32Array::from_iter_values((0..rows).map(|_| rng.random_range(18_000..20_000)));
     let timestamps = TimestampMicrosecondArray::from_iter_values(
-        (0..rows).map(|_| rng.gen_range(1_600_000_000_000_000i64..1_700_000_000_000_000)),
+        (0..rows).map(|_| rng.random_range(1_600_000_000_000_000i64..1_700_000_000_000_000)),
     );
 
     let columns: Vec<ArrayRef> = vec![
@@ -155,8 +156,8 @@ fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut StdRng) -> Re
 fn random_geometry_array(rows: usize, extent: &BoundingBox, rng: &mut StdRng) -> ArrayRef {
     let wkbs: Vec<Vec<u8>> = (0..rows)
         .map(|_| {
-            let x = rng.gen_range(extent.x().lo()..=extent.x().hi());
-            let y = rng.gen_range(extent.y().lo()..=extent.y().hi());
+            let x = rng.random_range(extent.x().lo()..=extent.x().hi());
+            let y = rng.random_range(extent.y().lo()..=extent.y().hi());
             point_wkb(x, y)
         })
         .collect();
@@ -169,7 +170,7 @@ fn random_string(rng: &mut StdRng) -> String {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let mut buf = [0u8; 8];
     for slot in &mut buf {
-        let idx = rng.gen_range(0..CHARSET.len());
+        let idx = rng.random_range(0..CHARSET.len());
         *slot = CHARSET[idx];
     }
     String::from_utf8_lossy(&buf).to_string()
@@ -189,7 +190,7 @@ fn build_schema() -> Schema {
 }
 
 fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send + Sync> {
-    let mut rng = StdRng::seed_from_u64(RNG_SEED ^ 0xFF_FFFF);
+    let mut rng = StdRng::seed_from_u64(RNG_SEED ^ 0x00FF_FFFF);
     let samples = (0..SAMPLE_FOR_PARTITIONER)
         .map(|_| random_bbox(extent, &mut rng))
         .collect::<Vec<_>>();
@@ -208,10 +209,10 @@ fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send 
 fn random_bbox(extent: &BoundingBox, rng: &mut StdRng) -> BoundingBox {
     let span_x = (extent.x().hi() - extent.x().lo()) / 20.0;
     let span_y = (extent.y().hi() - extent.y().lo()) / 20.0;
-    let width = rng.gen_range(10.0..=span_x).max(1.0);
-    let height = rng.gen_range(10.0..=span_y).max(1.0);
-    let min_x = rng.gen_range(extent.x().lo()..=extent.x().hi() - width);
-    let min_y = rng.gen_range(extent.y().lo()..=extent.y().hi() - height);
+    let width = rng.random_range(10.0..=span_x).max(1.0);
+    let height = rng.random_range(10.0..=span_y).max(1.0);
+    let min_x = rng.random_range(extent.x().lo()..=extent.x().hi() - width);
+    let min_y = rng.random_range(extent.y().lo()..=extent.y().hi() - height);
     BoundingBox::xy((min_x, min_x + width), (min_y, min_y + height))
 }
 

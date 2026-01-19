@@ -34,7 +34,6 @@ use crate::{
         partition_slots::PartitionSlots, util::geo_rect_to_bbox, PartitionedSide, SpatialPartition,
         SpatialPartitioner,
     },
-    utils::arrow_utils::{compact_array, compact_batch},
 };
 use arrow::compute::interleave as arrow_interleave;
 use arrow::compute::interleave_record_batch;
@@ -551,7 +550,6 @@ pub(crate) fn interleave_evaluated_batch(
         return sedona_internal_err!("interleave_evaluated_batch requires at least one batch");
     }
     let batch = interleave_record_batch(record_batches, indices)?;
-    let batch = compact_batch(batch)?;
     let geom_array = interleave_geometry_array(geom_arrays, indices)?;
     Ok(EvaluatedBatch { batch, geom_array })
 }
@@ -569,7 +567,6 @@ fn interleave_geometry_array(
         .map(|geom| geom.geometry_array.as_ref())
         .collect();
     let geometry_array = arrow_interleave(&value_refs, indices)?;
-    let (geometry_array, _) = compact_array(geometry_array)?;
 
     let distance = interleave_distance_columns(geom_arrays, indices)?;
 
