@@ -17,6 +17,7 @@
 use arrow_array::types::Float64Type;
 use arrow_array::Array;
 use arrow_array::PrimitiveArray;
+use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::ScalarValue;
@@ -25,13 +26,13 @@ use sedona_common::sedona_internal_err;
 use sedona_geometry::transform::CrsTransform;
 use std::sync::Arc;
 
-#[derive(Clone, Copy)]
-enum FloatArg<'a> {
-    Array(&'a PrimitiveArray<Float64Type>),
+#[derive(Clone)]
+enum FloatArg {
+    Array(PrimitiveArray<Float64Type>),
     Scalar(Option<f64>),
 }
 
-impl<'a> FloatArg<'a> {
+impl FloatArg {
     fn is_null(&self, i: usize) -> bool {
         match self {
             FloatArg::Array(values) => values.is_null(i),
@@ -55,34 +56,29 @@ impl<'a> FloatArg<'a> {
     }
 }
 
-fn float_arg_from_array<'a>(array: &'a Arc<dyn Array>) -> Result<FloatArg<'a>> {
-    Ok(FloatArg::Array(as_float64_array(array)?))
-}
-
-fn float_arg_from_columnar<'a>(arg: &'a ColumnarValue) -> Result<FloatArg<'a>> {
-    match arg {
-        ColumnarValue::Array(array) => float_arg_from_array(array),
-        ColumnarValue::Scalar(scalar) => match scalar {
-            ScalarValue::Float64(value) => Ok(FloatArg::Scalar(*value)),
-            ScalarValue::Null => Ok(FloatArg::Scalar(None)),
-            _ => sedona_internal_err!("Invalid scalar type for affine argument"),
-        },
+fn float_arg_from_columnar(arg: &ColumnarValue) -> Result<FloatArg> {
+    let casted = arg.cast_to(&DataType::Float64, None)?;
+    match casted {
+        ColumnarValue::Array(array) => Ok(FloatArg::Array(as_float64_array(&array)?.clone())),
+        ColumnarValue::Scalar(ScalarValue::Float64(value)) => Ok(FloatArg::Scalar(value)),
+        ColumnarValue::Scalar(ScalarValue::Null) => Ok(FloatArg::Scalar(None)),
+        _ => sedona_internal_err!("Invalid scalar type for affine argument"),
     }
 }
 
-pub(crate) struct DAffine2Iterator<'a> {
+pub(crate) struct DAffine2Iterator {
     index: usize,
-    a: FloatArg<'a>,
-    b: FloatArg<'a>,
-    d: FloatArg<'a>,
-    e: FloatArg<'a>,
-    x_offset: FloatArg<'a>,
-    y_offset: FloatArg<'a>,
+    a: FloatArg,
+    b: FloatArg,
+    d: FloatArg,
+    e: FloatArg,
+    x_offset: FloatArg,
+    y_offset: FloatArg,
     no_null: bool,
 }
 
-impl<'a> DAffine2Iterator<'a> {
-    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
+impl DAffine2Iterator {
+    pub(crate) fn new(array_args: &[ColumnarValue]) -> Result<Self> {
         if array_args.len() != 6 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
@@ -93,6 +89,13 @@ impl<'a> DAffine2Iterator<'a> {
         let e = float_arg_from_columnar(&array_args[3])?;
         let x_offset = float_arg_from_columnar(&array_args[4])?;
         let y_offset = float_arg_from_columnar(&array_args[5])?;
+        let no_null = a.no_nulls()
+            && b.no_nulls()
+            && d.no_nulls()
+            && e.no_nulls()
+            && x_offset.no_nulls()
+            && y_offset.no_nulls();
+
         Ok(Self {
             index: 0,
             a,
@@ -101,12 +104,7 @@ impl<'a> DAffine2Iterator<'a> {
             e,
             x_offset,
             y_offset,
-            no_null: a.no_nulls()
-                && b.no_nulls()
-                && d.no_nulls()
-                && e.no_nulls()
-                && x_offset.no_nulls()
-                && y_offset.no_nulls(),
+            no_null,
         })
     }
 
@@ -124,7 +122,7 @@ impl<'a> DAffine2Iterator<'a> {
     }
 }
 
-impl<'a> Iterator for DAffine2Iterator<'a> {
+impl Iterator for DAffine2Iterator {
     // As this needs to distinguish NULL, next() returns Some(Some(value))
     type Item = Option<glam::DAffine2>;
 
@@ -155,25 +153,25 @@ impl<'a> Iterator for DAffine2Iterator<'a> {
     }
 }
 
-pub(crate) struct DAffine3Iterator<'a> {
+pub(crate) struct DAffine3Iterator {
     index: usize,
-    a: FloatArg<'a>,
-    b: FloatArg<'a>,
-    c: FloatArg<'a>,
-    d: FloatArg<'a>,
-    e: FloatArg<'a>,
-    f: FloatArg<'a>,
-    g: FloatArg<'a>,
-    h: FloatArg<'a>,
-    i: FloatArg<'a>,
-    x_offset: FloatArg<'a>,
-    y_offset: FloatArg<'a>,
-    z_offset: FloatArg<'a>,
+    a: FloatArg,
+    b: FloatArg,
+    c: FloatArg,
+    d: FloatArg,
+    e: FloatArg,
+    f: FloatArg,
+    g: FloatArg,
+    h: FloatArg,
+    i: FloatArg,
+    x_offset: FloatArg,
+    y_offset: FloatArg,
+    z_offset: FloatArg,
     no_null: bool,
 }
 
-impl<'a> DAffine3Iterator<'a> {
-    pub(crate) fn new(array_args: &'a [ColumnarValue]) -> Result<Self> {
+impl DAffine3Iterator {
+    pub(crate) fn new(array_args: &[ColumnarValue]) -> Result<Self> {
         if array_args.len() != 12 {
             return sedona_internal_err!("Invalid number of arguments are passed");
         }
@@ -191,6 +189,19 @@ impl<'a> DAffine3Iterator<'a> {
         let y_offset = float_arg_from_columnar(&array_args[10])?;
         let z_offset = float_arg_from_columnar(&array_args[11])?;
 
+        let no_null = a.no_nulls()
+            && b.no_nulls()
+            && c.no_nulls()
+            && d.no_nulls()
+            && e.no_nulls()
+            && f.no_nulls()
+            && g.no_nulls()
+            && h.no_nulls()
+            && i.no_nulls()
+            && x_offset.no_nulls()
+            && y_offset.no_nulls()
+            && z_offset.no_nulls();
+
         Ok(Self {
             index: 0,
             a,
@@ -205,18 +216,7 @@ impl<'a> DAffine3Iterator<'a> {
             x_offset,
             y_offset,
             z_offset,
-            no_null: a.no_nulls()
-                && b.no_nulls()
-                && c.no_nulls()
-                && d.no_nulls()
-                && e.no_nulls()
-                && f.no_nulls()
-                && g.no_nulls()
-                && h.no_nulls()
-                && i.no_nulls()
-                && x_offset.no_nulls()
-                && y_offset.no_nulls()
-                && z_offset.no_nulls(),
+            no_null,
         })
     }
 
@@ -240,7 +240,7 @@ impl<'a> DAffine3Iterator<'a> {
     }
 }
 
-impl<'a> Iterator for DAffine3Iterator<'a> {
+impl Iterator for DAffine3Iterator {
     // As this needs to distinguish NULL, next() returns Some(Some(value))
     type Item = Option<glam::DAffine3>;
 
@@ -443,8 +443,8 @@ impl<'a> Iterator for DAffineRotateIterator<'a> {
 }
 
 pub(crate) enum DAffineIterator<'a> {
-    DAffine2(DAffine2Iterator<'a>),
-    DAffine3(DAffine3Iterator<'a>),
+    DAffine2(DAffine2Iterator),
+    DAffine3(DAffine3Iterator),
     DAffine2Scale(DAffine2ScaleIterator<'a>),
     DAffine3Scale(DAffine3ScaleIterator<'a>),
     DAffineRotate(DAffineRotateIterator<'a>),
