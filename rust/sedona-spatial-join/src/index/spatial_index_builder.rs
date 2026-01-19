@@ -249,7 +249,7 @@ impl SpatialIndexBuilder {
 
         let (rtree, batch_pos_vec) = self.build_rtree()?;
         let geom_idx_vec = self.build_geom_idx_vec(&batch_pos_vec);
-        let visited_left_side = self.build_visited_bitmaps()?;
+        let visited_build_side = self.build_visited_bitmaps()?;
 
         let refiner = create_refiner(
             self.options.spatial_library,
@@ -282,7 +282,7 @@ impl SpatialIndexBuilder {
             data_id_to_batch_pos: batch_pos_vec,
             indexed_batches: self.indexed_batches,
             geom_idx_vec,
-            visited_build_side: visited_left_side,
+            visited_build_side,
             probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
             knn_components,
             reservation: self.reservation,

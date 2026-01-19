@@ -88,7 +88,7 @@ pub struct SpatialIndex {
     /// prepared geometries.
     pub(crate) geom_idx_vec: Vec<usize>,
 
-    /// Shared bitmap builders for visited left indices, one per batch
+    /// Shared bitmap builders for visited build side indices, one per batch
     pub(crate) visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
 
     /// Counter of running probe-threads, potentially able to update `bitmap`.
