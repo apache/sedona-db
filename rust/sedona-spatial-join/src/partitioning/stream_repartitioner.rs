@@ -67,6 +67,7 @@ pub struct SpilledPartition {
 }
 
 impl SpilledPartition {
+    /// Construct a spilled partition from finalized spill files and aggregated statistics.
     pub fn new(
         spill_files: Vec<Arc<RefCountedTempFile>>,
         geo_statistics: GeoStatistics,
@@ -79,36 +80,46 @@ impl SpilledPartition {
         }
     }
 
+    /// Create an empty spilled partition (no files, empty stats, zero rows).
     pub fn empty() -> Self {
         Self::new(Vec::new(), GeoStatistics::empty(), 0)
     }
 
+    /// Spill files produced for this partition.
     pub fn spill_files(&self) -> &[Arc<RefCountedTempFile>] {
         &self.spill_files
     }
 
+    /// Aggregated geospatial statistics for this partition.
     pub fn geo_statistics(&self) -> &GeoStatistics {
         &self.geo_statistics
     }
 
+    /// Total number of rows assigned to this partition.
     pub fn num_rows(&self) -> usize {
         self.num_rows
     }
 
+    /// Bounding box, if available from accumulated statistics.
     pub fn bounding_box(&self) -> Option<&BoundingBox> {
         self.geo_statistics.bbox()
     }
 
+    /// Consume this value and return only the spill files.
     pub fn into_spill_files(self) -> Vec<Arc<RefCountedTempFile>> {
         self.spill_files
     }
 
+    /// Consume this value and return `(spill_files, geo_statistics, num_rows)`.
     pub fn into_inner(self) -> (Vec<Arc<RefCountedTempFile>>, GeoStatistics, usize) {
         (self.spill_files, self.geo_statistics, self.num_rows)
     }
 }
 
 impl SpilledPartitions {
+    /// Construct a new spilled-partitions container for the provided slots.
+    ///
+    /// `partitions` must contain one entry for every slot in `slots`.
     pub fn new(slots: PartitionSlots, partitions: Vec<SpilledPartition>) -> Self {
         assert_eq!(partitions.len(), slots.total_slots());
         let partitions = partitions.into_iter().map(Some).collect();
@@ -168,7 +179,7 @@ impl SpilledPartitions {
     }
 
     /// Get a clone of the spill files in specified partition without consuming it. This is
-    /// for retrieving the Multi partition, which may be scanned multiple times.
+    /// mainly for retrieving the Multi partition, which may be scanned multiple times.
     pub fn get_spilled_partition(&self, partition: SpatialPartition) -> Result<SpilledPartition> {
         let Some(slot) = self.slots.slot(partition) else {
             return sedona_internal_err!(
@@ -186,7 +197,8 @@ impl SpilledPartitions {
         }
     }
 
-    /// Take the spill files in specified partition from it without consuming this value
+    /// Take the spill files in specified partition from it without consuming this value. This is
+    /// mainly for retrieving the regular partitions, which will only be scanned once.
     pub fn take_spilled_partition(
         &mut self,
         partition: SpatialPartition,
@@ -261,8 +273,15 @@ impl SpilledPartitions {
     }
 }
 
-/// Stateful helper that incrementally repartitions [`EvaluatedBatch`] values into
-/// spill files while keeping writers open across batches.
+/// Incremental (stateful) repartitioner for an [`EvaluatedBatch`] stream.
+///
+/// This type assigns each incoming row to a [`SpatialPartition`] (based on a
+/// [`SpatialPartitioner`]) and writes the partitioned output into spill files.
+///
+/// It buffers incoming data and keeps per-partition spill writers open across
+/// batches to amortize setup cost. Flushing is controlled via
+/// `buffer_bytes_threshold`, and output is optionally chunked to approximately
+/// `target_batch_size` rows per partition batch.
 pub struct StreamRepartitioner {
     runtime_env: Arc<RuntimeEnv>,
     partitioner: Arc<dyn SpatialPartitioner>,
@@ -286,24 +305,66 @@ pub struct StreamRepartitioner {
     pending_bytes: usize,
 }
 
-impl StreamRepartitioner {
-    /// Create a new repartitioner that targets the provided spatial partitioner.
-    pub fn new(
-        runtime_env: Arc<RuntimeEnv>,
-        partitioner: Arc<dyn SpatialPartitioner>,
-        partitioned_side: PartitionedSide,
-        spill_compression: SpillCompression,
-        spill_metrics: SpillMetrics,
-        buffer_bytes_threshold: usize,
-        target_batch_size: usize,
+/// Builder for configuring and constructing a [`StreamRepartitioner`].
+///
+/// Defaults are chosen to be safe and explicit:
+/// - `spill_compression`: [`SpillCompression::Uncompressed`]
+/// - `buffer_bytes_threshold`: `0` (flush on every inserted batch)
+/// - `target_batch_size`: `0` (do not chunk; emit one batch per partition flush)
+/// - `spilled_batch_in_memory_size_threshold`: `None`
+pub struct StreamRepartitionerBuilder {
+    runtime_env: Arc<RuntimeEnv>,
+    partitioner: Arc<dyn SpatialPartitioner>,
+    partitioned_side: PartitionedSide,
+    spill_compression: SpillCompression,
+    spill_metrics: SpillMetrics,
+    buffer_bytes_threshold: usize,
+    target_batch_size: usize,
+    spilled_batch_in_memory_size_threshold: Option<usize>,
+}
+
+impl StreamRepartitionerBuilder {
+    /// Set spill compression applied to newly created per-partition spill files.
+    pub fn spill_compression(mut self, spill_compression: SpillCompression) -> Self {
+        self.spill_compression = spill_compression;
+        self
+    }
+
+    /// Set the in-memory buffering threshold (in bytes).
+    ///
+    /// When the buffered in-memory size meets/exceeds this threshold, pending
+    /// rows are flushed to partition writers.
+    pub fn buffer_bytes_threshold(mut self, buffer_bytes_threshold: usize) -> Self {
+        self.buffer_bytes_threshold = buffer_bytes_threshold;
+        self
+    }
+
+    /// Set the target maximum number of rows per flushed batch (per partition).
+    ///
+    /// A value of `0` disables chunking.
+    pub fn target_batch_size(mut self, target_batch_size: usize) -> Self {
+        self.target_batch_size = target_batch_size;
+        self
+    }
+
+    /// Set an optional threshold used by spill writers to decide whether to keep a
+    /// batch in memory vs. spilling.
+    pub fn spilled_batch_in_memory_size_threshold(
+        mut self,
         spilled_batch_in_memory_size_threshold: Option<usize>,
     ) -> Self {
-        let slots = PartitionSlots::new(partitioner.num_regular_partitions());
+        self.spilled_batch_in_memory_size_threshold = spilled_batch_in_memory_size_threshold;
+        self
+    }
+
+    /// Build a [`StreamRepartitioner`] with the configured parameters.
+    pub fn build(self) -> StreamRepartitioner {
+        let slots = PartitionSlots::new(self.partitioner.num_regular_partitions());
         let slot_count = slots.total_slots();
-        Self {
-            runtime_env,
-            partitioner,
-            partitioned_side,
+        StreamRepartitioner {
+            runtime_env: self.runtime_env,
+            partitioner: self.partitioner,
+            partitioned_side: self.partitioned_side,
             slots,
             spill_registry: (0..slot_count).map(|_| None).collect(),
             geo_stats_accumulators: (0..slot_count)
@@ -312,17 +373,59 @@ impl StreamRepartitioner {
             num_rows: vec![0; slot_count],
             slot_assignments: (0..slot_count).map(|_| Vec::new()).collect(),
             row_assignments_buffer: Vec::new(),
-            spill_compression,
-            spill_metrics,
-            buffer_bytes_threshold,
-            target_batch_size,
-            spilled_batch_in_memory_size_threshold,
+            spill_compression: self.spill_compression,
+            spill_metrics: self.spill_metrics,
+            buffer_bytes_threshold: self.buffer_bytes_threshold,
+            target_batch_size: self.target_batch_size,
+            spilled_batch_in_memory_size_threshold: self.spilled_batch_in_memory_size_threshold,
             pending_batches: Vec::new(),
             pending_bytes: 0,
         }
     }
+}
+
+impl StreamRepartitioner {
+    /// Start building a new [`StreamRepartitioner`].
+    ///
+    /// This captures the required configuration (runtime, partitioner, side, and
+    /// spill metrics). Optional parameters can then be set on the returned builder.
+    pub fn builder(
+        runtime_env: Arc<RuntimeEnv>,
+        partitioner: Arc<dyn SpatialPartitioner>,
+        partitioned_side: PartitionedSide,
+        spill_metrics: SpillMetrics,
+    ) -> StreamRepartitionerBuilder {
+        StreamRepartitionerBuilder {
+            runtime_env,
+            partitioner,
+            partitioned_side,
+            spill_compression: SpillCompression::Uncompressed,
+            spill_metrics,
+            buffer_bytes_threshold: 0,
+            target_batch_size: 0,
+            spilled_batch_in_memory_size_threshold: None,
+        }
+    }
+
+    /// Repartition a stream of evaluated batches into per-partition spill files.
+    ///
+    /// This consumes the repartitioner and returns [`SpilledPartitions`] once the
+    /// input stream is exhausted.
+    pub async fn repartition_stream(
+        mut self,
+        mut stream: SendableEvaluatedBatchStream,
+    ) -> Result<SpilledPartitions> {
+        while let Some(batch_result) = stream.next().await {
+            let batch = batch_result?;
+            self.repartition_batch(batch)?;
+        }
+        self.finish()
+    }
 
     /// Route a single evaluated batch into its corresponding spill writers.
+    ///
+    /// This runs the spatial partitioner to compute row assignments, buffers the
+    /// batch, and may flush pending buffered data depending on configuration.
     pub fn repartition_batch(&mut self, batch: EvaluatedBatch) -> Result<()> {
         let mut row_assignments = std::mem::take(&mut self.row_assignments_buffer);
         assign_rows(
@@ -339,6 +442,9 @@ impl StreamRepartitioner {
     /// Insert batch with row assignments into the repartitioner. The spatial partitioner
     /// does not need to be invoked in this method. This is useful when the batch has
     /// already been partitioned by calling assign_rows.
+    ///
+    /// `row_assignments` must have the same length as the batch row count and contain
+    /// only partitions valid for the configured [`SpatialPartitioner`].
     pub fn insert_repartitioned_batch(
         &mut self,
         batch: EvaluatedBatch,
@@ -416,6 +522,9 @@ impl StreamRepartitioner {
     }
 
     /// Seal every partition and return their associated spill files and bounds.
+    ///
+    /// This flushes any buffered rows, closes all partition writers, and returns a
+    /// [`SpilledPartitions`] summary.
     pub fn finish(mut self) -> Result<SpilledPartitions> {
         self.flush_pending_batches()?;
         let slot_count = self.slots.total_slots();
@@ -459,36 +568,6 @@ impl StreamRepartitioner {
             .as_mut()
             .expect("writer inserted above"))
     }
-}
-
-/// Repartition evaluated batches into per-partition spill files.
-#[allow(clippy::too_many_arguments)]
-pub async fn repartition_evaluated_batches(
-    runtime_env: Arc<RuntimeEnv>,
-    mut stream: SendableEvaluatedBatchStream,
-    partitioner: Arc<dyn SpatialPartitioner>,
-    partitioned_side: PartitionedSide,
-    spill_compression: SpillCompression,
-    spill_metrics: SpillMetrics,
-    buffer_bytes_threshold: usize,
-    target_batch_size: usize,
-    spilled_batch_in_memory_size_threshold: Option<usize>,
-) -> Result<SpilledPartitions> {
-    let mut repartitioner = StreamRepartitioner::new(
-        runtime_env,
-        partitioner,
-        partitioned_side,
-        spill_compression,
-        spill_metrics,
-        buffer_bytes_threshold,
-        target_batch_size,
-        spilled_batch_in_memory_size_threshold,
-    );
-    while let Some(batch_result) = stream.next().await {
-        let batch = batch_result?;
-        repartitioner.repartition_batch(batch)?;
-    }
-    repartitioner.finish()
 }
 
 /// Populate `assignments` with the spatial partition for every row in `batch`,
@@ -777,17 +856,18 @@ mod tests {
         let runtime_env = Arc::new(RuntimeEnv::default());
         let metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
 
-        let result = repartition_evaluated_batches(
+        let result = StreamRepartitioner::builder(
             runtime_env,
-            stream,
             partitioner,
             PartitionedSide::ProbeSide,
-            SpillCompression::Uncompressed,
             metrics,
-            BUFFER_BYTES,
-            TARGET_BATCH_SIZE,
-            None,
         )
+        .spill_compression(SpillCompression::Uncompressed)
+        .buffer_bytes_threshold(BUFFER_BYTES)
+        .target_batch_size(TARGET_BATCH_SIZE)
+        .spilled_batch_in_memory_size_threshold(None)
+        .build()
+        .repartition_stream(stream)
         .await?;
 
         assert_eq!(result.spill_file_count(), 3);
@@ -862,17 +942,18 @@ mod tests {
         let runtime_env = Arc::new(RuntimeEnv::default());
         let metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
 
-        let result = repartition_evaluated_batches(
+        let result = StreamRepartitioner::builder(
             runtime_env,
-            stream,
             partitioner,
             PartitionedSide::ProbeSide,
-            SpillCompression::Uncompressed,
             metrics,
-            BUFFER_BYTES,
-            TARGET_BATCH_SIZE,
-            None,
         )
+        .spill_compression(SpillCompression::Uncompressed)
+        .buffer_bytes_threshold(BUFFER_BYTES)
+        .target_batch_size(TARGET_BATCH_SIZE)
+        .spilled_batch_in_memory_size_threshold(None)
+        .build()
+        .repartition_stream(stream)
         .await?;
 
         assert_eq!(result.spill_file_count(), 2);
@@ -921,16 +1002,17 @@ mod tests {
         let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
-        let mut repartitioner = StreamRepartitioner::new(
+        let mut repartitioner = StreamRepartitioner::builder(
             runtime_env,
             partitioner,
             PartitionedSide::ProbeSide,
-            SpillCompression::Uncompressed,
             spill_metrics,
-            0,
-            TARGET_BATCH_SIZE,
-            None,
-        );
+        )
+        .spill_compression(SpillCompression::Uncompressed)
+        .buffer_bytes_threshold(0)
+        .target_batch_size(TARGET_BATCH_SIZE)
+        .spilled_batch_in_memory_size_threshold(None)
+        .build();
 
         repartitioner.repartition_batch(batch)?;
         let result = repartitioner.finish()?;
@@ -965,16 +1047,17 @@ mod tests {
         let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
-        let mut repartitioner = StreamRepartitioner::new(
+        let mut repartitioner = StreamRepartitioner::builder(
             runtime_env,
             partitioner,
             PartitionedSide::ProbeSide,
-            SpillCompression::Uncompressed,
             spill_metrics,
-            usize::MAX,
-            TARGET_BATCH_SIZE,
-            None,
-        );
+        )
+        .spill_compression(SpillCompression::Uncompressed)
+        .buffer_bytes_threshold(usize::MAX)
+        .target_batch_size(TARGET_BATCH_SIZE)
+        .spilled_batch_in_memory_size_threshold(None)
+        .build();
 
         repartitioner.repartition_batch(batch_a)?;
         repartitioner.repartition_batch(batch_b)?;
@@ -998,16 +1081,17 @@ mod tests {
         let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
-        let mut repartitioner = StreamRepartitioner::new(
+        let mut repartitioner = StreamRepartitioner::builder(
             runtime_env,
             partitioner,
             PartitionedSide::ProbeSide,
-            SpillCompression::Uncompressed,
             spill_metrics,
-            usize::MAX,
-            1,
-            None,
-        );
+        )
+        .spill_compression(SpillCompression::Uncompressed)
+        .buffer_bytes_threshold(usize::MAX)
+        .target_batch_size(1)
+        .spilled_batch_in_memory_size_threshold(None)
+        .build();
 
         repartitioner.repartition_batch(batch_a)?;
         repartitioner.repartition_batch(batch_b)?;

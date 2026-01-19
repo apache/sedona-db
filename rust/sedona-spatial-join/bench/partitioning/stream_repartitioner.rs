@@ -42,7 +42,7 @@ use sedona_spatial_join::evaluated_batch::{
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_spatial_join::partitioning::PartitionedSide;
 use sedona_spatial_join::partitioning::{
-    kdb::KDBPartitioner, stream_repartitioner::repartition_evaluated_batches, SpatialPartition,
+    kdb::KDBPartitioner, stream_repartitioner::StreamRepartitioner, SpatialPartition,
     SpatialPartitioner,
 };
 
@@ -81,17 +81,18 @@ fn bench_stream_partitioner(c: &mut Criterion) {
             },
             move |stream| {
                 block_on(async {
-                    repartition_evaluated_batches(
+                    StreamRepartitioner::builder(
                         runtime_env.clone(),
-                        stream,
                         partitioner.clone(),
                         PartitionedSide::BuildSide,
-                        SpillCompression::Uncompressed,
                         spill_metrics.clone(),
-                        REPARTITIONER_BUFFER_BYTES,
-                        ROWS_PER_BATCH,
-                        None,
                     )
+                    .spill_compression(SpillCompression::Uncompressed)
+                    .buffer_bytes_threshold(REPARTITIONER_BUFFER_BYTES)
+                    .target_batch_size(ROWS_PER_BATCH)
+                    .spilled_batch_in_memory_size_threshold(None)
+                    .build()
+                    .repartition_stream(stream)
                     .await
                     .expect("repartition should succeed in benchmark");
                 });
