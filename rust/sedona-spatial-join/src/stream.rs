@@ -504,11 +504,14 @@ struct ProbeProgress {
     /// Index of the probe row to be probed by [SpatialJoinBatchIterator::probe_range] or
     /// [SpatialJoinBatchIterator::probe_knn].
     current_probe_idx: usize,
-    /// Index of the lastly produced probe row. There are three cases:
-    /// - -1 means nothing was produced yet.
-    /// - >=num_rows means we have produced all probe rows. The iterator is complete.
-    /// - within [0, num_rows) means we have produced up to this probe index (inclusive)].
-    ///   The value is largest probe row index that has matching build rows so far.
+    /// Index of the lastly produced probe row. This field uses `-1` as a sentinel value
+    /// to represent "nothing produced yet" and is stored as `i64` instead of
+    /// `Option<usize>` to keep the layout compact and avoid extra branching and
+    /// wrapping/unwrapping in the hot probe loop. There are three cases:
+    /// - `-1` means nothing was produced yet.
+    /// - `>= num_rows` means we have produced all probe rows. The iterator is complete.
+    /// - within `[0, num_rows)` means we have produced up to this probe index (inclusive).
+    ///   The value is the largest probe row index that has matching build rows so far.
     last_produced_probe_idx: i64,
     /// Current accumulated build batch positions
     build_batch_positions: Vec<(i32, i32)>,
