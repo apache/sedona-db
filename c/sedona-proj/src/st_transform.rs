@@ -415,246 +415,284 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::create_array;
     use arrow_array::ArrayRef;
-    use arrow_schema::{DataType, Field};
-    use datafusion_common::config::ConfigOptions;
-    use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl};
+    use arrow_schema::DataType;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::crs::lnglat;
     use sedona_schema::crs::Crs;
     use sedona_schema::datatypes::WKB_GEOMETRY;
-    use sedona_testing::compare::assert_value_equal;
-    use sedona_testing::{create::create_array, create::create_array_value};
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::create::create_array;
+    use sedona_testing::create::create_array_item_crs;
+    use sedona_testing::testers::ScalarUdfTester;
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const WGS84: &str = "EPSG:4326";
 
-    #[rstest]
-    fn invalid_arg_checks() {
-        let udf: SedonaScalarUDF = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+    #[test]
+    fn invalid_arg_types() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
 
         // No args
-        let result = udf.return_field_from_args(ReturnFieldArgs {
-            arg_fields: &[],
-            scalar_arguments: &[],
-        });
-        assert!(
-            result.is_err()
-                && result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No kernel matching arguments")
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![]);
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([]): No kernel matching arguments"
         );
 
         // Too many args
-        let arg_types = [
-            WKB_GEOMETRY,
-            SedonaType::Arrow(DataType::Utf8),
-            SedonaType::Arrow(DataType::Utf8),
-            SedonaType::Arrow(DataType::Boolean),
-            SedonaType::Arrow(DataType::Int32),
-        ];
-        let arg_fields: Vec<Arc<Field>> = arg_types
-            .iter()
-            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
-            .collect();
-        let result = udf.return_field_from_args(ReturnFieldArgs {
-            arg_fields: &arg_fields,
-            scalar_arguments: &[None, None, None, None, None],
-        });
-        assert!(
-            result.is_err()
-                && result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No kernel matching arguments")
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Arrow(Utf8), Arrow(Utf8), Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
         );
 
         // First arg not geometry
-        let arg_types = [
-            SedonaType::Arrow(DataType::Utf8),
-            SedonaType::Arrow(DataType::Utf8),
-        ];
-        let arg_fields: Vec<Arc<Field>> = arg_types
-            .iter()
-            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
-            .collect();
-        let result = udf.return_field_from_args(ReturnFieldArgs {
-            arg_fields: &arg_fields,
-            scalar_arguments: &[None, None],
-        });
-        assert!(
-            result.is_err()
-                && result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No kernel matching arguments")
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
         );
 
         // Second arg not string or numeric
-        let arg_types = [WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)];
-        let arg_fields: Vec<Arc<Field>> = arg_types
-            .iter()
-            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
-            .collect();
-        let result = udf.return_field_from_args(ReturnFieldArgs {
-            arg_fields: &arg_fields,
-            scalar_arguments: &[None, None],
-        });
-        assert!(
-            result.is_err()
-                && result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No kernel matching arguments")
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Wkb(Planar, None), Arrow(Boolean)]): No kernel matching arguments"
+        );
+
+        // third arg not string or numeric
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Wkb(Planar, None), Arrow(Utf8), Arrow(Boolean)]): No kernel matching arguments"
         );
     }
 
-    #[rstest]
-    fn test_invoke_batch_with_geo_crs() {
-        // From-CRS pulled from sedona type
-        let arg_types = [
-            SedonaType::Wkb(Edges::Planar, lnglat()),
-            SedonaType::Arrow(DataType::Utf8),
-        ];
+    #[test]
+    fn test_invoke_with_string() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
+        );
 
-        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &arg_types[0]);
+        // Return type with scalar to argument (returns type-level CRS)
+        let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
+        let return_type = tester
+            .return_type_with_scalar_scalar(Option::<&str>::None, Some(NAD83ZONE6PROJ))
+            .unwrap();
+        assert_eq!(return_type, expected_return_type);
 
-        let scalar_args = vec![ScalarValue::Utf8(Some(NAD83ZONE6PROJ.to_string()))];
+        // Return type with array to argument (returns item CRS)
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(return_type, WKB_GEOMETRY_ITEM_CRS.clone());
 
-        let expected = create_array_value(
+        // Invoke with scalar to argument (returns type-level CRS)
+        let expected_array = create_array(
             &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
-            &SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ)),
+            &expected_return_type,
+        );
+        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let result = tester.invoke_array_scalar(wkb, NAD83ZONE6PROJ).unwrap();
+        assert_array_equal(&result, &expected_array);
+
+        // Invoke with array to argument (returns item CRS)
+        let expected_array = create_array_item_crs(
+            &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
+            [None, Some(NAD83ZONE6PROJ)],
+            &WKB_GEOMETRY,
+        );
+        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let crs = create_array!(Utf8, [None, Some(NAD83ZONE6PROJ)]) as ArrayRef;
+        let result = tester.invoke_array_array(wkb, crs).unwrap();
+        assert_array_equal(&result, &expected_array);
+    }
+
+    #[test]
+    fn test_invoke_with_srid() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![geometry_input.clone(), SedonaType::Arrow(DataType::UInt32)],
         );
 
-        let (result_type, result_col) =
-            invoke_udf_test(wkb, scalar_args, arg_types.to_vec()).unwrap();
-        assert_value_equal(&result_col, &expected);
-        assert_eq!(
-            result_type,
-            SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ))
+        // Return type with scalar to argument (returns type-level CRS)
+        let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
+        let return_type = tester
+            .return_type_with_scalar_scalar(Option::<&str>::None, Some(2230))
+            .unwrap();
+        assert_eq!(return_type, expected_return_type);
+
+        // Return type with array to argument (returns item CRS)
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(return_type, WKB_GEOMETRY_ITEM_CRS.clone());
+
+        // Invoke with scalar to argument (returns type-level CRS)
+        let expected_array = create_array(
+            &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
+            &expected_return_type,
         );
+        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let result = tester.invoke_array_scalar(wkb, 2230).unwrap();
+        assert_array_equal(&result, &expected_array);
+
+        // Invoke with array to argument (returns item CRS)
+        let expected_array = create_array_item_crs(
+            &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
+            [None, Some(NAD83ZONE6PROJ)],
+            &WKB_GEOMETRY,
+        );
+        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let crs = create_array!(Int32, [None, Some(2230)]) as ArrayRef;
+        let result = tester.invoke_array_array(wkb, crs).unwrap();
+        assert_array_equal(&result, &expected_array);
+    }
+
+    #[test]
+    fn test_invoke_with_item_crs() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let geometry_input = WKB_GEOMETRY_ITEM_CRS.clone();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
+        );
+
+        // Return type with scalar to argument (returns type-level CRS)
+        // This is the same as for normal input
+        let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
+        let return_type = tester
+            .return_type_with_scalar_scalar(Option::<&str>::None, Some(NAD83ZONE6PROJ))
+            .unwrap();
+        assert_eq!(return_type, expected_return_type);
+
+        // Return type with array to argument (returns item CRS)
+        // This is the same as for normal input
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(return_type, WKB_GEOMETRY_ITEM_CRS.clone());
+
+        // Invoke with scalar to argument (returns type-level CRS)
+        let expected_array = create_array(
+            &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
+            &expected_return_type,
+        );
+        let array_in = create_array_item_crs(
+            &[None, Some("POINT (79.3871 43.6426)")],
+            [None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let result = tester
+            .invoke_array_scalar(array_in, NAD83ZONE6PROJ)
+            .unwrap();
+        assert_array_equal(&result, &expected_array);
+
+        // Invoke with array to argument (returns item CRS)
+        let expected_array = create_array_item_crs(
+            &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
+            [None, Some(NAD83ZONE6PROJ)],
+            &WKB_GEOMETRY,
+        );
+        let array_in = create_array_item_crs(
+            &[None, Some("POINT (79.3871 43.6426)")],
+            [None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let crs = create_array!(Utf8, [None, Some(NAD83ZONE6PROJ)]) as ArrayRef;
+        let result = tester.invoke_array_array(array_in, crs).unwrap();
+        assert_array_equal(&result, &expected_array);
     }
 
     #[rstest]
-    fn test_invoke_with_srids() {
-        // Use an integer SRID for the to CRS
-        let arg_types = [
-            SedonaType::Wkb(Edges::Planar, lnglat()),
-            SedonaType::Arrow(DataType::UInt32),
-        ];
+    fn test_invoke_source_arg() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let geometry_input = WKB_GEOMETRY;
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                geometry_input.clone(),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
 
-        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &arg_types[0]);
+        // Return type with scalar to argument (returns type-level CRS)
+        // This is the same as for normal input
+        let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
+        let return_type = tester
+            .return_type_with_scalar_scalar_scalar(
+                Option::<&str>::None,
+                Option::<&str>::None,
+                Some(NAD83ZONE6PROJ),
+            )
+            .unwrap();
+        assert_eq!(return_type, expected_return_type);
 
-        let scalar_args = vec![ScalarValue::UInt32(Some(2230))];
+        // Return type with array to argument (returns item CRS)
+        // This is the same as for normal input
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(return_type, WKB_GEOMETRY_ITEM_CRS.clone());
 
-        let expected = create_array_value(
+        // Invoke with scalar to argument (returns type-level CRS)
+        let expected_array = create_array(
             &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
-            &SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ)),
+            &expected_return_type,
         );
+        let array_in = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let crs_from = create_array!(Utf8, [None, Some(WGS84)]) as ArrayRef;
+        let result = tester
+            .invoke_array_array_scalar(array_in, crs_from, NAD83ZONE6PROJ)
+            .unwrap();
+        assert_array_equal(&result, &expected_array);
 
-        let (result_type, result_col) =
-            invoke_udf_test(wkb, scalar_args, arg_types.to_vec()).unwrap();
-        assert_value_equal(&result_col, &expected);
-        assert_eq!(
-            result_type,
-            SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ))
-        );
-    }
-
-    #[rstest]
-    fn test_invoke_batch_with_source_arg() {
-        let arg_types = [
-            WKB_GEOMETRY,
-            SedonaType::Arrow(DataType::Utf8),
-            SedonaType::Arrow(DataType::Utf8),
-        ];
-
-        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &WKB_GEOMETRY);
-
-        let scalar_args = vec![
-            ScalarValue::Utf8(Some(WGS84.to_string())),
-            ScalarValue::Utf8(Some(NAD83ZONE6PROJ.to_string())),
-        ];
-
-        // Note: would be nice to have an epsilon of tolerance when validating
-        let expected = create_array_value(
+        // Invoke with array to argument (returns item CRS)
+        let expected_array = create_array_item_crs(
             &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
-            &SedonaType::Wkb(Edges::Planar, Some(get_crs(NAD83ZONE6PROJ).unwrap())),
+            [None, Some(NAD83ZONE6PROJ)],
+            &WKB_GEOMETRY,
         );
-
-        let (result_type, result_col) =
-            invoke_udf_test(wkb.clone(), scalar_args, arg_types.to_vec()).unwrap();
-        assert_value_equal(&result_col, &expected);
-        assert_eq!(
-            result_type,
-            SedonaType::Wkb(Edges::Planar, Some(get_crs(NAD83ZONE6PROJ).unwrap()))
-        );
-
-        // Test with integer SRIDs
-        let arg_types = [
-            WKB_GEOMETRY,
-            SedonaType::Arrow(DataType::Int32),
-            SedonaType::Arrow(DataType::Int32),
-        ];
-
-        let scalar_args = vec![
-            ScalarValue::Int32(Some(4326)),
-            ScalarValue::Int32(Some(2230)),
-        ];
-
-        let (result_type, result_col) =
-            invoke_udf_test(wkb, scalar_args, arg_types.to_vec()).unwrap();
-        assert_value_equal(&result_col, &expected);
-        assert_eq!(
-            result_type,
-            SedonaType::Wkb(Edges::Planar, Some(get_crs(NAD83ZONE6PROJ).unwrap()))
-        );
+        let array_in = create_array(&[None, Some("POINT (79.3871 43.6426)")], &WKB_GEOMETRY);
+        let crs_from = create_array!(Utf8, [None, Some(WGS84)]) as ArrayRef;
+        let crs_to = create_array!(Utf8, [None, Some(NAD83ZONE6PROJ)]) as ArrayRef;
+        let result = tester
+            .invoke_arrays(vec![array_in, crs_from, crs_to])
+            .unwrap();
+        assert_array_equal(&result, &expected_array);
     }
 
     fn get_crs(auth_code: &str) -> Crs {
         deserialize_crs(auth_code).unwrap()
-    }
-
-    fn invoke_udf_test(
-        wkb: ArrayRef,
-        scalar_args: Vec<ScalarValue>,
-        arg_types: Vec<SedonaType>,
-    ) -> Result<(SedonaType, ColumnarValue)> {
-        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
-
-        let arg_fields: Vec<Arc<Field>> = arg_types
-            .into_iter()
-            .map(|arg_type| Arc::new(arg_type.to_storage_field("", true).unwrap()))
-            .collect();
-        let row_count = wkb.len();
-
-        let mut scalar_args_fields: Vec<Option<&ScalarValue>> = vec![None];
-        let mut arg_vals: Vec<ColumnarValue> = vec![ColumnarValue::Array(Arc::new(wkb))];
-
-        for scalar_arg in &scalar_args {
-            scalar_args_fields.push(Some(scalar_arg));
-            arg_vals.push(scalar_arg.clone().into());
-        }
-
-        let return_field_args = ReturnFieldArgs {
-            arg_fields: &arg_fields,
-            scalar_arguments: &scalar_args_fields,
-        };
-
-        let return_field = udf.return_field_from_args(return_field_args)?;
-        let return_type = SedonaType::from_storage_field(&return_field)?;
-
-        let args = ScalarFunctionArgs {
-            args: arg_vals,
-            arg_fields: arg_fields.to_vec(),
-            number_rows: row_count,
-            return_field,
-            config_options: Arc::new(ConfigOptions::default()),
-        };
-
-        let value = udf.invoke_with_args(args)?;
-        Ok((return_type, value))
     }
 }
