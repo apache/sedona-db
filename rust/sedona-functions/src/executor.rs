@@ -361,9 +361,10 @@ impl IterGeo for ArrayRef {
                 if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
             {
                 let struct_array = as_struct_array(self)?;
+                let item_type = SedonaType::from_storage_field(&fields[0])?;
                 struct_array
                     .column(0)
-                    .iter_as_wkb_bytes(sedona_type, num_iterations, func)
+                    .iter_as_wkb_bytes(&item_type, num_iterations, func)
             }
             _ => {
                 // We could cast here as a fallback, iterate and cast per-element, or

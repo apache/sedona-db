@@ -18,7 +18,7 @@ use crate::transform::{ProjCrsEngine, ProjCrsEngineBuilder};
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::cast::as_string_view_array;
+use datafusion_common::cast::{as_string_view_array, as_struct_array};
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
@@ -107,6 +107,17 @@ impl<'a> ArgInput<'a> {
     fn crs_array(&self, arg: &ColumnarValue, iterations: usize) -> Result<ArrayRef> {
         if let Some(crs_constant) = self.crs_constant()? {
             ScalarValue::Utf8View(Some(crs_constant)).to_array_of_size(iterations)
+        } else if matches!(self, Self::ItemCrs) {
+            match arg {
+                ColumnarValue::Array(array) => {
+                    let struct_array = as_struct_array(array)?;
+                    Ok(struct_array.column(1).clone())
+                }
+                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
+                    Ok(struct_array.column(1).clone())
+                }
+                _ => sedona_internal_err!("Unexpected item_crs type"),
+            }
         } else {
             arg.cast_to(&DataType::Utf8View, None)?
                 .into_array(iterations)
