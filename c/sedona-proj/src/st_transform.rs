@@ -41,90 +41,6 @@ pub fn st_transform_impl() -> ScalarKernelRef {
     Arc::new(STTransform {})
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ArgInput<'a> {
-    Geo(&'a Crs),
-    ItemCrs,
-    ScalarCrs(&'a ScalarValue),
-    ArrayCrs,
-    Unsupported,
-}
-
-impl<'a> ArgInput<'a> {
-    fn from_return_type_arg(arg_type: &'a SedonaType, scalar_arg: Option<&'a ScalarValue>) -> Self {
-        if ArgMatcher::is_item_crs().match_type(arg_type) {
-            Self::ItemCrs
-        } else if ArgMatcher::is_numeric().match_type(arg_type)
-            || ArgMatcher::is_string().match_type(arg_type)
-        {
-            if let Some(scalar_crs) = scalar_arg {
-                Self::ScalarCrs(scalar_crs)
-            } else {
-                Self::ArrayCrs
-            }
-        } else {
-            match arg_type {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => Self::Geo(crs),
-                _ => Self::Unsupported,
-            }
-        }
-    }
-
-    fn from_arg(arg_type: &'a SedonaType, arg: &'a ColumnarValue) -> Self {
-        if ArgMatcher::is_item_crs().match_type(arg_type) {
-            Self::ItemCrs
-        } else if ArgMatcher::is_numeric().match_type(arg_type)
-            || ArgMatcher::is_string().match_type(arg_type)
-        {
-            match arg {
-                ColumnarValue::Array(_) => Self::ArrayCrs,
-                ColumnarValue::Scalar(scalar_value) => Self::ScalarCrs(scalar_value),
-            }
-        } else {
-            match arg_type {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => Self::Geo(crs),
-                _ => Self::Unsupported,
-            }
-        }
-    }
-
-    fn crs_constant(&self) -> Result<Option<String>> {
-        match self {
-            ArgInput::Geo(crs) => {
-                let crs_str = if let Some(crs) = crs {
-                    crs.to_crs_string()
-                } else {
-                    "0".to_string()
-                };
-
-                Ok(Some(crs_str))
-            }
-            ArgInput::ScalarCrs(scalar_value) => parse_crs_from_scalar_crs_value(scalar_value),
-            _ => Ok(None),
-        }
-    }
-
-    fn crs_array(&self, arg: &ColumnarValue, iterations: usize) -> Result<ArrayRef> {
-        if let Some(crs_constant) = self.crs_constant()? {
-            ScalarValue::Utf8View(Some(crs_constant)).to_array_of_size(iterations)
-        } else if matches!(self, Self::ItemCrs) {
-            match arg {
-                ColumnarValue::Array(array) => {
-                    let struct_array = as_struct_array(array)?;
-                    Ok(struct_array.column(1).clone())
-                }
-                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
-                    Ok(struct_array.column(1).clone())
-                }
-                _ => sedona_internal_err!("Unexpected item_crs type"),
-            }
-        } else {
-            arg.cast_to(&DataType::Utf8View, None)?
-                .into_array(iterations)
-        }
-    }
-}
-
 #[derive(Debug)]
 struct STTransform {}
 
@@ -194,29 +110,39 @@ impl SedonaScalarKernel for STTransform {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        // Optimize the easy case, where we have exactly one transformation
+        // Optimize the easy case, where we have exactly one transformation and there are no
+        // null or missing CRSes to contend with.
         let from_index = inputs.len() - 2;
         let to_index = inputs.len() - 1;
         let (from, to) = (inputs[from_index], inputs[to_index]);
         if let (Some(from_constant), Some(to_constant)) = (from.crs_constant()?, to.crs_constant()?)
         {
-            with_global_proj_engine(|engine| {
-                let crs_transform = engine
-                    .get_transform_crs_to_crs(&from_constant, &to_constant, None, "")
-                    .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
-                executor.execute_wkb_void(|maybe_wkb| {
-                    match maybe_wkb {
-                        Some(wkb) => {
-                            invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
-                            builder.append_value([]);
+            let maybe_from_crs = deserialize_crs(&from_constant)?;
+            let maybe_to_crs = deserialize_crs(&to_constant)?;
+            if let (Some(from_crs), Some(to_crs)) = (maybe_from_crs, maybe_to_crs) {
+                with_global_proj_engine(|engine| {
+                    let crs_transform = engine
+                        .get_transform_crs_to_crs(
+                            &from_crs.to_crs_string(),
+                            &to_crs.to_crs_string(),
+                            None,
+                            "",
+                        )
+                        .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
+                    executor.execute_wkb_void(|maybe_wkb| {
+                        match maybe_wkb {
+                            Some(wkb) => {
+                                invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                                builder.append_value([]);
+                            }
+                            None => builder.append_null(),
                         }
-                        None => builder.append_null(),
-                    }
+                        Ok(())
+                    })?;
                     Ok(())
                 })?;
-                Ok(())
-            })?;
-            return executor.finish(Arc::new(builder.finish()));
+                return executor.finish(Arc::new(builder.finish()));
+            }
         }
 
         // Iterate over pairs of CRS strings
@@ -339,6 +265,103 @@ fn invoke_scalar(wkb: &Wkb, trans: &dyn CrsTransform, builder: &mut impl Write) 
     Ok(())
 }
 
+/// Helper to label arguments because we have a lot argument types that are valid
+#[derive(Debug, Clone, Copy)]
+enum ArgInput<'a> {
+    /// Geometry input. This currently only matches geometry and not geography
+    /// because CRS support for geography is less clear at the moment. Must be
+    /// the first argument (and not supported for other arguments).
+    Geo(&'a Crs),
+    /// Item-level CRS input. Must be the first argument if present (not supported
+    /// for other arguments).
+    ItemCrs,
+    /// Scalar CRS input. Supported for second and third arguments. When present
+    /// as the last argument (to), this forces type-level CRS output.
+    ScalarCrs(&'a ScalarValue),
+    /// Array CRS input. Supported for second and third arguments. When present
+    /// as the last (to) argument, this forces Item CRS output.
+    ArrayCrs,
+    /// Sentinel for anything else
+    Unsupported,
+}
+
+impl<'a> ArgInput<'a> {
+    fn from_return_type_arg(arg_type: &'a SedonaType, scalar_arg: Option<&'a ScalarValue>) -> Self {
+        if ArgMatcher::is_item_crs().match_type(arg_type) {
+            Self::ItemCrs
+        } else if ArgMatcher::is_numeric().match_type(arg_type)
+            || ArgMatcher::is_string().match_type(arg_type)
+        {
+            if let Some(scalar_crs) = scalar_arg {
+                Self::ScalarCrs(scalar_crs)
+            } else {
+                Self::ArrayCrs
+            }
+        } else {
+            match arg_type {
+                SedonaType::Wkb(Edges::Planar, crs) | SedonaType::WkbView(Edges::Planar, crs) => {
+                    Self::Geo(crs)
+                }
+                _ => Self::Unsupported,
+            }
+        }
+    }
+
+    fn from_arg(arg_type: &'a SedonaType, arg: &'a ColumnarValue) -> Self {
+        if ArgMatcher::is_item_crs().match_type(arg_type) {
+            Self::ItemCrs
+        } else if ArgMatcher::is_numeric().match_type(arg_type)
+            || ArgMatcher::is_string().match_type(arg_type)
+        {
+            match arg {
+                ColumnarValue::Array(_) => Self::ArrayCrs,
+                ColumnarValue::Scalar(scalar_value) => Self::ScalarCrs(scalar_value),
+            }
+        } else {
+            match arg_type {
+                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => Self::Geo(crs),
+                _ => Self::Unsupported,
+            }
+        }
+    }
+
+    fn crs_constant(&self) -> Result<Option<String>> {
+        match self {
+            ArgInput::Geo(crs) => {
+                let crs_str = if let Some(crs) = crs {
+                    crs.to_crs_string()
+                } else {
+                    "0".to_string()
+                };
+
+                Ok(Some(crs_str))
+            }
+            ArgInput::ScalarCrs(scalar_value) => parse_crs_from_scalar_crs_value(scalar_value),
+            _ => Ok(None),
+        }
+    }
+
+    fn crs_array(&self, arg: &ColumnarValue, iterations: usize) -> Result<ArrayRef> {
+        if let Some(crs_constant) = self.crs_constant()? {
+            ScalarValue::Utf8View(Some(crs_constant)).to_array_of_size(iterations)
+        } else if matches!(self, Self::ItemCrs) {
+            match arg {
+                ColumnarValue::Array(array) => {
+                    let struct_array = as_struct_array(array)?;
+                    Ok(struct_array.column(1).clone())
+                }
+                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
+                    Ok(struct_array.column(1).clone())
+                }
+                _ => sedona_internal_err!("Unexpected item_crs type"),
+            }
+        } else {
+            arg.cast_to(&DataType::Utf8View, None)?
+                .into_array(iterations)
+        }
+    }
+}
+
 /// Configure the global PROJ engine
 ///
 /// Provides an opportunity for a calling application to provide the
@@ -426,79 +449,11 @@ mod tests {
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::create::create_array_item_crs;
+    use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const WGS84: &str = "EPSG:4326";
-
-    #[test]
-    fn invalid_arg_types() {
-        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
-
-        // No args
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![]);
-        let err = tester.return_type().unwrap_err();
-        assert_eq!(
-            err.message(),
-            "st_transform([]): No kernel matching arguments"
-        );
-
-        // Too many args
-        let tester = ScalarUdfTester::new(
-            udf.clone().into(),
-            vec![
-                SedonaType::Arrow(DataType::Utf8),
-                SedonaType::Arrow(DataType::Utf8),
-                SedonaType::Arrow(DataType::Utf8),
-                SedonaType::Arrow(DataType::Utf8),
-            ],
-        );
-        let err = tester.return_type().unwrap_err();
-        assert_eq!(
-            err.message(),
-            "st_transform([Arrow(Utf8), Arrow(Utf8), Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
-        );
-
-        // First arg not geometry
-        let tester = ScalarUdfTester::new(
-            udf.clone().into(),
-            vec![
-                SedonaType::Arrow(DataType::Utf8),
-                SedonaType::Arrow(DataType::Utf8),
-            ],
-        );
-        let err = tester.return_type().unwrap_err();
-        assert_eq!(
-            err.message(),
-            "st_transform([Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
-        );
-
-        // Second arg not string or numeric
-        let tester = ScalarUdfTester::new(
-            udf.clone().into(),
-            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)],
-        );
-        let err = tester.return_type().unwrap_err();
-        assert_eq!(
-            err.message(),
-            "st_transform([Wkb(Planar, None), Arrow(Boolean)]): No kernel matching arguments"
-        );
-
-        // third arg not string or numeric
-        let tester = ScalarUdfTester::new(
-            udf.clone().into(),
-            vec![
-                WKB_GEOMETRY,
-                SedonaType::Arrow(DataType::Utf8),
-                SedonaType::Arrow(DataType::Boolean),
-            ],
-        );
-        let err = tester.return_type().unwrap_err();
-        assert_eq!(
-            err.message(),
-            "st_transform([Wkb(Planar, None), Arrow(Utf8), Arrow(Boolean)]): No kernel matching arguments"
-        );
-    }
 
     #[test]
     fn test_invoke_with_string() {
@@ -690,6 +645,156 @@ mod tests {
             .invoke_arrays(vec![array_in, crs_from, crs_to])
             .unwrap();
         assert_array_equal(&result, &expected_array);
+    }
+
+    #[test]
+    fn test_invoke_null_crs_to() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+        );
+
+        // A null scalar CRS should generate WKB_GEOMETRY output with a a type
+        // level CRS that is unset; however, all the output will be null.
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, create_scalar(None, &WKB_GEOMETRY));
+
+        let expected_array = create_array(&[None, None, None], &WKB_GEOMETRY);
+        let array_in = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (1 2)"),
+                Some("POINT (2 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let result = tester
+            .invoke_array_scalar(array_in, ScalarValue::Null)
+            .unwrap();
+        assert_array_equal(&result, &expected_array);
+
+        // This currently has a side effect of working even though there is not
+        // valid transform from lnglat() to an unset CRS (because no transformations
+        // will ever take place).
+        let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![geometry_input, SedonaType::Arrow(DataType::Utf8)],
+        );
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, create_scalar(None, &WKB_GEOMETRY));
+    }
+
+    #[test]
+    fn test_invoke_unset_crs_to() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)],
+        );
+
+        // A unset scalar CRS should generate WKB_GEOMETRY output with a a type
+        // level CRS that is unset. This transformation is only valid if the input
+        // also has unset CRSes (and the result is a noop).
+        let result = tester.invoke_scalar_scalar("POINT (0 1)", 0).unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (0 1)");
+
+        let array_in = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (1 2)"),
+                Some("POINT (2 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let result = tester.invoke_array_scalar(array_in.clone(), 0).unwrap();
+        assert_array_equal(&result, &array_in);
+
+        // This should fail, because there is no valid transform between lnglat()
+        // and an unset CRS.
+        let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![geometry_input, SedonaType::Arrow(DataType::Utf8)],
+        );
+        let err = tester
+            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap_err();
+        assert_eq!(err.message(), "foofy");
+    }
+
+    #[test]
+    fn invalid_arg_types() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+
+        // No args
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![]);
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([]): No kernel matching arguments"
+        );
+
+        // Too many args
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Arrow(Utf8), Arrow(Utf8), Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
+        );
+
+        // First arg not geometry
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
+        );
+
+        // Second arg not string or numeric
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Boolean)],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Wkb(Planar, None), Arrow(Boolean)]): No kernel matching arguments"
+        );
+
+        // third arg not string or numeric
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        );
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "st_transform([Wkb(Planar, None), Arrow(Utf8), Arrow(Boolean)]): No kernel matching arguments"
+        );
     }
 
     fn get_crs(auth_code: &str) -> Crs {
