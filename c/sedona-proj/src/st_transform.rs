@@ -702,7 +702,7 @@ mod tests {
         // level CRS that is unset. This transformation is only valid if the input
         // also has unset CRSes (and the result is a noop).
         let result = tester.invoke_scalar_scalar("POINT (0 1)", 0).unwrap();
-        tester.assert_scalar_result_equals(result, "POINT (0 1)");
+        assert_eq!(result, create_scalar(Some("POINT (0 1)"), &WKB_GEOMETRY));
 
         let array_in = create_array(
             &[
@@ -720,12 +720,13 @@ mod tests {
         let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
-            vec![geometry_input, SedonaType::Arrow(DataType::Utf8)],
+            vec![geometry_input, SedonaType::Arrow(DataType::Int32)],
         );
-        let err = tester
-            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
-            .unwrap_err();
-        assert_eq!(err.message(), "foofy");
+        let err = tester.invoke_scalar_scalar("POINT (0 1)", 0).unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Can't transform to or from an unset CRS. Do you need to call ST_SetSRID on the input?"
+        );
     }
 
     #[test]
