@@ -16,8 +16,10 @@
 // under the License.
 use crate::transform::{ProjCrsEngine, ProjCrsEngineBuilder};
 use arrow_array::builder::BinaryBuilder;
+use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::cast::as_string_view_array;
+use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
@@ -100,6 +102,15 @@ impl<'a> ArgInput<'a> {
             _ => sedona_internal_err!("Unexpected CRS argument type {self:?}"),
         }
     }
+
+    fn crs_array(&self, arg: &ColumnarValue, iterations: usize) -> Result<ArrayRef> {
+        if let Some(crs_constant) = self.crs_constant()? {
+            ScalarValue::Utf8View(Some(crs_constant)).to_array_of_size(iterations)
+        } else {
+            arg.cast_to(&DataType::Utf8View, None)?
+                .into_array(iterations)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -171,7 +182,10 @@ impl SedonaScalarKernel for STTransform {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let (from, to) = inputs_from_to(&inputs)?;
+        // Optimize the easy case, where we have exactly one transformation
+        let from_index = inputs.len() - 2;
+        let to_index = inputs.len() - 1;
+        let (from, to) = (inputs[from_index], inputs[to_index]);
         if let (Some(from_constant), Some(to_constant)) = (from.crs_constant()?, to.crs_constant()?)
         {
             with_global_proj_engine(|engine| {
@@ -190,10 +204,50 @@ impl SedonaScalarKernel for STTransform {
                 })?;
                 Ok(())
             })?;
-        } else {
-            todo!()
+            return executor.finish(Arc::new(builder.finish()));
         }
 
+        // Iterate over pairs of CRS strings
+        let from_crs_array = from.crs_array(&args[from_index], executor.num_iterations())?;
+        let to_crs_array = to.crs_array(&args[to_index], executor.num_iterations())?;
+        let from_crs_string_view_array = as_string_view_array(&from_crs_array)?;
+        let to_crs_string_view_array = as_string_view_array(&to_crs_array)?;
+        let mut crs_to_crs_iter = zip(from_crs_string_view_array, to_crs_string_view_array);
+
+        with_global_proj_engine(|engine| {
+            executor.execute_wkb_void(|maybe_wkb| {
+                match (maybe_wkb, crs_to_crs_iter.next().unwrap()) {
+                    (Some(wkb), (Some(from_crs_str), Some(to_crs_str))) => {
+                        let maybe_from_crs = deserialize_crs(from_crs_str)?;
+                        let maybe_to_crs = deserialize_crs(to_crs_str)?;
+                        if maybe_from_crs == maybe_to_crs {
+                            invoke_noop(&wkb, &mut builder)?;
+                            builder.append_value([]);
+                            return Ok(());
+                        }
+
+                        let crs_transform = match (maybe_from_crs, maybe_to_crs) {
+                            (Some(from_crs), Some(to_crs)) => {
+                                engine
+                                .get_transform_crs_to_crs(&from_crs.to_crs_string(), &to_crs.to_crs_string(), None, "")
+                                .map_err(|e| DataFusionError::Execution(format!("{e}")))?
+                            },
+                            _ => return exec_err!(
+                                "Can't transform to or from an unset CRS. Do you need to call ST_SetSRID on the input?"
+                            )
+                        };
+
+                        invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                        builder.append_value([]);
+                    }
+                    _ => builder.append_null(),
+                }
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+
+        // TODO: construct and return item crs if this is the output type
         executor.finish(Arc::new(builder.finish()))
     }
 
@@ -207,14 +261,6 @@ impl SedonaScalarKernel for STTransform {
         _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         sedona_internal_err!("invoke_batch should only be called with args")
-    }
-}
-
-fn inputs_from_to<'a>(inputs: &'a [ArgInput]) -> Result<(ArgInput<'a>, ArgInput<'a>)> {
-    match inputs.len() {
-        2 => Ok((inputs[0], inputs[1])),
-        3 => Ok((inputs[1], inputs[2])),
-        unexpected => sedona_internal_err!("Unexpected number of arguments ({unexpected})"),
     }
 }
 
@@ -240,6 +286,12 @@ fn parse_crs_from_scalar_crs_value(scalar_arg: &ScalarValue) -> Result<Option<St
     } else {
         sedona_internal_err!("Expected scalar cast to utf8 to be a ScalarValue::Utf8")
     }
+}
+
+fn invoke_noop(wkb: &Wkb, builder: &mut impl Write) -> Result<()> {
+    builder
+        .write_all(wkb.buf())
+        .map_err(DataFusionError::IoError)
 }
 
 fn invoke_scalar(wkb: &Wkb, trans: &dyn CrsTransform, builder: &mut impl Write) -> Result<()> {
