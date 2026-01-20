@@ -153,7 +153,7 @@ impl SedonaScalarKernel for STTransform {
         let mut crs_to_crs_iter = zip(from_crs_string_view_array, to_crs_string_view_array);
 
         // We might need to build an output array of sanitized CRS strings
-        let mut maybe_crs_ouput = if matches!(to, ArgInput::ArrayCrs) {
+        let mut maybe_crs_output = if matches!(to, ArgInput::ArrayCrs) {
             Some(StringViewBuilder::with_capacity(executor.num_iterations()))
         } else {
             None
@@ -166,7 +166,7 @@ impl SedonaScalarKernel for STTransform {
                         let maybe_from_crs = deserialize_crs(from_crs_str)?;
                         let maybe_to_crs = deserialize_crs(to_crs_str)?;
 
-                        if let Some(crs_output) = &mut maybe_crs_ouput {
+                        if let Some(crs_output) = &mut maybe_crs_output {
                             if let Some(to_crs) = &maybe_to_crs {
                                 crs_output.append_value(to_crs.to_authority_code()?.unwrap_or_else(|| to_crs.to_crs_string()));
                             } else {
@@ -195,7 +195,7 @@ impl SedonaScalarKernel for STTransform {
                         builder.append_value([]);
                     }
                     _ => {
-                        if let Some(crs_output) = &mut maybe_crs_ouput {
+                        if let Some(crs_output) = &mut maybe_crs_output {
                             crs_output.append_null();
                         }
 
@@ -208,7 +208,7 @@ impl SedonaScalarKernel for STTransform {
         })?;
 
         let output_geometry = executor.finish(Arc::new(builder.finish()))?;
-        if let Some(mut crs_output) = maybe_crs_ouput {
+        if let Some(mut crs_output) = maybe_crs_output {
             let output_crs = executor.finish(Arc::new(crs_output.finish()))?;
             make_item_crs(&WKB_GEOMETRY, output_geometry, &output_crs, None)
         } else {
@@ -698,7 +698,7 @@ mod tests {
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)],
         );
 
-        // A unset scalar CRS should generate WKB_GEOMETRY output with a a type
+        // A unset scalar CRS should generate WKB_GEOMETRY output with a type
         // level CRS that is unset. This transformation is only valid if the input
         // also has unset CRSes (and the result is a noop).
         let result = tester.invoke_scalar_scalar("POINT (0 1)", 0).unwrap();
