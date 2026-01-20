@@ -18,7 +18,7 @@ use std::iter::zip;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::cast::{as_binary_array, as_binary_view_array};
+use datafusion_common::cast::{as_binary_array, as_binary_view_array, as_struct_array};
 use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
@@ -357,6 +357,14 @@ impl IterGeo for ArrayRef {
             }
             SedonaType::Wkb(_, _) => iter_wkb_binary(as_binary_array(self)?, func),
             SedonaType::WkbView(_, _) => iter_wkb_binary(as_binary_view_array(self)?, func),
+            SedonaType::Arrow(DataType::Struct(fields))
+                if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
+            {
+                let struct_array = as_struct_array(self)?;
+                struct_array
+                    .column(0)
+                    .iter_as_wkb_bytes(sedona_type, num_iterations, func)
+            }
             _ => {
                 // We could cast here as a fallback, iterate and cast per-element, or
                 // implement iter_as_something_else()/supports_iter_xxx() when more geo array types
