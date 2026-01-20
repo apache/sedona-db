@@ -655,7 +655,7 @@ mod tests {
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
         );
 
-        // A null scalar CRS should generate WKB_GEOMETRY output with a a type
+        // A null scalar CRS should generate WKB_GEOMETRY output with a type
         // level CRS that is unset; however, all the output will be null.
         let result = tester
             .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
