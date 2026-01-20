@@ -157,7 +157,6 @@ impl SedonaScalarKernel for STAffine {
 #[cfg(test)]
 mod tests {
     use arrow_array::Array;
-    use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ColumnarValue, ScalarUDF};
     use rstest::rstest;

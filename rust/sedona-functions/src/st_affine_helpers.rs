@@ -58,9 +58,11 @@ impl<'a> FloatArg<'a> {
 fn float_arg_from_columnar<'a>(arg: &'a ColumnarValue) -> Result<FloatArg<'a>> {
     match arg {
         ColumnarValue::Array(array) => Ok(FloatArg::Array(as_float64_array(array)?)),
-        ColumnarValue::Scalar(ScalarValue::Float64(value)) => Ok(FloatArg::Scalar(*value)),
-        ColumnarValue::Scalar(ScalarValue::Null) => Ok(FloatArg::Scalar(None)),
-        _ => sedona_internal_err!("Invalid scalar type for affine argument"),
+        ColumnarValue::Scalar(scalar) => match scalar {
+            ScalarValue::Float64(value) => Ok(FloatArg::Scalar(*value)),
+            ScalarValue::Null => Ok(FloatArg::Scalar(None)),
+            _ => sedona_internal_err!("Invalid scalar type for affine argument"),
+        },
     }
 }
 
@@ -87,13 +89,6 @@ impl<'a> DAffine2Iterator<'a> {
         let e = float_arg_from_columnar(&array_args[3])?;
         let x_offset = float_arg_from_columnar(&array_args[4])?;
         let y_offset = float_arg_from_columnar(&array_args[5])?;
-        let no_null = a.no_nulls()
-            && b.no_nulls()
-            && d.no_nulls()
-            && e.no_nulls()
-            && x_offset.no_nulls()
-            && y_offset.no_nulls();
-
         Ok(Self {
             index: 0,
             a,
@@ -102,7 +97,12 @@ impl<'a> DAffine2Iterator<'a> {
             e,
             x_offset,
             y_offset,
-            no_null,
+            no_null: a.no_nulls()
+                && b.no_nulls()
+                && d.no_nulls()
+                && e.no_nulls()
+                && x_offset.no_nulls()
+                && y_offset.no_nulls(),
         })
     }
 
@@ -187,19 +187,6 @@ impl<'a> DAffine3Iterator<'a> {
         let y_offset = float_arg_from_columnar(&array_args[10])?;
         let z_offset = float_arg_from_columnar(&array_args[11])?;
 
-        let no_null = a.no_nulls()
-            && b.no_nulls()
-            && c.no_nulls()
-            && d.no_nulls()
-            && e.no_nulls()
-            && f.no_nulls()
-            && g.no_nulls()
-            && h.no_nulls()
-            && i.no_nulls()
-            && x_offset.no_nulls()
-            && y_offset.no_nulls()
-            && z_offset.no_nulls();
-
         Ok(Self {
             index: 0,
             a,
@@ -214,7 +201,18 @@ impl<'a> DAffine3Iterator<'a> {
             x_offset,
             y_offset,
             z_offset,
-            no_null,
+            no_null: a.no_nulls()
+                && b.no_nulls()
+                && c.no_nulls()
+                && d.no_nulls()
+                && e.no_nulls()
+                && f.no_nulls()
+                && g.no_nulls()
+                && h.no_nulls()
+                && i.no_nulls()
+                && x_offset.no_nulls()
+                && y_offset.no_nulls()
+                && z_offset.no_nulls(),
         })
     }
 
@@ -441,8 +439,8 @@ impl<'a> Iterator for DAffineRotateIterator<'a> {
 }
 
 pub(crate) enum DAffineIterator<'a> {
-    DAffine2(DAffine2Iterator),
-    DAffine3(DAffine3Iterator),
+    DAffine2(DAffine2Iterator<'a>),
+    DAffine3(DAffine3Iterator<'a>),
     DAffine2Scale(DAffine2ScaleIterator<'a>),
     DAffine3Scale(DAffine3ScaleIterator<'a>),
     DAffineRotate(DAffineRotateIterator<'a>),
