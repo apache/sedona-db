@@ -15,13 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::transform::{ProjCrsEngine, ProjCrsEngineBuilder};
-use arrow_array::builder::BinaryBuilder;
+use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
+use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::transform::{transform, CachingCrsEngine, CrsEngine, CrsTransform};
@@ -214,12 +215,28 @@ impl SedonaScalarKernel for STTransform {
         let to_crs_string_view_array = as_string_view_array(&to_crs_array)?;
         let mut crs_to_crs_iter = zip(from_crs_string_view_array, to_crs_string_view_array);
 
+        // We might need to build an output array of sanitized CRS strings
+        let mut maybe_crs_ouput = if matches!(to, ArgInput::ArrayCrs) {
+            Some(StringViewBuilder::with_capacity(executor.num_iterations()))
+        } else {
+            None
+        };
+
         with_global_proj_engine(|engine| {
             executor.execute_wkb_void(|maybe_wkb| {
                 match (maybe_wkb, crs_to_crs_iter.next().unwrap()) {
                     (Some(wkb), (Some(from_crs_str), Some(to_crs_str))) => {
                         let maybe_from_crs = deserialize_crs(from_crs_str)?;
                         let maybe_to_crs = deserialize_crs(to_crs_str)?;
+
+                        if let Some(crs_output) = &mut maybe_crs_ouput {
+                            if let Some(to_crs) = &maybe_to_crs {
+                                crs_output.append_value(to_crs.to_authority_code()?.unwrap_or_else(|| to_crs.to_crs_string()));
+                            } else {
+                                crs_output.append_null();
+                            }
+                        }
+
                         if maybe_from_crs == maybe_to_crs {
                             invoke_noop(&wkb, &mut builder)?;
                             builder.append_value([]);
@@ -240,15 +257,26 @@ impl SedonaScalarKernel for STTransform {
                         invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
                         builder.append_value([]);
                     }
-                    _ => builder.append_null(),
+                    _ => {
+                        if let Some(crs_output) = &mut maybe_crs_ouput {
+                            crs_output.append_null();
+                        }
+
+                        builder.append_null()
+                    },
                 }
                 Ok(())
             })?;
             Ok(())
         })?;
 
-        // TODO: construct and return item crs if this is the output type
-        executor.finish(Arc::new(builder.finish()))
+        let output_geometry = executor.finish(Arc::new(builder.finish()))?;
+        if let Some(mut crs_output) = maybe_crs_ouput {
+            let output_crs = executor.finish(Arc::new(crs_output.finish()))?;
+            make_item_crs(&WKB_GEOMETRY, output_geometry, &output_crs, None)
+        } else {
+            Ok(output_geometry)
+        }
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>, DataFusionError> {
