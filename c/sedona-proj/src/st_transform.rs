@@ -99,7 +99,7 @@ impl<'a> ArgInput<'a> {
                 Ok(Some(crs_str))
             }
             ArgInput::ScalarCrs(scalar_value) => parse_crs_from_scalar_crs_value(scalar_value),
-            _ => sedona_internal_err!("Unexpected CRS argument type {self:?}"),
+            _ => Ok(None),
         }
     }
 
