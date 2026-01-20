@@ -27,7 +27,8 @@ pub(crate) use build_side_collector::{
     BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
 };
 pub use cpu_spatial_index_builder::CPUSpatialIndexBuilder;
-pub use spatial_index::{SpatialIndex, SpatialJoinBuildMetrics};
+pub(crate) use spatial_index::SpatialIndex;
+pub use spatial_index::SpatialJoinBuildMetrics;
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query
@@ -40,7 +41,7 @@ pub(crate) struct IndexQueryResult<'a, 'b> {
 
 /// The metrics for a spatial index query
 #[derive(Debug)]
-pub struct QueryResultMetrics {
+pub(crate) struct QueryResultMetrics {
     pub count: usize,
     pub candidate_count: usize,
 }

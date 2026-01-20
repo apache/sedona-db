@@ -16,7 +16,7 @@
 // under the License.
 
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::spatial_index::{SpatialIndex, SpatialIndexInternal};
+use crate::index::spatial_index::SpatialIndex;
 use crate::index::QueryResultMetrics;
 use crate::operand_evaluator::OperandEvaluator;
 use crate::spatial_predicate::SpatialRelationType;
@@ -63,7 +63,6 @@ pub struct GPUSpatialIndex {
     #[expect(dead_code)]
     pub(crate) reservation: MemoryReservation,
 }
-
 impl GPUSpatialIndex {
     pub fn empty(
         spatial_predicate: SpatialPredicate,
@@ -168,7 +167,7 @@ impl GPUSpatialIndex {
 }
 
 #[async_trait]
-impl SpatialIndexInternal for GPUSpatialIndex {
+impl SpatialIndex for GPUSpatialIndex {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -263,10 +262,6 @@ impl SpatialIndexInternal for GPUSpatialIndex {
     fn get_actual_execution_mode(&self) -> ExecutionMode {
         ExecutionMode::PrepareBuild // GPU-based spatial index is always on PrepareBuild mode
     }
-}
-
-#[async_trait]
-impl SpatialIndex for GPUSpatialIndex {
     #[allow(unused)]
     fn query(
         &self,

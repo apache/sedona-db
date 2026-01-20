@@ -49,7 +49,16 @@ impl SpatialJoinBuildMetrics {
     }
 }
 
-pub trait SpatialIndex {
+#[async_trait]
+pub(crate) trait SpatialIndex {
+    fn schema(&self) -> SchemaRef;
+
+    /// Get all the indexed batches.
+    #[allow(dead_code)] // used in tests
+    fn get_num_indexed_batches(&self) -> usize;
+
+    /// Get the batch at the given index.
+    fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
     /// Query the spatial index with a probe geometry to find matching build-side geometries.
     ///
     /// This method implements a two-phase spatial join query:
@@ -68,6 +77,7 @@ pub trait SpatialIndex {
     /// # Returns
     /// * `JoinResultMetrics` containing the number of actual matches (`count`) and the number
     ///   of candidates from the filter phase (`candidate_count`)
+    #[allow(dead_code)] // for future use
     fn query(
         &self,
         probe_wkb: &Wkb,
@@ -102,17 +112,7 @@ pub trait SpatialIndex {
         include_tie_breakers: bool,
         build_batch_positions: &mut Vec<(i32, i32)>,
     ) -> Result<QueryResultMetrics>;
-}
-#[async_trait]
-pub(crate) trait SpatialIndexInternal {
-    fn schema(&self) -> SchemaRef;
 
-    #[allow(dead_code)] // used in some tests
-    /// Get the number of indexed batches.
-    fn get_num_indexed_batches(&self) -> usize;
-
-    /// Get the batch at the given index.
-    fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
     /// Query the spatial index with a batch of probe geometries to find matching build-side geometries.
     ///
     /// This method iterates over the probe geometries in the given range of the evaluated batch.
@@ -170,46 +170,4 @@ pub(crate) trait SpatialIndexInternal {
     fn get_actual_execution_mode(&self) -> ExecutionMode;
 }
 
-pub(crate) trait SpatialIndexFull: SpatialIndex + SpatialIndexInternal {}
-
-impl<T> SpatialIndexFull for T where T: SpatialIndex + SpatialIndexInternal {}
-
-pub(crate) type SpatialIndexRef = Arc<dyn SpatialIndexFull + Send + Sync>;
-
-/// Public Wrapper of SpatialIndex
-#[derive(Clone)]
-pub struct SpatialIndexHandle {
-    pub(crate) inner: SpatialIndexRef,
-}
-
-impl SpatialIndex for SpatialIndexHandle {
-    fn query(
-        &self,
-        probe_wkb: &Wkb,
-        probe_rect: &Rect<f32>,
-        distance: &Option<f64>,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        // Forward the call to the internal Arc
-        self.inner
-            .query(probe_wkb, probe_rect, distance, build_batch_positions)
-    }
-
-    fn query_knn(
-        &self,
-        probe_wkb: &Wkb,
-        k: u32,
-        use_spheroid: bool,
-        include_tie_breakers: bool,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        // Forward the call
-        self.inner.query_knn(
-            probe_wkb,
-            k,
-            use_spheroid,
-            include_tie_breakers,
-            build_batch_positions,
-        )
-    }
-}
+pub type SpatialIndexRef = Arc<dyn SpatialIndex + Send + Sync>;

@@ -42,7 +42,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use wkb::reader::Wkb;
 
-use crate::index::spatial_index::{SpatialIndex, SpatialIndexInternal};
+use crate::index::SpatialIndex;
 use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{
@@ -309,7 +309,7 @@ impl CPUSpatialIndex {
 }
 
 #[async_trait]
-impl SpatialIndexInternal for CPUSpatialIndex {
+impl SpatialIndex for CPUSpatialIndex {
     fn schema(&self) -> SchemaRef {
         self.inner.schema.clone()
     }
@@ -322,129 +322,6 @@ impl SpatialIndexInternal for CPUSpatialIndex {
         &self.inner.indexed_batches[batch_idx].batch
     }
 
-    fn need_more_probe_stats(&self) -> bool {
-        self.inner.refiner.need_more_probe_stats()
-    }
-
-    fn merge_probe_stats(&self, stats: GeoStatistics) {
-        self.inner.refiner.merge_probe_stats(stats);
-    }
-
-    fn visited_left_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
-        self.inner.visited_left_side.as_ref()
-    }
-
-    fn report_probe_completed(&self) -> bool {
-        self.inner
-            .probe_threads_counter
-            .fetch_sub(1, Ordering::Relaxed)
-            == 1
-    }
-
-    fn get_refiner_mem_usage(&self) -> usize {
-        self.inner.refiner.mem_usage()
-    }
-
-    fn get_actual_execution_mode(&self) -> ExecutionMode {
-        self.inner.refiner.actual_execution_mode()
-    }
-
-    async fn query_batch(
-        &self,
-        evaluated_batch: &Arc<EvaluatedBatch>,
-        range: Range<usize>,
-        max_result_size: usize,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-        probe_indices: &mut Vec<u32>,
-    ) -> Result<(QueryResultMetrics, usize)> {
-        if range.is_empty() {
-            return Ok((
-                QueryResultMetrics {
-                    count: 0,
-                    candidate_count: 0,
-                },
-                range.start,
-            ));
-        }
-
-        let rects = evaluated_batch.rects();
-        let dist = evaluated_batch.distance();
-        let mut total_candidates_count = 0;
-        let mut total_count = 0;
-        let mut current_row_idx = range.start;
-        for row_idx in range {
-            current_row_idx = row_idx;
-            let Some(probe_rect) = rects[row_idx] else {
-                continue;
-            };
-
-            let min = probe_rect.min();
-            let max = probe_rect.max();
-            let mut candidates = self.inner.rtree.search(min.x, min.y, max.x, max.y);
-            if candidates.is_empty() {
-                continue;
-            }
-
-            let Some(probe_wkb) = evaluated_batch.wkb(row_idx) else {
-                return sedona_internal_err!(
-                    "Failed to get WKB for row {} in evaluated batch",
-                    row_idx
-                );
-            };
-
-            // Sort and dedup candidates to avoid duplicate results when we index one geometry
-            // using several boxes.
-            candidates.sort_unstable();
-            candidates.dedup();
-
-            let distance = match dist {
-                Some(dist_array) => distance_value_at(dist_array, row_idx)?,
-                None => None,
-            };
-
-            // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
-            let refine_chunk_size = self.inner.options.parallel_refinement_chunk_size;
-            if refine_chunk_size == 0 || candidates.len() < refine_chunk_size * 2 {
-                // For small candidate sets, use refine synchronously
-                let metrics =
-                    self.refine(probe_wkb, &candidates, &distance, build_batch_positions)?;
-                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
-                total_count += metrics.count;
-                total_candidates_count += metrics.candidate_count;
-            } else {
-                // For large candidate sets, spawn several tasks to parallelize refinement
-                let (metrics, positions) = self
-                    .refine_concurrently(
-                        evaluated_batch,
-                        row_idx,
-                        &candidates,
-                        distance,
-                        refine_chunk_size,
-                    )
-                    .await?;
-                build_batch_positions.extend(positions);
-                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
-                total_count += metrics.count;
-                total_candidates_count += metrics.candidate_count;
-            }
-
-            if total_count >= max_result_size {
-                break;
-            }
-        }
-
-        let end_idx = current_row_idx + 1;
-        Ok((
-            QueryResultMetrics {
-                count: total_count,
-                candidate_count: total_candidates_count,
-            },
-            end_idx,
-        ))
-    }
-}
-
-impl SpatialIndex for CPUSpatialIndex {
     #[allow(unused)]
     fn query(
         &self,
@@ -657,6 +534,127 @@ impl SpatialIndex for CPUSpatialIndex {
             count: final_results.len(),
             candidate_count,
         })
+    }
+
+    async fn query_batch(
+        &self,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        range: Range<usize>,
+        max_result_size: usize,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+        probe_indices: &mut Vec<u32>,
+    ) -> Result<(QueryResultMetrics, usize)> {
+        if range.is_empty() {
+            return Ok((
+                QueryResultMetrics {
+                    count: 0,
+                    candidate_count: 0,
+                },
+                range.start,
+            ));
+        }
+
+        let rects = evaluated_batch.rects();
+        let dist = evaluated_batch.distance();
+        let mut total_candidates_count = 0;
+        let mut total_count = 0;
+        let mut current_row_idx = range.start;
+        for row_idx in range {
+            current_row_idx = row_idx;
+            let Some(probe_rect) = rects[row_idx] else {
+                continue;
+            };
+
+            let min = probe_rect.min();
+            let max = probe_rect.max();
+            let mut candidates = self.inner.rtree.search(min.x, min.y, max.x, max.y);
+            if candidates.is_empty() {
+                continue;
+            }
+
+            let Some(probe_wkb) = evaluated_batch.wkb(row_idx) else {
+                return sedona_internal_err!(
+                    "Failed to get WKB for row {} in evaluated batch",
+                    row_idx
+                );
+            };
+
+            // Sort and dedup candidates to avoid duplicate results when we index one geometry
+            // using several boxes.
+            candidates.sort_unstable();
+            candidates.dedup();
+
+            let distance = match dist {
+                Some(dist_array) => distance_value_at(dist_array, row_idx)?,
+                None => None,
+            };
+
+            // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
+            let refine_chunk_size = self.inner.options.parallel_refinement_chunk_size;
+            if refine_chunk_size == 0 || candidates.len() < refine_chunk_size * 2 {
+                // For small candidate sets, use refine synchronously
+                let metrics =
+                    self.refine(probe_wkb, &candidates, &distance, build_batch_positions)?;
+                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
+                total_count += metrics.count;
+                total_candidates_count += metrics.candidate_count;
+            } else {
+                // For large candidate sets, spawn several tasks to parallelize refinement
+                let (metrics, positions) = self
+                    .refine_concurrently(
+                        evaluated_batch,
+                        row_idx,
+                        &candidates,
+                        distance,
+                        refine_chunk_size,
+                    )
+                    .await?;
+                build_batch_positions.extend(positions);
+                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
+                total_count += metrics.count;
+                total_candidates_count += metrics.candidate_count;
+            }
+
+            if total_count >= max_result_size {
+                break;
+            }
+        }
+
+        let end_idx = current_row_idx + 1;
+        Ok((
+            QueryResultMetrics {
+                count: total_count,
+                candidate_count: total_candidates_count,
+            },
+            end_idx,
+        ))
+    }
+
+    fn need_more_probe_stats(&self) -> bool {
+        self.inner.refiner.need_more_probe_stats()
+    }
+
+    fn merge_probe_stats(&self, stats: GeoStatistics) {
+        self.inner.refiner.merge_probe_stats(stats);
+    }
+
+    fn visited_left_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
+        self.inner.visited_left_side.as_ref()
+    }
+
+    fn report_probe_completed(&self) -> bool {
+        self.inner
+            .probe_threads_counter
+            .fetch_sub(1, Ordering::Relaxed)
+            == 1
+    }
+
+    fn get_refiner_mem_usage(&self) -> usize {
+        self.inner.refiner.mem_usage()
+    }
+
+    fn get_actual_execution_mode(&self) -> ExecutionMode {
+        self.inner.refiner.actual_execution_mode()
     }
 }
 

@@ -34,9 +34,9 @@ use datafusion_physical_plan::{
 };
 use parking_lot::Mutex;
 
-use crate::build_index::build_index_internal;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::{
+    build_index::build_index,
     spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
     utils::join_utils::{asymmetric_join_output_partitioning, boundedness_from_children},
@@ -475,7 +475,7 @@ impl ExecutionPlan for SpatialJoinExec {
                             let probe_thread_count =
                                 self.right.output_partitioning().partition_count();
 
-                            Ok(build_index_internal(
+                            Ok(build_index(
                                 Arc::clone(&context),
                                 build_side.schema(),
                                 build_streams,
@@ -567,7 +567,7 @@ impl SpatialJoinExec {
                     }
 
                     let probe_thread_count = probe_plan.output_partitioning().partition_count();
-                    Ok(build_index_internal(
+                    Ok(build_index(
                         Arc::clone(&context),
                         build_side.schema(),
                         build_streams,
