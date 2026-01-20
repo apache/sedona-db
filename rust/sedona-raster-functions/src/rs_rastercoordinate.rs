@@ -18,9 +18,11 @@ use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, Int64Builder};
+use arrow_array::cast::AsArray;
+use arrow_array::types::Float64Type;
+use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::ScalarValue;
-use datafusion_common::{error::Result, exec_err};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -139,17 +141,35 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = Int64Builder::with_capacity(executor.num_iterations());
 
-        let coord_opt = extract_scalar_coord(&args[1], &args[2])?;
-        executor.execute_raster_void(|_i, raster_opt| {
-            match (raster_opt, coord_opt) {
-                (Some(raster), (Some(x), Some(y))) => {
+        // Expand world x and y coordinate parameters to arrays and cast to Float64
+        let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
+        let world_x_array = world_x_array.into_array(executor.num_iterations())?;
+        let world_x_array = world_x_array.as_primitive::<Float64Type>();
+        let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
+        let world_y_array = world_y_array.into_array(executor.num_iterations())?;
+        let world_y_array = world_y_array.as_primitive::<Float64Type>();
+
+        executor.execute_raster_void(|i, raster_opt| {
+            let x_opt = if world_x_array.is_null(i) {
+                None
+            } else {
+                Some(world_x_array.value(i))
+            };
+            let y_opt = if world_y_array.is_null(i) {
+                None
+            } else {
+                Some(world_y_array.value(i))
+            };
+
+            match (raster_opt, x_opt, y_opt) {
+                (Some(raster), Some(x), Some(y)) => {
                     let (raster_x, raster_y) = to_raster_coordinate(&raster, x, y)?;
                     match self.coord {
                         Coord::X => builder.append_value(raster_x),
                         Coord::Y => builder.append_value(raster_y),
                     };
                 }
-                (_, _) => builder.append_null(),
+                (_, _, _) => builder.append_null(),
             }
             Ok(())
         })?;
@@ -188,44 +208,40 @@ impl SedonaScalarKernel for RsCoordinatePoint {
             item.len() * executor.num_iterations(),
         );
 
-        let coord_opt = extract_scalar_coord(&args[1], &args[2])?;
-        executor.execute_raster_void(|_i, raster_opt| {
-            match (raster_opt, coord_opt) {
-                (Some(raster), (Some(world_x), Some(world_y))) => {
+        // Expand world x and y coordinate parameters to arrays and cast to Float64
+        let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
+        let world_x_array = world_x_array.into_array(executor.num_iterations())?;
+        let world_x_array = world_x_array.as_primitive::<Float64Type>();
+        let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
+        let world_y_array = world_y_array.into_array(executor.num_iterations())?;
+        let world_y_array = world_y_array.as_primitive::<Float64Type>();
+
+        executor.execute_raster_void(|i, raster_opt| {
+            let x_opt = if world_x_array.is_null(i) {
+                None
+            } else {
+                Some(world_x_array.value(i))
+            };
+            let y_opt = if world_y_array.is_null(i) {
+                None
+            } else {
+                Some(world_y_array.value(i))
+            };
+
+            match (raster_opt, x_opt, y_opt) {
+                (Some(raster), Some(world_x), Some(world_y)) => {
                     let (raster_x, raster_y) = to_raster_coordinate(&raster, world_x, world_y)?;
                     item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
                     item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
                     builder.append_value(item);
                 }
-                (_, _) => builder.append_null(),
+                (_, _, _) => builder.append_null(),
             }
             Ok(())
         })?;
 
         executor.finish(Arc::new(builder.finish()))
     }
-}
-
-fn extract_float_scalar(arg: &ColumnarValue) -> Result<Option<f64>> {
-    match arg {
-        ColumnarValue::Scalar(scalar) => {
-            let f64_val = scalar.cast_to(&DataType::Float64)?;
-            match f64_val {
-                ScalarValue::Float64(Some(v)) => Ok(Some(v)),
-                _ => Ok(None),
-            }
-        }
-        _ => exec_err!("Expected scalar float argument for coordinate"),
-    }
-}
-
-fn extract_scalar_coord(
-    x_arg: &ColumnarValue,
-    y_arg: &ColumnarValue,
-) -> Result<(Option<f64>, Option<f64>)> {
-    let x_opt = extract_float_scalar(x_arg)?;
-    let y_opt = extract_float_scalar(y_arg)?;
-    Ok((x_opt, y_opt))
 }
 
 #[cfg(test)]
@@ -329,5 +345,41 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("determinant is zero"));
+    }
+
+    #[rstest]
+    fn udf_invoke_xy_with_array_coords(#[values(Coord::Y, Coord::X)] coord: Coord) {
+        let udf = match coord {
+            Coord::X => rs_worldtorastercoordx_udf(),
+            Coord::Y => rs_worldtorastercoordy_udf(),
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+
+        // Use only raster 1 (invertible) with different world coordinates
+        // Raster 1: upper_left=(2,3), scale_x=0.1, scale_y=-0.2, skew_x=0.03, skew_y=0.04
+        // For world coords (2,3) -> raster (0,0) (the upper left corner)
+        // For world coords (2.1, 2.8) -> need to solve the inverse
+        let rasters = generate_test_rasters(2, Some(0)).unwrap();
+        let world_x = Arc::new(arrow_array::Float64Array::from(vec![2.0, 2.0]));
+        let world_y = Arc::new(arrow_array::Float64Array::from(vec![3.0, 3.0]));
+
+        let expected_values = match coord {
+            Coord::X => vec![None, Some(0_i64)],
+            Coord::Y => vec![None, Some(0_i64)],
+        };
+        let expected: Arc<dyn arrow_array::Array> =
+            Arc::new(arrow_array::Int64Array::from(expected_values));
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), world_x, world_y])
+            .unwrap();
+        assert_array_equal(&result, &expected);
     }
 }
