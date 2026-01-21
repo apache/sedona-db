@@ -17,8 +17,8 @@
 
 import pytest
 import shapely
-from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
-import math
+from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
+
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
@@ -68,11 +68,13 @@ import math
         None,
     ],
 )
-def test_st_asbinary(eng, geom):
+def test_st_asewkb(eng, geom):
     eng = eng.create_or_skip()
 
     if geom is not None:
-        expected = shapely.to_wkb(shapely.from_wkt(geom), output_dimension=4, byte_order=1, flavor="extended")
+        expected = shapely.to_wkb(
+            shapely.from_wkt(geom), output_dimension=4, byte_order=1, flavor="extended"
+        )
     else:
         expected = None
 

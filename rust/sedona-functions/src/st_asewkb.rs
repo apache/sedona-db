@@ -99,6 +99,7 @@ impl SedonaScalarKernel for STAsEWKB {
                 },
                 None => None,
             },
+            SedonaType::Arrow(DataType::Null) => None,
             _ => return sedona_internal_err!("Unexpected input to invoke_batch in ST_AsEWKB"),
         };
 
@@ -279,7 +280,7 @@ fn write_multipoint(
     buf: &mut impl Write,
 ) -> Result<()> {
     write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
-    let num_children = geom.num_points();
+    let num_children = geom.num_points() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.points() {
@@ -294,8 +295,8 @@ fn write_multilinestring(
     srid: Option<u32>,
     buf: &mut impl Write,
 ) -> Result<()> {
-    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
-    let num_children = geom.num_line_strings();
+    write_geometry_type_and_srid(5, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_line_strings() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.line_strings() {
@@ -310,8 +311,8 @@ fn write_multipolygon(
     srid: Option<u32>,
     buf: &mut impl Write,
 ) -> Result<()> {
-    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
-    let num_children = geom.num_polygons();
+    write_geometry_type_and_srid(6, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_polygons() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.polygons() {
@@ -326,8 +327,8 @@ fn write_geometrycollection(
     srid: Option<u32>,
     buf: &mut impl Write,
 ) -> Result<()> {
-    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
-    let num_children = geom.num_geometries();
+    write_geometry_type_and_srid(7, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_geometries() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.geometries() {
@@ -351,7 +352,7 @@ fn write_geometry_type_and_srid(
         Dimension::Xym => base_type |= EWKB_M_BIT,
         Dimension::Xyzm => {
             base_type |= EWKB_Z_BIT;
-            base_type |= EWKB_Z_BIT;
+            base_type |= EWKB_M_BIT;
         }
     }
 
@@ -359,6 +360,8 @@ fn write_geometry_type_and_srid(
         base_type |= EWKB_SRID_BIT;
         buf.write_all(&base_type.to_le_bytes())?;
         buf.write_all(&srid.to_le_bytes())?;
+    } else {
+        buf.write_all(&base_type.to_le_bytes())?;
     }
 
     Ok(())
