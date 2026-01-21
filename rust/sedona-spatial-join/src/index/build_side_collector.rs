@@ -40,6 +40,11 @@ use crate::{
     SpatialPredicate,
 };
 
+/// Safety buffer applied when pre-growing build-side reservations to leave headroom for
+/// auxiliary structures beyond the build batches themselves.
+/// 20% was chosen as a conservative margin.
+const BUILD_SIDE_RESERVATION_BUFFER_RATIO: f64 = 0.20;
+
 pub(crate) struct BuildPartition {
     pub build_side_batch_stream: SendableEvaluatedBatchStream,
     pub geo_statistics: GeoStatistics,
@@ -136,7 +141,10 @@ impl BuildSideBatchesCollector {
         );
 
         // Try to grow the reservation with a safety buffer to leave room for additional data structures
-        let additional_reservation = extra_mem + (extra_mem + reservation.size()) / 5;
+        let buffer_bytes = ((extra_mem + reservation.size()) as f64
+            * BUILD_SIDE_RESERVATION_BUFFER_RATIO)
+            .ceil() as usize;
+        let additional_reservation = extra_mem + buffer_bytes;
         reservation.try_grow(additional_reservation)?;
 
         Ok(BuildPartition {

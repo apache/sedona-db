@@ -148,12 +148,8 @@ impl SpatialIndexBuilder {
         // Estimate the amount of memory needed for the R-tree
         let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
 
-        // Estimate the amount of memory needed for auxiliary data structures, such as
-        // batch_pos_vec and geom_idx_vec.
-        let auxiliary = num_geoms * 16;
-
         // The final estimation is the sum of all above
-        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage + auxiliary
+        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
     }
 
     /// Add a geometry batch to be indexed.
@@ -163,7 +159,7 @@ impl SpatialIndexBuilder {
     pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
         let in_mem_size = indexed_batch.in_mem_size()?;
         self.indexed_batches.push(indexed_batch);
-        self.add_memory_usage(in_mem_size);
+        self.record_memory_usage(in_mem_size);
         Ok(())
     }
 
@@ -202,7 +198,7 @@ impl SpatialIndexBuilder {
         build_timer.done();
 
         let mem_usage = rtree.metadata().data_buffer_length() + batch_pos_vec.allocated_size();
-        self.add_memory_usage(mem_usage);
+        self.record_memory_usage(mem_usage);
 
         Ok((rtree, batch_pos_vec))
     }
@@ -226,7 +222,7 @@ impl SpatialIndexBuilder {
             bitmaps.push(bitmap);
         }
 
-        self.add_memory_usage(total_buffer_size);
+        self.record_memory_usage(total_buffer_size);
 
         Ok(Some(Mutex::new(bitmaps)))
     }
@@ -242,7 +238,7 @@ impl SpatialIndexBuilder {
         }
 
         let mut geom_idx_vec = Vec::with_capacity(batch_pos_vec.len());
-        self.add_memory_usage(geom_idx_vec.allocated_size());
+        self.record_memory_usage(geom_idx_vec.allocated_size());
 
         for (batch_idx, row_idx) in batch_pos_vec {
             // Convert (batch_idx, row_idx) to a linear, sequential index
@@ -285,7 +281,7 @@ impl SpatialIndexBuilder {
             num_geoms,
             self.stats.clone(),
         );
-        self.add_memory_usage(refiner.estimate_max_memory_usage(&self.stats));
+        self.record_memory_usage(refiner.estimate_max_memory_usage(&self.stats));
 
         let cache_size = batch_pos_vec.len();
         let knn_components_opt = {
@@ -294,7 +290,7 @@ impl SpatialIndexBuilder {
                 SpatialPredicate::KNearestNeighbors(_)
             ) {
                 let knn_components = KnnComponents::new(cache_size, &self.indexed_batches)?;
-                self.add_memory_usage(knn_components.estimated_memory_usage());
+                self.record_memory_usage(knn_components.estimated_memory_usage());
                 Some(knn_components)
             } else {
                 None
@@ -336,7 +332,7 @@ impl SpatialIndexBuilder {
         Ok(())
     }
 
-    fn add_memory_usage(&mut self, bytes: usize) {
+    fn record_memory_usage(&mut self, bytes: usize) {
         self.memory_used += bytes;
         self.metrics.build_mem_used.set_max(self.memory_used);
     }
