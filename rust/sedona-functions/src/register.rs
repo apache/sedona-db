@@ -81,6 +81,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geometrytype::st_geometry_type_udf,
         crate::st_geomfromwkb::st_geogfromwkb_udf,
         crate::st_geomfromwkb::st_geomfromwkb_udf,
+        crate::st_geomfromwkb::st_geomfromwkbunchecked_udf,
         crate::st_geomfromwkt::st_geogfromwkt_udf,
         crate::st_geomfromwkt::st_geomfromwkt_udf,
         crate::st_geomfromwkt::st_geomfromewkt_udf,

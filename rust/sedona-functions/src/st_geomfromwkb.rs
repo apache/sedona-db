@@ -44,6 +44,21 @@ pub fn st_geomfromwkb_udf() -> SedonaScalarUDF {
     )
 }
 
+/// ST_GeomFromWKBUnchecked() scalar UDF implementation
+///
+/// An implementation of WKB reading using GeoRust's wkb crate without validation.
+pub fn st_geomfromwkbunchecked_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_geomfromwkbunchecked",
+        vec![Arc::new(STGeomFromWKB {
+            validate: false,
+            out_type: WKB_VIEW_GEOMETRY,
+        })],
+        Volatility::Immutable,
+        Some(doc_unchecked("ST_GeomFromWKBUnchecked", "Geometry")),
+    )
+}
+
 /// ST_GeogFromWKB() scalar UDF implementation
 ///
 /// An implementation of WKB reading using GeoRust's wkb crate.
@@ -63,6 +78,29 @@ fn doc(name: &str, out_type_name: &str) -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
         format!("Construct a {out_type_name} from WKB"),
+        format!("{name} (Wkb: Binary)"),
+    )
+    .with_argument(
+        "WKB",
+        format!(
+            "binary: Well-known binary representation of the {}",
+            out_type_name.to_lowercase()
+        ),
+    )
+    .with_sql_example(format!("SELECT {name}([01 02 00 00 00 02 00 00 00 00 00 00 00 84 D6 00 C0 00 00 00 00 80 B5 D6 BF 00 00 00 60 E1 EF F7 BF 00 00 00 80 07 5D E5 BF])"))
+    .with_related_udf("ST_AsText")
+    .build()
+}
+
+/// Documentation for `ST_GeomFromWKBUnchecked()`.
+///
+/// Parameterized for reuse if `ST_GeogFromWKBUnchecked()` is implemented in the future.
+fn doc_unchecked(name: &str, out_type_name: &str) -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        format!(
+            "Construct a {out_type_name} from WKB without validation. Invalid WKB input may result in undefined behavior."
+        ),
         format!("{name} (Wkb: Binary)"),
     )
     .with_argument(
@@ -117,7 +155,7 @@ impl SedonaScalarKernel for STGeomFromWKB {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::BinaryArray;
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -134,6 +172,9 @@ mod tests {
         0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
     ];
+    const INVALID_WKB_LEN: [u8; 0] = [];
+    const INVALID_WKB_CONTENT: [u8; 5] = [0x01, 0x00, 0x00, 0x00, 0x00];
+    const INVALID_WKBS: [&[u8]; 2] = [&INVALID_WKB_LEN, &INVALID_WKB_CONTENT];
 
     #[test]
     fn udf_metadata() {
@@ -144,6 +185,10 @@ mod tests {
         let geom_from_wkb: ScalarUDF = st_geomfromwkb_udf().into();
         assert_eq!(geom_from_wkb.name(), "st_geomfromwkb");
         assert!(geom_from_wkb.documentation().is_some());
+
+        let geom_from_wkb_unchecked: ScalarUDF = st_geomfromwkbunchecked_udf().into();
+        assert_eq!(geom_from_wkb_unchecked.name(), "st_geomfromwkbunchecked");
+        assert!(geom_from_wkb_unchecked.documentation().is_some());
     }
 
     #[rstest]
@@ -176,16 +221,89 @@ mod tests {
         );
     }
 
+    #[rstest]
+    fn udf_unchecked(#[values(DataType::Binary, DataType::BinaryView)] data_type: DataType) {
+        let udf = st_geomfromwkbunchecked_udf();
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![SedonaType::Arrow(data_type.clone())],
+        );
+
+        assert_eq!(tester.return_type().unwrap(), WKB_VIEW_GEOMETRY);
+
+        assert_scalar_equal(
+            &tester.invoke_scalar(POINT12.to_vec()).unwrap(),
+            &create_scalar(Some("POINT (1 2)"), &WKB_VIEW_GEOMETRY),
+        );
+
+        assert_scalar_equal(
+            &tester.invoke_scalar(ScalarValue::Null).unwrap(),
+            &create_scalar(None, &WKB_VIEW_GEOMETRY),
+        );
+
+        let binary_array: BinaryArray = [Some(POINT12), None, Some(POINT12)].iter().collect();
+        assert_array_equal(
+            &tester.invoke_array(Arc::new(binary_array)).unwrap(),
+            &create_array(
+                &[Some("POINT (1 2)"), None, Some("POINT (1 2)")],
+                &WKB_VIEW_GEOMETRY,
+            ),
+        );
+    }
+
     #[test]
     fn invalid_wkb() {
         let udf = st_geomfromwkb_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Binary)]);
 
-        let err = tester
-            .invoke_scalar(ScalarValue::Binary(Some(vec![])))
-            .unwrap_err();
+        for invalid in INVALID_WKBS {
+            let _err = tester
+                .invoke_scalar(ScalarValue::Binary(Some(invalid.to_vec())))
+                .unwrap_err();
+        }
+    }
 
-        assert_eq!(err.message(), "failed to fill whole buffer");
+    #[rstest]
+    fn unchecked_invalid_wkb(
+        #[values(DataType::Binary, DataType::BinaryView)] data_type: DataType,
+    ) {
+        let udf = st_geomfromwkbunchecked_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
+
+        for invalid in INVALID_WKBS {
+            let invalid_scalar = match data_type {
+                DataType::Binary => ScalarValue::Binary(Some(invalid.to_vec())),
+                DataType::BinaryView => ScalarValue::BinaryView(Some(invalid.to_vec())),
+                _ => unreachable!(),
+            };
+
+            assert_scalar_equal(
+                &tester.invoke_scalar(invalid_scalar).unwrap(),
+                &ScalarValue::BinaryView(Some(invalid.to_vec())),
+            );
+
+            let input_array: ArrayRef = match data_type {
+                DataType::Binary => Arc::new(
+                    [Some(invalid), None, Some(invalid)]
+                        .iter()
+                        .collect::<BinaryArray>(),
+                ),
+                DataType::BinaryView => Arc::new(
+                    [Some(invalid), None, Some(invalid)]
+                        .iter()
+                        .collect::<BinaryViewArray>(),
+                ),
+                _ => unreachable!(),
+            };
+
+            let expected_array: BinaryViewArray =
+                [Some(invalid), None, Some(invalid)].iter().collect();
+
+            assert_array_equal(
+                &tester.invoke_array(input_array).unwrap(),
+                &(Arc::new(expected_array) as ArrayRef),
+            );
+        }
     }
 
     #[test]
