@@ -57,7 +57,7 @@ fn st_asewkb_doc() -> Documentation {
         DOC_SECTION_OTHER,
         r#"Return the Extended Well-Known Binary (EWKB) representation of a geometry or geography.
 
-Compared to ST_AsBinary(), this function embeds an integer SRID derived from the type or dervied
+Compared to ST_AsBinary(), this function embeds an integer SRID derived from the type or derived
 from the item-level CRS for item CRS types. This is particularly useful for integration with
 PostGIS"#,
         "ST_AsEWKB (A: Geometry)",
