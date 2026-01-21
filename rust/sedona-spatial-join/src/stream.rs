@@ -1072,13 +1072,13 @@ impl UnmatchedBuildBatchIterator {
         spatial_index: SpatialIndexRef,
         empty_right_batch: RecordBatch,
     ) -> Result<Self> {
-        let visited_left_side = spatial_index.visited_build_side();
-        let Some(vec_visited_left_side) = visited_left_side else {
+        let visited_build_side = spatial_index.visited_build_side();
+        let Some(vec_visited_build_side) = visited_build_side else {
             return sedona_internal_err!("The bitmap for visited left side is not created");
         };
 
         let total_batches = {
-            let visited_bitmaps = vec_visited_left_side.lock();
+            let visited_bitmaps = vec_visited_build_side.lock();
             visited_bitmaps.len()
         };
 
@@ -1099,16 +1099,16 @@ impl UnmatchedBuildBatchIterator {
         build_side: JoinSide,
     ) -> Result<Option<RecordBatch>> {
         while self.current_batch_idx < self.total_batches && !self.is_complete {
-            let visited_left_side = self.spatial_index.visited_build_side();
-            let Some(vec_visited_left_side) = visited_left_side else {
+            let visited_build_side = self.spatial_index.visited_build_side();
+            let Some(vec_visited_build_side) = visited_build_side else {
                 return sedona_internal_err!("The bitmap for visited left side is not created");
             };
 
             let batch = {
-                let visited_bitmaps = vec_visited_left_side.lock();
-                let visited_left_side = &visited_bitmaps[self.current_batch_idx];
+                let visited_bitmaps = vec_visited_build_side.lock();
+                let visited_build_side = &visited_bitmaps[self.current_batch_idx];
                 let (left_side, right_side) =
-                    get_final_indices_from_bit_map(visited_left_side, join_type);
+                    get_final_indices_from_bit_map(visited_build_side, join_type);
 
                 build_batch_from_indices(
                     schema,

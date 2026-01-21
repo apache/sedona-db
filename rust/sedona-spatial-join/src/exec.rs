@@ -769,8 +769,7 @@ mod tests {
         Ok(ctx)
     }
 
-    #[tokio::test]
-    async fn test_empty_data() -> Result<()> {
+    async fn test_empty_data(use_gpu: bool) -> Result<()> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("dist", DataType::Float64, false),
@@ -778,42 +777,59 @@ mod tests {
         ]));
 
         let test_data_vec = vec![vec![vec![]], vec![vec![], vec![]]];
+
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareNone,
             gpu: GpuOptions {
-                enable: cfg!(feature = "gpu"),
+                enable: use_gpu,
                 ..GpuOptions::default()
             },
             ..Default::default()
         };
-        let ctx = setup_context(Some(options.clone()), 10)?;
-        for test_data in test_data_vec {
-            let left_partitions = test_data.clone();
-            let right_partitions = test_data;
 
-            let mem_table_left: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
-                Arc::clone(&schema),
-                left_partitions.clone(),
-            )?);
-            let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
-                Arc::clone(&schema),
-                right_partitions.clone(),
-            )?);
+        let ctx = setup_context(Some(options), 10)?;
+
+        // 4. Iterate through data scenarios
+        // Note: We iterate by reference (&) now so we can reuse data for the next 'use_gpu' loop
+        for test_data in &test_data_vec {
+            let left_partitions = test_data.clone();
+            let right_partitions = test_data.clone();
+
+            let mem_table_left: Arc<dyn TableProvider> =
+                Arc::new(MemTable::try_new(Arc::clone(&schema), left_partitions)?);
+            let mem_table_right: Arc<dyn TableProvider> =
+                Arc::new(MemTable::try_new(Arc::clone(&schema), right_partitions)?);
 
             ctx.deregister_table("L")?;
             ctx.deregister_table("R")?;
-            ctx.register_table("L", Arc::clone(&mem_table_left))?;
-            ctx.register_table("R", Arc::clone(&mem_table_right))?;
+            ctx.register_table("L", mem_table_left)?;
+            ctx.register_table("R", mem_table_right)?;
 
             let sql = "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id";
             let df = ctx.sql(sql).await?;
             let result_batches = df.collect().await?;
             for result_batch in result_batches {
-                assert_eq!(result_batch.num_rows(), 0);
+                assert_eq!(
+                    result_batch.num_rows(),
+                    0,
+                    "Failed assertion with use_gpu={}",
+                    use_gpu
+                );
             }
         }
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_empty_data_cpu() -> Result<()> {
+        test_empty_data(false).await
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_empty_data_gpu() -> Result<()> {
+        test_empty_data(true).await
     }
 
     // Shared test data and expected results - computed only once across all parameterized test cases
@@ -997,55 +1013,107 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_spatial_join_with_filter() -> Result<()> {
+    async fn test_spatial_join_with_filter(use_gpu: bool) -> Result<()> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
+
         for max_batch_size in [10, 30, 100] {
             let options = SpatialJoinOptions {
                 execution_mode: ExecutionMode::PrepareNone,
                 gpu: GpuOptions {
-                    enable: cfg!(feature = "gpu"),
+                    enable: use_gpu,
                     ..GpuOptions::default()
                 },
                 ..Default::default()
             };
-            test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
-                                    "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id").await?;
-            test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
-                                    "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY l_id, r_id").await?;
-            test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
-                                    "SELECT L.id l_id, R.id r_id, L.dist l_dist, R.dist r_dist FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY l_id, r_id").await?;
+
+            // Use clones of partitions because they are consumed by the test helper
+            test_spatial_join_query(
+                    &left_schema,
+                    &right_schema,
+                    left_partitions.clone(),
+                    right_partitions.clone(),
+                    &options,
+                    max_batch_size,
+                    "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id"
+                ).await?;
+
+            test_spatial_join_query(
+                    &left_schema,
+                    &right_schema,
+                    left_partitions.clone(),
+                    right_partitions.clone(),
+                    &options,
+                    max_batch_size,
+                    "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY l_id, r_id"
+                ).await?;
+
+            test_spatial_join_query(
+                    &left_schema,
+                    &right_schema,
+                    left_partitions.clone(),
+                    right_partitions.clone(),
+                    &options,
+                    max_batch_size,
+                    "SELECT L.id l_id, R.id r_id, L.dist l_dist, R.dist r_dist FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY l_id, r_id"
+                ).await?;
         }
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_range_join_with_empty_partitions() -> Result<()> {
+    async fn test_spatial_join_with_filter_cpu() -> Result<()> {
+        test_spatial_join_with_filter(false).await
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_spatial_join_with_filter_gpu() -> Result<()> {
+        test_spatial_join_with_filter(true).await
+    }
+
+    async fn test_range_join_with_empty_partitions(use_gpu: bool) -> Result<()> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_empty_partitions()?;
+        let options = SpatialJoinOptions {
+            execution_mode: ExecutionMode::PrepareNone,
+            gpu: GpuOptions {
+                enable: use_gpu,
+                ..GpuOptions::default()
+            },
+            ..Default::default()
+        };
         for max_batch_size in [10, 30, 1000] {
-            let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
-                gpu: GpuOptions {
-                    enable: cfg!(feature = "gpu"),
-                    ..GpuOptions::default()
-                },
-                ..Default::default()
-            };
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
-                                    "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id").await?;
+                                        "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id").await?;
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
-                                    "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY L.id, R.id").await?;
+                                        "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY L.id, R.id").await?;
         }
-
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_range_join_with_empty_partitions_cpu() -> Result<()> {
+        test_range_join_with_empty_partitions(false).await
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_range_join_with_empty_partitions_gpu() -> Result<()> {
+        test_range_join_with_empty_partitions(true).await
     }
 
     #[tokio::test]
     async fn test_inner_join() -> Result<()> {
-        test_with_join_types(JoinType::Inner).await?;
+        test_with_join_types(JoinType::Inner, false).await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_inner_join_gpu() -> Result<()> {
+        test_with_join_types(JoinType::Inner, true).await?;
         Ok(())
     }
 
@@ -1054,7 +1122,17 @@ mod tests {
     async fn test_left_joins(
         #[values(JoinType::Left, JoinType::LeftSemi, JoinType::LeftAnti)] join_type: JoinType,
     ) -> Result<()> {
-        test_with_join_types(join_type).await?;
+        test_with_join_types(join_type, false).await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    #[rstest]
+    #[tokio::test]
+    async fn test_left_joins_gpu(
+        #[values(JoinType::Left, JoinType::LeftSemi, JoinType::LeftAnti)] join_type: JoinType,
+    ) -> Result<()> {
+        test_with_join_types(join_type, true).await?;
         Ok(())
     }
 
@@ -1063,13 +1141,30 @@ mod tests {
     async fn test_right_joins(
         #[values(JoinType::Right, JoinType::RightSemi, JoinType::RightAnti)] join_type: JoinType,
     ) -> Result<()> {
-        test_with_join_types(join_type).await?;
+        test_with_join_types(join_type, false).await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    #[rstest]
+    #[tokio::test]
+    async fn test_right_joins_gpu(
+        #[values(JoinType::Right, JoinType::RightSemi, JoinType::RightAnti)] join_type: JoinType,
+    ) -> Result<()> {
+        test_with_join_types(join_type, true).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_full_outer_join() -> Result<()> {
-        test_with_join_types(JoinType::Full).await?;
+        test_with_join_types(JoinType::Full, false).await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_full_outer_join_gpu() -> Result<()> {
+        test_with_join_types(JoinType::Full, true).await?;
         Ok(())
     }
 
@@ -1079,12 +1174,24 @@ mod tests {
         #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
     ) -> Result<()> {
         let options = SpatialJoinOptions::default();
-        test_mark_join(join_type, options, 10).await?;
+
+        test_mark_join(join_type, options.clone(), 10, false).await?;
         Ok(())
     }
 
+    #[cfg(feature = "gpu")]
+    #[rstest]
     #[tokio::test]
-    async fn test_mark_join_via_correlated_exists_sql() -> Result<()> {
+    async fn test_mark_joins_gpu(
+        #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
+    ) -> Result<()> {
+        let options = SpatialJoinOptions::default();
+
+        test_mark_join(join_type, options, 10, true).await?;
+        Ok(())
+    }
+
+    async fn test_mark_join_via_correlated_exists_sql(use_gpu: bool) -> Result<()> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
 
@@ -1107,7 +1214,7 @@ mod tests {
         let batch_size = 10;
         let options = SpatialJoinOptions {
             gpu: GpuOptions {
-                enable: cfg!(feature = "gpu"),
+                enable: use_gpu,
                 ..GpuOptions::default()
             },
             ..SpatialJoinOptions::default()
@@ -1156,6 +1263,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mark_join_via_correlated_exists_sql_cpu() -> Result<()> {
+        test_mark_join_via_correlated_exists_sql(false).await
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_mark_join_via_correlated_exists_sql_gpu() -> Result<()> {
+        test_mark_join_via_correlated_exists_sql(true).await
+    }
+
+    #[tokio::test]
     async fn test_geography_join_is_not_optimized() -> Result<()> {
         let options = SpatialJoinOptions::default();
         let ctx = setup_context(Some(options), 10)?;
@@ -1190,9 +1308,20 @@ mod tests {
     async fn test_query_window_in_subquery() -> Result<()> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_size_range((50.0, 60.0), WKB_GEOMETRY)?;
+        let options = SpatialJoinOptions::default();
+        test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, 10,
+                                "SELECT id FROM L WHERE ST_Intersects(L.geometry, (SELECT R.geometry FROM R WHERE R.id = 1))").await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    #[tokio::test]
+    async fn test_query_window_in_subquery_gpu() -> Result<()> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_test_data_with_size_range((50.0, 60.0), WKB_GEOMETRY)?;
         let options = SpatialJoinOptions {
             gpu: GpuOptions {
-                enable: cfg!(feature = "gpu"),
+                enable: true,
                 ..GpuOptions::default()
             },
             ..Default::default()
@@ -1220,13 +1349,13 @@ mod tests {
         Ok(())
     }
 
-    async fn test_with_join_types(join_type: JoinType) -> Result<RecordBatch> {
+    async fn test_with_join_types(join_type: JoinType, use_gpu: bool) -> Result<RecordBatch> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_empty_partitions()?;
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareNone,
             gpu: GpuOptions {
-                enable: cfg!(feature = "gpu"),
+                enable: use_gpu,
                 ..GpuOptions::default()
             },
             ..Default::default()
@@ -1384,6 +1513,7 @@ mod tests {
         join_type: JoinType,
         options: SpatialJoinOptions,
         batch_size: usize,
+        use_gpu: bool,
     ) -> Result<()> {
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
@@ -1408,7 +1538,6 @@ mod tests {
         let spatial_join_execs = collect_spatial_join_exec(&plan)?;
         assert_eq!(spatial_join_execs.len(), 1);
         let original_exec = spatial_join_execs[0];
-        let use_gpu = cfg!(feature = "gpu");
 
         let mark_exec = SpatialJoinExec::try_new(
             original_exec.left.clone(),

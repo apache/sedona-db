@@ -232,7 +232,7 @@ impl CPUSpatialIndexBuilder {
 
         let (rtree, batch_pos_vec) = self.build_rtree()?;
         let geom_idx_vec = self.build_geom_idx_vec(&batch_pos_vec);
-        let visited_left_side = self.build_visited_bitmaps()?;
+        let visited_build_side = self.build_visited_bitmaps()?;
 
         let refiner = create_refiner(
             self.options.spatial_library,
@@ -265,7 +265,7 @@ impl CPUSpatialIndexBuilder {
             self.indexed_batches,
             batch_pos_vec,
             geom_idx_vec,
-            visited_left_side,
+            visited_build_side,
             AtomicUsize::new(self.probe_threads_count),
             knn_components,
             self.reservation,

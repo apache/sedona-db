@@ -52,7 +52,7 @@ pub struct GPUSpatialIndex {
     /// An array for translating data index to geometry batch index and row index
     pub(crate) data_id_to_batch_pos: Vec<(i32, i32)>,
     /// Shared bitmap builders for visited left indices, one per batch
-    pub(crate) visited_left_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
+    pub(crate) visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
     /// Counter of running probe-threads, potentially able to update `bitmap`.
     /// Each time a probe thread finished probing the index, it will decrement the counter.
     /// The last finished probe thread will produce the extra output batches for unmatched
@@ -83,7 +83,7 @@ impl GPUSpatialIndex {
             ),
             indexed_batches: vec![],
             data_id_to_batch_pos: vec![],
-            visited_left_side: None,
+            visited_build_side: None,
             probe_threads_counter,
             reservation,
         })
@@ -98,7 +98,7 @@ impl GPUSpatialIndex {
         gpu_spatial: Arc<GpuSpatial>,
         indexed_batches: Vec<EvaluatedBatch>,
         data_id_to_batch_pos: Vec<(i32, i32)>,
-        visited_left_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
+        visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
         probe_threads_counter: AtomicUsize,
         reservation: MemoryReservation,
     ) -> Result<Self> {
@@ -110,7 +110,7 @@ impl GPUSpatialIndex {
             gpu_spatial,
             indexed_batches,
             data_id_to_batch_pos,
-            visited_left_side,
+            visited_build_side,
             probe_threads_counter,
             reservation,
         })
@@ -247,8 +247,8 @@ impl SpatialIndex for GPUSpatialIndex {
         let _ = stats;
     }
 
-    fn visited_left_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
-        self.visited_left_side.as_ref()
+    fn visited_build_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
+        self.visited_build_side.as_ref()
     }
 
     fn report_probe_completed(&self) -> bool {

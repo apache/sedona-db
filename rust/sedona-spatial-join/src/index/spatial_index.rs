@@ -158,9 +158,9 @@ pub(crate) trait SpatialIndex {
     /// * `stats` - The probe statistics to merge.
     fn merge_probe_stats(&self, stats: GeoStatistics);
 
-    /// Get the bitmaps for tracking visited left-side indices. The bitmaps will be updated
+    /// Get the bitmaps for tracking visited build-side indices. The bitmaps will be updated
     /// by the spatial join stream when producing output batches during index probing phase.
-    fn visited_left_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>>;
+    fn visited_build_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>>;
     /// Decrements counter of running threads, and returns `true`
     /// if caller is the last running thread
     fn report_probe_completed(&self) -> bool;

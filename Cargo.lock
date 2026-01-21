@@ -3258,7 +3258,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -3804,15 +3804,6 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
-]
-
-[[package]]
-name = "ntapi"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
-dependencies = [
- "winapi",
 ]
 
 [[package]]
@@ -5457,9 +5448,9 @@ dependencies = [
  "arrow",
  "arrow-array",
  "arrow-schema",
+ "async-trait",
  "criterion",
  "datafusion",
- "datafusion-catalog",
  "datafusion-common",
  "datafusion-common-runtime",
  "datafusion-execution",
@@ -5490,56 +5481,8 @@ dependencies = [
  "sedona-geos",
  "sedona-libgpuspatial",
  "sedona-schema",
- "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
- "tokio",
- "wkb",
- "wkt 0.14.0",
-]
-
-[[package]]
-name = "sedona-spatial-join-gpu"
-version = "0.3.0"
-dependencies = [
- "arrow",
- "arrow-array",
- "arrow-schema",
- "datafusion",
- "datafusion-catalog",
- "datafusion-common",
- "datafusion-common-runtime",
- "datafusion-execution",
- "datafusion-expr",
- "datafusion-physical-expr",
- "datafusion-physical-plan",
- "env_logger 0.11.8",
- "fastrand",
- "float_next_after",
- "futures",
- "geo",
- "geo-index",
- "geo-traits",
- "geo-types",
- "log",
- "object_store",
- "parking_lot",
- "parquet",
- "rand",
- "rstest",
- "sedona-common",
- "sedona-expr",
- "sedona-functions",
- "sedona-geo",
- "sedona-geo-generic-alg",
- "sedona-geo-traits-ext",
- "sedona-geometry",
- "sedona-geos",
- "sedona-libgpuspatial",
- "sedona-schema",
- "sedona-testing",
- "sysinfo",
- "thiserror 2.0.17",
  "tokio",
  "wkb",
  "wkt 0.14.0",
@@ -5961,21 +5904,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
-]
-
-[[package]]
-name = "sysinfo"
-version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a5b4ddaee55fb2bea2bf0e5000747e5f5c0de765e5a5ff87f4cd106439f4bb3"
-dependencies = [
- "cfg-if",
- "core-foundation-sys",
- "libc",
- "ntapi",
- "once_cell",
- "rayon",
- "windows",
 ]
 
 [[package]]
@@ -6600,25 +6528,6 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
-
-[[package]]
-name = "windows"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
-dependencies = [
- "windows-core 0.52.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ab640c8d7e35bf8ba19b884ba838ceb4fba93a4e8c65a9059d08afcfc683d9"
-dependencies = [
- "windows-targets 0.52.6",
-]
 
 [[package]]
 name = "windows-core"

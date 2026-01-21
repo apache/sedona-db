@@ -75,6 +75,7 @@ impl GPUSpatialIndexBuilder {
             reservation,
         }
     }
+
     /// Build visited bitmaps for tracking left-side indices in outer joins.
     fn build_visited_bitmaps(&mut self) -> Result<Option<Mutex<Vec<BooleanBufferBuilder>>>> {
         if !need_produce_result_in_final(self.join_type) {
@@ -100,6 +101,7 @@ impl GPUSpatialIndexBuilder {
         Ok(Some(Mutex::new(bitmaps)))
     }
 
+    /// Finish building and return the completed SpatialIndex.
     pub fn finish(mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(GPUSpatialIndex::empty(
@@ -204,7 +206,7 @@ impl GPUSpatialIndexBuilder {
             DataFusionError::Execution(format!("Failed to build spatial refiner on GPU {e:?}"))
         })?;
         build_timer.done();
-        let visited_left_side = self.build_visited_bitmaps()?;
+        let visited_build_side = self.build_visited_bitmaps()?;
         let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
         // Build index for rectangle queries
         Ok(Arc::new(GPUSpatialIndex::new(
@@ -215,12 +217,16 @@ impl GPUSpatialIndexBuilder {
             Arc::new(gs),
             self.indexed_batches,
             data_id_to_batch_pos,
-            visited_left_side,
+            visited_build_side,
             AtomicUsize::new(self.probe_threads_count),
             self.reservation,
         )?))
     }
 
+    /// Add a geometry batch to be indexed.
+    ///
+    /// This method accumulates geometry batches that will be used to build the spatial index.
+    /// Each batch contains processed geometry data along with memory usage information.
     pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
         let in_mem_size = indexed_batch.in_mem_size()?;
         self.indexed_batches.push(indexed_batch);
@@ -228,6 +234,7 @@ impl GPUSpatialIndexBuilder {
         self.metrics.build_mem_used.add(in_mem_size);
         Ok(())
     }
+
     pub async fn add_partition(&mut self, mut partition: BuildPartition) -> Result<()> {
         let mut stream = partition.build_side_batch_stream;
         while let Some(batch) = stream.next().await {
