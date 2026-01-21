@@ -786,35 +786,30 @@ mod tests {
             },
             ..Default::default()
         };
-
-        let ctx = setup_context(Some(options), 10)?;
-
-        // 4. Iterate through data scenarios
-        // Note: We iterate by reference (&) now so we can reuse data for the next 'use_gpu' loop
-        for test_data in &test_data_vec {
+        let ctx = setup_context(Some(options.clone()), 10)?;
+        for test_data in test_data_vec {
             let left_partitions = test_data.clone();
-            let right_partitions = test_data.clone();
+            let right_partitions = test_data;
 
-            let mem_table_left: Arc<dyn TableProvider> =
-                Arc::new(MemTable::try_new(Arc::clone(&schema), left_partitions)?);
-            let mem_table_right: Arc<dyn TableProvider> =
-                Arc::new(MemTable::try_new(Arc::clone(&schema), right_partitions)?);
+            let mem_table_left: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+                Arc::clone(&schema),
+                left_partitions.clone(),
+            )?);
+            let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+                Arc::clone(&schema),
+                right_partitions.clone(),
+            )?);
 
             ctx.deregister_table("L")?;
             ctx.deregister_table("R")?;
-            ctx.register_table("L", mem_table_left)?;
-            ctx.register_table("R", mem_table_right)?;
+            ctx.register_table("L", Arc::clone(&mem_table_left))?;
+            ctx.register_table("R", Arc::clone(&mem_table_right))?;
 
             let sql = "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id";
             let df = ctx.sql(sql).await?;
             let result_batches = df.collect().await?;
             for result_batch in result_batches {
-                assert_eq!(
-                    result_batch.num_rows(),
-                    0,
-                    "Failed assertion with use_gpu={}",
-                    use_gpu
-                );
+                assert_eq!(result_batch.num_rows(), 0);
             }
         }
 
