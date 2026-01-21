@@ -21,6 +21,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("srid", [None, 4326])
 @pytest.mark.parametrize(
     "geom",
     [
@@ -68,14 +69,25 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
         None,
     ],
 )
-def test_st_asewkb(eng, geom):
+def test_st_asewkb(eng, srid, geom):
     eng = eng.create_or_skip()
 
     if geom is not None:
+        shapely_geom = shapely.from_wkt(geom)
+        if srid is not None:
+            shapely_geom = shapely.set_srid(shapely_geom, srid)
+            write_srid = True
+        else:
+            write_srid = False
+
         expected = shapely.to_wkb(
-            shapely.from_wkt(geom), output_dimension=4, byte_order=1, flavor="extended"
+            shapely_geom,
+            output_dimension=4,
+            byte_order=1,
+            flavor="extended",
+            include_srid=write_srid,
         )
     else:
         expected = None
 
-    eng.assert_query_result(f"SELECT ST_AsEWKB({geom_or_null(geom)})", expected)
+    eng.assert_query_result(f"SELECT ST_AsEWKB({geom_or_null(geom, srid)})", expected)

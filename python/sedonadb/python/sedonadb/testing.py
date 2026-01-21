@@ -624,11 +624,15 @@ class PostGISSingleThread(PostGIS):
             cur.execute("SET max_parallel_workers_per_gather TO 0")
 
 
-def geom_or_null(arg):
+def geom_or_null(arg, srid=None):
     """Format SQL expression for a geometry object or NULL"""
     if arg is None:
         return "NULL"
-    return f"ST_GeomFromText('{arg}')"
+
+    if srid is None:
+        return f"ST_GeomFromText('{arg}')"
+    else:
+        return f"ST_GeomFromEWKT('SRID={srid};{arg}')"
 
 
 def geog_or_null(arg):
