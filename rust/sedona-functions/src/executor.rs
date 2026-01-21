@@ -358,9 +358,7 @@ impl IterGeo for ArrayRef {
             SedonaType::Wkb(_, _) => iter_wkb_binary(as_binary_array(self)?, func),
             SedonaType::WkbView(_, _) => iter_wkb_binary(as_binary_view_array(self)?, func),
             SedonaType::Arrow(DataType::Struct(fields))
-                if fields.len() == 2
-                    && fields[0].name() == "item"
-                    && fields[1].name() == "crs" =>
+                if fields.len() == 2 && fields[0].name() == "item" && fields[1].name() == "crs" =>
             {
                 let struct_array = as_struct_array(self)?;
                 let item_type = SedonaType::from_storage_field(&fields[0])?;
