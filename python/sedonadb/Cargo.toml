@@ -29,7 +29,6 @@ crate-type = ["cdylib"]
 default = ["mimalloc"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
-gpu = ["sedona/gpu"]
 
 [dependencies]
 adbc_core = { workspace = true }
