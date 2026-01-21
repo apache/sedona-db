@@ -16,11 +16,10 @@
 // under the License.
 
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
 
-use datafusion_execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
 use geo_index::rtree::distance::{EuclideanDistance, GeometryAccessor, HaversineDistance};
 use geo_types::Geometry;
+use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 
 use crate::evaluated_batch::EvaluatedBatch;
@@ -32,45 +31,39 @@ pub(crate) struct KnnComponents {
     /// Pre-allocated vector for geometry cache - lock-free access
     /// Indexed by rtree data index for O(1) access
     geometry_cache: Vec<OnceCell<Geometry<f64>>>,
-    /// Memory reservation to track geometry cache memory usage
-    _reservation: MemoryReservation,
+    /// Estimated memory usage for decoded geometries
+    estimated_memory_usage: usize,
 }
 
 impl KnnComponents {
     pub fn new(
         cache_size: usize,
         indexed_batches: &[EvaluatedBatch],
-        memory_pool: Arc<dyn MemoryPool>,
     ) -> datafusion_common::Result<Self> {
-        // Create memory consumer and reservation for geometry cache
-        let consumer = MemoryConsumer::new("SpatialJoinKnnGeometryCache");
-        let mut reservation = consumer.register(&memory_pool);
-
-        // Estimate maximum possible memory usage based on WKB sizes
-        let estimated_memory = Self::estimate_max_memory_usage(indexed_batches);
-        reservation.try_grow(estimated_memory)?;
-
         // Pre-allocate OnceCell vector
         let geometry_cache = (0..cache_size).map(|_| OnceCell::new()).collect();
-
-        Ok(Self {
-            euclidean_metric: EuclideanDistance,
-            haversine_metric: HaversineDistance::default(),
-            geometry_cache,
-            _reservation: reservation,
-        })
-    }
-
-    /// Estimate the maximum memory usage for decoded geometries based on WKB sizes
-    pub fn estimate_max_memory_usage(indexed_batches: &[EvaluatedBatch]) -> usize {
         let mut total_wkb_size = 0;
-
         for batch in indexed_batches {
             for wkb in batch.geom_array.wkbs().iter().flatten() {
                 total_wkb_size += wkb.buf().len();
             }
         }
-        total_wkb_size
+
+        Ok(Self {
+            euclidean_metric: EuclideanDistance,
+            haversine_metric: HaversineDistance::default(),
+            geometry_cache,
+            estimated_memory_usage: total_wkb_size,
+        })
+    }
+
+    /// Estimate the maximum memory usage for decoded geometries based on statistics
+    pub fn estimate_max_memory_usage(build_stats: &GeoStatistics) -> usize {
+        build_stats.total_size_bytes().unwrap_or(0) as usize
+    }
+
+    pub fn estimated_memory_usage(&self) -> usize {
+        self.estimated_memory_usage
     }
 }
 

@@ -174,6 +174,10 @@ impl IndexQueryResultRefiner for GeoRefiner {
         }
     }
 
+    fn estimate_max_memory_usage(&self, _build_stats: &GeoStatistics) -> usize {
+        0
+    }
+
     fn mem_usage(&self) -> usize {
         0
     }
