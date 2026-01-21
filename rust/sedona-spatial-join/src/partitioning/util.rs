@@ -63,6 +63,13 @@ pub(crate) fn bbox_to_geo_rect(bbox: &BoundingBox) -> Result<Option<Rect<f32>>> 
     }
 }
 
+/// Convert a [`Rect<f32>`] into a [`BoundingBox`].
+pub(crate) fn geo_rect_to_bbox(rect: &Rect<f32>) -> BoundingBox {
+    let min = rect.min();
+    let max = rect.max();
+    BoundingBox::xy((min.x as f64, max.x as f64), (min.y as f64, max.y as f64))
+}
+
 /// Creates a `Rect` from four coordinate values representing the bounding box.
 ///
 /// This is a convenience function that constructs a `geo::Rect` from individual

@@ -413,7 +413,7 @@ impl SpatialJoinStream {
             let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
             let geom_array = &probe_evaluated_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
-                analyzer.update_statistics(wkb, wkb.buf().len())?;
+                analyzer.update_statistics(wkb)?;
             }
             let stats = analyzer.finish();
             spatial_index.merge_probe_stats(stats);

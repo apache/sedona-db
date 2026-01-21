@@ -20,7 +20,9 @@ use sedona_geometry::bounding_box::BoundingBox;
 
 pub mod flat;
 pub mod kdb;
+pub(crate) mod partition_slots;
 pub mod rtree;
+pub mod stream_repartitioner;
 pub(crate) mod util;
 
 /// Spatial partitioning is different from traditional data partitioning such as hash partitioning.
