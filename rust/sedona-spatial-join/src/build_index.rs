@@ -46,6 +46,7 @@ pub async fn build_index(
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
+    seed: u64,
 ) -> Result<SpatialIndex> {
     let session_config = context.session_config();
     let sedona_options = session_config
@@ -72,7 +73,13 @@ pub async fn build_index(
     }
 
     let build_partitions = collector
-        .collect_all(build_streams, reservations, collect_metrics_vec, concurrent)
+        .collect_all(
+            build_streams,
+            reservations,
+            collect_metrics_vec,
+            concurrent,
+            seed,
+        )
         .await?;
 
     let contains_external_stream = build_partitions

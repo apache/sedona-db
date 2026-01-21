@@ -71,6 +71,18 @@ config_namespace! {
         /// Include tie-breakers in KNN join results when there are tied distances
         pub knn_include_tie_breakers: bool, default = false
 
+        /// Maximum number of sample bounding boxes collected from the index side for partitioning the
+        /// data when running out-of-core spatial join
+        pub max_index_side_bbox_samples: usize, default = 10000
+
+        /// Minimum number of sample bounding boxes collected from the index side for partitioning the
+        /// data when running out-of-core spatial join
+        pub min_index_side_bbox_samples: usize, default = 1000
+
+        /// Target sampling rate for sampling bounding boxes from the index side for partitioning the
+        /// data when running out-of-core spatial join
+        pub target_index_side_bbox_sampling_rate: f64, default = 0.01
+
         /// The minimum number of geometry pairs per chunk required to enable parallel
         /// refinement during the spatial join operation. When the refinement phase has
         /// fewer geometry pairs than this threshold, it will run sequentially instead

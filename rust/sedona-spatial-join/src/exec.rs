@@ -137,6 +137,8 @@ pub struct SpatialJoinExec {
     /// Indicates if this SpatialJoin was converted from a HashJoin
     /// When true, we preserve HashJoin's equivalence properties and partitioning
     converted_from_hash_join: bool,
+    /// A random seed for making random procedures in spatial join deterministic
+    seed: u64,
 }
 
 impl SpatialJoinExec {
@@ -178,6 +180,7 @@ impl SpatialJoinExec {
             filter.as_ref(),
             converted_from_hash_join,
         )?;
+        let seed = fastrand::u64(0..0xFFFF);
 
         Ok(SpatialJoinExec {
             left,
@@ -192,6 +195,7 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_index: Arc::new(Mutex::new(None)),
             converted_from_hash_join,
+            seed,
         })
     }
 
@@ -419,6 +423,7 @@ impl ExecutionPlan for SpatialJoinExec {
             cache: self.cache.clone(),
             once_async_spatial_index: Arc::new(Mutex::new(None)),
             converted_from_hash_join: self.converted_from_hash_join,
+            seed: self.seed,
         }))
     }
 
@@ -472,6 +477,7 @@ impl ExecutionPlan for SpatialJoinExec {
                                 self.join_type,
                                 probe_thread_count,
                                 self.metrics.clone(),
+                                self.seed,
                             ))
                         })?
                 };
@@ -563,6 +569,7 @@ impl SpatialJoinExec {
                         self.join_type,
                         probe_thread_count,
                         self.metrics.clone(),
+                        self.seed,
                     ))
                 })?
         };

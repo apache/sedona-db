@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::Result;
+use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{memory_pool::MemoryReservation, SendableRecordBatchStream};
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
@@ -37,7 +37,8 @@ use crate::{
     },
     index::SpatialIndexBuilder,
     operand_evaluator::{create_operand_evaluator, OperandEvaluator},
-    SpatialPredicate,
+    spatial_predicate::SpatialPredicate,
+    utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
 
 /// Safety buffer applied when pre-growing build-side reservations to leave headroom for
@@ -46,8 +47,18 @@ use crate::{
 const BUILD_SIDE_RESERVATION_BUFFER_RATIO: f64 = 0.20;
 
 pub(crate) struct BuildPartition {
+    pub num_rows: usize,
     pub build_side_batch_stream: SendableEvaluatedBatchStream,
     pub geo_statistics: GeoStatistics,
+
+    /// Subset of build-side bounding boxes kept for building partitioners (e.g. KDB partitioner)
+    /// when the indexed data cannot be fully loaded into memory.
+    pub bbox_samples: BoundingBoxSamples,
+
+    /// The estimated memory usage of building spatial index from all the data
+    /// collected in this partition. The estimated memory used by the global
+    /// spatial index will be the sum of these per-partition estimation.
+    pub estimated_spatial_index_memory_usage: usize,
 
     /// Memory reservation for tracking the memory usage of the build partition
     /// Cleared on `BuildPartition` drop
@@ -105,32 +116,60 @@ impl BuildSideBatchesCollector {
         }
     }
 
+    /// Collect build-side batches from the stream into a `BuildPartition`.
+    ///
+    /// This method grows the given memory reservation as if an in-memory spatial
+    /// index will be built for all collected batches. If the reservation cannot
+    /// be grown, batches are spilled to disk and the reservation is left at its
+    /// peak value.
+    ///
+    /// The reservation represents memory available for loading the spatial index.
+    /// Across all partitions, the sum of their reservations forms a soft memory
+    /// cap for subsequent spatial join operations. Reservations grown here are
+    /// not released until the spatial join operator completes.
     pub async fn collect(
         &self,
         mut stream: SendableEvaluatedBatchStream,
         mut reservation: MemoryReservation,
+        mut bbox_sampler: BoundingBoxSampler,
         metrics: &CollectBuildSideMetrics,
     ) -> Result<BuildPartition> {
         let mut in_mem_batches: Vec<EvaluatedBatch> = Vec::new();
+        let mut total_num_rows = 0;
+        let mut total_size_bytes = 0;
         let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
+
+        // Reserve memory for holding bbox samples. This should be a small reservation.
+        // We simply return error if the reservation cannot be fulfilled, since there's
+        // too little memory for the collector and proceeding will risk overshooting the
+        // memory limit.
+        reservation.try_grow(bbox_sampler.estimate_maximum_memory_usage())?;
 
         while let Some(evaluated_batch) = stream.next().await {
             let build_side_batch = evaluated_batch?;
             let _timer = metrics.time_taken.timer();
 
-            // Process the record batch and create a BuildSideBatch
             let geom_array = &build_side_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
-                analyzer.update_statistics(wkb)?;
+                let summary = sedona_geometry::analyze::analyze_geometry(wkb)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                if !summary.bbox.is_empty() {
+                    bbox_sampler.add_bbox(&summary.bbox);
+                }
+                analyzer.ingest_geometry_summary(&summary);
             }
 
+            let num_rows = build_side_batch.num_rows();
             let in_mem_size = build_side_batch.in_mem_size()?;
+            total_num_rows += num_rows;
+            total_size_bytes += in_mem_size;
+
             metrics.num_batches.add(1);
-            metrics.num_rows.add(build_side_batch.num_rows());
+            metrics.num_rows.add(num_rows);
             metrics.total_size_bytes.add(in_mem_size);
 
-            reservation.try_grow(in_mem_size)?;
             in_mem_batches.push(build_side_batch);
+            reservation.try_grow(in_mem_size)?;
         }
 
         let geo_statistics = analyzer.finish();
@@ -147,12 +186,19 @@ impl BuildSideBatchesCollector {
         let additional_reservation = extra_mem + buffer_bytes;
         reservation.try_grow(additional_reservation)?;
 
+        let build_side_batch_stream: SendableEvaluatedBatchStream = {
+            let schema = stream.schema();
+            Box::pin(InMemoryEvaluatedBatchStream::new(schema, in_mem_batches))
+        };
+
+        let estimated_spatial_index_memory_usage = total_size_bytes + extra_mem;
+
         Ok(BuildPartition {
-            build_side_batch_stream: Box::pin(InMemoryEvaluatedBatchStream::new(
-                stream.schema(),
-                in_mem_batches,
-            )),
+            num_rows: total_num_rows,
+            build_side_batch_stream,
             geo_statistics,
+            bbox_samples: bbox_sampler.into_samples(),
+            estimated_spatial_index_memory_usage,
             reservation,
         })
     }
@@ -163,16 +209,28 @@ impl BuildSideBatchesCollector {
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
         concurrent: bool,
+        seed: u64,
     ) -> Result<Vec<BuildPartition>> {
         if streams.is_empty() {
             return Ok(vec![]);
         }
 
+        assert_eq!(
+            streams.len(),
+            reservations.len(),
+            "each build stream must have a reservation"
+        );
+        assert_eq!(
+            streams.len(),
+            metrics_vec.len(),
+            "each build stream must have a metrics collector"
+        );
+
         if concurrent {
-            self.collect_all_concurrently(streams, reservations, metrics_vec)
+            self.collect_all_concurrently(streams, reservations, metrics_vec, seed)
                 .await
         } else {
-            self.collect_all_sequentially(streams, reservations, metrics_vec)
+            self.collect_all_sequentially(streams, reservations, metrics_vec, seed)
                 .await
         }
     }
@@ -182,8 +240,9 @@ impl BuildSideBatchesCollector {
         streams: Vec<SendableRecordBatchStream>,
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
+        seed: u64,
     ) -> Result<Vec<BuildPartition>> {
-        // Spawn a task for each stream to scan all streams concurrently
+        // Spawn task for each stream to scan all streams concurrently
         let mut join_set = JoinSet::new();
         for (partition_id, ((stream, metrics), reservation)) in streams
             .into_iter()
@@ -193,11 +252,18 @@ impl BuildSideBatchesCollector {
         {
             let collector = self.clone();
             let evaluator = Arc::clone(&self.evaluator);
+            let bbox_sampler = BoundingBoxSampler::try_new(
+                self.spatial_join_options.min_index_side_bbox_samples,
+                self.spatial_join_options.max_index_side_bbox_samples,
+                self.spatial_join_options
+                    .target_index_side_bbox_sampling_rate,
+                seed.wrapping_add(partition_id as u64),
+            )?;
             join_set.spawn(async move {
                 let evaluated_stream =
                     create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
                 let result = collector
-                    .collect(evaluated_stream, reservation, &metrics)
+                    .collect(evaluated_stream, reservation, bbox_sampler, &metrics)
                     .await;
                 (partition_id, result)
             });
@@ -224,17 +290,29 @@ impl BuildSideBatchesCollector {
         streams: Vec<SendableRecordBatchStream>,
         reservations: Vec<MemoryReservation>,
         metrics_vec: Vec<CollectBuildSideMetrics>,
+        seed: u64,
     ) -> Result<Vec<BuildPartition>> {
         // Collect partitions sequentially (for JNI/embedded contexts)
         let mut results = Vec::with_capacity(streams.len());
-        for ((stream, metrics), reservation) in
-            streams.into_iter().zip(metrics_vec).zip(reservations)
+        for (partition_id, ((stream, metrics), reservation)) in streams
+            .into_iter()
+            .zip(metrics_vec)
+            .zip(reservations)
+            .enumerate()
         {
             let evaluator = Arc::clone(&self.evaluator);
+            let bbox_sampler = BoundingBoxSampler::try_new(
+                self.spatial_join_options.min_index_side_bbox_samples,
+                self.spatial_join_options.max_index_side_bbox_samples,
+                self.spatial_join_options
+                    .target_index_side_bbox_sampling_rate,
+                seed.wrapping_add(partition_id as u64),
+            )?;
+
             let evaluated_stream =
                 create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
             let result = self
-                .collect(evaluated_stream, reservation, &metrics)
+                .collect(evaluated_stream, reservation, bbox_sampler, &metrics)
                 .await?;
             results.push(result);
         }
