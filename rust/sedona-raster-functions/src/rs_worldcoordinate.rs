@@ -18,10 +18,8 @@ use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, Float64Builder};
-use arrow_array::cast::AsArray;
-use arrow_array::types::Int64Type;
-use arrow_array::Array;
 use arrow_schema::DataType;
+use datafusion_common::cast::as_int64_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
@@ -142,22 +140,16 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         // Expand x and y coordinate parameters to arrays and cast to Int64
         let x_array = args[1].clone().cast_to(&DataType::Int64, None)?;
         let x_array = x_array.into_array(executor.num_iterations())?;
-        let x_array = x_array.as_primitive::<Int64Type>();
+        let x_array = as_int64_array(&x_array)?;
         let y_array = args[2].clone().cast_to(&DataType::Int64, None)?;
         let y_array = y_array.into_array(executor.num_iterations())?;
-        let y_array = y_array.as_primitive::<Int64Type>();
+        let y_array = as_int64_array(&y_array)?;
+        let mut x_iter = x_array.iter();
+        let mut y_iter = y_array.iter();
 
-        executor.execute_raster_void(|i, raster_opt| {
-            let x_opt = if x_array.is_null(i) {
-                None
-            } else {
-                Some(x_array.value(i))
-            };
-            let y_opt = if y_array.is_null(i) {
-                None
-            } else {
-                Some(y_array.value(i))
-            };
+        executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = x_iter.next().unwrap();
+            let y_opt = y_iter.next().unwrap();
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
@@ -209,22 +201,16 @@ impl SedonaScalarKernel for RsCoordinatePoint {
         // Expand x and y coordinate parameters to arrays and cast to Int64
         let x_array = args[1].clone().cast_to(&DataType::Int64, None)?;
         let x_array = x_array.into_array(executor.num_iterations())?;
-        let x_array = x_array.as_primitive::<Int64Type>();
+        let x_array = as_int64_array(&x_array)?;
         let y_array = args[2].clone().cast_to(&DataType::Int64, None)?;
         let y_array = y_array.into_array(executor.num_iterations())?;
-        let y_array = y_array.as_primitive::<Int64Type>();
+        let y_array = as_int64_array(&y_array)?;
+        let mut x_iter = x_array.iter();
+        let mut y_iter = y_array.iter();
 
-        executor.execute_raster_void(|i, raster_opt| {
-            let x_opt = if x_array.is_null(i) {
-                None
-            } else {
-                Some(x_array.value(i))
-            };
-            let y_opt = if y_array.is_null(i) {
-                None
-            } else {
-                Some(y_array.value(i))
-            };
+        executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = x_iter.next().unwrap();
+            let y_opt = y_iter.next().unwrap();
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
@@ -245,6 +231,7 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::Array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};

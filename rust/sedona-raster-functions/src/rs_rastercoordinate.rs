@@ -18,10 +18,8 @@ use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, Int64Builder};
-use arrow_array::cast::AsArray;
-use arrow_array::types::Float64Type;
-use arrow_array::Array;
 use arrow_schema::DataType;
+use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
@@ -144,22 +142,16 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         // Expand world x and y coordinate parameters to arrays and cast to Float64
         let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
         let world_x_array = world_x_array.into_array(executor.num_iterations())?;
-        let world_x_array = world_x_array.as_primitive::<Float64Type>();
+        let world_x_array = as_float64_array(&world_x_array)?;
         let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
         let world_y_array = world_y_array.into_array(executor.num_iterations())?;
-        let world_y_array = world_y_array.as_primitive::<Float64Type>();
+        let world_y_array = as_float64_array(&world_y_array)?;
+        let mut world_x_iter = world_x_array.iter();
+        let mut world_y_iter = world_y_array.iter();
 
-        executor.execute_raster_void(|i, raster_opt| {
-            let x_opt = if world_x_array.is_null(i) {
-                None
-            } else {
-                Some(world_x_array.value(i))
-            };
-            let y_opt = if world_y_array.is_null(i) {
-                None
-            } else {
-                Some(world_y_array.value(i))
-            };
+        executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = world_x_iter.next().unwrap();
+            let y_opt = world_y_iter.next().unwrap();
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
@@ -211,22 +203,16 @@ impl SedonaScalarKernel for RsCoordinatePoint {
         // Expand world x and y coordinate parameters to arrays and cast to Float64
         let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
         let world_x_array = world_x_array.into_array(executor.num_iterations())?;
-        let world_x_array = world_x_array.as_primitive::<Float64Type>();
+        let world_x_array = as_float64_array(&world_x_array)?;
         let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
         let world_y_array = world_y_array.into_array(executor.num_iterations())?;
-        let world_y_array = world_y_array.as_primitive::<Float64Type>();
+        let world_y_array = as_float64_array(&world_y_array)?;
+        let mut world_x_iter = world_x_array.iter();
+        let mut world_y_iter = world_y_array.iter();
 
-        executor.execute_raster_void(|i, raster_opt| {
-            let x_opt = if world_x_array.is_null(i) {
-                None
-            } else {
-                Some(world_x_array.value(i))
-            };
-            let y_opt = if world_y_array.is_null(i) {
-                None
-            } else {
-                Some(world_y_array.value(i))
-            };
+        executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = world_x_iter.next().unwrap();
+            let y_opt = world_y_iter.next().unwrap();
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(world_x), Some(world_y)) => {
