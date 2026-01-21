@@ -21,15 +21,20 @@ use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
     error::Result,
-    exec_err, ScalarValue,
+    exec_datafusion_err, exec_err, ScalarValue,
 };
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::GeometryTrait;
+use geo_traits::{
+    GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait, MultiPointTrait,
+    MultiPolygonTrait, PointTrait, PolygonTrait,
+};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
+use sedona_geometry::wkb_factory::{
+    write_wkb_coord_trait, write_wkb_empty_point, WKB_MIN_PROBABLE_BYTES,
+};
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::{Dimension, Wkb};
 
@@ -186,18 +191,28 @@ fn write_geometry(geom: &Wkb, srid: Option<u32>, buf: &mut impl Write) -> Result
     match geom.as_type() {
         geo_traits::GeometryType::Point(p) => write_point(p, srid, buf),
         geo_traits::GeometryType::LineString(ls) => write_linestring(ls, srid, buf),
-        geo_traits::GeometryType::Polygon(poly) => todo!(),
-        geo_traits::GeometryType::MultiPoint(mp) => todo!(),
-        geo_traits::GeometryType::MultiLineString(mls) => todo!(),
-        geo_traits::GeometryType::MultiPolygon(mpoly) => todo!(),
-        geo_traits::GeometryType::GeometryCollection(gc) => todo!(),
+        geo_traits::GeometryType::Polygon(poly) => write_polygon(poly, srid, buf),
+        geo_traits::GeometryType::MultiPoint(mp) => write_multipoint(mp, srid, buf),
+        geo_traits::GeometryType::MultiLineString(mls) => write_multilinestring(mls, srid, buf),
+        geo_traits::GeometryType::MultiPolygon(mpoly) => write_multipolygon(mpoly, srid, buf),
+        geo_traits::GeometryType::GeometryCollection(gc) => write_geometrycollection(gc, srid, buf),
         _ => exec_err!("Unsupported geometry type in ST_AsEWKB()"),
     }
 }
 
 fn write_point(geom: &wkb::reader::Point, srid: Option<u32>, buf: &mut impl Write) -> Result<()> {
     write_geometry_type_and_srid(1, geom.dimension(), srid, buf)?;
-    buf.write_all(geom.coord_slice())?;
+    match geom.byte_order() {
+        wkb::Endianness::BigEndian => match geom.coord() {
+            Some(c) => {
+                write_wkb_coord_trait(buf, &c).map_err(|e| exec_datafusion_err!("write err {e}"))?
+            }
+            None => write_wkb_empty_point(buf, geom.dim())
+                .map_err(|e| exec_datafusion_err!("write err {e}"))?,
+        },
+        wkb::Endianness::LittleEndian => buf.write_all(geom.coord_slice())?,
+    }
+
     Ok(())
 }
 
@@ -207,7 +222,118 @@ fn write_linestring(
     buf: &mut impl Write,
 ) -> Result<()> {
     write_geometry_type_and_srid(2, geom.dimension(), srid, buf)?;
-    buf.write_all(geom.coords_slice())?;
+    let num_coords = geom.num_coords() as u32;
+    buf.write_all(&num_coords.to_le_bytes())?;
+    match geom.byte_order() {
+        wkb::Endianness::BigEndian => {
+            for c in geom.coords() {
+                write_wkb_coord_trait(buf, &c)
+                    .map_err(|e| exec_datafusion_err!("write err {e}"))?;
+            }
+        }
+        wkb::Endianness::LittleEndian => buf.write_all(geom.coords_slice())?,
+    }
+
+    Ok(())
+}
+
+fn write_linearring(geom: &wkb::reader::LinearRing, buf: &mut impl Write) -> Result<()> {
+    let num_coords = geom.num_coords() as u32;
+    buf.write_all(&num_coords.to_le_bytes())?;
+    match geom.byte_order() {
+        wkb::Endianness::BigEndian => {
+            for c in geom.coords() {
+                write_wkb_coord_trait(buf, &c)
+                    .map_err(|e| exec_datafusion_err!("write err {e}"))?;
+            }
+        }
+        wkb::Endianness::LittleEndian => buf.write_all(geom.coords_slice())?,
+    }
+
+    Ok(())
+}
+
+fn write_polygon(
+    geom: &wkb::reader::Polygon,
+    srid: Option<u32>,
+    buf: &mut impl Write,
+) -> Result<()> {
+    write_geometry_type_and_srid(3, geom.dimension(), srid, buf)?;
+    let num_rings = geom.num_interiors() as u32 + geom.exterior().is_some() as u32;
+    buf.write_all(&num_rings.to_le_bytes())?;
+
+    if let Some(exterior) = geom.exterior() {
+        write_linearring(exterior, buf)?;
+    }
+
+    for interior in geom.interiors() {
+        write_linearring(interior, buf)?;
+    }
+
+    Ok(())
+}
+
+fn write_multipoint(
+    geom: &wkb::reader::MultiPoint,
+    srid: Option<u32>,
+    buf: &mut impl Write,
+) -> Result<()> {
+    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_points();
+    buf.write_all(&num_children.to_le_bytes())?;
+
+    for child in geom.points() {
+        write_point(&child, None, buf)?;
+    }
+
+    Ok(())
+}
+
+fn write_multilinestring(
+    geom: &wkb::reader::MultiLineString,
+    srid: Option<u32>,
+    buf: &mut impl Write,
+) -> Result<()> {
+    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_line_strings();
+    buf.write_all(&num_children.to_le_bytes())?;
+
+    for child in geom.line_strings() {
+        write_linestring(child, None, buf)?;
+    }
+
+    Ok(())
+}
+
+fn write_multipolygon(
+    geom: &wkb::reader::MultiPolygon,
+    srid: Option<u32>,
+    buf: &mut impl Write,
+) -> Result<()> {
+    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_polygons();
+    buf.write_all(&num_children.to_le_bytes())?;
+
+    for child in geom.polygons() {
+        write_polygon(child, None, buf)?;
+    }
+
+    Ok(())
+}
+
+fn write_geometrycollection(
+    geom: &wkb::reader::GeometryCollection,
+    srid: Option<u32>,
+    buf: &mut impl Write,
+) -> Result<()> {
+    write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
+    let num_children = geom.num_geometries();
+    buf.write_all(&num_children.to_le_bytes())?;
+
+    for child in geom.geometries() {
+        write_geometry(child, None, buf)?;
+    }
+
     Ok(())
 }
 
