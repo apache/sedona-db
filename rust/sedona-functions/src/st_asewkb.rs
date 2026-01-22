@@ -35,7 +35,7 @@ use crate::executor::WkbExecutor;
 
 /// ST_AsEWKB() scalar UDF implementation
 ///
-/// An implementation of WKB writing using GeoRust's wkt crate.
+/// An implementation of EWKB writing using Sedona's geometry EWKB/WKB facilities.
 pub fn st_asewkb_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_asewkb",
