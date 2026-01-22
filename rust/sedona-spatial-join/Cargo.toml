@@ -100,3 +100,8 @@ harness = false
 name = "external_evaluated_batch_stream"
 path = "bench/evaluated_batch/external_evaluated_batch_stream.rs"
 harness = false
+
+[[bench]]
+name = "stream_repartitioner"
+path = "bench/partitioning/stream_repartitioner.rs"
+harness = false

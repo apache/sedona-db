@@ -27,7 +27,7 @@ use datafusion_common::Result;
 
 use crate::evaluated_batch::{evaluated_batch_stream::EvaluatedBatchStream, EvaluatedBatch};
 
-pub(crate) struct InMemoryEvaluatedBatchStream {
+pub struct InMemoryEvaluatedBatchStream {
     schema: SchemaRef,
     iter: IntoIter<EvaluatedBatch>,
 }

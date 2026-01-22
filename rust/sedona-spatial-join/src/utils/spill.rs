@@ -39,7 +39,7 @@ pub(crate) struct RecordBatchSpillWriter {
     in_progress_file: RefCountedTempFile,
     writer: StreamWriter<File>,
     metrics: SpillMetrics,
-    batch_size_threshold: Option<usize>,
+    batch_in_memory_size_threshold: Option<usize>,
     gc_view_arrays: bool,
 }
 
@@ -50,7 +50,7 @@ impl RecordBatchSpillWriter {
         request_description: &str,
         compression: SpillCompression,
         metrics: SpillMetrics,
-        batch_size_threshold: Option<usize>,
+        batch_in_memory_size_threshold: Option<usize>,
     ) -> Result<Self> {
         let in_progress_file = env.disk_manager.create_tmp_file(request_description)?;
         let file = File::create(in_progress_file.path())?;
@@ -67,7 +67,7 @@ impl RecordBatchSpillWriter {
             in_progress_file,
             writer,
             metrics,
-            batch_size_threshold,
+            batch_in_memory_size_threshold,
             gc_view_arrays,
         })
     }
@@ -101,7 +101,7 @@ impl RecordBatchSpillWriter {
     }
 
     fn calculate_rows_per_split(&self, batch: &RecordBatch, num_rows: usize) -> Result<usize> {
-        let Some(threshold) = self.batch_size_threshold else {
+        let Some(threshold) = self.batch_in_memory_size_threshold else {
             return Ok(num_rows);
         };
         if threshold == 0 {

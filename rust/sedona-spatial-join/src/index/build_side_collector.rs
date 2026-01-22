@@ -103,7 +103,7 @@ impl BuildSideBatchesCollector {
             // Process the record batch and create a BuildSideBatch
             let geom_array = &build_side_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
-                analyzer.update_statistics(wkb, wkb.buf().len())?;
+                analyzer.update_statistics(wkb)?;
             }
 
             let in_mem_size = build_side_batch.in_mem_size()?;
