@@ -280,7 +280,7 @@ mod test {
         }
     }
 
-    const ROUNDTRIP_CASES: [&str; 56] = [
+    const ROUNDTRIP_CASES: [&str; 60] = [
         // XY dimensions
         "POINT(1 2)",
         "LINESTRING(1 2,3 4,5 6)",
@@ -289,6 +289,7 @@ mod test {
         "MULTILINESTRING((1 2,3 4),(5 6,7 8))",
         "MULTIPOLYGON(((0 1,2 0,2 3,0 3,0 1)))",
         "GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(3 4,5 6))",
+        "GEOMETRYCOLLECTION(GEOMETRYCOLLECTION(POINT(1 2)))",
         // XYZ dimensions
         "POINT Z(1 2 3)",
         "LINESTRING Z(1 2 3,4 5 6)",
@@ -297,6 +298,7 @@ mod test {
         "MULTILINESTRING Z((1 2 3,4 5 6),(7 8 9,10 11 12))",
         "MULTIPOLYGON Z(((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2)))",
         "GEOMETRYCOLLECTION Z(POINT Z(1 2 3))",
+        "GEOMETRYCOLLECTION Z(GEOMETRYCOLLECTION Z(POINT Z(1 2 3)))",
         // XYM dimensions
         "POINT M(1 2 3)",
         "LINESTRING M(1 2 3,4 5 6)",
@@ -305,6 +307,7 @@ mod test {
         "MULTILINESTRING M((1 2 3,4 5 6),(7 8 9,10 11 12))",
         "MULTIPOLYGON M(((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2)))",
         "GEOMETRYCOLLECTION M(POINT M(1 2 3))",
+        "GEOMETRYCOLLECTION M(GEOMETRYCOLLECTION M(POINT M(1 2 3)))",
         // XYZM dimensions
         "POINT ZM(1 2 3 4)",
         "LINESTRING ZM(1 2 3 4,5 6 7 8)",
@@ -313,6 +316,7 @@ mod test {
         "MULTILINESTRING ZM((1 2 3 4,5 6 7 8),(9 10 11 12,13 14 15 16))",
         "MULTIPOLYGON ZM(((0 1 2 3,4 0 2 3,4 5 2 3,0 5 2 3,0 1 2 3)))",
         "GEOMETRYCOLLECTION ZM(POINT ZM(1 2 3 4))",
+        "GEOMETRYCOLLECTION ZM(GEOMETRYCOLLECTION ZM(POINT ZM(1 2 3 4)))",
         // Empty geometries
         "POINT EMPTY",
         "LINESTRING EMPTY",
