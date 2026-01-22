@@ -23,10 +23,7 @@ use geo_traits::{
 };
 use wkb::reader::Wkb;
 
-use crate::{
-    error::SedonaGeometryError,
-    wkb_factory::{write_wkb_coord_trait, write_wkb_empty_point},
-};
+use crate::{error::SedonaGeometryError, wkb_factory::write_wkb_coord_trait};
 
 const EWKB_Z_BIT: u32 = 0x80000000;
 const EWKB_M_BIT: u32 = 0x40000000;
@@ -64,7 +61,11 @@ fn write_ewkb_point(
     match geom.byte_order() {
         wkb::Endianness::BigEndian => match geom.coord() {
             Some(c) => write_wkb_coord_trait(buf, &c)?,
-            None => write_wkb_empty_point(buf, geom.dim())?,
+            None => {
+                for _ in 0..geom.dim().size() {
+                    buf.write_all(&f64::NAN.to_le_bytes())?;
+                }
+            }
         },
         wkb::Endianness::LittleEndian => buf.write_all(geom.coord_slice())?,
     }
@@ -249,8 +250,16 @@ mod test {
             write_ewkb_geometry(&wkb_geom, Some(4326), &mut ewkb_with_srid).unwrap();
 
             // Check that the ewkbs have the correct number of bytes
-            assert_eq!(ewkb_no_srid.len(), iso_wkb.len());
-            assert_eq!(ewkb_with_srid.len(), ewkb_no_srid.len() + size_of::<u32>());
+            assert_eq!(
+                ewkb_no_srid.len(),
+                iso_wkb.len(),
+                "incorrect number of bytes for case {wkt_str} without srid"
+            );
+            assert_eq!(
+                ewkb_with_srid.len(),
+                ewkb_no_srid.len() + size_of::<u32>(),
+                "incorrect number of bytes for case {wkt_str} with srid"
+            );
 
             // Check the rendered WKT of the no srid EWKB
             let wkb_geom_roundtrip_no_srid = wkb::reader::read_wkb(&ewkb_no_srid).unwrap();
@@ -262,45 +271,48 @@ mod test {
             // Check the rendered WKT of the srid EWKB
             let wkb_geom_roundtrip_with_srid = wkb::reader::read_wkb(&ewkb_with_srid).unwrap();
             let mut wkt_roundtrip_with_srid = String::new();
-            wkt::to_wkt::write_geometry(&mut wkt_roundtrip_with_srid, &wkb_geom_roundtrip_with_srid)
-                .unwrap();
+            wkt::to_wkt::write_geometry(
+                &mut wkt_roundtrip_with_srid,
+                &wkb_geom_roundtrip_with_srid,
+            )
+            .unwrap();
             assert_eq!(wkt_roundtrip_with_srid, wkt_str);
         }
     }
 
     const ROUNDTRIP_CASES: [&str; 35] = [
         // XY dimensions
-        "POINT (1 2)",
-        "LINESTRING (1 2, 3 4, 5 6)",
-        "POLYGON ((0 1, 2 0, 2 3, 0 3, 0 1))",
-        "MULTIPOINT ((1 2), (3 4))",
-        "MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))",
-        "MULTIPOLYGON (((0 1, 2 0, 2 3, 0 3, 0 1)))",
-        "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))",
+        "POINT(1 2)",
+        "LINESTRING(1 2,3 4,5 6)",
+        "POLYGON((0 1,2 0,2 3,0 3,0 1))",
+        "MULTIPOINT((1 2),(3 4))",
+        "MULTILINESTRING((1 2,3 4),(5 6,7 8))",
+        "MULTIPOLYGON(((0 1,2 0,2 3,0 3,0 1)))",
+        "GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(3 4,5 6))",
         // XYZ dimensions
-        "POINT Z (1 2 3)",
-        "LINESTRING Z (1 2 3, 4 5 6)",
-        "POLYGON Z ((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2))",
-        "MULTIPOINT Z ((1 2 3), (4 5 6))",
-        "MULTILINESTRING Z ((1 2 3, 4 5 6), (7 8 9, 10 11 12))",
-        "MULTIPOLYGON Z (((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2)))",
-        "GEOMETRYCOLLECTION Z (POINT Z (1 2 3))",
+        "POINT Z(1 2 3)",
+        "LINESTRING Z(1 2 3,4 5 6)",
+        "POLYGON Z((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2))",
+        "MULTIPOINT Z((1 2 3),(4 5 6))",
+        "MULTILINESTRING Z((1 2 3,4 5 6),(7 8 9,10 11 12))",
+        "MULTIPOLYGON Z(((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2)))",
+        "GEOMETRYCOLLECTION Z(POINT Z(1 2 3))",
         // XYM dimensions
-        "POINT M (1 2 3)",
-        "LINESTRING M (1 2 3, 4 5 6)",
-        "POLYGON M ((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2))",
-        "MULTIPOINT M ((1 2 3), (4 5 6))",
-        "MULTILINESTRING M ((1 2 3, 4 5 6), (7 8 9, 10 11 12))",
-        "MULTIPOLYGON M (((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2)))",
-        "GEOMETRYCOLLECTION M (POINT M (1 2 3))",
+        "POINT M(1 2 3)",
+        "LINESTRING M(1 2 3,4 5 6)",
+        "POLYGON M((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2))",
+        "MULTIPOINT M((1 2 3),(4 5 6))",
+        "MULTILINESTRING M((1 2 3,4 5 6),(7 8 9,10 11 12))",
+        "MULTIPOLYGON M(((0 1 2,3 0 2,3 4 2,0 4 2,0 1 2)))",
+        "GEOMETRYCOLLECTION M(POINT M(1 2 3))",
         // XYZM dimensions
-        "POINT ZM (1 2 3 4)",
-        "LINESTRING ZM (1 2 3 4, 5 6 7 8)",
-        "POLYGON ZM ((0 1 2 3, 4 0 2 3, 4 5 2 3, 0 5 2 3, 0 1 2 3))",
-        "MULTIPOINT ZM ((1 2 3 4), (5 6 7 8))",
-        "MULTILINESTRING ZM ((1 2 3 4, 5 6 7 8), (9 10 11 12, 13 14 15 16))",
-        "MULTIPOLYGON ZM (((0 1 2 3, 4 0 2 3, 4 5 2 3, 0 5 2 3, 0 1 2 3)))",
-        "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4))",
+        "POINT ZM(1 2 3 4)",
+        "LINESTRING ZM(1 2 3 4,5 6 7 8)",
+        "POLYGON ZM((0 1 2 3,4 0 2 3,4 5 2 3,0 5 2 3,0 1 2 3))",
+        "MULTIPOINT ZM((1 2 3 4),(5 6 7 8))",
+        "MULTILINESTRING ZM((1 2 3 4,5 6 7 8),(9 10 11 12,13 14 15 16))",
+        "MULTIPOLYGON ZM(((0 1 2 3,4 0 2 3,4 5 2 3,0 5 2 3,0 1 2 3)))",
+        "GEOMETRYCOLLECTION ZM(POINT ZM(1 2 3 4))",
         // Empty geometries
         "POINT EMPTY",
         "LINESTRING EMPTY",
