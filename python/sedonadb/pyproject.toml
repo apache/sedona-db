@@ -38,9 +38,7 @@ test = [
     "duckdb",
     "geoarrow-pyarrow",
     "geopandas",
-    # Short term workaround for Pandas 3.0 until this is fixed
-    # https://github.com/apache/sedona-db/issues/536
-    "pandas<3",
+    "pandas",
     "polars",
     "pytest",
 ]
