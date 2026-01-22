@@ -18,7 +18,7 @@ use sedona_expr::scalar_udf::ScalarKernelRef;
 
 use crate::binary_predicate;
 
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
+pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     vec![
         ("st_equals", binary_predicate::st_equals_impl()),
         ("st_intersects", binary_predicate::st_intersects_impl()),

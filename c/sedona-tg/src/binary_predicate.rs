@@ -20,49 +20,52 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{executor::TgGeomExecutor, tg};
 
 /// ST_Equals() implementation using tg
-pub fn st_equals_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Equals>::default())
+pub fn st_equals_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Equals>::default())
 }
 
 /// ST_Intersects() implementation using tg
-pub fn st_intersects_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Intersects>::default())
+pub fn st_intersects_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Intersects>::default())
 }
 
 /// ST_Disjoint() implementation using tg
-pub fn st_disjoint_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Disjoint>::default())
+pub fn st_disjoint_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Disjoint>::default())
 }
 
 /// ST_Contains() implementation using tg
-pub fn st_contains_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Contains>::default())
+pub fn st_contains_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Contains>::default())
 }
 
 /// ST_Within() implementation using tg
-pub fn st_within_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Within>::default())
+pub fn st_within_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Within>::default())
 }
 
 /// ST_Covers() implementation using tg
-pub fn st_covers_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Covers>::default())
+pub fn st_covers_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Covers>::default())
 }
 
 /// ST_CoveredBy() implementation using tg
-pub fn st_covered_by_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::CoveredBy>::default())
+pub fn st_covered_by_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::CoveredBy>::default())
 }
 
 /// ST_Touches() implementation using tg
-pub fn st_touches_impl() -> ScalarKernelRef {
-    Arc::new(TgPredicate::<tg::Touches>::default())
+pub fn st_touches_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(TgPredicate::<tg::Touches>::default())
 }
 
 #[derive(Debug, Default)]
@@ -104,8 +107,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> SedonaScalarKernel for TgPredicate<O
 mod tests {
     use arrow_array::{create_array, ArrayRef};
     use datafusion_common::scalar::ScalarValue;
+    use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         create::{create_array, create_scalar},
         testers::ScalarUdfTester,
@@ -113,13 +117,17 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn scalar_scalar() {
+    #[rstest]
+    fn scalar_scalar(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         tester.assert_return_type(DataType::Boolean);
 
-        let polygon_scalar = create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
+        let polygon_scalar = create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &sedona_type);
 
         // Check something that intersects with both argument orders
         let result = tester
@@ -161,17 +169,22 @@ mod tests {
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
     }
 
-    #[test]
-    fn scalar_array() {
+    #[rstest]
+    fn array_scalar(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         tester.assert_return_type(DataType::Boolean);
 
         let point_array = create_array(
             &[Some("POINT (0.25 0.25)"), Some("POINT (10 10)"), None],
-            &WKB_GEOMETRY,
+            &sedona_type.clone(),
         );
-        let polygon_scalar = create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &WKB_GEOMETRY);
+        let polygon_scalar =
+            create_scalar(Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"), &sedona_type.clone());
 
         // Array, Scalar -> Array
         let expected: ArrayRef = create_array!(Boolean, [Some(true), Some(false), None]);
@@ -189,10 +202,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn array_array() {
+    #[rstest]
+    fn array_array(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY, WKB_GEOMETRY]);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         tester.assert_return_type(DataType::Boolean);
 
         let point_array = create_array(
@@ -202,7 +219,7 @@ mod tests {
                 None,
                 Some("POINT (0.25 0.25)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let polygon_array = create_array(
             &[
@@ -211,7 +228,7 @@ mod tests {
                 Some("POLYGON ((0 0, 1 0, 0 1, 0 0))"),
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         // Array, Array -> Array
