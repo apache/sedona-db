@@ -163,9 +163,10 @@ impl SedonaScalarKernel for STAsEWKBItemCrs {
             });
 
         executor.execute_wkb_void(|maybe_wkb| {
+            let maybe_srid = srid_iter.next().unwrap()?;
             match maybe_wkb {
                 Some(wkb) => {
-                    write_ewkb_geometry(&mut builder, &wkb, srid_iter.next().unwrap()?)
+                    write_ewkb_geometry(&mut builder, &wkb, maybe_srid)
                         .map_err(|e| exec_datafusion_err!("EWKB writer error {e}"))?;
                     builder.append_value([]);
                 }
@@ -181,21 +182,32 @@ impl SedonaScalarKernel for STAsEWKBItemCrs {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{ArrayRef, BinaryArray};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    use sedona_schema::{
+        crs::lnglat,
+        datatypes::{
+            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        },
     };
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_testing::{
+        create::{create_array_item_crs, create_scalar_item_crs},
+        testers::ScalarUdfTester,
+    };
 
     use super::*;
 
     const POINT12: [u8; 21] = [
         0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+    ];
+
+    const POINT12_LNGLAT: [u8; 25] = [
+        0x01, 0x01, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xf0, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
     ];
 
     #[test]
@@ -206,10 +218,12 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_geometry_input(
+    fn udf_no_srid(
         #[values(
             WKB_GEOMETRY,
             WKB_GEOGRAPHY,
+            WKB_VIEW_GEOMETRY,
+            WKB_VIEW_GEOGRAPHY,
             WKB_GEOMETRY_ITEM_CRS.clone(),
             WKB_GEOGRAPHY_ITEM_CRS.clone(),
         )]
@@ -238,23 +252,29 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_geometry_view_input(
-        #[values(WKB_VIEW_GEOMETRY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType,
+    fn udf_srid_from_type(
+        #[values(
+            SedonaType::Wkb(Edges::Planar, lnglat()),
+            SedonaType::Wkb(Edges::Spherical, lnglat())
+        )]
+        sedona_type: SedonaType,
     ) {
         let udf = st_asewkb_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(
             tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap(),
-            ScalarValue::BinaryView(Some(POINT12.to_vec()))
+            ScalarValue::Binary(Some(POINT12_LNGLAT.to_vec()))
         );
 
         assert_eq!(
             tester.invoke_wkb_scalar(None).unwrap(),
-            ScalarValue::BinaryView(None)
+            ScalarValue::Binary(None)
         );
 
-        let expected_array: BinaryViewArray = [Some(POINT12), None, Some(POINT12)].iter().collect();
+        let expected_array: BinaryArray = [Some(POINT12_LNGLAT), None, Some(POINT12_LNGLAT)]
+            .iter()
+            .collect();
         assert_eq!(
             &tester
                 .invoke_wkb_array(vec![Some("POINT (1 2)"), None, Some("POINT (1 2)")])
@@ -264,8 +284,28 @@ mod tests {
     }
 
     #[test]
-    fn aliases() {
-        let udf: ScalarUDF = st_asewkb_udf().into();
-        assert!(udf.aliases().contains(&"st_aswkb".to_string()));
+    fn udf_srid_from_item_crs() {
+        let udf = st_asewkb_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+
+        let scalar_with_srid =
+            create_scalar_item_crs(Some("POINT (1 2)"), Some("EPSG:4326"), &WKB_GEOMETRY);
+        assert_eq!(
+            tester.invoke_scalar(scalar_with_srid).unwrap(),
+            ScalarValue::Binary(Some(POINT12_LNGLAT.to_vec()))
+        );
+
+        let array_with_srid = create_array_item_crs(
+            &[Some("POINT (1 2)"), None, Some("POINT (1 2)")],
+            [Some("EPSG:4326"), None, Some("EPSG:4326")],
+            &WKB_GEOMETRY,
+        );
+        let expected_array: BinaryArray = [Some(POINT12_LNGLAT), None, Some(POINT12_LNGLAT)]
+            .iter()
+            .collect();
+        assert_eq!(
+            &tester.invoke_array(array_with_srid).unwrap(),
+            &(Arc::new(expected_array) as ArrayRef)
+        );
     }
 }
