@@ -16,15 +16,19 @@
 // under the License.
 
 use arrow_array::RecordBatch;
+use arrow_schema::SchemaRef;
+use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
 use geo::Rect;
 use wkb::reader::Wkb;
 
-use crate::operand_evaluator::EvaluatedGeometryArray;
+use crate::{
+    operand_evaluator::EvaluatedGeometryArray, utils::arrow_utils::get_record_batch_memory_size,
+};
 
 /// EvaluatedBatch contains the original record batch from the input stream and the evaluated
 /// geometry array.
-pub(crate) struct EvaluatedBatch {
+pub struct EvaluatedBatch {
     /// Original record batch polled from the stream
     pub batch: RecordBatch,
     /// Evaluated geometry array, containing the geometry array containing geometries to be joined,
@@ -34,12 +38,18 @@ pub(crate) struct EvaluatedBatch {
 }
 
 impl EvaluatedBatch {
-    pub fn in_mem_size(&self) -> usize {
+    pub fn in_mem_size(&self) -> Result<usize> {
         // NOTE: sometimes `geom_array` will reuse the memory of `batch`, especially when
         // the expression for evaluating the geometry is a simple column reference. In this case,
         // the in_mem_size will be overestimated. It is a conservative estimation so there's no risk
         // of running out of memory because of underestimation.
-        self.batch.get_array_memory_size() + self.geom_array.in_mem_size()
+        let record_batch_size = get_record_batch_memory_size(&self.batch)?;
+        let geom_array_size = self.geom_array.in_mem_size()?;
+        Ok(record_batch_size + geom_array_size)
+    }
+
+    pub fn schema(&self) -> SchemaRef {
+        self.batch.schema()
     }
 
     pub fn num_rows(&self) -> usize {
@@ -60,4 +70,5 @@ impl EvaluatedBatch {
     }
 }
 
-pub(crate) mod evaluated_batch_stream;
+pub mod evaluated_batch_stream;
+pub mod spill;

@@ -129,11 +129,12 @@ impl SpatialIndexBuilder {
     ///
     /// This method accumulates geometry batches that will be used to build the spatial index.
     /// Each batch contains processed geometry data along with memory usage information.
-    pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) {
-        let in_mem_size = indexed_batch.in_mem_size();
+    pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        let in_mem_size = indexed_batch.in_mem_size()?;
         self.indexed_batches.push(indexed_batch);
         self.reservation.grow(in_mem_size);
         self.metrics.build_mem_used.add(in_mem_size);
+        Ok(())
     }
 
     pub fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
@@ -248,7 +249,7 @@ impl SpatialIndexBuilder {
 
         let (rtree, batch_pos_vec) = self.build_rtree()?;
         let geom_idx_vec = self.build_geom_idx_vec(&batch_pos_vec);
-        let visited_left_side = self.build_visited_bitmaps()?;
+        let visited_build_side = self.build_visited_bitmaps()?;
 
         let refiner = create_refiner(
             self.options.spatial_library,
@@ -273,6 +274,7 @@ impl SpatialIndexBuilder {
 
         Ok(SpatialIndex {
             schema: self.schema,
+            options: self.options,
             evaluator,
             refiner,
             refiner_reservation,
@@ -280,7 +282,7 @@ impl SpatialIndexBuilder {
             data_id_to_batch_pos: batch_pos_vec,
             indexed_batches: self.indexed_batches,
             geom_idx_vec,
-            visited_left_side,
+            visited_build_side,
             probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
             knn_components,
             reservation: self.reservation,
@@ -298,7 +300,7 @@ impl SpatialIndexBuilder {
         let mut stream = partition.build_side_batch_stream;
         while let Some(batch) = stream.next().await {
             let indexed_batch = batch?;
-            self.add_batch(indexed_batch);
+            self.add_batch(indexed_batch)?;
         }
         self.merge_stats(partition.geo_statistics);
         let mem_bytes = partition.reservation.free();

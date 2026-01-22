@@ -71,24 +71,9 @@ pub async fn build_index(
         collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &metrics));
     }
 
-    let build_partitions = if concurrent {
-        // Collect partitions concurrently using collect_all which spawns tasks
-        collector
-            .collect_all(build_streams, reservations, collect_metrics_vec)
-            .await?
-    } else {
-        // Collect partitions sequentially (for JNI/embedded contexts)
-        let mut partitions = Vec::with_capacity(num_partitions);
-        for ((stream, reservation), metrics) in build_streams
-            .into_iter()
-            .zip(reservations)
-            .zip(&collect_metrics_vec)
-        {
-            let partition = collector.collect(stream, reservation, metrics).await?;
-            partitions.push(partition);
-        }
-        partitions
-    };
+    let build_partitions = collector
+        .collect_all(build_streams, reservations, collect_metrics_vec, concurrent)
+        .await?;
 
     let contains_external_stream = build_partitions
         .iter()

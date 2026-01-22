@@ -52,7 +52,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     )
 }
 
-pub fn aggregate_kernels() -> Vec<(&'static str, SedonaAccumulatorRef)> {
+pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
     define_aggregate_kernels!(
         "st_intersection_agg" => crate::st_intersection_agg::st_intersection_agg_impl,
         "st_union_agg" => crate::st_union_agg::st_union_agg_impl,

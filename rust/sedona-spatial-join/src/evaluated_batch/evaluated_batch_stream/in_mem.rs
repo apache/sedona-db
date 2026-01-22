@@ -17,21 +17,25 @@
 
 use std::{
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     vec::IntoIter,
 };
 
+use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 
 use crate::evaluated_batch::{evaluated_batch_stream::EvaluatedBatchStream, EvaluatedBatch};
 
-pub(crate) struct InMemoryEvaluatedBatchStream {
+pub struct InMemoryEvaluatedBatchStream {
+    schema: SchemaRef,
     iter: IntoIter<EvaluatedBatch>,
 }
 
 impl InMemoryEvaluatedBatchStream {
-    pub fn new(batches: Vec<EvaluatedBatch>) -> Self {
+    pub fn new(schema: SchemaRef, batches: Vec<EvaluatedBatch>) -> Self {
         InMemoryEvaluatedBatchStream {
+            schema,
             iter: batches.into_iter(),
         }
     }
@@ -40,6 +44,10 @@ impl InMemoryEvaluatedBatchStream {
 impl EvaluatedBatchStream for InMemoryEvaluatedBatchStream {
     fn is_external(&self) -> bool {
         false
+    }
+
+    fn schema(&self) -> arrow_schema::SchemaRef {
+        Arc::clone(&self.schema)
     }
 }
 

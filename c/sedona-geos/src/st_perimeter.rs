@@ -24,13 +24,16 @@ use geos::{
     GResult, Geom,
     GeometryTypes::{GeometryCollection, MultiPolygon, Polygon},
 };
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
-pub fn st_perimeter_impl() -> ScalarKernelRef {
-    Arc::new(STPerimeter {})
+pub fn st_perimeter_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STPerimeter {})
 }
 
 #[derive(Debug)]
@@ -98,13 +101,16 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_perimeter", st_perimeter_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
         tester.assert_return_type(DataType::Float64);

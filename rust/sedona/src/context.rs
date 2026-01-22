@@ -45,8 +45,8 @@ use parking_lot::Mutex;
 use sedona_common::option::add_sedona_option_extension;
 use sedona_datasource::provider::external_listing_table;
 use sedona_datasource::spec::ExternalFormatSpec;
-use sedona_expr::function_set::FunctionSet;
-use sedona_expr::{aggregate_udf::SedonaAccumulatorRef, scalar_udf::IntoScalarKernelRefs};
+use sedona_expr::scalar_udf::IntoScalarKernelRefs;
+use sedona_expr::{aggregate_udf::IntoSedonaAccumulatorRefs, function_set::FunctionSet};
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
@@ -206,7 +206,7 @@ impl SedonaContext {
 
     pub fn register_aggregate_kernels<'a>(
         &mut self,
-        kernels: impl Iterator<Item = (&'a str, SedonaAccumulatorRef)>,
+        kernels: impl Iterator<Item = (&'a str, impl IntoSedonaAccumulatorRefs)>,
     ) -> Result<()> {
         for (name, kernel) in kernels {
             let udf = self.functions.add_aggregate_udf_kernel(name, kernel)?;

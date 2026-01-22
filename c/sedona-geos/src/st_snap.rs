@@ -22,7 +22,10 @@ use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -33,8 +36,8 @@ use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Snap() implementation using the geos crate
-pub fn st_snap_impl() -> ScalarKernelRef {
-    Arc::new(STSnap {})
+pub fn st_snap_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STSnap {})
 }
 
 #[derive(Debug)]
@@ -115,7 +118,7 @@ fn invoke_scalar(
 mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{SedonaType, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -253,5 +256,24 @@ mod tests {
                 .unwrap(),
             &expected_geometries,
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_snap", st_snap_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                sedona_type.clone(),
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT (1.1 2.1)", "POINT (1 2)", 0.5)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }
 }

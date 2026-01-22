@@ -50,9 +50,11 @@ pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
         return Ok(cached);
     }
 
-    // Handle JSON strings "OGC:CRS84" and "EPSG:4326"
+    // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}" and "0"
     let crs = if LngLat::is_str_lnglat(crs_str) {
         lnglat()
+    } else if crs_str == "0" {
+        None
     } else if AuthorityCode::is_authority_code(crs_str) {
         AuthorityCode::crs(crs_str)
     } else {

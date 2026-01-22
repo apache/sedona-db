@@ -21,7 +21,10 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -32,8 +35,8 @@ use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_MinimumClearanceLine() implementation using the geos crate
-pub fn st_minimum_clearance_line_impl() -> ScalarKernelRef {
-    Arc::new(STMinimumClearanceLine {})
+pub fn st_minimum_clearance_line_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STMinimumClearanceLine {})
 }
 
 #[derive(Debug)]
@@ -88,7 +91,7 @@ fn invoke_scalar(geos_geom: &geos::Geometry, writer: &mut impl std::io::Write) -
 mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
@@ -133,5 +136,18 @@ mod tests {
         );
 
         assert_eq!(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf =
+            SedonaScalarUDF::from_impl("st_minimumclearanceline", st_minimum_clearance_line_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type);
+
+        let result = tester
+            .invoke_scalar("POLYGON ((0 0, 1 0, 1 1, 0.5 3.2e-4, 0 0))")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING(0.5 0.00032,0.5 0)");
     }
 }

@@ -16,12 +16,124 @@
 # under the License.
 
 import pytest
+import shapely
 from sedonadb.testing import PostGIS, SedonaDB
 
 
+# Aggregate functions don't have a suffix in PostGIS
 def agg_fn_suffix(eng):
-    """Return the appropriate suffix for the aggregate function for the given engine."""
     return "" if isinstance(eng, PostGIS) else "_Agg"
+
+
+# ST_Envelope is not an aggregate function in PostGIS but we can check
+# behaviour using ST_Envelope(ST_Collect(...))
+def call_st_envelope_agg(eng, arg):
+    if isinstance(eng, PostGIS):
+        return f"ST_Envelope(ST_Collect({arg}))"
+    else:
+        return f"ST_Envelope_Agg({arg})"
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_points(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        f"""SELECT {call_st_envelope_agg(eng, "ST_GeomFromText(geom)")} FROM (
+            VALUES
+                ('POINT (1 2)'),
+                ('POINT (3 4)'),
+                (NULL)
+        ) AS t(geom)""",
+        "POLYGON ((1 2, 1 4, 3 4, 3 2, 1 2))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_all_null(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        f"""SELECT {call_st_envelope_agg(eng, "ST_GeomFromText(geom)")} FROM (
+            VALUES
+                (NULL),
+                (NULL),
+                (NULL)
+        ) AS t(geom)""",
+        None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_zero_input(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        f"""SELECT {call_st_envelope_agg(eng, "ST_GeomFromText(geom)")} AS empty FROM (
+            VALUES
+                ('POINT (1 2)')
+        ) AS t(geom) WHERE false""",
+        None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_single_point(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        f"""SELECT {call_st_envelope_agg(eng, "ST_GeomFromText(geom)")} FROM (
+            VALUES ('POINT (5 5)')
+        ) AS t(geom)""",
+        "POINT (5 5)",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_collinear_points(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        f"""SELECT {call_st_envelope_agg(eng, "ST_GeomFromText(geom)")} FROM (
+            VALUES
+                ('POINT (0 0)'),
+                ('POINT (0 1)'),
+                ('POINT (0 2)')
+        ) AS t(geom)""",
+        "LINESTRING (0 0, 0 2)",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_agg_many_groups(eng, con):
+    eng = eng.create_or_skip()
+    num_groups = 1000
+
+    df_points = con.sql("""
+        SELECT id, geometry FROM sd_random_geometry('{"target_rows": 100000, "seed": 9728}')
+    """)
+    eng.create_table_arrow("df_points", df_points.to_arrow_table())
+
+    result = eng.execute_and_collect(
+        f"""
+        SELECT
+            (id % {num_groups})::INTEGER AS id_mod,
+            {call_st_envelope_agg(eng, "geometry")} AS envelope
+        FROM df_points
+        GROUP BY id_mod
+        ORDER BY id_mod
+        """,
+    )
+
+    df_points_geopandas = df_points.to_pandas()
+    expected = (
+        df_points_geopandas.groupby(df_points_geopandas["id"] % num_groups)["geometry"]
+        .apply(lambda group: shapely.box(*group.total_bounds))
+        .reset_index(name="envelope")
+        .rename(columns={"id": "id_mod"})
+    )
+
+    eng.assert_result(result, expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

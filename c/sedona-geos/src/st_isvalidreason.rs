@@ -21,15 +21,18 @@ use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use geos::Geom;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
 /// ST_IsValidReason() implementation using the geos crate
-pub fn st_is_valid_reason_impl() -> ScalarKernelRef {
-    Arc::new(STIsValidReason {})
+pub fn st_is_valid_reason_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STIsValidReason {})
 }
 
 #[derive(Debug)]
@@ -82,13 +85,16 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         use arrow_array::Array;
 
         let udf = SedonaScalarUDF::from_impl("st_isvalidreason", st_is_valid_reason_impl());

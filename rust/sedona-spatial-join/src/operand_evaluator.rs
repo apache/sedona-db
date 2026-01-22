@@ -34,8 +34,9 @@ use wkb::reader::Wkb;
 
 use sedona_common::option::SpatialJoinOptions;
 
-use crate::spatial_predicate::{
-    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate,
+use crate::{
+    spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
+    utils::arrow_utils::get_array_memory_size,
 };
 
 /// Operand evaluator is for evaluating the operands of a spatial predicate. It can be a distance
@@ -89,7 +90,9 @@ pub(crate) fn create_operand_evaluator(
 }
 
 /// Result of evaluating a geometry batch.
-pub(crate) struct EvaluatedGeometryArray {
+pub struct EvaluatedGeometryArray {
+    /// Type of geometry_array
+    pub sedona_type: SedonaType,
     /// The array of geometries produced by evaluating the geometry expression.
     pub geometry_array: ArrayRef,
     /// The rects of the geometries in the geometry array. The length of this array is equal to the number of geometries.
@@ -138,6 +141,7 @@ impl EvaluatedGeometryArray {
             .map(|wkb| wkb.map(|wkb| unsafe { transmute(wkb) }))
             .collect();
         Ok(Self {
+            sedona_type: sedona_type.clone(),
             geometry_array,
             rects: rect_vec,
             distance: None,
@@ -154,9 +158,11 @@ impl EvaluatedGeometryArray {
         &self.wkbs
     }
 
-    pub fn in_mem_size(&self) -> usize {
+    pub fn in_mem_size(&self) -> Result<usize> {
+        let geom_array_size = get_array_memory_size(&self.geometry_array)?;
+
         let distance_in_mem_size = match &self.distance {
-            Some(ColumnarValue::Array(array)) => array.get_array_memory_size(),
+            Some(ColumnarValue::Array(array)) => get_array_memory_size(array)?,
             _ => 8,
         };
 
@@ -164,10 +170,7 @@ impl EvaluatedGeometryArray {
         // should be small, so the inaccuracy does not matter too much.
         let wkb_vec_size = self.wkbs.allocated_size();
 
-        self.geometry_array.get_array_memory_size()
-            + self.rects.allocated_size()
-            + distance_in_mem_size
-            + wkb_vec_size
+        Ok(geom_array_size + self.rects.allocated_size() + distance_in_mem_size + wkb_vec_size)
     }
 }
 
