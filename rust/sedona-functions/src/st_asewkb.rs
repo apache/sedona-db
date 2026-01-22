@@ -87,8 +87,9 @@ impl SedonaScalarKernel for STAsEWKB {
         let maybe_srid = match &arg_types[0] {
             SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => match crs {
                 Some(crs) => match crs.srid()? {
-                    Some(srid) if srid != 0 => Some(srid),
-                    _ => None,
+                    Some(0) => None,
+                    Some(srid) => Some(srid),
+                    _ => return exec_err!("CRS {crs} cannot be represented by a single SRID"),
                 },
                 None => None,
             },
@@ -153,13 +154,20 @@ impl SedonaScalarKernel for STAsEWKBItemCrs {
             .into_iter()
             .map(|maybe_crs_str| match maybe_crs_str {
                 None => Ok(None),
-                Some(crs_str) => match deserialize_crs(crs_str)? {
-                    None => Ok(None),
-                    Some(crs) => match crs.srid()? {
-                        Some(srid) => Ok(Some(srid)),
-                        None => exec_err!("CRS {crs} cannot be represented by a single SRID"),
-                    },
-                },
+                Some(crs_str) => {
+                    match deserialize_crs(crs_str)
+                        .map_err(|e| exec_datafusion_err!("{}", e.message()))?
+                    {
+                        None => Ok(None),
+                        Some(crs) => match crs.srid()? {
+                            Some(0) => Ok(None),
+                            Some(srid) => Ok(Some(srid)),
+                            _ => {
+                                exec_err!("CRS {crs} cannot be represented by a single SRID")
+                            }
+                        },
+                    }
+                }
             });
 
         executor.execute_wkb_void(|maybe_wkb| {
@@ -306,6 +314,55 @@ mod tests {
         assert_eq!(
             &tester.invoke_array(array_with_srid).unwrap(),
             &(Arc::new(expected_array) as ArrayRef)
+        );
+    }
+
+    #[test]
+    fn udf_invalid_type_crs() {
+        let udf = st_asewkb_udf();
+
+        let crs_where_srid_returns_none = deserialize_crs("EPSG:9999999999").unwrap();
+        let sedona_type = SedonaType::Wkb(Edges::Planar, crs_where_srid_returns_none);
+
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
+        let err = tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS epsg:9999999999 cannot be represented by a single SRID"
+        );
+    }
+
+    #[test]
+    fn udf_invalid_item_crs() {
+        let udf = st_asewkb_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+
+        // Very large SRID
+        let scalar_with_srid_outside_u32 = create_scalar_item_crs(
+            Some("POINT (1 2)"),
+            Some("EPSG:999999999999"),
+            &WKB_GEOMETRY,
+        );
+        let err = tester
+            .invoke_scalar(scalar_with_srid_outside_u32)
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "CRS epsg:999999999999 cannot be represented by a single SRID"
+        );
+
+        // CRS that fails to parse in deserialize_crs()
+        let scalar_with_unparsable_crs = create_scalar_item_crs(
+            Some("POINT (1 2)"),
+            Some("This is invalid JSON and also not auth:code"),
+            &WKB_GEOMETRY,
+        );
+        let err = tester
+            .invoke_scalar(scalar_with_unparsable_crs)
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Error deserializing PROJJSON Crs: expected value at line 1 column 1"
         );
     }
 }
