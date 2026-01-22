@@ -243,22 +243,16 @@ void RefineExactPoints(rmm::cuda_stream_view stream, ArrayView<POINT_T> build_po
 }  // namespace detail
 
 template <typename SCALAR_T, int N_DIM>
-void RTSpatialIndex<SCALAR_T, N_DIM>::Init(
-    const typename SpatialIndex<SCALAR_T, N_DIM>::Config* config) {
-  CUDA_CHECK(cudaGetDevice(&device_));
-  config_ = *dynamic_cast<const RTSpatialIndexConfig<scalar_t, n_dim>*>(config);
-  GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), Initialize, Concurrency %u", this,
-                      rmm::available_device_memory().first / 1024 / 1024,
-                      config_.concurrency);
-  stream_pool_ = std::make_unique<rmm::cuda_stream_pool>(config_.concurrency);
-  Clear();
-}
+RTSpatialIndex<SCALAR_T, N_DIM>::RTSpatialIndex(const RTSpatialIndexConfig& config)
+    : config_(config),
+      stream_pool_(std::make_unique<rmm::cuda_stream_pool>(config_.concurrency)),
+      indexing_points_(false),
+      handle_(0) {}
 
 template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::Clear() {
   GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), Clear", this,
                       rmm::available_device_memory().first / 1024 / 1024);
-  CUDA_CHECK(cudaSetDevice(device_));
   auto stream = rmm::cuda_stream_default;
   bvh_buffer_.resize(0, stream);
   bvh_buffer_.shrink_to_fit(stream);
@@ -274,7 +268,6 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::PushBuild(const box_t* rects, uint32_t n_r
   GPUSPATIAL_LOG_INFO("RTSpatialIndex %p (Free %zu MB), PushBuild, rectangles %zu", this,
                       rmm::available_device_memory().first / 1024 / 1024, n_rects);
   if (n_rects == 0) return;
-  CUDA_CHECK(cudaSetDevice(device_));
   auto stream = rmm::cuda_stream_default;
   auto prev_size = rects_.size();
 
@@ -285,8 +278,6 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::PushBuild(const box_t* rects, uint32_t n_r
 
 template <typename SCALAR_T, int N_DIM>
 void RTSpatialIndex<SCALAR_T, N_DIM>::FinishBuilding() {
-  CUDA_CHECK(cudaSetDevice(device_));
-
   auto stream = rmm::cuda_stream_default;
 
   indexing_points_ = thrust::all_of(rmm::exec_policy_nosync(stream), rects_.begin(),
@@ -326,8 +317,6 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::Probe(const box_t* rects, uint32_t n_rects
                                             std::vector<uint32_t>* build_indices,
                                             std::vector<uint32_t>* probe_indices) {
   if (n_rects == 0) return;
-  CUDA_CHECK(cudaSetDevice(device_));
-
   SpatialIndexContext ctx;
   auto stream = stream_pool_->get_stream();
   rmm::device_uvector<box_t> d_rects(n_rects, stream);
@@ -652,12 +641,17 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::filter(SpatialIndexContext& ctx,
 }
 
 template <typename SCALAR_T, int N_DIM>
-std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex() {
-  return std::make_unique<RTSpatialIndex<SCALAR_T, N_DIM>>();
+std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config) {
+  return std::make_unique<RTSpatialIndex<SCALAR_T, N_DIM>>(config);
 }
 
-template std::unique_ptr<SpatialIndex<float, 2>> CreateRTSpatialIndex();
-template std::unique_ptr<SpatialIndex<float, 3>> CreateRTSpatialIndex();
-template std::unique_ptr<SpatialIndex<double, 2>> CreateRTSpatialIndex();
-template std::unique_ptr<SpatialIndex<double, 3>> CreateRTSpatialIndex();
+template std::unique_ptr<SpatialIndex<float, 2>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config);
+template std::unique_ptr<SpatialIndex<float, 3>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config);
+template std::unique_ptr<SpatialIndex<double, 2>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config);
+template std::unique_ptr<SpatialIndex<double, 3>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config);
 }  // namespace gpuspatial

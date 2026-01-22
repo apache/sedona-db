@@ -23,9 +23,7 @@
 
 namespace gpuspatial {
 
-std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner();
-
-struct RTSpatialRefinerConfig : SpatialRefiner::Config {
+struct RTSpatialRefinerConfig {
   std::shared_ptr<RTEngine> rt_engine;
   // Prefer fast build the BVH
   bool prefer_fast_build = false;
@@ -46,4 +44,8 @@ struct RTSpatialRefinerConfig : SpatialRefiner::Config {
     concurrency = std::thread::hardware_concurrency();
   }
 };
+
+std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner(
+    const RTSpatialRefinerConfig& config);
+
 }  // namespace gpuspatial

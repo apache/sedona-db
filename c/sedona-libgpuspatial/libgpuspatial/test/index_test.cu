@@ -39,9 +39,9 @@ struct SpatialIndexTest : public ::testing::Test {
     auto ptx_root = TestUtils::GetTestShaderPath();
     rt_engine = std::make_shared<RTEngine>();
     rt_engine->Init(get_default_rt_config(ptx_root));
-    RTSpatialIndexConfig<typename T::scalar_t, T::n_dim> config;
+    RTSpatialIndexConfig config;
     config.rt_engine = rt_engine;
-    index.Init(&config);
+    index = std::move(index_t(config));
   }
 };
 using PointTypes = ::testing::Types<Point<float, 2>, Point<double, 2>>;

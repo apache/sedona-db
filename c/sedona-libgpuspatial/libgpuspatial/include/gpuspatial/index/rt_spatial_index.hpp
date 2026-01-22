@@ -23,11 +23,8 @@
 #include <thread>
 
 namespace gpuspatial {
-template <typename SCALAR_T, int N_DIM>
-std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex();
 
-template <typename SCALAR_T, int N_DIM>
-struct RTSpatialIndexConfig : SpatialIndex<SCALAR_T, N_DIM>::Config {
+struct RTSpatialIndexConfig {
   std::shared_ptr<RTEngine> rt_engine;
   // Prefer fast build the BVH
   bool prefer_fast_build = false;
@@ -41,5 +38,9 @@ struct RTSpatialIndexConfig : SpatialIndex<SCALAR_T, N_DIM>::Config {
     concurrency = std::thread::hardware_concurrency();
   }
 };
+
+template <typename SCALAR_T, int N_DIM>
+std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex(
+    const RTSpatialIndexConfig& config);
 
 }  // namespace gpuspatial

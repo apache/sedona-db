@@ -29,18 +29,7 @@ class SpatialIndex {
   using point_t = Point<SCALAR_T, N_DIM>;
   using box_t = Box<point_t>;
 
-  struct Config {
-    virtual ~Config() = default;
-  };
-
   virtual ~SpatialIndex() = default;
-
-  /**
-   * Initialize the index with the given configuration. This method should be called only
-   * once before using the index.
-   * @param config
-   */
-  virtual void Init(const Config* config) = 0;
 
   /**
    * Provide an array of geometries to build the index.
@@ -62,7 +51,6 @@ class SpatialIndex {
   /**
    * Query the index with an array of rectangles and return the indices of
    * the rectangles. This method is thread-safe.
-   * @param context A context object that can be used to store intermediate results.
    * @param build_indices A vector to store the indices of the geometries in the index
    * that have a spatial overlap with the geometries in the stream.
    * @param stream_indices A vector to store the indices of the geometries in the stream

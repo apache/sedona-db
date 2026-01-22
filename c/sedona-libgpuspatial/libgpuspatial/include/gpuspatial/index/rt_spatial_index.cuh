@@ -60,7 +60,7 @@ class RTSpatialIndex : public SpatialIndex<SCALAR_T, N_DIM> {
  public:
   RTSpatialIndex() = default;
 
-  void Init(const typename SpatialIndex<SCALAR_T, N_DIM>::Config* config);
+  RTSpatialIndex(const RTSpatialIndexConfig& config);
 
   void Clear() override;
 
@@ -72,7 +72,7 @@ class RTSpatialIndex : public SpatialIndex<SCALAR_T, N_DIM> {
              std::vector<uint32_t>* probe_indices) override;
 
  private:
-  RTSpatialIndexConfig<scalar_t, n_dim> config_;
+  RTSpatialIndexConfig config_;
   std::unique_ptr<rmm::cuda_stream_pool> stream_pool_;
   bool indexing_points_;
   // The rectangles being indexed or the MBRs of grouped points
@@ -83,7 +83,6 @@ class RTSpatialIndex : public SpatialIndex<SCALAR_T, N_DIM> {
   rmm::device_uvector<point_t> points_{0, rmm::cuda_stream_default};
   rmm::device_buffer bvh_buffer_{0, rmm::cuda_stream_default};
   OptixTraversableHandle handle_;
-  int device_;
 
   void allocateResultBuffer(SpatialIndexContext& ctx, uint32_t capacity) const;
 

@@ -17,23 +17,12 @@
 #pragma once
 #include "gpuspatial/relate/predicate.cuh"
 
-#include <stdexcept>
+#include "nanoarrow/nanoarrow.h"
 
 namespace gpuspatial {
 class SpatialRefiner {
  public:
-  struct Config {
-    virtual ~Config() = default;
-  };
-
   virtual ~SpatialRefiner() = default;
-
-  /**
-   * Initialize the index with the given configuration. This method should be called only
-   * once before using the index.
-   * @param config
-   */
-  virtual void Init(const Config* config) = 0;
 
   virtual void Clear() = 0;
 

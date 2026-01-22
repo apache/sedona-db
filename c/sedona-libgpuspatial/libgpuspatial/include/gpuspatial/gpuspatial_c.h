@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 
+// Interfaces for ray-tracing engine (OptiX)
 struct GpuSpatialRTEngineConfig {
   /** Path to PTX files */
   const char* ptx_root;
@@ -33,12 +34,12 @@ struct GpuSpatialRTEngine {
    */
   int (*init)(struct GpuSpatialRTEngine* self, struct GpuSpatialRTEngineConfig* config);
   void (*release)(struct GpuSpatialRTEngine* self);
+  const char* (*get_last_error)(struct GpuSpatialRTEngine* self);
   void* private_data;
-  const char* last_error;
 };
 
 /** Create an instance of GpuSpatialRTEngine */
-void GpuSpatialRTEngineCreate(struct GpuSpatialRTEngine* instance);
+int GpuSpatialRTEngineCreate(struct GpuSpatialRTEngine* instance);
 
 struct GpuSpatialIndexConfig {
   /** Pointer to an initialized GpuSpatialRTEngine struct */
@@ -49,39 +50,31 @@ struct GpuSpatialIndexConfig {
   int device_id;
 };
 
-struct GpuSpatialIndexContext {
-  const char* last_error;  // Pointer to std::string to store last error message
-  void* build_indices;     // Pointer to std::vector<uint32_t> to store results
-  void* probe_indices;
+// An opaque context for concurrent probing
+struct SedonaSpatialIndexContext {
+  void* private_data;
 };
 
-struct GpuSpatialIndexFloat2D {
-  /** Initialize the spatial index with the given configuration
-   *
-   * @return 0 on success, non-zero on failure
-   */
-  int (*init)(struct GpuSpatialIndexFloat2D* self, struct GpuSpatialIndexConfig* config);
+struct SedonaFloatIndex2D {
   /** Clear the spatial index, removing all built data */
-  void (*clear)(struct GpuSpatialIndexFloat2D* self);
+  int (*clear)(struct SedonaFloatIndex2D* self);
   /** Create a new context for concurrent probing */
-  void (*create_context)(struct GpuSpatialIndexFloat2D* self,
-                         struct GpuSpatialIndexContext* context);
+  void (*create_context)(struct SedonaSpatialIndexContext* context);
   /** Destroy a previously created context */
-  void (*destroy_context)(struct GpuSpatialIndexContext* context);
+  void (*destroy_context)(struct SedonaSpatialIndexContext* context);
   /** Push rectangles for building the spatial index, each rectangle is represented by 4
    * floats: [min_x, min_y, max_x, max_y] Points can also be indexed by providing [x, y,
    * x, y] but points and rectangles cannot be mixed
    *
    * @return 0 on success, non-zero on failure
    */
-  int (*push_build)(struct GpuSpatialIndexFloat2D* self, const float* buf,
-                    uint32_t n_rects);
+  int (*push_build)(struct SedonaFloatIndex2D* self, const float* buf, uint32_t n_rects);
   /**
    * Finish building the spatial index after all rectangles have been pushed
    *
    * @return 0 on success, non-zero on failure
    */
-  int (*finish_building)(struct GpuSpatialIndexFloat2D* self);
+  int (*finish_building)(struct SedonaFloatIndex2D* self);
   /**
    * Probe the spatial index with the given rectangles, each rectangle is represented by 4
    * floats: [min_x, min_y, max_x, max_y] Points can also be probed by providing [x, y, x,
@@ -90,28 +83,31 @@ struct GpuSpatialIndexFloat2D {
    *
    * @return 0 on success, non-zero on failure
    */
-  int (*probe)(struct GpuSpatialIndexFloat2D* self,
-               struct GpuSpatialIndexContext* context, const float* buf,
-               uint32_t n_rects);
+  int (*probe)(struct SedonaFloatIndex2D* self, struct SedonaSpatialIndexContext* context,
+               const float* buf, uint32_t n_rects);
   /** Get the build indices buffer from the context
    *
    * @return A pointer to the buffer and its length
    */
-  void (*get_build_indices_buffer)(struct GpuSpatialIndexContext* context,
-                                   void** build_indices, uint32_t* build_indices_length);
+  void (*get_build_indices_buffer)(struct SedonaSpatialIndexContext* context,
+                                   uint32_t** build_indices,
+                                   uint32_t* build_indices_length);
   /** Get the probe indices buffer from the context
    *
    * @return A pointer to the buffer and its length
    */
-  void (*get_probe_indices_buffer)(struct GpuSpatialIndexContext* context,
-                                   void** probe_indices, uint32_t* probe_indices_length);
+  void (*get_probe_indices_buffer)(struct SedonaSpatialIndexContext* context,
+                                   uint32_t** probe_indices,
+                                   uint32_t* probe_indices_length);
+  const char* (*get_last_error)(struct SedonaFloatIndex2D* self);
+  const char* (*context_get_last_error)(struct SedonaSpatialIndexContext* context);
   /** Release the spatial index and free all resources */
-  void (*release)(struct GpuSpatialIndexFloat2D* self);
+  void (*release)(struct SedonaFloatIndex2D* self);
   void* private_data;
-  const char* last_error;
 };
 
-void GpuSpatialIndexFloat2DCreate(struct GpuSpatialIndexFloat2D* index);
+int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
+                                 const struct GpuSpatialIndexConfig* config);
 
 struct GpuSpatialRefinerConfig {
   /** Pointer to an initialized GpuSpatialRTEngine struct */
@@ -122,46 +118,45 @@ struct GpuSpatialRefinerConfig {
   int device_id;
 };
 
-enum GpuSpatialRelationPredicate {
-  GpuSpatialPredicateEquals = 0,
-  GpuSpatialPredicateDisjoint,
-  GpuSpatialPredicateTouches,
-  GpuSpatialPredicateContains,
-  GpuSpatialPredicateCovers,
-  GpuSpatialPredicateIntersects,
-  GpuSpatialPredicateWithin,
-  GpuSpatialPredicateCoveredBy
+enum SedonaSpatialRelationPredicate {
+  SedonaSpatialPredicateEquals = 0,
+  SedonaSpatialPredicateDisjoint,
+  SedonaSpatialPredicateTouches,
+  SedonaSpatialPredicateContains,
+  SedonaSpatialPredicateCovers,
+  SedonaSpatialPredicateIntersects,
+  SedonaSpatialPredicateWithin,
+  SedonaSpatialPredicateCoveredBy
 };
 
-struct GpuSpatialRefiner {
-  int (*init)(struct GpuSpatialRefiner* self, struct GpuSpatialRefinerConfig* config);
+struct SedonaSpatialRefiner {
+  int (*clear)(struct SedonaSpatialRefiner* self);
 
-  int (*clear)(struct GpuSpatialRefiner* self);
-
-  int (*push_build)(struct GpuSpatialRefiner* self,
+  int (*push_build)(struct SedonaSpatialRefiner* self,
                     const struct ArrowSchema* build_schema,
                     const struct ArrowArray* build_array);
 
-  int (*finish_building)(struct GpuSpatialRefiner* self);
+  int (*finish_building)(struct SedonaSpatialRefiner* self);
 
-  int (*refine_loaded)(struct GpuSpatialRefiner* self,
+  int (*refine_loaded)(struct SedonaSpatialRefiner* self,
                        const struct ArrowSchema* probe_schema,
                        const struct ArrowArray* probe_array,
-                       enum GpuSpatialRelationPredicate predicate,
+                       enum SedonaSpatialRelationPredicate predicate,
                        uint32_t* build_indices, uint32_t* probe_indices,
                        uint32_t indices_size, uint32_t* new_indices_size);
 
-  int (*refine)(struct GpuSpatialRefiner* self, const struct ArrowSchema* schema1,
+  int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowSchema* schema1,
                 const struct ArrowArray* array1, const struct ArrowSchema* schema2,
                 const struct ArrowArray* array2,
-                enum GpuSpatialRelationPredicate predicate, uint32_t* indices1,
+                enum SedonaSpatialRelationPredicate predicate, uint32_t* indices1,
                 uint32_t* indices2, uint32_t indices_size, uint32_t* new_indices_size);
-  void (*release)(struct GpuSpatialRefiner* self);
+  const char* (*get_last_error)(struct SedonaSpatialRefiner* self);
+  void (*release)(struct SedonaSpatialRefiner* self);
   void* private_data;
-  const char* last_error;
 };
 
-void GpuSpatialRefinerCreate(struct GpuSpatialRefiner* refiner);
+int GpuSpatialRefinerCreate(struct SedonaSpatialRefiner* refiner,
+                            const struct GpuSpatialRefinerConfig* config);
 #ifdef __cplusplus
 }
 #endif

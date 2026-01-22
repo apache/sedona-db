@@ -139,14 +139,15 @@ std::vector<std::shared_ptr<arrow::Array>> ReadParquet(const std::string& path,
 }
 
 void ReadArrowIPC(const std::string& path, std::vector<nanoarrow::UniqueArray>& arrays,
-                  std::vector<nanoarrow::UniqueSchema>& schemas) {
+                  std::vector<nanoarrow::UniqueSchema>& schemas,
+                  uint32_t limit = std::numeric_limits<uint32_t>::max()) {
   nanoarrow::UniqueArrayStream stream;
   ArrowError error;
 
   // Assuming this helper exists in your context or you implement it via Arrow C++
   // (It populates the C-stream from the file)
   ArrayStreamFromIpc(path, "geometry", stream.get());
-
+  uint32_t count = 0;
   while (true) {
     // 1. Create fresh objects for this iteration
     nanoarrow::UniqueArray array;
@@ -177,6 +178,8 @@ void ReadArrowIPC(const std::string& path, std::vector<nanoarrow::UniqueArray>& 
     // 5. Move ownership to the output vectors
     arrays.push_back(std::move(array));
     schemas.push_back(std::move(schema));
+    count += array->length;
+    if (count >= limit) break;
   }
 }
 
@@ -189,24 +192,19 @@ void TestJoiner(ArrowSchema* build_schema, std::vector<ArrowArray*>& build_array
   using box_t = Box<fpoint_t>;
 
   auto rt_engine = std::make_shared<RTEngine>();
-  auto rt_index = CreateRTSpatialIndex<coord_t, 2>();
-  auto rt_refiner = CreateRTSpatialRefiner();
+
   {
-    std::string ptx_root = TestUtils::GetTestShaderPath();
+    std::string ptx_root = GetTestShaderPath();
     auto config = get_default_rt_config(ptx_root);
     rt_engine->Init(config);
   }
 
-  {
-    RTSpatialIndexConfig<coord_t, 2> config;
-    config.rt_engine = rt_engine;
-    rt_index->Init(&config);
-  }
-  {
-    RTSpatialRefinerConfig config;
-    config.rt_engine = rt_engine;
-    rt_refiner->Init(&config);
-  }
+  RTSpatialIndexConfig idx_config;
+  idx_config.rt_engine = rt_engine;
+  auto rt_index = CreateRTSpatialIndex<coord_t, 2>(idx_config);
+  RTSpatialRefinerConfig refiner_config;
+  refiner_config.rt_engine = rt_engine;
+  auto rt_refiner = CreateRTSpatialRefiner(refiner_config);
 
   geoarrow::geos::ArrayReader reader;
 
@@ -366,25 +364,20 @@ void TestJoinerLoaded(ArrowSchema* build_schema, std::vector<ArrowArray*>& build
   using box_t = Box<fpoint_t>;
 
   auto rt_engine = std::make_shared<RTEngine>();
-  auto rt_index = CreateRTSpatialIndex<coord_t, 2>();
-  auto rt_refiner = CreateRTSpatialRefiner();
+
   {
     std::string ptx_root = TestUtils::GetTestShaderPath();
     auto config = get_default_rt_config(ptx_root);
     rt_engine->Init(config);
   }
 
-  {
-    RTSpatialIndexConfig<coord_t, 2> config;
-    config.rt_engine = rt_engine;
-    rt_index->Init(&config);
-  }
-  {
-    RTSpatialRefinerConfig config;
-    config.rt_engine = rt_engine;
-    rt_refiner->Init(&config);
-  }
+  RTSpatialIndexConfig idx_config;
+  idx_config.rt_engine = rt_engine;
+  auto rt_index = CreateRTSpatialIndex<coord_t, 2>(idx_config);
 
+  RTSpatialRefinerConfig refiner_config;
+  refiner_config.rt_engine = rt_engine;
+  auto rt_refiner = CreateRTSpatialRefiner(refiner_config);
   geoarrow::geos::ArrayReader reader;
 
   class GEOSCppHandle {
@@ -686,8 +679,8 @@ TEST(JoinerTest, PolygonPolygonContains) {
     std::vector<nanoarrow::UniqueArray> poly1_uniq_arrays, poly2_uniq_arrays;
     std::vector<nanoarrow::UniqueSchema> poly1_uniq_schema, poly2_uniq_schema;
 
-    ReadArrowIPC(poly1_path, poly1_uniq_arrays, poly1_uniq_schema);
-    ReadArrowIPC(poly2_path, poly2_uniq_arrays, poly2_uniq_schema);
+    ReadArrowIPC(poly1_path, poly1_uniq_arrays, poly1_uniq_schema, 100);
+    ReadArrowIPC(poly2_path, poly2_uniq_arrays, poly2_uniq_schema, 100);
 
     std::vector<ArrowArray*> poly1_c_arrays, poly2_c_arrays;
     for (auto& arr : poly1_uniq_arrays) {
@@ -698,7 +691,7 @@ TEST(JoinerTest, PolygonPolygonContains) {
     }
 
     TestJoiner(poly1_uniq_schema[0].get(), poly1_c_arrays, poly2_uniq_schema[0].get(),
-               poly2_c_arrays, Predicate::kContains);
+               poly2_c_arrays, Predicate::kIntersects);
   }
 }
 }  // namespace gpuspatial

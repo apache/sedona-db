@@ -27,6 +27,86 @@
 #include "geoarrow_geos/geoarrow_geos.hpp"
 #include "nanoarrow/nanoarrow.hpp"
 
+TEST(RTEngineTest, InitializeEngine) {
+  GpuSpatialRTEngine engine;
+  GpuSpatialRTEngineCreate(&engine);
+  GpuSpatialRTEngineConfig engine_config;
+
+  std::string ptx_root = TestUtils::GetTestShaderPath();
+  engine_config.ptx_root = ptx_root.c_str();
+  engine_config.device_id = 0;
+  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+
+  engine.release(&engine);
+}
+
+TEST(RTEngineTest, ErrorTest) {
+  GpuSpatialRTEngine engine;
+  GpuSpatialRTEngineCreate(&engine);
+  GpuSpatialRTEngineConfig engine_config;
+
+  engine_config.ptx_root = "/invalid/path/to/ptx";
+  engine_config.device_id = 0;
+
+  EXPECT_NE(engine.init(&engine, &engine_config), 0);
+
+  const char* raw_error = engine.get_last_error(&engine);
+  printf("Error received: %s\n", raw_error);
+
+  std::string error_msg(raw_error);
+
+  EXPECT_NE(error_msg.find("No such file or directory"), std::string::npos)
+      << "Error message was corrupted or incorrect. Got: " << error_msg;
+
+  engine.release(&engine);
+}
+
+TEST(SpatialIndexTest, InitializeIndex) {
+  GpuSpatialRTEngine engine;
+  GpuSpatialRTEngineCreate(&engine);
+  GpuSpatialRTEngineConfig engine_config;
+
+  std::string ptx_root = TestUtils::GetTestShaderPath();
+  engine_config.ptx_root = ptx_root.c_str();
+  engine_config.device_id = 0;
+  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+
+  SedonaFloatIndex2D index;
+  GpuSpatialIndexConfig index_config;
+
+  index_config.rt_engine = &engine;
+  index_config.device_id = 0;
+  index_config.concurrency = 1;
+
+  ASSERT_EQ(GpuSpatialIndexFloat2DCreate(&index, &index_config), 0);
+
+  index.release(&index);
+  engine.release(&engine);
+}
+
+TEST(RefinerTest, InitializeRefiner) {
+  GpuSpatialRTEngine engine;
+  GpuSpatialRTEngineCreate(&engine);
+  GpuSpatialRTEngineConfig engine_config;
+
+  std::string ptx_root = TestUtils::GetTestShaderPath();
+  engine_config.ptx_root = ptx_root.c_str();
+  engine_config.device_id = 0;
+  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+
+  SedonaSpatialRefiner refiner;
+  GpuSpatialRefinerConfig refiner_config;
+
+  refiner_config.rt_engine = &engine;
+  refiner_config.device_id = 0;
+  refiner_config.concurrency = 1;
+
+  ASSERT_EQ(GpuSpatialRefinerCreate(&refiner, &refiner_config), 0);
+
+  refiner.release(&refiner);
+  engine.release(&engine);
+}
+
 class CWrapperTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -45,9 +125,7 @@ class CWrapperTest : public ::testing::Test {
     index_config.device_id = 0;
     index_config.concurrency = 1;
 
-    GpuSpatialIndexFloat2DCreate(&index_);
-
-    ASSERT_EQ(index_.init(&index_, &index_config), 0);
+    ASSERT_EQ(GpuSpatialIndexFloat2DCreate(&index_, &index_config), 0);
 
     GpuSpatialRefinerConfig refiner_config;
 
@@ -55,8 +133,7 @@ class CWrapperTest : public ::testing::Test {
     refiner_config.device_id = 0;
     refiner_config.concurrency = 1;
 
-    GpuSpatialRefinerCreate(&refiner_);
-    ASSERT_EQ(refiner_.init(&refiner_, &refiner_config), 0);
+    ASSERT_EQ(GpuSpatialRefinerCreate(&refiner_, &refiner_config), 0);
   }
 
   void TearDown() override {
@@ -65,8 +142,8 @@ class CWrapperTest : public ::testing::Test {
     engine_.release(&engine_);
   }
   GpuSpatialRTEngine engine_;
-  GpuSpatialIndexFloat2D index_;
-  GpuSpatialRefiner refiner_;
+  SedonaFloatIndex2D index_;
+  SedonaSpatialRefiner refiner_;
 };
 
 TEST_F(CWrapperTest, InitializeJoiner) {
@@ -163,28 +240,27 @@ TEST_F(CWrapperTest, InitializeJoiner) {
       queries.push_back(bbox);
     }
 
-    GpuSpatialIndexContext idx_ctx;
-    index_.create_context(&index_, &idx_ctx);
+    SedonaSpatialIndexContext idx_ctx;
+    index_.create_context(&idx_ctx);
 
     index_.probe(&index_, &idx_ctx, (float*)queries.data(), queries.size());
 
-    void* build_indices_ptr;
-    void* probe_indices_ptr;
+    uint32_t* build_indices_ptr;
+    uint32_t* probe_indices_ptr;
     uint32_t build_indices_length;
     uint32_t probe_indices_length;
 
-    index_.get_build_indices_buffer(&idx_ctx, (void**)&build_indices_ptr,
-                                    &build_indices_length);
-    index_.get_probe_indices_buffer(&idx_ctx, (void**)&probe_indices_ptr,
-                                    &probe_indices_length);
+    index_.get_build_indices_buffer(&idx_ctx, &build_indices_ptr, &build_indices_length);
+    index_.get_probe_indices_buffer(&idx_ctx, &probe_indices_ptr, &probe_indices_length);
 
     uint32_t new_len;
-    ASSERT_EQ(refiner_.refine(&refiner_, build_schema.get(), build_array.get(),
-                              stream_schema.get(), stream_array.get(),
-                              GpuSpatialRelationPredicate::GpuSpatialPredicateContains,
-                              (uint32_t*)build_indices_ptr, (uint32_t*)probe_indices_ptr,
-                              build_indices_length, &new_len),
-              0);
+    ASSERT_EQ(
+        refiner_.refine(&refiner_, build_schema.get(), build_array.get(),
+                        stream_schema.get(), stream_array.get(),
+                        SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
+                        (uint32_t*)build_indices_ptr, (uint32_t*)probe_indices_ptr,
+                        build_indices_length, &new_len),
+        0);
 
     std::vector<uint32_t> build_indices((uint32_t*)build_indices_ptr,
                                         (uint32_t*)build_indices_ptr + new_len);
@@ -196,11 +272,11 @@ TEST_F(CWrapperTest, InitializeJoiner) {
       const GEOSGeometry* geom;
       std::vector<uint32_t> build_indices;
       std::vector<uint32_t> stream_indices;
-      GpuSpatialRelationPredicate predicate;
+      SedonaSpatialRelationPredicate predicate;
     };
 
     Payload payload;
-    payload.predicate = GpuSpatialRelationPredicate::GpuSpatialPredicateContains;
+    payload.predicate = SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains;
     payload.handle = handle.handle;
 
     for (size_t offset = 0; offset < n_stream; offset++) {

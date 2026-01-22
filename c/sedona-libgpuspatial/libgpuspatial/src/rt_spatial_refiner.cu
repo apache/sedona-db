@@ -50,13 +50,9 @@ void ReorderIndices(rmm::cuda_stream_view stream, rmm::device_uvector<uint32_t>&
                     });
 }
 }  // namespace detail
-void RTSpatialRefiner::Init(const Config* config) {
-  config_ = *dynamic_cast<const RTSpatialRefinerConfig*>(config);
-  GPUSPATIAL_LOG_INFO("RTSpatialRefiner %p (Free %zu MB), Initialize, Concurrency %u",
-                      this, rmm::available_device_memory().first / 1024 / 1024,
-                      config_.concurrency);
 
-  CUDA_CHECK(cudaGetDevice(&device_id_));
+RTSpatialRefiner::RTSpatialRefiner(const RTSpatialRefinerConfig& config)
+    : config_(config) {
   thread_pool_ = std::make_shared<ThreadPool>(config_.parsing_threads);
   stream_pool_ = std::make_unique<rmm::cuda_stream_pool>(config_.concurrency);
   CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, config_.stack_size_bytes));
@@ -67,11 +63,9 @@ void RTSpatialRefiner::Init(const Config* config) {
   loader_config.memory_quota = config_.wkb_parser_memory_quota;
 
   wkb_loader_->Init(loader_config);
-  Clear();
 }
 
 void RTSpatialRefiner::Clear() {
-  CUDA_CHECK(cudaGetDevice(&device_id_));
   auto stream = rmm::cuda_stream_default;
   wkb_loader_->Clear(stream);
   build_geometries_.Clear(stream);
@@ -79,7 +73,6 @@ void RTSpatialRefiner::Clear() {
 
 void RTSpatialRefiner::PushBuild(const ArrowSchema* build_schema,
                                  const ArrowArray* build_array) {
-  CUDA_CHECK(cudaSetDevice(device_id_));
   auto stream = rmm::cuda_stream_default;
 
   wkb_loader_->Parse(stream, build_schema, build_array, 0, build_array->length);
@@ -97,7 +90,6 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* probe_schema,
   if (len == 0) {
     return 0;
   }
-  CUDA_CHECK(cudaSetDevice(device_id_));
   SpatialRefinerContext ctx;
   ctx.cuda_stream = stream_pool_->get_stream();
 
@@ -174,7 +166,6 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* schema1, const ArrowArray* 
   if (len == 0) {
     return 0;
   }
-  CUDA_CHECK(cudaSetDevice(device_id_));
   SpatialRefinerContext ctx;
   ctx.cuda_stream = stream_pool_->get_stream();
 
@@ -282,8 +273,9 @@ void RTSpatialRefiner::buildIndicesMap(SpatialRefinerContext* ctx,
   detail::ReorderIndices(stream, d_indices, d_uniq_indices, d_reordered_indices);
 }
 
-std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner() {
-  return std::make_unique<RTSpatialRefiner>();
+std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner(
+    const RTSpatialRefinerConfig& config) {
+  return std::make_unique<RTSpatialRefiner>(config);
 }
 
 }  // namespace gpuspatial

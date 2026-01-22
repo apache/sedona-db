@@ -87,14 +87,13 @@ class RTSpatialRefiner : public SpatialRefiner {
 
   RTSpatialRefiner() = default;
 
-  ~RTSpatialRefiner() = default;
+  RTSpatialRefiner(const RTSpatialRefinerConfig& config);
 
-  void Init(const Config* config) override;
+  ~RTSpatialRefiner() = default;
 
   void Clear() override;
 
-  void PushBuild(const ArrowSchema* build_schema,
-                      const ArrowArray* build_array) override;
+  void PushBuild(const ArrowSchema* build_schema, const ArrowArray* build_array) override;
 
   void FinishBuilding() override;
 
@@ -113,7 +112,6 @@ class RTSpatialRefiner : public SpatialRefiner {
   std::shared_ptr<ThreadPool> thread_pool_;
   std::unique_ptr<ParallelWkbLoader<point_t, index_t>> wkb_loader_;
   dev_geometries_t build_geometries_;
-  int device_id_;
 
   void buildIndicesMap(SpatialRefinerContext* ctx, const uint32_t* indices, size_t len,
                        IndicesMap& indices_map) const;
