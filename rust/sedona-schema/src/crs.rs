@@ -51,7 +51,7 @@ pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
     }
 
     // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}" and "0"
-    let crs = if LngLat::is_str_lnglat(crs_str) {
+    let crs = if crs_str == "OGC:CRS84" {
         lnglat()
     } else if crs_str == "0" {
         None
@@ -79,13 +79,17 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
 
     if let Some(crs_str) = crs_value.as_str() {
         // Handle JSON strings "OGC:CRS84" and "EPSG:4326"
-        if LngLat::is_str_lnglat(crs_str) {
+        if crs_str == "OGC:CRS84" {
             return Ok(lnglat());
         }
 
         if AuthorityCode::is_authority_code(crs_str) {
             return Ok(AuthorityCode::crs(crs_str));
         }
+    }
+
+    if let Some(number) = crs_value.as_number() {
+        return deserialize_crs(&number.to_string());
     }
 
     let projjson = if let Some(string) = crs_value.as_str() {

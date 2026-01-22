@@ -20,3 +20,5 @@ mod metadata;
 pub mod options;
 pub mod provider;
 mod writer;
+
+pub use metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata};

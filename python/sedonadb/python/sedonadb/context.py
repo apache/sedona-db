@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
+from sedonadb._options import Options
 from sedonadb.dataframe import DataFrame, _create_data_frame
 from sedonadb.utility import sedona  # noqa: F401
-from sedonadb._options import Options
 
 
 class SedonaContext:
@@ -123,6 +123,7 @@ class SedonaContext:
         self,
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
+        geometry_columns: Optional[Dict[str, Union[str, Dict[str, Any]]]] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -131,6 +132,33 @@ class SedonaContext:
                 files.
             options: Optional dictionary of options to pass to the Parquet reader.
                 For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
+            geometry_columns: Optional mapping of column name to GeoParquet column
+                metadata (e.g., {"geom": {"encoding": "WKB"}}). Use this to mark
+                binary WKB columns as geometry columns. Supported keys:
+                - encoding: "WKB" (required)
+                - crs: string (e.g., "EPSG:4326") or integer SRID (e.g., 4326).
+                  If not provided, the default CRS is OGC:CRS84
+                  (https://www.opengis.net/def/crs/OGC/1.3/CRS84), which means
+                  the data in this column must be stored in longitude/latitude
+                  based on the WGS84 datum.
+                - edges: "planar" (default) or "spherical"
+
+                Useful for:
+                - Legacy Parquet files with Binary columns containing WKB payloads.
+                - Overriding GeoParquet metadata when fields like `crs` are missing.
+
+                Precedence:
+                - If a column appears in both GeoParquet metadata and this option,
+                  the geometry_columns entry takes precedence.
+
+                Example:
+                - For `geo.parquet(geo1: geometry, geo2: geometry, geo3: binary)`,
+                  `read_parquet("geo.parquet", geometry_columns={"geo2": {...}, "geo3": ...})`
+                  will override `geo2` metadata and treat `geo3` as a geometry column.
+
+                Safety:
+                - Columns specified here are not validated for WKB correctness.
+                  Invalid WKB payloads may cause undefined behavior.
 
         Examples:
 
@@ -138,6 +166,12 @@ class SedonaContext:
             >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
             >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
+            >>> sd.read_parquet(
+            ...     url,
+            ...     geometry_columns={
+            ...         "geometry": {"encoding": "WKB", "crs": "EPSG:4326", "edges": "planar"}
+            ...     },
+            ... )
 
         """
         if isinstance(table_paths, (str, Path)):
@@ -148,7 +182,9 @@ class SedonaContext:
 
         return DataFrame(
             self._impl,
-            self._impl.read_parquet([str(path) for path in table_paths], options),
+            self._impl.read_parquet(
+                [str(path) for path in table_paths], options, geometry_columns
+            ),
             self.options,
         )
 

@@ -14,10 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import json
+
 import geoarrow.pyarrow as ga  # noqa: F401
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import sedonadb
+import shapely
 
 
 def test_options():
@@ -98,6 +102,38 @@ def test_read_parquet_options_parameter(con, geoarrow_data):
     assert len(tab4) == len(
         tab1
     )  # Should be identical (option ignored but not errored)
+
+
+# Basic test for `geometry_columns` option for `read_parquet(..)`
+def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
+    # Write regular parquet table with wkb column in Binary type
+    geom = shapely.from_wkt("POINT (0 1)").wkb
+    table = pa.table({"id": [1], "geom": [geom]})
+    src = tmp_path / "plain.parquet"
+    pq.write_table(table, src)
+
+    # Check metadata: geoparquet meatadata should not be available
+    metadata = pq.read_metadata(src).metadata
+    assert metadata is not None
+    assert b"geo" not in metadata
+
+    # `read_parquet()` with geo type hint produces `geometry` columns, writing it
+    # again will produce GeoParquet file
+    df = con.read_parquet(
+        src, geometry_columns={"geom": {"encoding": "WKB", "crs": 4326}}
+    )
+    tab = df.to_arrow_table()
+    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+
+    out = tmp_path / "geo.parquet"
+    df.to_parquet(out)
+    metadata = pq.read_metadata(out).metadata
+    assert metadata is not None
+    geo = metadata.get(b"geo")
+    assert geo is not None
+    geo_metadata = json.loads(geo.decode("utf-8"))
+    print(json.dumps(geo_metadata, indent=2, sort_keys=True))
+    assert geo_metadata["columns"]["geom"]["crs"] == "EPSG:4326"
 
 
 def test_read_geoparquet_s3_anonymous_access():
