@@ -144,6 +144,27 @@ class TestBenchBase:
             # We don't need to call self.postgis_single.create_table_arrow
             # because it shares the same database with self.postgis
 
+        affine_query = """
+            SELECT
+                geom1,
+                CAST(1.0 + random() * 0.1 AS DOUBLE) AS a,
+                CAST(random() * 0.1 AS DOUBLE) AS b,
+                CAST(random() * 0.1 AS DOUBLE) AS d,
+                CAST(1.0 + random() * 0.1 AS DOUBLE) AS e,
+                CAST(random() * 5.0 AS DOUBLE) AS xoff,
+                CAST(random() * 5.0 AS DOUBLE) AS yoff
+            FROM points_simple
+        """
+        tab = self.sedonadb.execute_and_collect(affine_query)
+
+        self.sedonadb.create_table_arrow("affine_params", tab)
+        self.postgis.create_table_arrow("affine_params", tab)
+        self.duckdb.create_table_arrow("affine_params", tab)
+        self.sedonadb_single.create_table_arrow("affine_params", tab)
+        self.duckdb_single.create_table_arrow("affine_params", tab)
+        # We don't need to call self.postgis_single.create_table_arrow
+        # because it shares the same database with self.postgis
+
     def _get_eng(self, eng):
         if eng == SedonaDB:
             return self.sedonadb
