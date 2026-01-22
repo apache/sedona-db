@@ -518,7 +518,10 @@ def _qualified_type_name(obj):
 
 SPECIAL_CASED_SCANS = {
     "pyarrow.lib.Table": _scan_collected_default,
+    # pandas < 3.0
     "pandas.core.frame.DataFrame": _scan_collected_default,
+    # pandas >= 3.0
+    "pandas.DataFrame": _scan_collected_default,
     "geopandas.geodataframe.GeoDataFrame": _scan_geopandas,
     "polars.dataframe.frame.DataFrame": _scan_collected_default,
 }
