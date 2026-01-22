@@ -19,7 +19,8 @@ use std::{sync::Arc, vec};
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, Float64Builder};
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, exec_err, ScalarValue};
+use datafusion_common::cast::as_int64_array;
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -136,9 +137,20 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
 
-        let (x_opt, y_opt) = get_scalar_coord(&args[1], &args[2])?;
+        // Expand x and y coordinate parameters to arrays and cast to Int64
+        let x_array = args[1].clone().cast_to(&DataType::Int64, None)?;
+        let x_array = x_array.into_array(executor.num_iterations())?;
+        let x_array = as_int64_array(&x_array)?;
+        let y_array = args[2].clone().cast_to(&DataType::Int64, None)?;
+        let y_array = y_array.into_array(executor.num_iterations())?;
+        let y_array = as_int64_array(&y_array)?;
+        let mut x_iter = x_array.iter();
+        let mut y_iter = y_array.iter();
 
         executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = x_iter.next().unwrap();
+            let y_opt = y_iter.next().unwrap();
+
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
                     let (world_x, world_y) = to_world_coordinate(&raster, x, y);
@@ -186,9 +198,20 @@ impl SedonaScalarKernel for RsCoordinatePoint {
             item.len() * executor.num_iterations(),
         );
 
-        let (x_opt, y_opt) = get_scalar_coord(&args[1], &args[2])?;
+        // Expand x and y coordinate parameters to arrays and cast to Int64
+        let x_array = args[1].clone().cast_to(&DataType::Int64, None)?;
+        let x_array = x_array.into_array(executor.num_iterations())?;
+        let x_array = as_int64_array(&x_array)?;
+        let y_array = args[2].clone().cast_to(&DataType::Int64, None)?;
+        let y_array = y_array.into_array(executor.num_iterations())?;
+        let y_array = as_int64_array(&y_array)?;
+        let mut x_iter = x_array.iter();
+        let mut y_iter = y_array.iter();
 
         executor.execute_raster_void(|_i, raster_opt| {
+            let x_opt = x_iter.next().unwrap();
+            let y_opt = y_iter.next().unwrap();
+
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
                     let (world_x, world_y) = to_world_coordinate(&raster, x, y);
@@ -205,31 +228,10 @@ impl SedonaScalarKernel for RsCoordinatePoint {
     }
 }
 
-fn extract_int_scalar(arg: &ColumnarValue) -> Result<Option<i64>> {
-    match arg {
-        ColumnarValue::Scalar(scalar) => {
-            let i64_val = scalar.cast_to(&DataType::Int64)?;
-            match i64_val {
-                ScalarValue::Int64(Some(v)) => Ok(Some(v)),
-                _ => Ok(None),
-            }
-        }
-        _ => exec_err!("Expected scalar integer argument for coordinate"),
-    }
-}
-
-fn get_scalar_coord(
-    x_arg: &ColumnarValue,
-    y_arg: &ColumnarValue,
-) -> Result<(Option<i64>, Option<i64>)> {
-    let x_opt = extract_int_scalar(x_arg)?;
-    let y_opt = extract_int_scalar(y_arg)?;
-    Ok((x_opt, y_opt))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::Array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
@@ -306,5 +308,53 @@ mod tests {
             .invoke_array_scalar_scalar(Arc::new(rasters), 0_i32, 0_i32)
             .unwrap();
         assert_array_equal(&result, expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_xy_with_array_coords(#[values(Coord::Y, Coord::X)] coord: Coord) {
+        let udf = match coord {
+            Coord::X => rs_rastertoworldcoordx_udf(),
+            Coord::Y => rs_rastertoworldcoordy_udf(),
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        // Test with different pixel coordinates for each raster
+        // Raster 0: upper_left=(1,2), scales=(0,0), so any pixel gives (1,2)
+        // Raster 1: null
+        // Raster 2: upper_left=(3,4), scale_x=0.2, scale_y=-0.4, skew_x=0.06, skew_y=0.08
+        //           At pixel (1,2): x = 3 + 0.2*1 + 0.06*2 = 3.32, y = 4 + 0.08*1 + (-0.4)*2 = 3.28
+        let x_coords = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 1]));
+        let y_coords = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 2]));
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), x_coords, y_coords])
+            .unwrap();
+
+        let float_array = result
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .expect("Expected Float64Array");
+
+        // Check each value with approximate comparison due to floating point
+        match coord {
+            Coord::X => {
+                assert!((float_array.value(0) - 1.0).abs() < 1e-10);
+                assert!(float_array.is_null(1));
+                assert!((float_array.value(2) - 3.32).abs() < 1e-10);
+            }
+            Coord::Y => {
+                assert!((float_array.value(0) - 2.0).abs() < 1e-10);
+                assert!(float_array.is_null(1));
+                assert!((float_array.value(2) - 3.28).abs() < 1e-10);
+            }
+        }
     }
 }

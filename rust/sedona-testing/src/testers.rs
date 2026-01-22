@@ -570,8 +570,18 @@ impl ScalarUdfTester {
     }
 
     pub fn invoke(&self, args: Vec<ColumnarValue>) -> Result<ColumnarValue> {
-        self.invoke_with_return_type(args, None)
+        let scalar_args = args
+            .iter()
+            .map(|arg| match arg {
+                ColumnarValue::Array(_) => None,
+                ColumnarValue::Scalar(scalar_value) => Some(scalar_value.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        let return_type = self.return_type_with_scalars_inner(&scalar_args)?;
+        self.invoke_with_return_type(args, Some(return_type))
     }
+
     pub fn invoke_with_return_type(
         &self,
         args: Vec<ColumnarValue>,

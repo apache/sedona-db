@@ -74,8 +74,13 @@ def test_read_ogr_multi_file(con):
 
     with tempfile.TemporaryDirectory() as td:
         # Create partitioned files by writing Parquet first and translating
-        # one file at a time
-        con.create_data_frame(gdf).to_parquet(td, partition_by="partition")
+        # one file at a time. We need to cast partition in pandas>=3.0 because
+        # the default translation of a string column is LargeUtf8 and this is not
+        # currently supported by DataFusion partition_by.
+        con.create_data_frame(gdf).to_view("tmp_gdf", overwrite=True)
+        con.sql(
+            """SELECT idx, partition::VARCHAR AS partition, wkb_geometry FROM tmp_gdf"""
+        ).to_parquet(td, partition_by="partition")
         for parquet_path in Path(td).rglob("*.parquet"):
             fgb_path = str(parquet_path).replace(".parquet", ".fgb")
             con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)
