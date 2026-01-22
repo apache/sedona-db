@@ -83,12 +83,79 @@ config_namespace! {
         /// data when running out-of-core spatial join
         pub target_index_side_bbox_sampling_rate: f64, default = 0.01
 
+        /// The in memory size threshold of batches written to spill files. If the spilled batch is
+        /// too large, it will be broken into several smaller parts before written to spill files.
+        /// This is for avoiding overshooting the memory limit when reading spilled batches from
+        /// spill files. Specify 0 for unlimited size.
+        pub spilled_batch_in_memory_size_threshold: usize, default = 0
+
         /// The minimum number of geometry pairs per chunk required to enable parallel
         /// refinement during the spatial join operation. When the refinement phase has
         /// fewer geometry pairs than this threshold, it will run sequentially instead
         /// of spawning parallel tasks. Higher values reduce parallelization overhead
         /// for small datasets, while lower values enable more fine-grained parallelism.
         pub parallel_refinement_chunk_size: usize, default = 8192
+
+        /// Options for debugging or testing spatial join
+        pub debug : SpatialJoinDebugOptions, default = SpatialJoinDebugOptions::default()
+    }
+}
+
+config_namespace! {
+    /// Configurations for debugging or testing spatial join
+    pub struct SpatialJoinDebugOptions {
+        /// Number of spatial partitions to use for spatial join
+        pub num_spatial_partitions: NumSpatialPartitionsConfig, default = NumSpatialPartitionsConfig::Auto
+
+        /// The amount of memory for intermittent usage such as spatially repartitioning the data
+        pub memory_for_intermittent_usage: Option<usize>, default = None
+
+        /// Force spilling while collecting the build side or not
+        pub force_spill: bool, default = false
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum NumSpatialPartitionsConfig {
+    /// Automatically determine the number of spatial partitions
+    Auto,
+
+    /// Use a fixed number of spatial partitions
+    Fixed(usize),
+}
+
+impl ConfigField for NumSpatialPartitionsConfig {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        let value = match self {
+            NumSpatialPartitionsConfig::Auto => "auto".into(),
+            NumSpatialPartitionsConfig::Fixed(n) => format!("{n}"),
+        };
+        v.some(key, value, description);
+    }
+
+    fn set(&mut self, _key: &str, value: &str) -> Result<()> {
+        let value = value.to_lowercase();
+        let config = match value.as_str() {
+            "auto" => NumSpatialPartitionsConfig::Auto,
+            _ => match value.parse::<usize>() {
+                Ok(n) => {
+                    if n > 0 {
+                        NumSpatialPartitionsConfig::Fixed(n)
+                    } else {
+                        return Err(datafusion_common::DataFusionError::Configuration(
+                            "num_spatial_partitions must be greater than 0".to_string(),
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Err(datafusion_common::DataFusionError::Configuration(format!(
+                        "Unknown num_spatial_partitions config: {value}. Expected formats: auto, <number>"
+                    )));
+                }
+            },
+        };
+        *self = config;
+        Ok(())
     }
 }
 
@@ -432,5 +499,20 @@ mod tests {
         assert!(index_type.set("", "unindexed").is_err());
         assert!(index_type.set("", "invalid").is_err());
         assert!(index_type.set("", "").is_err());
+    }
+
+    #[test]
+    fn test_num_spatial_partitions_config_parsing() {
+        let mut config = NumSpatialPartitionsConfig::Auto;
+
+        assert!(config.set("", "auto").is_ok());
+        assert_eq!(config, NumSpatialPartitionsConfig::Auto);
+
+        assert!(config.set("", "10").is_ok());
+        assert_eq!(config, NumSpatialPartitionsConfig::Fixed(10));
+
+        assert!(config.set("", "0").is_err());
+        assert!(config.set("", "invalid").is_err());
+        assert!(config.set("", "fixed[10]").is_err());
     }
 }

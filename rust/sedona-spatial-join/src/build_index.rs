@@ -56,10 +56,14 @@ pub async fn build_index(
         .cloned()
         .unwrap_or_default();
     let concurrent = sedona_options.spatial_join.concurrent_build_side_collection;
+    let runtime_env = context.runtime_env();
+    let spill_compression = session_config.spill_compression();
     let memory_pool = context.memory_pool();
     let collector = BuildSideBatchesCollector::new(
         spatial_predicate.clone(),
         sedona_options.spatial_join.clone(),
+        Arc::clone(&runtime_env),
+        spill_compression,
     );
     let num_partitions = build_streams.len();
     let mut collect_metrics_vec = Vec::with_capacity(num_partitions);
@@ -82,9 +86,14 @@ pub async fn build_index(
         )
         .await?;
 
-    let contains_external_stream = build_partitions
-        .iter()
-        .any(|partition| partition.build_side_batch_stream.is_external());
+    let contains_external_stream = build_partitions.iter().any(|partition| {
+        // Access fields to avoid unused variable warnings. Will be removed when out-of-core
+        // spatial join (https://github.com/apache/sedona-db/issues/436) is fully implemented.
+        let _ = partition.num_rows;
+        let _ = partition.bbox_samples;
+        let _ = partition.estimated_spatial_index_memory_usage;
+        partition.build_side_batch_stream.is_external()
+    });
     if !contains_external_stream {
         let mut index_builder = SpatialIndexBuilder::new(
             build_schema,

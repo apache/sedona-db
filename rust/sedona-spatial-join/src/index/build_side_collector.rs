@@ -17,12 +17,17 @@
 
 use std::sync::Arc;
 
+use datafusion::config::SpillCompression;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
-use datafusion_execution::{memory_pool::MemoryReservation, SendableRecordBatchStream};
-use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
+use datafusion_execution::{
+    memory_pool::MemoryReservation, runtime_env::RuntimeEnv, SendableRecordBatchStream,
+};
+use datafusion_physical_plan::metrics::{
+    self, ExecutionPlanMetricsSet, MetricBuilder, SpillMetrics,
+};
 use futures::StreamExt;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
@@ -30,9 +35,10 @@ use sedona_schema::datatypes::WKB_GEOMETRY;
 use crate::{
     evaluated_batch::{
         evaluated_batch_stream::{
-            evaluate::create_evaluated_build_stream, in_mem::InMemoryEvaluatedBatchStream,
-            SendableEvaluatedBatchStream,
+            evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream,
+            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
         },
+        spill::EvaluatedBatchSpillWriter,
         EvaluatedBatch,
     },
     index::SpatialIndexBuilder,
@@ -40,11 +46,6 @@ use crate::{
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
-
-/// Safety buffer applied when pre-growing build-side reservations to leave headroom for
-/// auxiliary structures beyond the build batches themselves.
-/// 20% was chosen as a conservative margin.
-const BUILD_SIDE_RESERVATION_BUFFER_RATIO: f64 = 0.20;
 
 pub(crate) struct BuildPartition {
     pub num_rows: usize,
@@ -60,8 +61,12 @@ pub(crate) struct BuildPartition {
     /// spatial index will be the sum of these per-partition estimation.
     pub estimated_spatial_index_memory_usage: usize,
 
-    /// Memory reservation for tracking the memory usage of the build partition
-    /// Cleared on `BuildPartition` drop
+    /// Memory reservation for tracking the maximum memory usage when collecting
+    /// the build side. This reservation won't be freed even when spilling is
+    /// triggered. We deliberately only grow the memory reservation to probe
+    /// the amount of memory available for loading spatial index into memory.
+    /// The size of this reservation will be used to determine the maximum size of
+    /// each spatial partition, as well as how many spatial partitions to create.
     pub reservation: MemoryReservation,
 }
 
@@ -74,8 +79,11 @@ pub(crate) struct BuildSideBatchesCollector {
     spatial_predicate: SpatialPredicate,
     spatial_join_options: SpatialJoinOptions,
     evaluator: Arc<dyn OperandEvaluator>,
+    runtime_env: Arc<RuntimeEnv>,
+    spill_compression: SpillCompression,
 }
 
+#[derive(Clone)]
 pub(crate) struct CollectBuildSideMetrics {
     /// Number of batches collected
     num_batches: metrics::Count,
@@ -88,6 +96,8 @@ pub(crate) struct CollectBuildSideMetrics {
     /// Total time taken to collect and process the build side batches. This does not include the time awaiting
     /// for batches from the input stream.
     time_taken: metrics::Time,
+    /// Spill metrics of build partitions collecting phase
+    spill_metrics: SpillMetrics,
 }
 
 impl CollectBuildSideMetrics {
@@ -99,6 +109,7 @@ impl CollectBuildSideMetrics {
                 .gauge("build_input_total_size_bytes", partition),
             time_taken: MetricBuilder::new(metrics)
                 .subset_time("build_input_collection_time", partition),
+            spill_metrics: SpillMetrics::new(metrics, partition),
         }
     }
 }
@@ -107,12 +118,16 @@ impl BuildSideBatchesCollector {
     pub fn new(
         spatial_predicate: SpatialPredicate,
         spatial_join_options: SpatialJoinOptions,
+        runtime_env: Arc<RuntimeEnv>,
+        spill_compression: SpillCompression,
     ) -> Self {
         let evaluator = create_operand_evaluator(&spatial_predicate, spatial_join_options.clone());
         BuildSideBatchesCollector {
             spatial_predicate,
             spatial_join_options,
             evaluator,
+            runtime_env,
+            spill_compression,
         }
     }
 
@@ -134,6 +149,7 @@ impl BuildSideBatchesCollector {
         mut bbox_sampler: BoundingBoxSampler,
         metrics: &CollectBuildSideMetrics,
     ) -> Result<BuildPartition> {
+        let mut spill_writer_opt = None;
         let mut in_mem_batches: Vec<EvaluatedBatch> = Vec::new();
         let mut total_num_rows = 0;
         let mut total_size_bytes = 0;
@@ -168,8 +184,29 @@ impl BuildSideBatchesCollector {
             metrics.num_rows.add(num_rows);
             metrics.total_size_bytes.add(in_mem_size);
 
-            in_mem_batches.push(build_side_batch);
-            reservation.try_grow(in_mem_size)?;
+            match &mut spill_writer_opt {
+                None => {
+                    // Collected batches are in memory, no spilling happened for this partition before. We'll try
+                    // storing this batch in memory first, and switch to writing everything to disk if we fail
+                    // to grow the reservation.
+                    in_mem_batches.push(build_side_batch);
+                    if let Err(e) = reservation.try_grow(in_mem_size) {
+                        log::debug!(
+                            "Failed to grow reservation by {} bytes. Current reservation: {} bytes. \
+                            num rows: {}, reason: {:?}, Spilling...",
+                            in_mem_size,
+                            reservation.size(),
+                            num_rows,
+                            e,
+                        );
+                        spill_writer_opt =
+                            self.spill_in_mem_batches(&mut in_mem_batches, metrics)?;
+                    }
+                }
+                Some(spill_writer) => {
+                    spill_writer.append(&build_side_batch)?;
+                }
+            }
         }
 
         let geo_statistics = analyzer.finish();
@@ -179,16 +216,45 @@ impl BuildSideBatchesCollector {
             &self.spatial_join_options,
         );
 
-        // Try to grow the reservation with a safety buffer to leave room for additional data structures
-        let buffer_bytes = ((extra_mem + reservation.size()) as f64
-            * BUILD_SIDE_RESERVATION_BUFFER_RATIO)
-            .ceil() as usize;
-        let additional_reservation = extra_mem + buffer_bytes;
-        reservation.try_grow(additional_reservation)?;
+        // Try to grow the reservation a bit more to account for any underestimation of
+        // memory usage. We proceed even when the growth fails.
+        let additional_reservation = extra_mem + (extra_mem + reservation.size()) / 5;
+        if let Err(e) = reservation.try_grow(additional_reservation) {
+            log::debug!(
+                "Failed to grow reservation by {} bytes to account for spatial index building memory usage. \
+                Current reservation: {} bytes. reason: {:?}",
+                additional_reservation,
+                reservation.size(),
+                e,
+            );
+        }
 
-        let build_side_batch_stream: SendableEvaluatedBatchStream = {
-            let schema = stream.schema();
-            Box::pin(InMemoryEvaluatedBatchStream::new(schema, in_mem_batches))
+        // If force spill is enabled, flush everything to disk regardless of whether the memory
+        // is enough or not.
+        if self.spatial_join_options.debug.force_spill && spill_writer_opt.is_none() {
+            log::debug!(
+                "Force spilling enabled. Spilling {} in-memory batches to disk.",
+                in_mem_batches.len()
+            );
+            spill_writer_opt = self.spill_in_mem_batches(&mut in_mem_batches, metrics)?;
+        }
+
+        let build_side_batch_stream: SendableEvaluatedBatchStream = match spill_writer_opt {
+            Some(spill_writer) => {
+                let spill_file = spill_writer.finish()?;
+                if !in_mem_batches.is_empty() {
+                    return sedona_internal_err!(
+                        "In-memory batches should have been spilled when spill file exists"
+                    );
+                }
+                Box::pin(ExternalEvaluatedBatchStream::try_from_spill_file(
+                    Arc::new(spill_file),
+                )?)
+            }
+            None => {
+                let schema = stream.schema();
+                Box::pin(InMemoryEvaluatedBatchStream::new(schema, in_mem_batches))
+            }
         };
 
         let estimated_spatial_index_memory_usage = total_size_bytes + extra_mem;
@@ -317,5 +383,220 @@ impl BuildSideBatchesCollector {
             results.push(result);
         }
         Ok(results)
+    }
+
+    fn spill_in_mem_batches(
+        &self,
+        in_mem_batches: &mut Vec<EvaluatedBatch>,
+        metrics: &CollectBuildSideMetrics,
+    ) -> Result<Option<EvaluatedBatchSpillWriter>> {
+        if in_mem_batches.is_empty() {
+            return Ok(None);
+        }
+
+        let build_side_batch = &in_mem_batches[0];
+
+        let schema = build_side_batch.schema();
+        let sedona_type = &build_side_batch.geom_array.sedona_type;
+        let mut spill_writer = EvaluatedBatchSpillWriter::try_new(
+            Arc::clone(&self.runtime_env),
+            schema,
+            sedona_type,
+            "spilling build side batches",
+            self.spill_compression,
+            metrics.spill_metrics.clone(),
+            if self
+                .spatial_join_options
+                .spilled_batch_in_memory_size_threshold
+                == 0
+            {
+                None
+            } else {
+                Some(
+                    self.spatial_join_options
+                        .spilled_batch_in_memory_size_threshold,
+                )
+            },
+        )?;
+
+        for in_mem_batch in in_mem_batches.iter() {
+            spill_writer.append(in_mem_batch)?;
+        }
+
+        in_mem_batches.clear();
+        Ok(Some(spill_writer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        operand_evaluator::EvaluatedGeometryArray,
+        spatial_predicate::{RelationPredicate, SpatialRelationType},
+    };
+    use arrow_array::{ArrayRef, BinaryArray, Int32Array, RecordBatch};
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion_common::ScalarValue;
+    use datafusion_execution::memory_pool::{GreedyMemoryPool, MemoryConsumer, MemoryPool};
+    use datafusion_physical_expr::expressions::Literal;
+    use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
+    use futures::TryStreamExt;
+    use sedona_common::SpatialJoinOptions;
+    use sedona_schema::datatypes::WKB_GEOMETRY;
+
+    fn test_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]))
+    }
+
+    fn sample_batch(ids: &[i32], wkbs: Vec<Option<Vec<u8>>>) -> Result<EvaluatedBatch> {
+        assert_eq!(ids.len(), wkbs.len());
+        let id_array = Arc::new(Int32Array::from(ids.to_vec())) as ArrayRef;
+        let batch = RecordBatch::try_new(test_schema(), vec![id_array])?;
+        let geom_values: Vec<Option<&[u8]>> = wkbs
+            .iter()
+            .map(|wkb_opt| wkb_opt.as_ref().map(|wkb| wkb.as_slice()))
+            .collect();
+        let geom_array: ArrayRef = Arc::new(BinaryArray::from(geom_values));
+        let geom = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
+        Ok(EvaluatedBatch {
+            batch,
+            geom_array: geom,
+        })
+    }
+
+    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
+        let mut buf = vec![1u8, 1, 0, 0, 0];
+        buf.extend_from_slice(&x.to_le_bytes());
+        buf.extend_from_slice(&y.to_le_bytes());
+        buf
+    }
+
+    fn build_collector() -> BuildSideBatchesCollector {
+        let expr: Arc<dyn datafusion_physical_expr::PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Null));
+        let predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::clone(&expr),
+            expr,
+            SpatialRelationType::Intersects,
+        ));
+        BuildSideBatchesCollector::new(
+            predicate,
+            SpatialJoinOptions::default(),
+            Arc::new(RuntimeEnv::default()),
+            SpillCompression::Uncompressed,
+        )
+    }
+
+    fn memory_reservation(limit: usize) -> (MemoryReservation, Arc<dyn MemoryPool>) {
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(limit));
+        let consumer = MemoryConsumer::new("build-side-test").with_can_spill(true);
+        let reservation = consumer.register(&pool);
+        (reservation, pool)
+    }
+
+    fn build_stream(batches: Vec<EvaluatedBatch>) -> SendableEvaluatedBatchStream {
+        let schema = batches
+            .first()
+            .map(|batch| batch.schema())
+            .unwrap_or_else(test_schema);
+        Box::pin(InMemoryEvaluatedBatchStream::new(schema, batches))
+    }
+
+    fn collect_ids(batches: &[EvaluatedBatch]) -> Vec<i32> {
+        let mut ids = Vec::new();
+        for batch in batches {
+            let array = batch
+                .batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap();
+            for i in 0..array.len() {
+                ids.push(array.value(i));
+            }
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn collect_keeps_batches_in_memory_when_capacity_suffices() -> Result<()> {
+        let collector = build_collector();
+        let (reservation, _pool) = memory_reservation(10 * 1024 * 1024);
+        let sampler = BoundingBoxSampler::try_new(1, 4, 1.0, 7)?;
+        let batch_a = sample_batch(
+            &[0, 1],
+            vec![Some(point_wkb(0.0, 0.0)), Some(point_wkb(1.0, 1.0))],
+        )?;
+        let batch_b = sample_batch(&[2], vec![Some(point_wkb(2.0, 2.0))])?;
+        let stream = build_stream(vec![batch_a, batch_b]);
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
+
+        let partition = collector
+            .collect(stream, reservation, sampler, &metrics)
+            .await?;
+        let stream = partition.build_side_batch_stream;
+        let is_external = stream.is_external();
+        let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        assert!(!is_external, "Expected in-memory batches");
+        assert_eq!(collect_ids(&batches), vec![0, 1, 2]);
+        assert_eq!(partition.num_rows, 3);
+        assert_eq!(metrics.num_batches.value(), 2);
+        assert_eq!(metrics.num_rows.value(), 3);
+        assert!(metrics.total_size_bytes.value() > 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_spills_when_reservation_cannot_grow() -> Result<()> {
+        let collector = build_collector();
+        let sampler = BoundingBoxSampler::try_new(1, 2, 1.0, 13)?;
+        let bbox_mem = sampler.estimate_maximum_memory_usage();
+        let (reservation, _pool) = memory_reservation(bbox_mem + 1);
+        let batch_a = sample_batch(
+            &[10, 11],
+            vec![Some(point_wkb(5.0, 5.0)), Some(point_wkb(6.0, 6.0))],
+        )?;
+        let batch_b = sample_batch(&[12], vec![Some(point_wkb(7.0, 7.0))])?;
+        let stream = build_stream(vec![batch_a, batch_b]);
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
+
+        let partition = collector
+            .collect(stream, reservation, sampler, &metrics)
+            .await?;
+        let stream = partition.build_side_batch_stream;
+        let is_external = stream.is_external();
+        let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        assert!(is_external, "Expected batches to spill to disk");
+        assert_eq!(collect_ids(&batches), vec![10, 11, 12]);
+        let spill_metrics = metrics.spill_metrics;
+        assert!(spill_metrics.spill_file_count.value() >= 1);
+        assert!(spill_metrics.spilled_rows.value() >= 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_handles_empty_stream() -> Result<()> {
+        let collector = build_collector();
+        let (reservation, _pool) = memory_reservation(1024);
+        let sampler = BoundingBoxSampler::try_new(1, 2, 1.0, 19)?;
+        let stream = build_stream(Vec::new());
+        let metrics_set = ExecutionPlanMetricsSet::new();
+        let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
+
+        let partition = collector
+            .collect(stream, reservation, sampler, &metrics)
+            .await?;
+        assert_eq!(partition.num_rows, 0);
+        let stream = partition.build_side_batch_stream;
+        let is_external = stream.is_external();
+        let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        assert!(!is_external);
+        assert!(batches.is_empty());
+        assert_eq!(metrics.num_batches.value(), 0);
+        assert_eq!(metrics.num_rows.value(), 0);
+        Ok(())
     }
 }
