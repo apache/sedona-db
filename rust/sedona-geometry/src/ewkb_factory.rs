@@ -280,7 +280,7 @@ mod test {
         }
     }
 
-    const ROUNDTRIP_CASES: [&str; 35] = [
+    const ROUNDTRIP_CASES: [&str; 56] = [
         // XY dimensions
         "POINT(1 2)",
         "LINESTRING(1 2,3 4,5 6)",
@@ -321,5 +321,29 @@ mod test {
         "MULTILINESTRING EMPTY",
         "MULTIPOLYGON EMPTY",
         "GEOMETRYCOLLECTION EMPTY",
+        // Empty geometries Z
+        "POINT Z EMPTY",
+        "LINESTRING Z EMPTY",
+        "POLYGON Z EMPTY",
+        "MULTIPOINT Z EMPTY",
+        "MULTILINESTRING Z EMPTY",
+        "MULTIPOLYGON Z EMPTY",
+        "GEOMETRYCOLLECTION Z EMPTY",
+        // Empty geometries M
+        "POINT M EMPTY",
+        "LINESTRING M EMPTY",
+        "POLYGON M EMPTY",
+        "MULTIPOINT M EMPTY",
+        "MULTILINESTRING M EMPTY",
+        "MULTIPOLYGON M EMPTY",
+        "GEOMETRYCOLLECTION M EMPTY",
+        // Empty geometries ZM
+        "POINT ZM EMPTY",
+        "LINESTRING ZM EMPTY",
+        "POLYGON ZM EMPTY",
+        "MULTIPOINT ZM EMPTY",
+        "MULTILINESTRING ZM EMPTY",
+        "MULTIPOLYGON ZM EMPTY",
+        "GEOMETRYCOLLECTION ZM EMPTY",
     ];
 }
