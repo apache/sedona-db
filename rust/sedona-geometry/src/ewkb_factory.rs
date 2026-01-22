@@ -30,21 +30,21 @@ const EWKB_M_BIT: u32 = 0x40000000;
 const EWKB_SRID_BIT: u32 = 0x20000000;
 
 pub fn write_ewkb_geometry(
+    buf: &mut impl Write,
     geom: &Wkb,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     match geom.as_type() {
-        geo_traits::GeometryType::Point(p) => write_ewkb_point(p, srid, buf),
-        geo_traits::GeometryType::LineString(ls) => write_ewkb_line_string(ls, srid, buf),
-        geo_traits::GeometryType::Polygon(poly) => write_ewkb_polygon(poly, srid, buf),
-        geo_traits::GeometryType::MultiPoint(mp) => write_ewkb_multi_point(mp, srid, buf),
+        geo_traits::GeometryType::Point(p) => write_ewkb_point(buf, p, srid),
+        geo_traits::GeometryType::LineString(ls) => write_ewkb_line_string(buf, ls, srid),
+        geo_traits::GeometryType::Polygon(poly) => write_ewkb_polygon(buf, poly, srid),
+        geo_traits::GeometryType::MultiPoint(mp) => write_ewkb_multi_point(buf, mp, srid),
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_ewkb_multi_line_string(mls, srid, buf)
+            write_ewkb_multi_line_string(buf, mls, srid)
         }
-        geo_traits::GeometryType::MultiPolygon(mpoly) => write_ewkb_multi_polygon(mpoly, srid, buf),
+        geo_traits::GeometryType::MultiPolygon(mpoly) => write_ewkb_multi_polygon(buf, mpoly, srid),
         geo_traits::GeometryType::GeometryCollection(gc) => {
-            write_ewkb_geometry_collection(gc, srid, buf)
+            write_ewkb_geometry_collection(buf, gc, srid)
         }
         _ => Err(SedonaGeometryError::Invalid(
             "Unsupported EWKB geometry type".to_string(),
@@ -53,9 +53,9 @@ pub fn write_ewkb_geometry(
 }
 
 fn write_ewkb_point(
+    buf: &mut impl Write,
     geom: &wkb::reader::Point,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(1, geom.dimension(), srid, buf)?;
     match geom.byte_order() {
@@ -74,9 +74,9 @@ fn write_ewkb_point(
 }
 
 fn write_ewkb_line_string(
+    buf: &mut impl Write,
     geom: &wkb::reader::LineString,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(2, geom.dimension(), srid, buf)?;
     let num_coords = geom.num_coords() as u32;
@@ -94,8 +94,8 @@ fn write_ewkb_line_string(
 }
 
 fn write_linearring(
-    geom: &wkb::reader::LinearRing,
     buf: &mut impl Write,
+    geom: &wkb::reader::LinearRing,
 ) -> Result<(), SedonaGeometryError> {
     let num_coords = geom.num_coords() as u32;
     buf.write_all(&num_coords.to_le_bytes())?;
@@ -112,84 +112,84 @@ fn write_linearring(
 }
 
 fn write_ewkb_polygon(
+    buf: &mut impl Write,
     geom: &wkb::reader::Polygon,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(3, geom.dimension(), srid, buf)?;
     let num_rings = geom.num_interiors() as u32 + geom.exterior().is_some() as u32;
     buf.write_all(&num_rings.to_le_bytes())?;
 
     if let Some(exterior) = geom.exterior() {
-        write_linearring(exterior, buf)?;
+        write_linearring(buf, exterior)?;
     }
 
     for interior in geom.interiors() {
-        write_linearring(interior, buf)?;
+        write_linearring(buf, interior)?;
     }
 
     Ok(())
 }
 
 fn write_ewkb_multi_point(
+    buf: &mut impl Write,
     geom: &wkb::reader::MultiPoint,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(4, geom.dimension(), srid, buf)?;
     let num_children = geom.num_points() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.points() {
-        write_ewkb_point(&child, None, buf)?;
+        write_ewkb_point(buf, &child, None)?;
     }
 
     Ok(())
 }
 
 fn write_ewkb_multi_line_string(
+    buf: &mut impl Write,
     geom: &wkb::reader::MultiLineString,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(5, geom.dimension(), srid, buf)?;
     let num_children = geom.num_line_strings() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.line_strings() {
-        write_ewkb_line_string(child, None, buf)?;
+        write_ewkb_line_string(buf, child, None)?;
     }
 
     Ok(())
 }
 
 fn write_ewkb_multi_polygon(
+    buf: &mut impl Write,
     geom: &wkb::reader::MultiPolygon,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(6, geom.dimension(), srid, buf)?;
     let num_children = geom.num_polygons() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.polygons() {
-        write_ewkb_polygon(child, None, buf)?;
+        write_ewkb_polygon(buf, child, None)?;
     }
 
     Ok(())
 }
 
 fn write_ewkb_geometry_collection(
+    buf: &mut impl Write,
     geom: &wkb::reader::GeometryCollection,
     srid: Option<u32>,
-    buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     write_geometry_type_and_srid(7, geom.dimension(), srid, buf)?;
     let num_children = geom.num_geometries() as u32;
     buf.write_all(&num_children.to_le_bytes())?;
 
     for child in geom.geometries() {
-        write_ewkb_geometry(child, None, buf)?;
+        write_ewkb_geometry(buf, child, None)?;
     }
 
     Ok(())
@@ -244,10 +244,10 @@ mod test {
             let wkb_geom = wkb::reader::read_wkb(&iso_wkb).unwrap();
 
             let mut ewkb_no_srid = Vec::new();
-            write_ewkb_geometry(&wkb_geom, None, &mut ewkb_no_srid).unwrap();
+            write_ewkb_geometry(&mut ewkb_no_srid, &wkb_geom, None).unwrap();
 
             let mut ewkb_with_srid = Vec::new();
-            write_ewkb_geometry(&wkb_geom, Some(4326), &mut ewkb_with_srid).unwrap();
+            write_ewkb_geometry(&mut ewkb_with_srid, &wkb_geom, Some(4326)).unwrap();
 
             // Check that the ewkbs have the correct number of bytes
             assert_eq!(
