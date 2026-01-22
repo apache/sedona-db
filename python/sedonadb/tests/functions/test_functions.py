@@ -14,10 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import math
+
+import pyarrow
 import pytest
 import shapely
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
-import math
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -1666,6 +1668,49 @@ def test_st_geomfromwkb(eng, geom):
         else:
             raise
     eng.assert_query_result(f"SELECT ST_GeomFromWKB({wkb})", expected)
+
+
+# `ST_GeomFromWKBUnchecked` is not available in PostGIS
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom"),
+    [
+        "POINT (1 1)",
+        "POINT EMPTY",
+        "LINESTRING EMPTY",
+        "POLYGON EMPTY",
+        "GEOMETRYCOLLECTION EMPTY",
+        "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+        "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+    ],
+)
+def test_st_geomfromwkbunchecked(eng, geom):
+    eng = eng.create_or_skip()
+
+    expected = geom
+    if geom == "POINT EMPTY":
+        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
+        expected = "POINT (nan nan)"
+
+    wkb = shapely.from_wkt(geom).wkb
+    wkb = "0x" + wkb.hex()
+
+    eng.assert_query_result(f"SELECT ST_GeomFromWKBUnchecked({wkb})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_geomfromwkbunchecked_invalid_wkb(eng):
+    eng = eng.create_or_skip()
+
+    # Invalid WKB payload can still convert to geometry column
+    eng.assert_query_result(
+        "SELECT ST_AsBinary(ST_GeomFromWKBUnchecked(0x01))", b"\x01"
+    )
+
+    # Using invalid WKB elsewhere may result in undefined behavior.
+    with pytest.raises(pyarrow.lib.ArrowInvalid, match="failed to fill whole buffer"):
+        eng.execute_and_collect("SELECT ST_AsText(ST_GeomFromWKBUnchecked(0x01))")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
