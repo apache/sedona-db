@@ -70,6 +70,9 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
     ],
 )
 def test_st_asewkb(eng, srid, geom):
+    if shapely.geos_version < (3, 12, 0):
+        pytest.skip("GEOS version 3.12+ required for EWKB tests")
+
     eng = eng.create_or_skip()
 
     if geom is not None:
