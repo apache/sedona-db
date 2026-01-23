@@ -36,7 +36,7 @@ pub use libgpuspatial::{
     GpuSpatialRelationPredicateWrapper,
 };
 #[cfg(gpu_available)]
-pub use libgpuspatial_glue_bindgen::GpuSpatialIndexContext;
+pub use libgpuspatial_glue_bindgen::SedonaSpatialIndexContext;
 #[cfg(gpu_available)]
 use nvml_wrapper::Nvml;
 
@@ -45,22 +45,22 @@ use nvml_wrapper::Nvml;
 // Each thread gets its own context, and the underlying GPU library handles thread safety.
 // The raw pointers inside are managed by the C++ library which ensures proper synchronization.
 #[cfg(gpu_available)]
-unsafe impl Send for GpuSpatialIndexContext {}
+unsafe impl Send for SedonaSpatialIndexContext {}
 #[cfg(gpu_available)]
 unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRTEngine {}
 #[cfg(gpu_available)]
 unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRTEngine {}
 
 #[cfg(gpu_available)]
-unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialIndexFloat2D {}
+unsafe impl Send for libgpuspatial_glue_bindgen::SedonaFloatIndex2D {}
 #[cfg(gpu_available)]
-unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRefiner {}
+unsafe impl Send for libgpuspatial_glue_bindgen::SedonaSpatialRefiner {}
 
 #[cfg(gpu_available)]
-unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialIndexFloat2D {}
+unsafe impl Sync for libgpuspatial_glue_bindgen::SedonaFloatIndex2D {}
 
 #[cfg(gpu_available)]
-unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRefiner {}
+unsafe impl Sync for libgpuspatial_glue_bindgen::SedonaSpatialRefiner {}
 
 // Error type for non-GPU builds
 #[cfg(not(gpu_available))]
@@ -277,10 +277,8 @@ impl GpuSpatial {
                 .as_ref()
                 .ok_or_else(|| GpuSpatialError::Init("GPU index not available".into()))?;
 
-            let mut ctx = GpuSpatialIndexContext {
-                last_error: std::ptr::null(),
-                build_indices: std::ptr::null_mut(),
-                probe_indices: std::ptr::null_mut(),
+            let mut ctx = SedonaSpatialIndexContext {
+                private_data: std::ptr::null_mut(),
             };
             index.create_context(&mut ctx);
 
