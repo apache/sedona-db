@@ -261,8 +261,7 @@ sd_transmute <- function(.data, ...) {
 #' @export
 #'
 #' @examples
-#' data.frame(x = 1:10) |>
-#'   sd_filter(x > 5)
+#' data.frame(x = 1:10) |> sd_filter(x > 5)
 #'
 sd_filter <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)

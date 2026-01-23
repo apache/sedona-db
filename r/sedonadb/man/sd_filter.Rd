@@ -20,7 +20,6 @@ An object of class sedonadb_dataframe
 Keep rows of a SedonaDB DataFrame that match a condition
 }
 \examples{
-data.frame(x = 1:10) |>
-  sd_filter(x > 5)
+data.frame(x = 1:10) |> sd_filter(x > 5)
 
 }
