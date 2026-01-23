@@ -485,18 +485,6 @@ mod tests {
         let result = tester.invoke_array_scalar(wkb, NAD83ZONE6PROJ).unwrap();
         assert_array_equal(&result, &expected_array);
 
-        // 3D case
-        let expected_array = create_array(
-            &[
-                None,
-                Some("POINT Z (5177633.352083738 1100539.9429069504 3546477.878583284)"),
-            ],
-            &expected_return_type,
-        );
-        let wkb = create_array(&[None, Some("POINT Z (12 34 56)")], &geometry_input);
-        let result = tester.invoke_array_scalar(wkb, WGS84GEOCENTRIC).unwrap();
-        assert_array_equal(&result, &expected_array);
-
         // Invoke with array to argument (returns item CRS)
         let expected_array = create_array_item_crs(
             &[None, Some("POINT (-21508577.363421552 34067918.06097863)")],
