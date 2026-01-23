@@ -95,9 +95,9 @@ def test_udf_name():
 
 
 def test_shapely_udf(con):
-    import shapely
     import geoarrow.pyarrow as ga
     import numpy as np
+    import shapely
 
     @udf.arrow_udf(ga.wkb(), [udf.GEOMETRY, udf.NUMERIC])
     def shapely_udf(geom, distance):
@@ -117,7 +117,7 @@ def test_shapely_udf(con):
     # Ensure we can propagate a crs
     pd.testing.assert_frame_equal(
         con.sql(
-            "SELECT ST_SRID(shapely_udf(ST_SetSRID(ST_Point(0, 0), 3857), 2.0)) as col"
+            "SELECT ST_SRID(shapely_udf(ST_Point(0, 0, 3857), 2.0)) as col"
         ).to_pandas(),
         pd.DataFrame({"col": [3857]}, dtype=np.uint32),
     )

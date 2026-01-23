@@ -133,7 +133,7 @@ nova_scotia_bbox_wkt = (
 ns = sd.sql(f"""
 SELECT country, region, geometry
 FROM division_area
-WHERE ST_Intersects(geometry, ST_SetSRID(ST_GeomFromText('{nova_scotia_bbox_wkt}'), 4326))
+WHERE ST_Intersects(geometry, ST_GeomFromText('{nova_scotia_bbox_wkt}', 4326))
 """)
 
 ns.show(3)

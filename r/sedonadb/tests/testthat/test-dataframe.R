@@ -241,7 +241,7 @@ test_that("sd_write_parquet can sort data", {
 
 test_that("sd_write_parquet can write geometry data", {
   df <- sd_sql(
-    "SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom, 'test' as name"
+    "SELECT ST_Point(1, 2, 4326) as geom, 'test' as name"
   )
 
   tmp_parquet_file <- tempfile(fileext = ".parquet")
@@ -261,7 +261,7 @@ test_that("sd_write_parquet can write geometry data", {
 
 test_that("sd_write_parquet validates geoparquet_version parameter", {
   df <- sd_sql(
-    "SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom, 'test' as name"
+    "SELECT ST_Point(1, 2, 4326) as geom, 'test' as name"
   )
   tmp_parquet_file <- tempfile(fileext = ".parquet")
   on.exit(unlink(tmp_parquet_file))

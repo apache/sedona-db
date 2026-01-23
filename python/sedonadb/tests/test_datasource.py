@@ -15,15 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import geopandas
 import geopandas.testing
 import pandas as pd
 import pytest
-import shapely
 import sedonadb
+import shapely
 
 
 def test_read_ogr_projection(con):
@@ -120,7 +120,7 @@ def test_read_ogr_filter(con):
             con.sql(
                 """
                 SELECT * FROM test_fgb
-                WHERE ST_Equals(wkb_geometry, ST_SetSRID(ST_Point(1, 2), 3857))
+                WHERE ST_Equals(wkb_geometry, ST_Point(1, 2, 3857))
                 """
             ).to_pandas(),
             gdf[gdf.geometry.geom_equals(shapely.Point(1, 2))].reset_index(drop=True),

@@ -202,7 +202,7 @@ WHERE
     AND height > 20
     AND ST_Intersects(
         geometry,
-        ST_SetSRID(ST_GeomFromText('{nyc_bbox_wkt}'), 4326)
+        ST_GeomFromText('{nyc_bbox_wkt}', 4326)
     )
 LIMIT 5;
 """).show()
@@ -325,7 +325,7 @@ FROM division_area
 WHERE
     ST_Intersects(
         geometry,
-        ST_SetSRID(ST_GeomFromText('{nova_scotia_bbox_wkt}'), 4326)
+        ST_GeomFromText('{nova_scotia_bbox_wkt}', 4326)
     )
 """).to_memtable()
 ```

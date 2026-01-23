@@ -69,7 +69,7 @@ filter <- "POLYGON ((-73.4341 44.0087, -73.4341 43.7981, -73.2531 43.7981, -73.2
 
 sd_sql(glue::glue("
   SELECT * FROM buildings
-  WHERE ST_Intersects(ST_SetSRID(ST_GeomFromText('{filter}'), 4326), geometry)
+  WHERE ST_Intersects(ST_GeomFromText('{filter}', 4326), geometry)
 ")) |> sd_preview()
 #> ┌─────────────────────────────────┐
 #> │             geometry            │

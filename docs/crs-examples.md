@@ -79,7 +79,7 @@ We use the `ST_SetSRID` function to assign the correct CRS identifier to our geo
 
 ```python
 cities = sd.sql("""
-SELECT city, ST_SetSRID(ST_GeomFromText(wkt), 3857) AS geometry FROM (VALUES
+SELECT city, ST_GeomFromText(wkt, 3857) AS geometry FROM (VALUES
     ('New York', 'POINT(-8238310.24 4969803.34)'),
     ('Los Angeles', 'POINT(-13153204.78 4037636.04)'),
     ('Chicago', 'POINT(-9757148.04 5138517.44)'))

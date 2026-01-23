@@ -231,7 +231,7 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #' @examples
 #' tmp_parquet <- tempfile(fileext = ".parquet")
 #'
-#' sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom") |>
+#' sd_sql("SELECT ST_Point(1, 2, 4326) as geom") |>
 #'   sd_write_parquet(tmp_parquet)
 #'
 #' sd_read_parquet(tmp_parquet)
