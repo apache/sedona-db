@@ -454,6 +454,7 @@ mod tests {
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const WGS84: &str = "EPSG:4326";
+    const WGS84GEOCENTRIC: &str = "EPSG:4978";
 
     #[test]
     fn test_invoke_with_string() {
@@ -482,6 +483,18 @@ mod tests {
         );
         let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
         let result = tester.invoke_array_scalar(wkb, NAD83ZONE6PROJ).unwrap();
+        assert_array_equal(&result, &expected_array);
+
+        // 3D case
+        let expected_array = create_array(
+            &[
+                None,
+                Some("POINT Z (5177633.352083738 1100539.9429069504 3546477.878583284)"),
+            ],
+            &expected_return_type,
+        );
+        let wkb = create_array(&[None, Some("POINT Z (12 34 56)")], &geometry_input);
+        let result = tester.invoke_array_scalar(wkb, WGS84GEOCENTRIC).unwrap();
         assert_array_equal(&result, &expected_array);
 
         // Invoke with array to argument (returns item CRS)
