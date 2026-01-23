@@ -454,7 +454,6 @@ mod tests {
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const WGS84: &str = "EPSG:4326";
-    const WGS84GEOCENTRIC: &str = "EPSG:4978";
 
     #[test]
     fn test_invoke_with_string() {
