@@ -143,7 +143,7 @@ impl GpuSpatialIndexFloat2DWrapper {
         let mut engine_guard = rt_engine
             .lock()
             .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
-        let mut config = GpuSpatialIndexConfig {
+        let config = GpuSpatialIndexConfig {
             rt_engine: &mut engine_guard.rt_engine,
             concurrency,
             device_id: engine_guard.device_id,
@@ -151,7 +151,7 @@ impl GpuSpatialIndexFloat2DWrapper {
 
         unsafe {
             // Set function pointers to the C functions
-            if GpuSpatialIndexFloat2DCreate(&mut index, &mut config) != 0 {
+            if GpuSpatialIndexFloat2DCreate(&mut index, &config) != 0 {
                 let error_message = index.get_last_error.unwrap()(&rt_engine as *const _ as *mut _);
                 let c_str = std::ffi::CStr::from_ptr(error_message);
                 let error_string = c_str.to_string_lossy().into_owned();
@@ -462,14 +462,14 @@ impl GpuSpatialRefinerWrapper {
         let mut engine_guard = rt_engine
             .lock()
             .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
-        let mut config = GpuSpatialRefinerConfig {
+        let config = GpuSpatialRefinerConfig {
             rt_engine: &mut engine_guard.rt_engine,
             concurrency,
             device_id: engine_guard.device_id,
         };
         unsafe {
             // Set function pointers to the C functions
-            if GpuSpatialRefinerCreate(&mut refiner, &mut config) != 0 {
+            if GpuSpatialRefinerCreate(&mut refiner, &config) != 0 {
                 let error_message = refiner.get_last_error.unwrap()(&refiner as *const _ as *mut _);
                 let c_str = std::ffi::CStr::from_ptr(error_message);
                 let error_string = c_str.to_string_lossy().into_owned();
