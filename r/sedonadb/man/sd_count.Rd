@@ -7,7 +7,7 @@
 sd_count(.data)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 }
 \value{
 The number of rows after executing the query

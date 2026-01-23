@@ -80,7 +80,7 @@ as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NUL
 
 #' Count rows in a DataFrame
 #'
-#' @param .data A sedonadb_dataframe
+#' @param .data A sedonadb_dataframe or an object that can be coerced to one.
 #'
 #' @returns The number of rows after executing the query
 #' @export
@@ -89,6 +89,7 @@ as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NUL
 #' sd_sql("SELECT 1 as one") |> sd_count()
 #'
 sd_count <- function(.data) {
+  .data <- as_sedonadb_dataframe(.data)
   .data$df$count()
 }
 
@@ -331,6 +332,8 @@ sd_write_parquet <- function(
   geoparquet_version = "1.0",
   overwrite_bbox_columns = FALSE
 ) {
+  .data <- as_sedonadb_dataframe(.data)
+
   # Determine single_file_output default based on path and partition_by
   if (is.null(single_file_output)) {
     single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)

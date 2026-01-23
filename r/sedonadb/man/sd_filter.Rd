@@ -7,7 +7,7 @@
 sd_filter(.data, ...)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{...}{Unnamed expressions for filter conditions. These are evaluated
 in the same way as \code{\link[dplyr:filter]{dplyr::filter()}} except does not support extra

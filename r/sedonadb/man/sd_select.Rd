@@ -7,7 +7,7 @@
 sd_select(.data, ...)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{...}{One or more bare names. Evaluated like \code{\link[dplyr:select]{dplyr::select()}}.}
 }

@@ -7,7 +7,7 @@
 sd_transmute(.data, ...)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{...}{Named expressions for new columns to create. These are evaluated
 in the same way as \code{\link[dplyr:transmute]{dplyr::transmute()}} except does not support extra
