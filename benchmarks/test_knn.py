@@ -30,9 +30,9 @@ class TestBenchKNN(TestBenchBase):
         # Create building-like polygons (index side - fewer, larger geometries)
         building_options = {
             "geom_type": "Polygon",
-            "target_rows": 2_000,
-            "vertices_per_linestring_range": [4, 8],
-            "size_range": [0.001, 0.01],
+            "num_rows": 2_000,
+            "num_vertices": [4, 8],
+            "size": [0.001, 0.01],
             "seed": 42,
         }
 
@@ -51,7 +51,7 @@ class TestBenchKNN(TestBenchBase):
         # Create trip pickup points (probe side)
         trip_options = {
             "geom_type": "Point",
-            "target_rows": 10_000,
+            "num_rows": 10_000,
             "seed": 43,
         }
 

@@ -345,6 +345,13 @@ impl IndexQueryResultRefiner for GeosRefiner {
         }
     }
 
+    fn estimate_max_memory_usage(&self, build_stats: &GeoStatistics) -> usize {
+        // TODO: This is a rough estimate of the memory usage of the prepared geometry and
+        // may not be accurate.
+        // https://github.com/apache/sedona-db/issues/281
+        build_stats.total_size_bytes().unwrap_or(0) as usize * 4
+    }
+
     fn mem_usage(&self) -> usize {
         self.mem_usage.load(Ordering::Relaxed)
     }

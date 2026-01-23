@@ -205,9 +205,11 @@ impl FileFormat for GeoParquetFormat {
         for metadata in &metadatas {
             if let Some(kv) = metadata.file_metadata().key_value_metadata() {
                 for item in kv {
-                    if item.key == "geo" && item.value.is_some() {
-                        let this_geoparquet_metadata =
-                            GeoParquetMetadata::try_new(item.value.as_ref().unwrap())?;
+                    if item.key != "geo" {
+                        continue;
+                    }
+                    if let Some(value) = &item.value {
+                        let this_geoparquet_metadata = GeoParquetMetadata::try_new(value)?;
 
                         match geoparquet_metadata.as_mut() {
                             Some(existing) => {
