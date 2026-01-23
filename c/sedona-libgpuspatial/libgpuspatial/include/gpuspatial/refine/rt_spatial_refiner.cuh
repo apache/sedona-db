@@ -101,9 +101,9 @@ class RTSpatialRefiner : public SpatialRefiner {
                   Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
                   uint32_t len) override;
 
-  uint32_t Refine(const ArrowSchema* schema1, const ArrowArray* array1,
-                  const ArrowSchema* schema2, const ArrowArray* array2,
-                  Predicate predicate, uint32_t* indices1, uint32_t* indices2,
+  uint32_t Refine(const ArrowSchema* build_schema, const ArrowArray* build_array,
+                  const ArrowSchema* probe_schema, const ArrowArray* probe_array,
+                  Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
                   uint32_t len) override;
 
  private:

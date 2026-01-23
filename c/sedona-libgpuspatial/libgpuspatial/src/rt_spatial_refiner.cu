@@ -141,56 +141,66 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* probe_schema,
   GPUSPATIAL_LOG_INFO("RTSpatialRefiner %p (Free %zu MB), Refine time %f, new size %zu",
                       this, rmm::available_device_memory().first / 1024 / 1024, refine_ms,
                       new_size);
-  CUDA_CHECK(cudaMemcpyAsync(build_indices, d_build_indices.data(),
-                             sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
-                             ctx.cuda_stream));
 
-  rmm::device_uvector<uint32_t> result_indices(new_size, ctx.cuda_stream);
+  rmm::device_uvector<uint32_t> d_probe_indices(new_size, ctx.cuda_stream);
 
   thrust::gather(rmm::exec_policy_nosync(ctx.cuda_stream),
                  probe_indices_map.d_reordered_indices.begin(),
                  probe_indices_map.d_reordered_indices.end(),
-                 probe_indices_map.d_uniq_indices.begin(), result_indices.begin());
+                 probe_indices_map.d_uniq_indices.begin(), d_probe_indices.begin());
 
-  CUDA_CHECK(cudaMemcpyAsync(probe_indices, result_indices.data(),
+  if (config_.sort_probe_indices) {
+    thrust::sort_by_key(rmm::exec_policy_nosync(ctx.cuda_stream), d_probe_indices.begin(),
+                        d_probe_indices.end(), d_build_indices.begin());
+  }
+
+  CUDA_CHECK(cudaMemcpyAsync(build_indices, d_build_indices.data(),
+                             sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
+                             ctx.cuda_stream));
+
+  CUDA_CHECK(cudaMemcpyAsync(probe_indices, d_probe_indices.data(),
                              sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
                              ctx.cuda_stream));
   ctx.cuda_stream.synchronize();
   return new_size;
 }
 
-uint32_t RTSpatialRefiner::Refine(const ArrowSchema* schema1, const ArrowArray* array1,
-                                  const ArrowSchema* schema2, const ArrowArray* array2,
-                                  Predicate predicate, uint32_t* indices1,
-                                  uint32_t* indices2, uint32_t len) {
+uint32_t RTSpatialRefiner::Refine(const ArrowSchema* build_schema,
+                                  const ArrowArray* build_array,
+                                  const ArrowSchema* probe_schema,
+                                  const ArrowArray* probe_array, Predicate predicate,
+                                  uint32_t* build_indices, uint32_t* probe_indices,
+                                  uint32_t len) {
   if (len == 0) {
     return 0;
   }
   SpatialRefinerContext ctx;
   ctx.cuda_stream = stream_pool_->get_stream();
 
-  IndicesMap indices_map1, indices_map2;
-  buildIndicesMap(&ctx, indices1, len, indices_map1);
-  buildIndicesMap(&ctx, indices2, len, indices_map2);
+  IndicesMap build_indices_map, probe_indices_map;
+  buildIndicesMap(&ctx, build_indices, len, build_indices_map);
+  buildIndicesMap(&ctx, probe_indices, len, probe_indices_map);
 
   loader_t loader(thread_pool_);
   loader_t::Config loader_config;
   loader_config.memory_quota = config_.wkb_parser_memory_quota / config_.concurrency;
   loader.Init(loader_config);
-  loader.Parse(ctx.cuda_stream, schema1, array1, indices_map1.h_uniq_indices.begin(),
-               indices_map1.h_uniq_indices.end());
+  loader.Parse(ctx.cuda_stream, build_schema, build_array,
+               build_indices_map.h_uniq_indices.begin(),
+               build_indices_map.h_uniq_indices.end());
   auto geoms1 = std::move(loader.Finish(ctx.cuda_stream));
 
   loader.Clear(ctx.cuda_stream);
-  loader.Parse(ctx.cuda_stream, schema2, array2, indices_map2.h_uniq_indices.begin(),
-               indices_map2.h_uniq_indices.end());
+  loader.Parse(ctx.cuda_stream, probe_schema, probe_array,
+               probe_indices_map.h_uniq_indices.begin(),
+               probe_indices_map.h_uniq_indices.end());
   auto geoms2 = std::move(loader.Finish(ctx.cuda_stream));
 
   GPUSPATIAL_LOG_INFO(
-      "RTSpatialRefiner %p (Free %zu MB), Loaded Geometries, Array1 %ld, Loaded %u, Type %s, Array2 %ld, Loaded %u, Type %s",
-      this, rmm::available_device_memory().first / 1024 / 1024, array1->length,
+      "RTSpatialRefiner %p (Free %zu MB), Loaded Geometries, build_array %ld, Loaded %u, Type %s, probe_array %ld, Loaded %u, Type %s",
+      this, rmm::available_device_memory().first / 1024 / 1024, build_array->length,
       geoms1.num_features(), GeometryTypeToString(geoms1.get_geometry_type()).c_str(),
-      array2->length, geoms2.num_features(),
+      probe_array->length, geoms2.num_features(),
       GeometryTypeToString(geoms2.get_geometry_type()).c_str());
 
   RelateEngine<point_t, index_t> relate_engine(&geoms1, config_.rt_engine.get());
@@ -210,29 +220,39 @@ uint32_t RTSpatialRefiner::Refine(const ArrowSchema* schema1, const ArrowArray* 
   ctx.timer.start(ctx.cuda_stream);
 
   relate_engine.Evaluate(ctx.cuda_stream, geoms2, predicate,
-                         indices_map1.d_reordered_indices,
-                         indices_map2.d_reordered_indices);
+                         build_indices_map.d_reordered_indices,
+                         probe_indices_map.d_reordered_indices);
   float refine_ms = ctx.timer.stop(ctx.cuda_stream);
 
-  auto new_size = indices_map1.d_reordered_indices.size();
+  auto new_size = build_indices_map.d_reordered_indices.size();
   GPUSPATIAL_LOG_INFO("RTSpatialRefiner %p (Free %zu MB), Refine time %f, new size %zu",
                       this, rmm::available_device_memory().first / 1024 / 1024, refine_ms,
                       new_size);
-  rmm::device_uvector<uint32_t> result_indices(new_size, ctx.cuda_stream);
+  rmm::device_uvector<uint32_t> d_build_indices(new_size, ctx.cuda_stream);
+  rmm::device_uvector<uint32_t> d_probe_indices(new_size, ctx.cuda_stream);
 
   thrust::gather(rmm::exec_policy_nosync(ctx.cuda_stream),
-                 indices_map1.d_reordered_indices.begin(),
-                 indices_map1.d_reordered_indices.end(),
-                 indices_map1.d_uniq_indices.begin(), result_indices.begin());
-  CUDA_CHECK(cudaMemcpyAsync(indices1, result_indices.data(), sizeof(uint32_t) * new_size,
-                             cudaMemcpyDeviceToHost, ctx.cuda_stream));
-  thrust::gather(rmm::exec_policy_nosync(ctx.cuda_stream),
-                 indices_map2.d_reordered_indices.begin(),
-                 indices_map2.d_reordered_indices.end(),
-                 indices_map2.d_uniq_indices.begin(), result_indices.begin());
+                 build_indices_map.d_reordered_indices.begin(),
+                 build_indices_map.d_reordered_indices.end(),
+                 build_indices_map.d_uniq_indices.begin(), d_build_indices.begin());
 
-  CUDA_CHECK(cudaMemcpyAsync(indices2, result_indices.data(), sizeof(uint32_t) * new_size,
-                             cudaMemcpyDeviceToHost, ctx.cuda_stream));
+  thrust::gather(rmm::exec_policy_nosync(ctx.cuda_stream),
+                 probe_indices_map.d_reordered_indices.begin(),
+                 probe_indices_map.d_reordered_indices.end(),
+                 probe_indices_map.d_uniq_indices.begin(), d_probe_indices.begin());
+
+  if (config_.sort_probe_indices) {
+    thrust::sort_by_key(rmm::exec_policy_nosync(ctx.cuda_stream), d_probe_indices.begin(),
+                        d_probe_indices.end(), d_build_indices.begin());
+  }
+
+  CUDA_CHECK(cudaMemcpyAsync(build_indices, d_build_indices.data(),
+                             sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
+                             ctx.cuda_stream));
+
+  CUDA_CHECK(cudaMemcpyAsync(probe_indices, d_probe_indices.data(),
+                             sizeof(uint32_t) * new_size, cudaMemcpyDeviceToHost,
+                             ctx.cuda_stream));
   ctx.cuda_stream.synchronize();
   return new_size;
 }

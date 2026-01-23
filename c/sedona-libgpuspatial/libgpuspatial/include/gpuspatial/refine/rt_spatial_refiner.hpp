@@ -40,6 +40,7 @@ struct RTSpatialRefinerConfig {
   float relate_engine_memory_quota = 0.8;
   // this value determines RELATE_MAX_DEPTH
   size_t stack_size_bytes = 3 * 1024;
+  bool sort_probe_indices = true;  // Sedona's spatial-join may require ordered output
   RTSpatialRefinerConfig() : prefer_fast_build(false), compact(false) {
     concurrency = std::thread::hardware_concurrency();
   }

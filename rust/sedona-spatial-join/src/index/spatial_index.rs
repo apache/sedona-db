@@ -132,7 +132,7 @@ pub(crate) trait SpatialIndex {
     /// * `probe_indices` - Output vector that will be populated with the probe row index (in
     ///   `evaluated_batch`) for each match appended to `build_batch_positions`.
     ///   This means the probe index is repeated `N` times when a probe geometry produces `N` matches,
-    ///   keeping `probe_indices.len()` in sync with `build_batch_positions.len()`.
+    ///   keeping `probe_indices.len()` in sync with `build_batch_positions.len()`. `probe_indices` should be sorted in **ascending order**.
     ///
     /// # Returns
     /// * A tuple containing:
