@@ -78,3 +78,24 @@ test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
 })
+
+test_that("sd_eval_stream() evaluates scalar expressions synchronously", {
+  df_in <- data.frame(x = 1:10)
+
+  # With no name provided, the DataFusion-generated name
+  df_out <- as.data.frame(sd_eval_stream(df_in, list(quote(x + 1L))))
+  expect_identical(names(df_out), "x + Int32(1)")
+
+  # With a name provided, we should get the column name
+  df_out <- as.data.frame(sd_eval_stream(df_in, list(y = quote(x + 1L))))
+  expect_identical(df_out, data.frame(y = 2:11))
+
+  # Multiple in batches should yield multiple out batches
+  stream_in <- nanoarrow::basic_array_stream(list(
+    data.frame(x = 1:5),
+    data.frame(x = 6:10)
+  ))
+  stream_out <- sd_eval_stream(stream_in, list(y = quote(x + 1L)))
+  expect_identical(as.data.frame(stream_out$get_next()), data.frame(y = 2:6))
+  expect_identical(as.data.frame(stream_out$get_next()), data.frame(y = 7:11))
+})

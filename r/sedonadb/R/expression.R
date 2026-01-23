@@ -138,6 +138,7 @@ print.SedonaDBExpr <- function(x, ...) {
 #'
 #' @param expr An R expression (e.g., the result of `quote()`).
 #' @param expr_ctx An `sd_expr_ctx()`
+#' @param env An evaluation environment. Defaults to the calling environment.
 #'
 #' @returns A `SedonaDBExpr`
 #' @noRd
@@ -158,7 +159,16 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
   )
 }
 
-sd_eval <- function(stream, exprs, env = parent.frame()) {
+#' Evaluate a list of R expressions into a stream of RecordBatch
+#'
+#' @param stream Input stream, or an object (such as a `data.frame()`)
+#'   that can be coerced to one.
+#' @param exprs An list of R expressions (e.g., the result of `quote()`).
+#' @param env An evaluation environment. Defaults to the calling environment.
+#'
+#' @returns A `SedonaDBExpr`
+#' @noRd
+sd_eval_stream <- function(stream, exprs, env = parent.frame()) {
   stream <- nanoarrow::as_nanoarrow_array_stream(
     stream,
     geometry_schema = geoarrow::geoarrow_wkb()

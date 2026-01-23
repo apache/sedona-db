@@ -193,28 +193,6 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
   invisible(.data)
 }
 
-sd_transmute <- function(.data, ...) {
-  .data <- as_sedonadb_dataframe(.data)
-  expr_quos <- rlang::enquos(...)
-  env <- parent.frame()
-
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
-  exprs <- lapply(expr_quos, rlang::quo_get_expr)
-  sd_exprs <- lapply(exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
-  exprs_names <- names(exprs)
-  if (!is.null(exprs_names)) {
-    for (i in seq_along(sd_exprs)) {
-      name <- exprs_names[i]
-      if (!is.na(name) && name != "") {
-        sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
-      }
-    }
-  }
-
-  df <- .data$df$transmute(.data$ctx, sd_exprs)
-  new_sedonadb_dataframe(.data$ctx, df)
-}
-
 #' Write DataFrame to (Geo)Parquet files
 #'
 #' Write this DataFrame to one or more (Geo)Parquet files. For input that contains
