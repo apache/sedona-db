@@ -31,8 +31,7 @@ pub use exec::SpatialJoinExec;
 pub use optimizer::register_spatial_join_optimizer;
 
 // Re-export types needed for external usage (e.g., in Comet)
-pub use build_index::build_index;
-pub use index::{SpatialIndex, SpatialJoinBuildMetrics};
+pub use index::SpatialJoinBuildMetrics;
 pub use spatial_predicate::SpatialPredicate;
 
 // Re-export option types from sedona-common for convenience

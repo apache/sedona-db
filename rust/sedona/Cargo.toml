@@ -42,6 +42,7 @@ http = ["object_store/http"]
 proj = ["sedona-proj/proj-sys"]
 spatial-join = ["dep:sedona-spatial-join"]
 s2geography = ["dep:sedona-s2geography"]
+gpu = ["sedona-spatial-join/gpu"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

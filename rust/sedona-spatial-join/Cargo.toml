@@ -31,12 +31,16 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [features]
+default = []
 backtrace = ["datafusion-common/backtrace"]
+# Enable GPU acceleration (requires CUDA toolkit and sedona-libgpuspatial with gpu feature)
+gpu = ["sedona-libgpuspatial/gpu"]
 
 [dependencies]
 arrow = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
@@ -66,12 +70,14 @@ geo-index = { workspace = true }
 geos = { workspace = true }
 float_next_after = { workspace = true }
 fastrand = { workspace = true }
+log = "0.4"
+sedona-libgpuspatial = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }
 rstest = { workspace = true }
-sedona-testing = { workspace = true}
+sedona-testing = { workspace = true }
 wkt = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 rand = { workspace = true }

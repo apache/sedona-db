@@ -16,13 +16,30 @@
 // under the License.
 #pragma once
 
-#include "gpuspatial/index/streaming_joiner.hpp"
+#include "gpuspatial/index/spatial_index.hpp"
+#include "gpuspatial/rt/rt_engine.hpp"
 
 #include <memory>
+#include <thread>
 
 namespace gpuspatial {
-std::unique_ptr<StreamingJoiner> CreateSpatialJoiner();
+template <typename SCALAR_T, int N_DIM>
+std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex();
 
-void InitSpatialJoiner(StreamingJoiner* index, const char* ptx_root,
-                       uint32_t concurrency);
+template <typename SCALAR_T, int N_DIM>
+struct RTSpatialIndexConfig : SpatialIndex<SCALAR_T, N_DIM>::Config {
+  std::shared_ptr<RTEngine> rt_engine;
+  // Prefer fast build the BVH
+  bool prefer_fast_build = false;
+  // Compress the BVH to save memory
+  bool compact = true;
+  // How many threads are allowed to call PushProbe concurrently
+  uint32_t concurrency = 1;
+  // number of points to represent an AABB when doing point-point queries
+  uint32_t n_points_per_aabb = 8;
+  RTSpatialIndexConfig() : prefer_fast_build(false), compact(false) {
+    concurrency = std::thread::hardware_concurrency();
+  }
+};
+
 }  // namespace gpuspatial

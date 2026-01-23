@@ -38,7 +38,7 @@ use std::sync::Arc;
 use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::SpatialIndex;
+use crate::index::spatial_index::SpatialIndexRef;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
@@ -74,12 +74,12 @@ pub(crate) struct SpatialJoinStream {
     /// Target output batch size
     target_output_batch_size: usize,
     /// Once future for the spatial index
-    once_fut_spatial_index: OnceFut<SpatialIndex>,
+    once_fut_spatial_index: OnceFut<SpatialIndexRef>,
     /// Once async for the spatial index, will be manually disposed by the last finished stream
     /// to avoid unnecessary memory usage.
-    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
+    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndexRef>>>>,
     /// The spatial index
-    spatial_index: Option<Arc<SpatialIndex>>,
+    spatial_index: Option<SpatialIndexRef>,
     /// The spatial predicate being evaluated
     spatial_predicate: SpatialPredicate,
 }
@@ -97,8 +97,8 @@ impl SpatialJoinStream {
         join_metrics: SpatialJoinProbeMetrics,
         options: SpatialJoinOptions,
         target_output_batch_size: usize,
-        once_fut_spatial_index: OnceFut<SpatialIndex>,
-        once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
+        once_fut_spatial_index: OnceFut<SpatialIndexRef>,
+        once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndexRef>>>>,
     ) -> Self {
         let evaluator = create_operand_evaluator(on, options.clone());
         let probe_stream = create_evaluated_probe_stream(
@@ -217,8 +217,8 @@ impl SpatialJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        let index = ready!(self.once_fut_spatial_index.get_shared(cx))?;
-        self.spatial_index = Some(index);
+        let index = ready!(self.once_fut_spatial_index.get(cx))?;
+        self.spatial_index = Some(index.clone());
         self.state = SpatialJoinStreamState::FetchProbeBatch;
         Poll::Ready(Ok(StatefulStreamResult::Continue))
     }
@@ -483,7 +483,7 @@ pub(crate) struct SpatialJoinBatchIterator {
     /// The side of the build stream, either Left or Right
     build_side: JoinSide,
     /// The spatial index reference
-    spatial_index: Arc<SpatialIndex>,
+    spatial_index: SpatialIndexRef,
     /// The probe side batch being processed
     probe_evaluated_batch: Arc<EvaluatedBatch>,
     /// Join metrics for tracking performance
@@ -610,7 +610,7 @@ pub(crate) struct SpatialJoinBatchIteratorParams {
     pub join_type: JoinType,
     pub column_indices: Vec<ColumnIndex>,
     pub build_side: JoinSide,
-    pub spatial_index: Arc<SpatialIndex>,
+    pub spatial_index: SpatialIndexRef,
     pub probe_evaluated_batch: Arc<EvaluatedBatch>,
     pub join_metrics: SpatialJoinProbeMetrics,
     pub max_batch_size: usize,
@@ -1056,7 +1056,7 @@ impl std::fmt::Debug for SpatialJoinBatchIterator {
 /// Iterator that processes unmatched build-side batches for outer joins
 pub(crate) struct UnmatchedBuildBatchIterator {
     /// The spatial index reference
-    spatial_index: Arc<SpatialIndex>,
+    spatial_index: SpatialIndexRef,
     /// Current batch index being processed
     current_batch_idx: usize,
     /// Total number of batches to process
@@ -1069,16 +1069,16 @@ pub(crate) struct UnmatchedBuildBatchIterator {
 
 impl UnmatchedBuildBatchIterator {
     pub(crate) fn new(
-        spatial_index: Arc<SpatialIndex>,
+        spatial_index: SpatialIndexRef,
         empty_right_batch: RecordBatch,
     ) -> Result<Self> {
-        let visited_left_side = spatial_index.visited_build_side();
-        let Some(vec_visited_left_side) = visited_left_side else {
+        let visited_build_side = spatial_index.visited_build_side();
+        let Some(vec_visited_build_side) = visited_build_side else {
             return sedona_internal_err!("The bitmap for visited left side is not created");
         };
 
         let total_batches = {
-            let visited_bitmaps = vec_visited_left_side.lock();
+            let visited_bitmaps = vec_visited_build_side.lock();
             visited_bitmaps.len()
         };
 
@@ -1099,16 +1099,16 @@ impl UnmatchedBuildBatchIterator {
         build_side: JoinSide,
     ) -> Result<Option<RecordBatch>> {
         while self.current_batch_idx < self.total_batches && !self.is_complete {
-            let visited_left_side = self.spatial_index.visited_build_side();
-            let Some(vec_visited_left_side) = visited_left_side else {
+            let visited_build_side = self.spatial_index.visited_build_side();
+            let Some(vec_visited_build_side) = visited_build_side else {
                 return sedona_internal_err!("The bitmap for visited left side is not created");
             };
 
             let batch = {
-                let visited_bitmaps = vec_visited_left_side.lock();
-                let visited_left_side = &visited_bitmaps[self.current_batch_idx];
+                let visited_bitmaps = vec_visited_build_side.lock();
+                let visited_build_side = &visited_bitmaps[self.current_batch_idx];
                 let (left_side, right_side) =
-                    get_final_indices_from_bit_map(visited_left_side, join_type);
+                    get_final_indices_from_bit_map(visited_build_side, join_type);
 
                 build_batch_from_indices(
                     schema,

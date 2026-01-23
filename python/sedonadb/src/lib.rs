@@ -98,6 +98,7 @@ fn configure_proj_shared(
 #[pymodule]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
+    env_logger::init();
     configure_tg_allocator();
 
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;

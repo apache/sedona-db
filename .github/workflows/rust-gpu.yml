@@ -27,7 +27,6 @@ on:
       - main
     paths:
       - 'c/sedona-libgpuspatial/**'
-      - 'rust/sedona-spatial-join-gpu/**'
       - '.github/workflows/rust-gpu.yml'
 
   push:
@@ -35,7 +34,6 @@ on:
       - main
     paths:
       - 'c/sedona-libgpuspatial/**'
-      - 'rust/sedona-spatial-join-gpu/**'
       - '.github/workflows/rust-gpu.yml'
 
 concurrency:
@@ -66,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [ "clippy", "docs", "test", "build" ]
+        name: [ "build_tests", "build_lib", "build_package" ]
 
     name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
@@ -181,15 +179,6 @@ jobs:
           # Bump the number at the end of this line to force a new dependency build
           key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
 
-      # Install vcpkg dependencies from vcpkg.json manifest
-      - name: Install vcpkg dependencies
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
-        run: |
-          ./vcpkg/vcpkg install abseil openssl
-          # Clean up vcpkg buildtrees and downloads to save space
-          rm -rf vcpkg/buildtrees
-          rm -rf vcpkg/downloads
-
       - name: Use stable Rust
         id: rust
         run: |
@@ -200,10 +189,20 @@ jobs:
         with:
           prefix-key: "rust-gpu-v4"
 
+      - name: Build libgpuspatial Tests
+        if: matrix.name == 'build_tests'
+        run: |
+          echo "=== Building libgpuspatial tests ==="
+          cd c/sedona-libgpuspatial/libgpuspatial
+          mkdir build
+          cmake --preset=default-with-tests -S . -B build
+          cmake --build build --target all
+
       # Build WITH GPU feature to compile CUDA code
       # CUDA compilation (nvcc) works without GPU hardware
       # Only GPU runtime execution requires actual GPU
       - name: Build libgpuspatial (with CUDA compilation)
+        if: matrix.name == 'build_lib'
         run: |
           echo "=== Building libgpuspatial WITH GPU feature ==="
           echo "Compiling CUDA code using nvcc (no GPU hardware needed for compilation)"
@@ -215,10 +214,7 @@ jobs:
           # --lib builds only the library, not test binaries
           cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
 
-      - name: Build libgpuspatial Tests
+      - name: Build GPU Spatial Join Package
+        if: matrix.name == 'build_package'
         run: |
-          echo "=== Building libgpuspatial tests ==="
-          cd c/sedona-libgpuspatial/libgpuspatial
-          mkdir build
-          cmake --preset=default-with-tests -S . -B build
-          cmake --build build --target all
+          cargo build --workspace --package sedona-spatial-join --features gpu --verbose

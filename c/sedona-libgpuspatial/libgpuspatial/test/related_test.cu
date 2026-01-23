@@ -58,15 +58,18 @@ void ParseWKTPoint(const char* wkt, POINT_T& point) {
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
-
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
   auto h_vec = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
   cuda_stream.synchronize();
@@ -79,15 +82,19 @@ void ParseWKTMultiPoint(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
 
   ctx.prefix_sum1 = TestUtils::ToVector(
@@ -108,15 +115,19 @@ void ParseWKTLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
       cuda_stream, device_geometries.get_offsets().line_string_offsets.ps_num_points);
@@ -136,15 +147,19 @@ void ParseWKTMultiLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
       cuda_stream,
@@ -169,15 +184,19 @@ void ParseWKTPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
       cuda_stream, device_geometries.get_offsets().polygon_offsets.ps_num_rings);
@@ -200,15 +219,19 @@ void ParseWKTMultiPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueArrayStream stream;
   ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
   nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
   ArrowError error;
   ArrowErrorSet(&error, "");
 
-  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK);
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
   loader_t loader;
   auto cuda_stream = rmm::cuda_stream_default;
 
   loader.Init();
-  loader.Parse(cuda_stream, array.get(), 0, array->length);
+  loader.Parse(cuda_stream, schema.get(), array.get(), 0, array->length);
   auto device_geometries = loader.Finish(cuda_stream);
   ctx.prefix_sum1 = TestUtils::ToVector(
       cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_parts);

@@ -28,7 +28,7 @@
 
 #else
 #define DEV_HOST
-#define DEV_HOST_INLINE
+#define DEV_HOST_INLINE inline
 #define DEV_INLINE
 #define CONST_STATIC_INIT(...) = __VA_ARGS__
 

@@ -151,7 +151,7 @@ jobs:
       - name: Test
         if: matrix.name == 'test'
         run: |
-          cargo test --workspace --all-targets --all-features
+          cargo test --workspace --all-targets # Test all default features but GPU
           # Clean up intermediate build artifacts to free disk space aggressively
           cargo clean -p sedona-s2geography
           rm -rf target/debug/deps

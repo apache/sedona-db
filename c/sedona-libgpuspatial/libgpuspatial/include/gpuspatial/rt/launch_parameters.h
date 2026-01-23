@@ -31,29 +31,29 @@ namespace detail {
 
 template <typename POINT_T>
 struct LaunchParamsPointQuery {
-  using box_t = Box<Point<float, POINT_T::n_dim>>;
-  // Data structures of geometries1
-  bool grouped;
-  ArrayView<uint32_t> prefix_sum;         // Only used when grouped
-  ArrayView<uint32_t> reordered_indices;  // Only used when grouped
-  ArrayView<box_t> mbrs1;                 // MBR of each feature in geometries1
+  using box_t = Box<POINT_T>;
+  // Input
+  ArrayView<box_t> rects;
+  ArrayView<POINT_T> points;
   OptixTraversableHandle handle;
-  //  Data structures of geometries2
-  ArrayView<POINT_T> points2;
-  // Output: Geom1 ID, Geom2 ID
-  QueueView<thrust::pair<uint32_t, uint32_t>> ids;
+  uint32_t* count;
+  // Output
+  QueueView<uint32_t> rect_ids;
+  ArrayView<uint32_t> point_ids;
 };
 
 template <typename POINT_T>
 struct LaunchParamsBoxQuery {
-  using box_t = Box<Point<float, POINT_T::n_dim>>;
+  using box_t = Box<POINT_T>;
   // Input
-  ArrayView<box_t> mbrs1;
-  ArrayView<box_t> mbrs2;
+  ArrayView<box_t> rects1;
+  ArrayView<box_t> rects2;
   // can be either geometries 1 or 2
   OptixTraversableHandle handle;
-  // Output: Geom2 ID, Geom2 ID
-  QueueView<thrust::pair<uint32_t, uint32_t>> ids;
+  uint32_t* count;
+  // Output
+  QueueView<uint32_t> rect1_ids;
+  ArrayView<uint32_t> rect2_ids;
 };
 
 /**
@@ -67,12 +67,15 @@ struct LaunchParamsPolygonPointQuery {
   MultiPointArrayView<point_t, index_t> multi_points;
   PointArrayView<point_t, index_t> points;
   PolygonArrayView<point_t, index_t> polygons;
-  ArrayView<index_t> polygon_ids;  // sorted
-  ArrayView<thrust::pair<index_t, index_t>> ids;
+  ArrayView<index_t> uniq_polygon_ids;  // sorted
+  index_t* query_point_ids;
+  index_t* query_polygon_ids;
+  size_t query_size;
   ArrayView<index_t> seg_begins;
   ArrayView<int> IMs;  // intersection matrices
   OptixTraversableHandle handle;
   ArrayView<index_t> aabb_poly_ids, aabb_ring_ids;
+  ArrayView<thrust::pair<index_t, index_t>> aabb_vertex_offsets;
 };
 
 /**
@@ -87,14 +90,16 @@ struct LaunchParamsPointMultiPolygonQuery {
   // Either MultiPointArrayView or PointArrayView will be used
   MultiPointArrayView<point_t, index_t> multi_points;
   PointArrayView<point_t, index_t> points;
-  ArrayView<index_t> multi_polygon_ids;  // sorted
-  ArrayView<thrust::pair<index_t, index_t>> ids;
-  ArrayView<index_t> seg_begins;
-  ArrayView<index_t> uniq_part_begins;
+  ArrayView<index_t> uniq_multi_polygon_ids;  // sorted
+  index_t* query_point_ids;
+  index_t* query_multi_polygon_ids;
+  size_t query_size;
+  ArrayView<index_t> uniq_part_begins;  // used to calculate z-index for parts
   // each query point has n elements of part_min_y and part_locations, n is # of parts
   ArrayView<int> IMs;  // intersection matrices
   OptixTraversableHandle handle;
   ArrayView<index_t> aabb_multi_poly_ids, aabb_part_ids, aabb_ring_ids;
+  ArrayView<thrust::pair<index_t, index_t>> aabb_vertex_offsets;
 };
 
 }  // namespace detail

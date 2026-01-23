@@ -17,7 +17,6 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 
@@ -29,9 +28,11 @@ use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder};
 use parking_lot::Mutex;
 use std::sync::{atomic::AtomicUsize, Arc};
 
+use crate::index::cpu_spatial_index::CPUSpatialIndex;
+use crate::index::spatial_index::{SpatialIndexRef, SpatialJoinBuildMetrics};
 use crate::{
     evaluated_batch::EvaluatedBatch,
-    index::{knn_adapter::KnnComponents, spatial_index::SpatialIndex, BuildPartition},
+    index::{knn_adapter::KnnComponents, BuildPartition},
     operand_evaluator::create_operand_evaluator,
     refine::create_refiner,
     spatial_predicate::SpatialPredicate,
@@ -59,7 +60,7 @@ const REFINER_RESERVATION_PREALLOC_SIZE: usize = 10 * 1024 * 1024; // 10MB
 /// 2. Building the spatial R-tree index
 /// 3. Setting up memory tracking and visited bitmaps
 /// 4. Configuring prepared geometries based on execution mode
-pub struct SpatialIndexBuilder {
+pub struct CPUSpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
     options: SpatialJoinOptions,
@@ -79,25 +80,7 @@ pub struct SpatialIndexBuilder {
     memory_pool: Arc<dyn MemoryPool>,
 }
 
-/// Metrics for the build phase of the spatial join.
-#[derive(Clone, Debug, Default)]
-pub struct SpatialJoinBuildMetrics {
-    /// Total time for collecting build-side of join
-    pub(crate) build_time: metrics::Time,
-    /// Memory used by the spatial-index in bytes
-    pub(crate) build_mem_used: metrics::Gauge,
-}
-
-impl SpatialJoinBuildMetrics {
-    pub fn new(partition: usize, metrics: &ExecutionPlanMetricsSet) -> Self {
-        Self {
-            build_time: MetricBuilder::new(metrics).subset_time("build_time", partition),
-            build_mem_used: MetricBuilder::new(metrics).gauge("build_mem_used", partition),
-        }
-    }
-}
-
-impl SpatialIndexBuilder {
+impl CPUSpatialIndexBuilder {
     /// Create a new builder with the given configuration.
     pub fn new(
         schema: SchemaRef,
@@ -228,16 +211,16 @@ impl SpatialIndexBuilder {
     }
 
     /// Finish building and return the completed SpatialIndex.
-    pub fn finish(mut self) -> Result<SpatialIndex> {
+    pub fn finish(mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
-            return Ok(SpatialIndex::empty(
+            return Ok(Arc::new(CPUSpatialIndex::empty(
                 self.spatial_predicate,
                 self.schema,
                 self.options,
                 AtomicUsize::new(self.probe_threads_count),
                 self.reservation,
                 self.memory_pool.clone(),
-            ));
+            )));
         }
 
         let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
@@ -272,21 +255,21 @@ impl SpatialIndexBuilder {
         .then(|| KnnComponents::new(cache_size, &self.indexed_batches, self.memory_pool.clone()))
         .transpose()?;
 
-        Ok(SpatialIndex {
-            schema: self.schema,
-            options: self.options,
+        Ok(Arc::new(CPUSpatialIndex::new(
+            self.schema,
+            self.options,
             evaluator,
             refiner,
             refiner_reservation,
             rtree,
-            data_id_to_batch_pos: batch_pos_vec,
-            indexed_batches: self.indexed_batches,
+            self.indexed_batches,
+            batch_pos_vec,
             geom_idx_vec,
             visited_build_side,
-            probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
+            AtomicUsize::new(self.probe_threads_count),
             knn_components,
-            reservation: self.reservation,
-        })
+            self.reservation,
+        )))
     }
 
     pub async fn add_partitions(&mut self, partitions: Vec<BuildPartition>) -> Result<()> {

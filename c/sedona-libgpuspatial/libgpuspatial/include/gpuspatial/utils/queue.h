@@ -41,6 +41,7 @@ class Queue {
     if (counter_ == nullptr) {
       counter_ = std::make_unique<rmm::device_scalar<SIZE_T>>(stream);
     }
+    Clear(stream);
   }
 
   void Clear(const rmm::cuda_stream_view& stream) {

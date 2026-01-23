@@ -54,3 +54,4 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 mimalloc = { workspace = true, optional = true }
 libmimalloc-sys = { workspace = true, optional = true }
+env_logger = { workspace = true }

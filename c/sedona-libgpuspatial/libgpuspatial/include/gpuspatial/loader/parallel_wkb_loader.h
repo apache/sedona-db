@@ -23,19 +23,23 @@
 #include "gpuspatial/utils/stopwatch.h"
 #include "gpuspatial/utils/thread_pool.h"
 
-#include "nanoarrow/nanoarrow.h"
+#include "nanoarrow/nanoarrow.hpp"
+
+#include "geoarrow/geoarrow.hpp"
 
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
 #include "rmm/exec_policy.hpp"
 
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
 
+#include <sys/sysinfo.h>
+
+#include <numeric>
 #include <thread>
 #include <unordered_set>
-
-#include <sys/sysinfo.h>
-#include <unistd.h>
+#include <vector>
 
 namespace gpuspatial {
 namespace detail {
@@ -43,8 +47,6 @@ namespace detail {
 inline long long get_free_physical_memory_linux() {
   struct sysinfo info;
   if (sysinfo(&info) == 0) {
-    // info.freeram is in bytes (or unit defined by info.mem_unit)
-    // Use info.freeram * info.mem_unit for total free bytes
     return (long long)info.freeram * (long long)info.mem_unit;
   }
   return 0;  // Error
@@ -105,6 +107,7 @@ template <typename POINT_T, typename INDEX_T>
 struct HostParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
   using mbr_t = Box<Point<float, n_dim>>;
+  GeometryType type;  // A general type that can reprs
   // each feature should have only one type except GeometryCollection
   std::vector<GeometryType> feature_types;
   // This number should be one except GeometryCollection, which should be unnested # of
@@ -120,17 +123,18 @@ struct HostParsedGeometries {
   bool has_geometry_collection = false;
   bool create_mbr = false;
 
-  HostParsedGeometries(bool multi_, bool has_geometry_collection_, bool create_mbr_) {
+  HostParsedGeometries(GeometryType t) : type(t) {
+    multi = type == GeometryType::kMultiPoint || type == GeometryType::kMultiLineString ||
+            type == GeometryType::kMultiPolygon;
+    has_geometry_collection = type == GeometryType::kGeometryCollection;
+    create_mbr = type != GeometryType::kPoint;
     // Multi and GeometryCollection are mutually exclusive
-    assert(!(multi_ && has_geometry_collection_));
-    multi = multi_;
-    has_geometry_collection = has_geometry_collection_;
-    create_mbr = create_mbr_;
+    assert(!(multi && has_geometry_collection));
   }
 
   void AddGeometry(const GeoArrowGeometryView* geom) {
     if (geom == nullptr) {
-      throw std::runtime_error("Null geometry not supported yet");
+      addNullEntry();
       return;
     }
 
@@ -405,6 +409,49 @@ struct HostParsedGeometries {
     }
     return node + 1;
   }
+
+  void addNullEntry() {
+    // 1. Maintain MBR alignment if this type has MBRs
+    if (create_mbr) {
+      mbr_t empty_mbr;
+      empty_mbr.set_empty();
+      mbrs.push_back(empty_mbr);
+    }
+
+    // 2. Push zero-placeholders to maintain offset alignment
+    if (has_geometry_collection) {
+      // Null collection => 0 sub-geometries
+      num_geoms.push_back(0);
+    } else {
+      switch (type) {
+        case GeometryType::kPoint: {
+          // Push NaN point to represent empty/null
+          POINT_T p;
+          p.set_empty();
+          vertices.push_back(p);
+          break;
+        }
+        case GeometryType::kLineString:
+          num_points.push_back(0);
+          break;
+        case GeometryType::kPolygon:
+          num_rings.push_back(0);
+          break;
+        case GeometryType::kMultiPoint:
+          num_points.push_back(0);
+          break;
+        case GeometryType::kMultiLineString:
+          num_parts.push_back(0);
+          break;
+        case GeometryType::kMultiPolygon:
+          num_parts.push_back(0);
+          break;
+        default:
+          throw std::runtime_error(
+              "Null geometry encountered for unsupported geometry type");
+      }
+    }
+  }
 };
 
 template <typename POINT_T, typename INDEX_T>
@@ -442,7 +489,8 @@ struct DeviceParsedGeometries {
   }
 
   void Append(rmm::cuda_stream_view stream,
-              const std::vector<HostParsedGeometries<POINT_T, INDEX_T>>& host_geoms) {
+              const std::vector<HostParsedGeometries<POINT_T, INDEX_T>>& host_geoms,
+              double& t_alloc_ms, double& t_copy_ms) {
     size_t sz_feature_types = 0;
     size_t sz_num_geoms = 0;
     size_t sz_num_parts = 0;
@@ -482,6 +530,9 @@ struct DeviceParsedGeometries {
         prev_sz_mbrs * sizeof(mbr_t) / 1024 / 1024,
         sz_mbrs * sizeof(mbr_t) / 1024 / 1024);
 
+    Stopwatch sw;
+
+    sw.start();
     feature_types.resize(feature_types.size() + sz_feature_types, stream);
     num_geoms.resize(num_geoms.size() + sz_num_geoms, stream);
     num_parts.resize(num_parts.size() + sz_num_parts, stream);
@@ -489,7 +540,11 @@ struct DeviceParsedGeometries {
     num_points.resize(num_points.size() + sz_num_points, stream);
     vertices.resize(vertices.size() + sz_vertices, stream);
     mbrs.resize(mbrs.size() + sz_mbrs, stream);
+    stream.synchronize();
+    sw.stop();
+    t_alloc_ms += sw.ms();
 
+    sw.start();
     for (auto& geoms : host_geoms) {
       detail::async_copy_h2d(stream, geoms.feature_types.data(),
                              feature_types.data() + prev_sz_feature_types,
@@ -518,6 +573,9 @@ struct DeviceParsedGeometries {
       prev_sz_vertices += geoms.vertices.size();
       prev_sz_mbrs += geoms.mbrs.size();
     }
+    stream.synchronize();
+    sw.stop();
+    t_copy_ms += sw.ms();
   }
 };
 }  // namespace detail
@@ -531,9 +589,7 @@ class ParallelWkbLoader {
 
  public:
   struct Config {
-    // How many rows of WKBs to process in one chunk
-    // This value affects the peak memory usage and overheads
-    int chunk_size = 16 * 1024;
+    float memory_quota = 0.8f;  // percentage of free memory to use
   };
 
   ParallelWkbLoader()
@@ -543,9 +599,8 @@ class ParallelWkbLoader {
       : thread_pool_(thread_pool) {}
 
   void Init(const Config& config = Config()) {
-    ArrowArrayViewInitFromType(&array_view_, NANOARROW_TYPE_BINARY);
     config_ = config;
-    geometry_type_ = GeometryType::kNull;
+    Clear(rmm::cuda_stream_default);
   }
 
   void Clear(rmm::cuda_stream_view stream) {
@@ -553,47 +608,71 @@ class ParallelWkbLoader {
     geoms_.Clear(stream);
   }
 
-  void Parse(rmm::cuda_stream_view stream, const ArrowArray* array, int64_t offset,
-             int64_t length) {
-    using host_geometries_t = detail::HostParsedGeometries<POINT_T, INDEX_T>;
+  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
+             const ArrowArray* array, int64_t offset, int64_t length) {
+    auto begin = thrust::make_counting_iterator<int64_t>(offset);
+    auto end = begin + length;
+
+    Parse(stream, schema, array, begin, end);
+  }
+
+  template <typename OFFSET_IT>
+  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
+             const ArrowArray* array, OFFSET_IT begin, OFFSET_IT end) {
+    // ArrowArrayViewInitFromType(array_view_.get(), NANOARROW_TYPE_BINARY);
     ArrowError arrow_error;
-    if (ArrowArrayViewSetArray(&array_view_, array, &arrow_error) != NANOARROW_OK) {
+
+    if (ArrowArrayViewInitFromSchema(array_view_.get(), schema, &arrow_error) !=
+        NANOARROW_OK) {
+      throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
+                               std::string(arrow_error.message));
+    }
+    using host_geometries_t = detail::HostParsedGeometries<POINT_T, INDEX_T>;
+
+    size_t num_offsets = std::distance(begin, end);
+    if (num_offsets == 0) return;
+
+    if (ArrowArrayViewSetArray(array_view_.get(), array, &arrow_error) != NANOARROW_OK) {
       throw std::runtime_error("ArrowArrayViewSetArray error " +
                                std::string(arrow_error.message));
     }
+
     auto parallelism = thread_pool_->num_threads();
-    auto est_bytes = estimateTotalBytes(array, offset, length);
-    auto free_memory = detail::get_free_physical_memory_linux();
+
+    uint64_t est_bytes = estimateTotalBytes(begin, end);
+
+    uint64_t free_memory = detail::get_free_physical_memory_linux();
+    uint64_t memory_quota = free_memory * config_.memory_quota;
     uint32_t est_n_chunks = est_bytes / free_memory + 1;
-    uint32_t chunk_size = (length + est_n_chunks - 1) / est_n_chunks;
+
+    // Use num_offsets instead of offsets.size()
+    uint32_t chunk_size = (num_offsets + est_n_chunks - 1) / est_n_chunks;
+    uint32_t n_chunks = (num_offsets + chunk_size - 1) / chunk_size;
 
     GPUSPATIAL_LOG_INFO(
-        "Parsing %ld rows, est arrow size %ld MB, free memory %lld, chunk size %u\n",
-        length, est_bytes / 1024 / 1024, free_memory / 1024 / 1024, chunk_size);
+        "Parsing %zu rows, est ArrowArray size %lu MB, Free Host Memory %lu MB, Memory quota %lu MB, Chunk Size %u, Total Chunks %u",
+        num_offsets, est_bytes / 1024 / 1024, free_memory / 1024 / 1024,
+        memory_quota / 1024 / 1024, chunk_size, n_chunks);
 
-    auto n_chunks = (length + chunk_size - 1) / chunk_size;
     Stopwatch sw;
     double t_fetch_type = 0, t_parse = 0, t_copy = 0;
+    double t_alloc = 0, t_h2d = 0;
 
     sw.start();
-    updateGeometryType(offset, length);
+    // Assumption: updateGeometryType is updated to accept iterators (begin, end)
+    updateGeometryType(begin, end);
     sw.stop();
     t_fetch_type = sw.ms();
 
-    bool multi = geometry_type_ == GeometryType::kMultiPoint ||
-                 geometry_type_ == GeometryType::kMultiLineString ||
-                 geometry_type_ == GeometryType::kMultiPolygon;
-    bool has_geometry_collection = geometry_type_ == GeometryType::kGeometryCollection;
-    bool create_mbr = geometry_type_ != GeometryType::kPoint;
-
     // reserve space
     geoms_.vertices.reserve(est_bytes / sizeof(POINT_T), stream);
-    if (create_mbr) geoms_.mbrs.reserve(array->length, stream);
+    if (geometry_type_ != GeometryType::kPoint)
+      geoms_.mbrs.reserve(array->length, stream);
 
     // Batch processing to reduce the peak memory usage
-    for (int64_t chunk = 0; chunk < n_chunks; chunk++) {
+    for (size_t chunk = 0; chunk < n_chunks; chunk++) {
       auto chunk_start = chunk * chunk_size;
-      auto chunk_end = std::min(length, (chunk + 1) * chunk_size);
+      auto chunk_end = std::min(num_offsets, (chunk + 1) * chunk_size);
       auto work_size = chunk_end - chunk_start;
 
       std::vector<std::future<host_geometries_t>> pending_local_geoms;
@@ -602,23 +681,24 @@ class ParallelWkbLoader {
       // Each thread will parse in parallel and store results sequentially
       for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
         auto run = [&](int tid) {
-          // FIXME: SetDevice
           auto thread_work_start = chunk_start + tid * thread_work_size;
           auto thread_work_end =
               std::min(chunk_end, thread_work_start + thread_work_size);
-          host_geometries_t local_geoms(multi, has_geometry_collection, create_mbr);
+          host_geometries_t local_geoms(geometry_type_);
           GeoArrowWKBReader reader;
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
 
           for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
                work_offset++) {
-            auto arrow_offset = work_offset + offset;
+            // Use iterator indexing (Requires RandomAccessIterator)
+            auto arrow_offset = begin[work_offset];
+
             // handle null value
-            if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
+            if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
               local_geoms.AddGeometry(nullptr);
             } else {
-              auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, arrow_offset);
+              auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
               GeoArrowGeometryView geom;
 
               GEOARROW_THROW_NOT_OK(
@@ -641,15 +721,14 @@ class ParallelWkbLoader {
       sw.stop();
       t_parse += sw.ms();
       sw.start();
-      geoms_.Append(stream, local_geoms);
+      geoms_.Append(stream, local_geoms, t_alloc, t_h2d);
       stream.synchronize();
       sw.stop();
       t_copy += sw.ms();
     }
     GPUSPATIAL_LOG_INFO(
-        "ParallelWkbLoader::Parse: fetched type in %.3f ms, parsed in %.3f ms, copied in "
-        "%.3f ms",
-        t_fetch_type, t_parse, t_copy);
+        "ParallelWkbLoader::Parse: fetched type in %.3f ms, parsed in %.3f ms, alloc %.3f ms, h2d copy %.3f ms",
+        t_fetch_type, t_parse, t_alloc, t_h2d);
   }
 
   DeviceGeometries<POINT_T, INDEX_T> Finish(rmm::cuda_stream_view stream) {
@@ -746,6 +825,9 @@ class ParallelWkbLoader {
             std::move(ps_num_points);
         break;
       }
+      default:
+        throw std::runtime_error("Unsupported geometry type " +
+                                 GeometryTypeToString(geometry_type_) + " in Finish");
     }
     Clear(stream);
     stream.synchronize();
@@ -756,39 +838,48 @@ class ParallelWkbLoader {
 
  private:
   Config config_;
-  ArrowArrayView array_view_;
+  nanoarrow::UniqueArrayView array_view_;
+  // ArrowArrayView array_view_;
   GeometryType geometry_type_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
   std::shared_ptr<ThreadPool> thread_pool_;
 
-  void updateGeometryType(int64_t offset, int64_t length) {
+  template <typename OFFSET_IT>
+  void updateGeometryType(OFFSET_IT begin, OFFSET_IT end) {
     if (geometry_type_ == GeometryType::kGeometryCollection) {
       // it's already the most generic type
       return;
     }
 
-    std::vector<bool> type_flags(8 /*WKB types*/, false);
-    std::vector<std::thread> workers;
+    size_t num_offsets = std::distance(begin, end);
+    if (num_offsets == 0) return;
+
+    // Changed to uint8_t to avoid data races inherent to std::vector<bool> bit-packing
+    std::vector<uint8_t> type_flags(8 /*WKB types*/, 0);
+
     auto parallelism = thread_pool_->num_threads();
-    auto thread_work_size = (length + parallelism - 1) / parallelism;
+    auto thread_work_size = (num_offsets + parallelism - 1) / parallelism;
     std::vector<std::future<void>> futures;
 
     for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
       auto run = [&](int tid) {
-        auto thread_work_start = tid * thread_work_size;
-        auto thread_work_end = std::min(length, thread_work_start + thread_work_size);
+        size_t thread_work_start = tid * thread_work_size;
+        size_t thread_work_end =
+            std::min(num_offsets, thread_work_start + thread_work_size);
         GeoArrowWKBReader reader;
         GeoArrowError error;
         GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
 
         for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
              work_offset++) {
-          auto arrow_offset = work_offset + offset;
+          // Access via iterator indexing (requires RandomAccessIterator)
+          auto arrow_offset = begin[work_offset];
+
           // handle null value
-          if (ArrowArrayViewIsNull(&array_view_, arrow_offset)) {
+          if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
             continue;
           }
-          auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, arrow_offset);
+          auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
           auto* s = (struct detail::WKBReaderPrivate*)reader.private_data;
 
           s->data = item.data.as_uint8;
@@ -804,7 +895,8 @@ class ParallelWkbLoader {
                 std::to_string(geometry_type));
           }
           assert(geometry_type < type_flags.size());
-          type_flags[geometry_type] = true;
+
+          type_flags[geometry_type] = 1;
         }
       };
       futures.push_back(std::move(thread_pool_->enqueue(run, thread_idx)));
@@ -825,6 +917,46 @@ class ParallelWkbLoader {
       }
     }
 
+    geometry_type_ = getUpcastedGeometryType(types);
+  }
+
+  template <typename T>
+  void appendVector(rmm::cuda_stream_view stream, rmm::device_uvector<T>& d_vec,
+                    const std::vector<T>& h_vec) {
+    if (h_vec.empty()) return;
+    auto prev_size = d_vec.size();
+    d_vec.resize(prev_size + h_vec.size(), stream);
+    detail::async_copy_h2d(stream, h_vec.data(), d_vec.data() + prev_size, h_vec.size());
+  }
+
+  template <typename T>
+  void calcPrefixSum(rmm::cuda_stream_view stream, rmm::device_uvector<T>& nums,
+                     rmm::device_uvector<T>& ps) {
+    if (nums.size() == 0) return;
+    ps.resize(nums.size() + 1, stream);
+    ps.set_element_to_zero_async(0, stream);
+    thrust::inclusive_scan(rmm::exec_policy_nosync(stream), nums.begin(), nums.end(),
+                           ps.begin() + 1);
+    nums.resize(0, stream);
+    nums.shrink_to_fit(stream);
+  }
+
+  template <typename OFFSET_IT>
+  size_t estimateTotalBytes(OFFSET_IT begin, OFFSET_IT end) {
+    size_t total_bytes = 0;
+    for (auto it = begin; it != end; ++it) {
+      auto offset = *it;
+      if (!ArrowArrayViewIsNull(array_view_.get(), offset)) {
+        auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), offset);
+        total_bytes += item.size_bytes - 1      // byte order
+                       - 2 * sizeof(uint32_t);  // type + size
+      }
+    }
+    return total_bytes;
+  }
+
+  GeometryType getUpcastedGeometryType(
+      const std::unordered_set<GeometryType>& types) const {
     GeometryType final_type;
     // Infer a generic type that can represent the current and previous types
     switch (types.size()) {
@@ -851,45 +983,7 @@ class ParallelWkbLoader {
       default:
         final_type = GeometryType::kGeometryCollection;
     }
-    geometry_type_ = final_type;
-  }
-
-  template <typename T>
-  void appendVector(rmm::cuda_stream_view stream, rmm::device_uvector<T>& d_vec,
-                    const std::vector<T>& h_vec) {
-    if (h_vec.empty()) return;
-    auto prev_size = d_vec.size();
-    d_vec.resize(prev_size + h_vec.size(), stream);
-    detail::async_copy_h2d(stream, h_vec.data(), d_vec.data() + prev_size, h_vec.size());
-  }
-
-  template <typename T>
-  void calcPrefixSum(rmm::cuda_stream_view stream, rmm::device_uvector<T>& nums,
-                     rmm::device_uvector<T>& ps) {
-    if (nums.size() == 0) return;
-    ps.resize(nums.size() + 1, stream);
-    ps.set_element_to_zero_async(0, stream);
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream), nums.begin(), nums.end(),
-                           ps.begin() + 1);
-    nums.resize(0, stream);
-    nums.shrink_to_fit(stream);
-  }
-
-  size_t estimateTotalBytes(const ArrowArray* array, int64_t offset, int64_t length) {
-    ArrowError arrow_error;
-    if (ArrowArrayViewSetArray(&array_view_, array, &arrow_error) != NANOARROW_OK) {
-      throw std::runtime_error("ArrowArrayViewSetArray error " +
-                               std::string(arrow_error.message));
-    }
-    size_t total_bytes = 0;
-    for (int64_t i = 0; i < length; i++) {
-      if (!ArrowArrayViewIsNull(&array_view_, offset + i)) {
-        auto item = ArrowArrayViewGetBytesUnsafe(&array_view_, offset + i);
-        total_bytes += item.size_bytes - 1      // byte order
-                       - 2 * sizeof(uint32_t);  // type + size
-      }
-    }
-    return total_bytes;
+    return final_type;
   }
 };
 }  // namespace gpuspatial

@@ -27,11 +27,11 @@ use datafusion::{
     config::ConfigOptions, execution::session_state::SessionStateBuilder,
     physical_optimizer::PhysicalOptimizerRule,
 };
-use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
     JoinSide,
 };
+use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_common::{HashMap, Result};
 use datafusion_expr::{Expr, Filter, Join, JoinType, LogicalPlan, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
@@ -41,7 +41,7 @@ use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
 use datafusion_physical_plan::projection::ProjectionExec;
 use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
-use sedona_common::{option::SedonaOptions, sedona_internal_err};
+use sedona_common::{option::SedonaOptions, sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -235,19 +235,31 @@ impl SpatialJoinOptimizer {
     fn try_optimize_join(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
+        config: &ConfigOptions,
     ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
+        let sedona_options = config
+            .extensions
+            .get::<SedonaOptions>()
+            .ok_or_else(|| DataFusionError::Internal("SedonaOptions not found".into()))?;
         // Check if this is a NestedLoopJoinExec that we can convert to spatial join
         if let Some(nested_loop_join) = plan.as_any().downcast_ref::<NestedLoopJoinExec>() {
-            if let Some(spatial_join) = self.try_convert_to_spatial_join(nested_loop_join)? {
+            if let Some(spatial_join) =
+                self.try_convert_to_spatial_join(nested_loop_join, &sedona_options.spatial_join)?
+            {
                 return Ok(Transformed::yes(spatial_join));
             }
         }
 
         // Check if this is a HashJoinExec with spatial filter that we can convert to spatial join
         if let Some(hash_join) = plan.as_any().downcast_ref::<HashJoinExec>() {
-            if let Some(spatial_join) = self.try_convert_hash_join_to_spatial(hash_join)? {
-                return Ok(Transformed::yes(spatial_join));
+            if let Some(spatial_join) =
+                self.try_convert_hash_join_to_spatial(hash_join, &sedona_options.spatial_join)?
+            {
+                if let Some(_spatial_join_exec) =
+                    spatial_join.as_any().downcast_ref::<SpatialJoinExec>()
+                {
+                    return Ok(Transformed::yes(spatial_join));
+                }
             }
         }
 
@@ -261,6 +273,7 @@ impl SpatialJoinOptimizer {
     fn try_convert_to_spatial_join(
         &self,
         nested_loop_join: &NestedLoopJoinExec,
+        options: &SpatialJoinOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         if let Some(join_filter) = nested_loop_join.filter() {
             if let Some((spatial_predicate, remainder)) = transform_join_filter(join_filter) {
@@ -292,6 +305,9 @@ impl SpatialJoinOptimizer {
                     return Ok(None);
                 }
 
+                // Check if we can use GPU for this spatial join
+                let use_gpu = is_using_gpu(&spatial_predicate, options)?;
+
                 // Create the spatial join
                 let spatial_join = SpatialJoinExec::try_new(
                     left,
@@ -300,6 +316,7 @@ impl SpatialJoinOptimizer {
                     remainder,
                     join_type,
                     nested_loop_join.projection().cloned(),
+                    use_gpu,
                 )?;
 
                 return Ok(Some(Arc::new(spatial_join)));
@@ -316,6 +333,7 @@ impl SpatialJoinOptimizer {
     fn try_convert_hash_join_to_spatial(
         &self,
         hash_join: &HashJoinExec,
+        options: &SpatialJoinOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         // Check if the filter contains spatial predicates
         if let Some(join_filter) = hash_join.filter() {
@@ -341,6 +359,9 @@ impl SpatialJoinOptimizer {
                 // Combine the equi-filter with any existing remainder
                 remainder = self.combine_filters(remainder, equi_filter)?;
 
+                // Check if we can use GPU for this spatial join
+                let use_gpu = is_using_gpu(&spatial_predicate, options)?;
+
                 // Create spatial join where:
                 // - Spatial predicate (ST_KNN) drives the join
                 // - Equi-conditions (c.id = r.id) become filters
@@ -355,6 +376,7 @@ impl SpatialJoinOptimizer {
                     hash_join.join_type(),
                     None, // No projection in SpatialJoinExec
                     true, // converted_from_hash_join = true
+                    use_gpu,
                 )?);
 
                 // Now wrap it with ProjectionExec to match HashJoinExec's output schema exactly
@@ -1054,18 +1076,59 @@ fn is_spatial_predicate_supported(
     }
 }
 
+fn is_using_gpu(
+    spatial_predicate: &SpatialPredicate,
+    join_opts: &SpatialJoinOptions,
+) -> Result<bool> {
+    if join_opts.gpu.enable {
+        if is_spatial_predicate_supported_on_gpu(spatial_predicate) {
+            return Ok(true);
+        } else if join_opts.gpu.fallback_to_cpu {
+            log::warn!(
+                "Falling back to CPU spatial join as the spatial predicate is not supported on GPU"
+            );
+            return Ok(false);
+        } else {
+            return sedona_internal_err!(
+                "GPU spatial join is enabled, but the spatial predicate is not supported on GPU"
+            );
+        }
+    }
+    Ok(false)
+}
+
+fn is_spatial_predicate_supported_on_gpu(spatial_predicate: &SpatialPredicate) -> bool {
+    match spatial_predicate {
+        SpatialPredicate::Relation(rel) => match rel.relation_type {
+            SpatialRelationType::Intersects => true,
+            SpatialRelationType::Contains => true,
+            SpatialRelationType::Within => true,
+            SpatialRelationType::Covers => true,
+            SpatialRelationType::CoveredBy => true,
+            SpatialRelationType::Touches => true,
+            SpatialRelationType::Crosses => false,
+            SpatialRelationType::Overlaps => false,
+            SpatialRelationType::Equals => true,
+        },
+        SpatialPredicate::Distance(_) => false,
+        SpatialPredicate::KNearestNeighbors(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial_predicate::{SpatialPredicate, SpatialRelationType};
+    use crate::spatial_predicate::SpatialPredicate;
     use arrow::datatypes::{DataType, Field, Schema};
     use datafusion_common::{JoinSide, ScalarValue};
+    use datafusion_execution::config::SessionConfig;
     use datafusion_expr::Operator;
     use datafusion_expr::{col, lit, ColumnarValue, Expr, ScalarUDF, SimpleScalarUDF};
     use datafusion_physical_expr::expressions::{BinaryExpr, Column, IsNotNullExpr, Literal};
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
     use datafusion_physical_plan::joins::utils::JoinFilter;
+    use sedona_common::add_sedona_option_extension;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
     use std::sync::Arc;
 
@@ -2778,5 +2841,20 @@ mod tests {
             right: Box::new(col("name").eq(lit("test"))),
         });
         assert!(!super::is_spatial_predicate(&non_spatial_and));
+    }
+
+    #[test]
+    fn test_gpu_disabled_by_default() {
+        // Create default config
+        let config = SessionConfig::new();
+        let config = add_sedona_option_extension(config);
+        let options = config.options();
+
+        // GPU should be disabled by default
+        let sedona_options = options
+            .extensions
+            .get::<sedona_common::option::SedonaOptions>()
+            .unwrap();
+        assert!(!sedona_options.spatial_join.gpu.enable);
     }
 }
