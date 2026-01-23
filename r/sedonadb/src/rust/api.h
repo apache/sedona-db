@@ -42,8 +42,10 @@ SEXP savvy_InternalContext_view__ffi(SEXP self__, SEXP c_arg__table_ref);
 SEXP savvy_InternalDataFrame_collect__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_compute__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_count__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_filter__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
 SEXP savvy_InternalDataFrame_limit__ffi(SEXP self__, SEXP c_arg__n);
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_select__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
 SEXP savvy_InternalDataFrame_select_indices__ffi(SEXP self__, SEXP c_arg__names,
                                                  SEXP c_arg__indices);
 SEXP savvy_InternalDataFrame_show__ffi(SEXP self__, SEXP c_arg__ctx,
@@ -78,10 +80,6 @@ SEXP savvy_SedonaDBExprFactory_binary__ffi(SEXP self__, SEXP c_arg__op,
                                            SEXP c_arg__lhs, SEXP c_arg__rhs);
 SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP self__, SEXP c_arg__name,
                                            SEXP c_arg__qualifier);
-SEXP savvy_SedonaDBExprFactory_evaluate_scalar__ffi(SEXP self__,
-                                                    SEXP c_arg__exprs_sexp,
-                                                    SEXP c_arg__stream_in,
-                                                    SEXP c_arg__stream_out);
 SEXP savvy_SedonaDBExprFactory_literal__ffi(SEXP c_arg__array_xptr,
                                             SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExprFactory_new__ffi(SEXP c_arg__ctx);

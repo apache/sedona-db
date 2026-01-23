@@ -161,6 +161,11 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
 
 #' Evaluate a list of R expressions into a stream of RecordBatch
 #'
+#' Internally this is creating a DataFusion PhysicalExpr and evaluating
+#' it sequentially on each batch. This is primarily a tool for testing
+#' the result of expressions but also may be useful for exposing scalar
+#' functions for synchronous use.
+#'
 #' @param stream Input stream, or an object (such as a `data.frame()`)
 #'   that can be coerced to one.
 #' @param exprs An list of R expressions (e.g., the result of `quote()`).

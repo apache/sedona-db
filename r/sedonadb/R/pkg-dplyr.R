@@ -29,4 +29,5 @@ select.sedonadb_dataframe <- function(.data, ...) {
   df <- .data$df$select_indices(names(loc), loc - 1L)
   new_sedonadb_dataframe(.data$ctx, df)
 }
+
 # nolint end

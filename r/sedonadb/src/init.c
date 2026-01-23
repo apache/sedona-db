@@ -149,6 +149,11 @@ SEXP savvy_InternalDataFrame_count__impl(SEXP self__) {
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_filter__impl(SEXP self__, SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_filter__ffi(self__, c_arg__exprs_sexp);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_limit__impl(SEXP self__, SEXP c_arg__n) {
   SEXP res = savvy_InternalDataFrame_limit__ffi(self__, c_arg__n);
   return handle_result(res);
@@ -156,6 +161,11 @@ SEXP savvy_InternalDataFrame_limit__impl(SEXP self__, SEXP c_arg__n) {
 
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__impl(SEXP self__) {
   SEXP res = savvy_InternalDataFrame_primary_geometry_column_index__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalDataFrame_select__impl(SEXP self__, SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_select__ffi(self__, c_arg__exprs_sexp);
   return handle_result(res);
 }
 
@@ -261,15 +271,6 @@ SEXP savvy_SedonaDBExprFactory_column__impl(SEXP self__, SEXP c_arg__name,
   return handle_result(res);
 }
 
-SEXP savvy_SedonaDBExprFactory_evaluate_scalar__impl(SEXP self__,
-                                                     SEXP c_arg__exprs_sexp,
-                                                     SEXP c_arg__stream_in,
-                                                     SEXP c_arg__stream_out) {
-  SEXP res = savvy_SedonaDBExprFactory_evaluate_scalar__ffi(
-      self__, c_arg__exprs_sexp, c_arg__stream_in, c_arg__stream_out);
-  return handle_result(res);
-}
-
 SEXP savvy_SedonaDBExprFactory_literal__impl(SEXP c_arg__array_xptr,
                                              SEXP c_arg__schema_xptr) {
   SEXP res = savvy_SedonaDBExprFactory_literal__ffi(c_arg__array_xptr,
@@ -321,10 +322,14 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_compute__impl, 2},
     {"savvy_InternalDataFrame_count__impl",
      (DL_FUNC)&savvy_InternalDataFrame_count__impl, 1},
+    {"savvy_InternalDataFrame_filter__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_filter__impl, 2},
     {"savvy_InternalDataFrame_limit__impl",
      (DL_FUNC)&savvy_InternalDataFrame_limit__impl, 2},
     {"savvy_InternalDataFrame_primary_geometry_column_index__impl",
      (DL_FUNC)&savvy_InternalDataFrame_primary_geometry_column_index__impl, 1},
+    {"savvy_InternalDataFrame_select__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_select__impl, 2},
     {"savvy_InternalDataFrame_select_indices__impl",
      (DL_FUNC)&savvy_InternalDataFrame_select_indices__impl, 3},
     {"savvy_InternalDataFrame_show__impl",
@@ -355,8 +360,6 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExprFactory_binary__impl, 4},
     {"savvy_SedonaDBExprFactory_column__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_column__impl, 3},
-    {"savvy_SedonaDBExprFactory_evaluate_scalar__impl",
-     (DL_FUNC)&savvy_SedonaDBExprFactory_evaluate_scalar__impl, 4},
     {"savvy_SedonaDBExprFactory_literal__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_literal__impl, 2},
     {"savvy_SedonaDBExprFactory_new__impl",
