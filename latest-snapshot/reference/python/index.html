@@ -1039,6 +1039,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sedonadb.testing.random_geometry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;random_geometry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.testing.skip_if_not_exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1900,6 +1911,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sedonadb.testing.random_geometry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;random_geometry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.testing.skip_if_not_exists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2194,6 +2216,31 @@ Spark SessionContext or a database connection.</p>
 
 
 
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="sedonadb.context.SedonaContext.funcs" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">funcs</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-cached"><code>cached</code></small>
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#sedonadb.context.SedonaContext.funcs" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">funcs</span><span class="p">:</span> <span class="n"><span title="sedonadb.functions.Functions">Functions</span></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Access Python wrappers for SedonaDB functions</p>
+
+    </div>
+
+</div>
 
 
 
@@ -4354,6 +4401,27 @@ connect to non-docker PostGIS.</p>
     <div class="doc doc-contents ">
 
         <p>Format SQL expression for a geometry object or NULL</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="sedonadb.testing.random_geometry" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">random_geometry</span>
+
+
+<a href="#sedonadb.testing.random_geometry" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">random_geometry</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Generate a DataFrame with random geometries for testing purposes by
+calling sd_random_geometry() on an isolated SedonaDB session.</p>
 
 
     </div>
