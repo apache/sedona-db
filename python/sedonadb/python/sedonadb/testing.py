@@ -14,8 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import os
 import math
+import os
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
@@ -27,6 +27,17 @@ if TYPE_CHECKING:
     import pandas
 
     import sedonadb
+
+
+def random_geometry(*args, **kwargs) -> "sedonadb.dataframe.DataFrame":
+    """
+    Generate a DataFrame with random geometries for testing purposes by
+    calling sd_random_geometry() on an isolated SedonaDB session.
+    """
+    import sedonadb
+
+    sd = sedonadb.connect()
+    return sd.funcs.table.sd_random_geometry(*args, **kwargs)
 
 
 def skip_if_not_exists(path: Path):

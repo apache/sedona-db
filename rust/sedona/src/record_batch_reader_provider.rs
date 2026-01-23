@@ -107,14 +107,14 @@ impl TableProvider for RecordBatchReaderProvider {
 }
 
 /// An iterator that limits the number of rows from a RecordBatchReader
-struct RowLimitedIterator {
+pub struct RowLimitedIterator {
     reader: Option<Box<dyn RecordBatchReader + Send>>,
     limit: usize,
     rows_consumed: usize,
 }
 
 impl RowLimitedIterator {
-    fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
+    pub fn new(reader: Box<dyn RecordBatchReader + Send>, limit: usize) -> Self {
         Self {
             reader: Some(reader),
             limit,
@@ -251,9 +251,16 @@ impl ExecutionPlan for RecordBatchReaderExec {
 
     fn execute(
         &self,
-        _partition: usize,
+        partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Error for an attempt to read an incorrect partition
+        if partition > 0 {
+            return sedona_internal_err!(
+                "Can't read partition {partition} from RecordBatchReaderExec"
+            );
+        }
+
         let mut reader_guard = self.reader.lock();
 
         let reader = if let Some(reader) = reader_guard.take() {

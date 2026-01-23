@@ -59,9 +59,23 @@ pub(crate) trait IndexQueryResultRefiner: Send + Sync {
         index_query_results: &[IndexQueryResult],
     ) -> Result<Vec<(i32, i32)>>;
 
+    /// Estimate the maximum memory usage of the refiner in bytes. Some refiner may hold prepared
+    /// geometry in memory to accelerate predicate evaluations and consume non-trivial amount of
+    /// memory. This method estimates the maximum memory usage based on the statistics of the build-side
+    /// that will be processed. The estimation may not be accurate. The actual memory usage
+    /// can be obtained from spatial join metrics (see [`crate::stream::SpatialJoinProbeMetrics`]
+    /// for more details)
+    ///
+    /// # Arguments
+    /// * `build_stats` - The statistics of build-side geometry batches that will be processed by the refiner.
+    ///
+    /// # Returns
+    /// * `usize` - Estimated maximum memory usage in bytes
+    fn estimate_max_memory_usage(&self, build_stats: &GeoStatistics) -> usize;
+
     /// Get the current memory usage of the refiner in bytes.
     ///
-    /// Used for memory tracking and reservation management. Implementations should account for
+    /// Used for updating memory usage metrics. Implementations should account for
     /// prepared geometry caches, internal data structures, and temporary computation buffers.
     ///
     /// # Returns
