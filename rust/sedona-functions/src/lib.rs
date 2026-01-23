@@ -28,6 +28,7 @@ mod st_affine_helpers;
 pub mod st_analyze_agg;
 mod st_area;
 mod st_asbinary;
+mod st_asewkb;
 mod st_asgeojson;
 mod st_astext;
 mod st_azimuth;
