@@ -22,6 +22,7 @@ use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{memory_pool::MemoryReservation, SendableRecordBatchStream};
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use futures::StreamExt;
+use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
@@ -34,8 +35,15 @@ use crate::{
         },
         EvaluatedBatch,
     },
-    operand_evaluator::OperandEvaluator,
+    index::SpatialIndexBuilder,
+    operand_evaluator::{create_operand_evaluator, OperandEvaluator},
+    SpatialPredicate,
 };
+
+/// Safety buffer applied when pre-growing build-side reservations to leave headroom for
+/// auxiliary structures beyond the build batches themselves.
+/// 20% was chosen as a conservative margin.
+const BUILD_SIDE_RESERVATION_BUFFER_RATIO: f64 = 0.20;
 
 pub(crate) struct BuildPartition {
     pub build_side_batch_stream: SendableEvaluatedBatchStream,
@@ -52,6 +60,8 @@ pub(crate) struct BuildPartition {
 /// spatial index, depending on the statistics collected by the collector.
 #[derive(Clone)]
 pub(crate) struct BuildSideBatchesCollector {
+    spatial_predicate: SpatialPredicate,
+    spatial_join_options: SpatialJoinOptions,
     evaluator: Arc<dyn OperandEvaluator>,
 }
 
@@ -83,8 +93,16 @@ impl CollectBuildSideMetrics {
 }
 
 impl BuildSideBatchesCollector {
-    pub fn new(evaluator: Arc<dyn OperandEvaluator>) -> Self {
-        BuildSideBatchesCollector { evaluator }
+    pub fn new(
+        spatial_predicate: SpatialPredicate,
+        spatial_join_options: SpatialJoinOptions,
+    ) -> Self {
+        let evaluator = create_operand_evaluator(&spatial_predicate, spatial_join_options.clone());
+        BuildSideBatchesCollector {
+            spatial_predicate,
+            spatial_join_options,
+            evaluator,
+        }
     }
 
     pub async fn collect(
@@ -115,12 +133,26 @@ impl BuildSideBatchesCollector {
             in_mem_batches.push(build_side_batch);
         }
 
+        let geo_statistics = analyzer.finish();
+        let extra_mem = SpatialIndexBuilder::estimate_extra_memory_usage(
+            &geo_statistics,
+            &self.spatial_predicate,
+            &self.spatial_join_options,
+        );
+
+        // Try to grow the reservation with a safety buffer to leave room for additional data structures
+        let buffer_bytes = ((extra_mem + reservation.size()) as f64
+            * BUILD_SIDE_RESERVATION_BUFFER_RATIO)
+            .ceil() as usize;
+        let additional_reservation = extra_mem + buffer_bytes;
+        reservation.try_grow(additional_reservation)?;
+
         Ok(BuildPartition {
             build_side_batch_stream: Box::pin(InMemoryEvaluatedBatchStream::new(
                 stream.schema(),
                 in_mem_batches,
             )),
-            geo_statistics: analyzer.finish(),
+            geo_statistics,
             reservation,
         })
     }

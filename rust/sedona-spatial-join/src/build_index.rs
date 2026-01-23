@@ -29,7 +29,6 @@ use crate::{
         BuildSideBatchesCollector, CollectBuildSideMetrics, SpatialIndex, SpatialIndexBuilder,
         SpatialJoinBuildMetrics,
     },
-    operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
 };
 
@@ -57,9 +56,10 @@ pub async fn build_index(
         .unwrap_or_default();
     let concurrent = sedona_options.spatial_join.concurrent_build_side_collection;
     let memory_pool = context.memory_pool();
-    let evaluator =
-        create_operand_evaluator(&spatial_predicate, sedona_options.spatial_join.clone());
-    let collector = BuildSideBatchesCollector::new(evaluator);
+    let collector = BuildSideBatchesCollector::new(
+        spatial_predicate.clone(),
+        sedona_options.spatial_join.clone(),
+    );
     let num_partitions = build_streams.len();
     let mut collect_metrics_vec = Vec::with_capacity(num_partitions);
     let mut reservations = Vec::with_capacity(num_partitions);
