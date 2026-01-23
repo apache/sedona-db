@@ -27,7 +27,7 @@ use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
 use arrow_array::{BinaryArray, BinaryViewArray};
 use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{exec_datafusion_err, plan_err, DataFusionError, Result};
 use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
@@ -347,6 +347,32 @@ impl RandomPartitionedDataBuilder {
         Ok((schema, result))
     }
 
+    /// Validate options
+    ///
+    /// This is called internally before generating batches to prevent panics from
+    /// occurring while creating random output; however, it may also be called
+    /// at a higher level to generate an error at a more relevant time.
+    pub fn validate(&self) -> Result<()> {
+        self.options.validate()?;
+
+        if self.null_rate < 0.0 || self.null_rate > 1.0 {
+            return plan_err!(
+                "Expected null_rate between 0.0 and 1.0 but got {}",
+                self.null_rate
+            );
+        }
+
+        if self.rows_per_batch == 0 {
+            return plan_err!("Expected rows_per_batch > 0 but got 0");
+        }
+
+        if self.num_partitions == 0 {
+            return plan_err!("Expected num_partitions > 0 but got 0");
+        }
+
+        Ok(())
+    }
+
     /// Generate a [Rng] based on a seed
     ///
     /// Callers can also supply their own [Rng].
@@ -379,6 +405,9 @@ impl RandomPartitionedDataBuilder {
         partition_idx: usize,
         batch_idx: usize,
     ) -> Result<RecordBatch> {
+        // Check for valid ranges to avoid panic in generation
+        self.validate()?;
+
         // Generate IDs - make them unique across partitions and batches
         let id_start =
             (partition_idx * self.batches_per_partition + batch_idx) * self.rows_per_batch;
@@ -386,8 +415,13 @@ impl RandomPartitionedDataBuilder {
             .map(|i| (id_start + i) as i32)
             .collect();
 
-        // Generate random distances between 0.0 and 100.0
-        let distance_dist = Uniform::new(0.0, 100.0).expect("valid input to Uniform::new()");
+        // Generate random distances relevant to the bounds (0.0 and 100.0 by default)
+        let max_dist = self
+            .options
+            .bounds
+            .width()
+            .min(self.options.bounds.height());
+        let distance_dist = Uniform::new(0.0, max_dist).expect("valid input to Uniform::new()");
         let distances: Vec<f64> = (0..self.rows_per_batch)
             .map(|_| rng.sample(distance_dist))
             .collect();
@@ -395,9 +429,7 @@ impl RandomPartitionedDataBuilder {
         // Generate random geometries based on the geometry type
         let wkb_geometries = (0..self.rows_per_batch)
             .map(|_| -> Result<Option<Vec<u8>>> {
-                if rng.sample(Uniform::new(0.0, 1.0).expect("valid input to Uniform::new()"))
-                    < self.null_rate
-                {
+                if rng.random_bool(self.null_rate) {
                     Ok(None)
                 } else {
                     Ok(Some(generate_random_wkb(rng, &self.options)?))
@@ -490,6 +522,48 @@ impl RandomGeometryOptions {
             num_parts_range: (1, 3),
         }
     }
+
+    fn validate(&self) -> Result<()> {
+        if self.bounds.width() <= 0.0 || self.bounds.height() <= 0.0 {
+            return plan_err!("Expected valid bounds but got {:?}", self.bounds);
+        }
+
+        if self.size_range.0 <= 0.0 || self.size_range.0 > self.size_range.1 {
+            return plan_err!("Expected valid size_range but got {:?}", self.size_range);
+        }
+
+        if self.vertices_per_linestring_range.0 == 0
+            || self.vertices_per_linestring_range.0 > self.vertices_per_linestring_range.1
+        {
+            return plan_err!(
+                "Expected valid vertices_per_linestring_range but got {:?}",
+                self.vertices_per_linestring_range
+            );
+        }
+
+        if !(0.0..=1.0).contains(&self.empty_rate) {
+            return plan_err!(
+                "Expected empty_rate between 0.0 and 1.0 but got {}",
+                self.empty_rate
+            );
+        }
+
+        if !(0.0..=1.0).contains(&self.polygon_hole_rate) {
+            return plan_err!(
+                "Expected polygon_hole_rate between 0.0 and 1.0 but got {}",
+                self.polygon_hole_rate
+            );
+        }
+
+        if self.num_parts_range.0 == 0 || self.num_parts_range.0 > self.num_parts_range.1 {
+            return plan_err!(
+                "Expected valid num_parts_range but got {:?}",
+                self.num_parts_range
+            );
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for RandomGeometryOptions {
@@ -560,9 +634,9 @@ fn generate_random_point<R: rand::Rng>(
     } else {
         // Generate random points within the specified bounds
         let x_dist = Uniform::new(options.bounds.min().x, options.bounds.max().x)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid x bounds for random point: {e}"))?;
         let y_dist = Uniform::new(options.bounds.min().y, options.bounds.max().y)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid y bounds for random point: {e}"))?;
         let x = rng.sample(x_dist);
         let y = rng.sample(y_dist);
         Ok(Point::new(x, y))
@@ -581,11 +655,13 @@ fn generate_random_linestring<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid vertex count range for linestring: {e}"))?;
         // Always sample in such a way that we end up with a valid linestring
         let num_vertices = rng.sample(vertices_dist).max(2);
+        // Randomize starting angle (0 to 2 * PI)
+        let angle = rng.random_range(0.0..(2.0 * PI));
         let coords =
-            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, false)?;
+            generate_circular_vertices(angle, center_x, center_y, half_size, num_vertices, false)?;
         Ok(LineString::from(coords))
     }
 }
@@ -602,22 +678,31 @@ fn generate_random_polygon<R: rand::Rng>(
             options.vertices_per_linestring_range.0,
             options.vertices_per_linestring_range.1,
         )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        .map_err(|e| exec_datafusion_err!("Invalid vertex count range for polygon: {e}"))?;
         // Always sample in such a way that we end up with a valid Polygon
         let num_vertices = rng.sample(vertices_dist).max(3);
+
+        // Randomize starting angle (but use the same starting angle for both the shell
+        // and the hole to ensure a non-intersecting interior)
+        let angle = rng.random_range(0.0..=(2.0 * PI));
         let coords =
-            generate_circular_vertices(rng, center_x, center_y, half_size, num_vertices, true)?;
+            generate_circular_vertices(angle, center_x, center_y, half_size, num_vertices, true)?;
         let shell = LineString::from(coords);
         let mut holes = Vec::new();
 
         // Potentially add a hole based on probability
         let add_hole = rng.random_bool(options.polygon_hole_rate);
-        let hole_scale_factor_dist = Uniform::new(0.1, 0.5).expect("Valid input range");
-        let hole_scale_factor = rng.sample(hole_scale_factor_dist);
+        let hole_scale_factor = rng.random_range(0.1..0.5);
         if add_hole {
             let new_size = half_size * hole_scale_factor;
-            let mut coords =
-                generate_circular_vertices(rng, center_x, center_y, new_size, num_vertices, true)?;
+            let mut coords = generate_circular_vertices(
+                angle,
+                center_x,
+                center_y,
+                new_size,
+                num_vertices,
+                true,
+            )?;
             coords.reverse();
             holes.push(LineString::from(coords));
         }
@@ -681,7 +766,7 @@ fn generate_random_children<R: Rng, T, F: Fn(&mut R, &RandomGeometryOptions) -> 
 ) -> Result<Vec<T>> {
     let num_parts_dist =
         Uniform::new_inclusive(options.num_parts_range.0, options.num_parts_range.1)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Invalid part count range: {e}"))?;
     let num_parts = rng.sample(num_parts_dist);
 
     // Constrain this feature to the size range indicated in the option
@@ -733,26 +818,44 @@ fn generate_random_circle<R: rand::Rng>(
     rng: &mut R,
     options: &RandomGeometryOptions,
 ) -> Result<(f64, f64, f64)> {
-    // Generate random diamond polygons (rotated squares)
-    let size_dist = Uniform::new(options.size_range.0, options.size_range.1)
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let half_size = rng.sample(size_dist) / 2.0;
+    // Generate random circular polygons
+    let size_dist = Uniform::new_inclusive(options.size_range.0, options.size_range.1)
+        .map_err(|e| exec_datafusion_err!("Invalid size range for random region: {e}"))?;
+    let size = rng.sample(size_dist);
+    let half_size = size / 2.0;
+    let height = options.bounds.height();
+    let width = options.bounds.width();
 
-    // Ensure diamond fits within bounds by constraining center position
-    let center_x_dist = Uniform::new(
-        options.bounds.min().x + half_size,
-        options.bounds.max().x - half_size,
-    )
-    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let center_y_dist = Uniform::new(
-        options.bounds.min().y + half_size,
-        options.bounds.max().y - half_size,
-    )
-    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let center_x = rng.sample(center_x_dist);
-    let center_y = rng.sample(center_y_dist);
+    // Ensure circle fits within bounds by constraining center position
+    let center_x = if width >= size {
+        let center_x_dist = Uniform::new(
+            options.bounds.min().x + half_size,
+            options.bounds.max().x - half_size,
+        )
+        .map_err(|e| exec_datafusion_err!("Invalid x bounds for random circle center: {e}"))?;
 
-    Ok((center_x, center_y, half_size))
+        rng.sample(center_x_dist)
+    } else {
+        options.bounds.min().x + width / 2.0
+    };
+
+    let center_y = if height >= size {
+        let center_y_dist = Uniform::new(
+            options.bounds.min().y + half_size,
+            options.bounds.max().y - half_size,
+        )
+        .map_err(|e| exec_datafusion_err!("Invalid y bounds for random circle center: {e}"))?;
+
+        rng.sample(center_y_dist)
+    } else {
+        options.bounds.min().y + height / 2.0
+    };
+
+    Ok((
+        center_x,
+        center_y,
+        half_size.min(height / 2.0).min(width / 2.0),
+    ))
 }
 
 fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> Vec<Rect> {
@@ -784,8 +887,8 @@ fn generate_non_overlapping_sub_rectangles(num_parts: usize, bounds: &Rect) -> V
     tiles
 }
 
-fn generate_circular_vertices<R: rand::Rng>(
-    rng: &mut R,
+fn generate_circular_vertices(
+    mut angle: f64,
     center_x: f64,
     center_y: f64,
     radius: f64,
@@ -793,11 +896,6 @@ fn generate_circular_vertices<R: rand::Rng>(
     closed: bool,
 ) -> Result<Vec<Coord>> {
     let mut out = Vec::new();
-
-    // Randomize starting angle (0 to 2 * PI)
-    let start_angle_dist =
-        Uniform::new(0.0, 2.0 * PI).map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let mut angle: f64 = rng.sample(start_angle_dist);
 
     let dangle = 2.0 * PI / (num_vertices as f64).max(3.0);
     for _ in 0..num_vertices {
@@ -1269,5 +1367,184 @@ mod tests {
             assert!(bounds.x().is_empty());
             assert!(bounds.y().is_empty());
         }
+    }
+
+    #[test]
+    fn test_random_partitioned_data_builder_validation() {
+        // Test invalid null_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .null_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected null_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid null_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .null_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected null_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid rows_per_batch (0)
+        let err = RandomPartitionedDataBuilder::new()
+            .rows_per_batch(0)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected rows_per_batch > 0 but got 0"
+        );
+
+        // Test invalid num_partitions (0)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_partitions(0)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected num_partitions > 0 but got 0"
+        );
+
+        // Test invalid empty_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .empty_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected empty_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid empty_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .empty_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected empty_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid polygon_hole_rate (< 0.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .polygon_hole_rate(-0.1)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected polygon_hole_rate between 0.0 and 1.0 but got -0.1"
+        );
+
+        // Test invalid polygon_hole_rate (> 1.0)
+        let err = RandomPartitionedDataBuilder::new()
+            .polygon_hole_rate(1.5)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected polygon_hole_rate between 0.0 and 1.0 but got 1.5"
+        );
+
+        // Test invalid size_range (min <= 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((0.0, 10.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (0.0, 10.0)"
+        );
+
+        // Test invalid size_range (max <= 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((5.0, -1.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (5.0, -1.0)"
+        );
+
+        // Test invalid size_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .size_range((10.0, 5.0))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid size_range but got (10.0, 5.0)"
+        );
+
+        // Test invalid vertices_per_linestring_range (min == 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .vertices_per_linestring_range((0, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid vertices_per_linestring_range but got (0, 5)"
+        );
+
+        // Test invalid vertices_per_linestring_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .vertices_per_linestring_range((10, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid vertices_per_linestring_range but got (10, 5)"
+        );
+
+        // Test invalid num_parts_range (min == 0)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_parts_range((0, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid num_parts_range but got (0, 5)"
+        );
+
+        // Test invalid num_parts_range (min > max)
+        let err = RandomPartitionedDataBuilder::new()
+            .num_parts_range((10, 5))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid num_parts_range but got (10, 5)"
+        );
+
+        // Test invalid bounds (zero width)
+        let err = RandomPartitionedDataBuilder::new()
+            .bounds(Rect::new(
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 10.0, y: 20.0 },
+            ))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid bounds but got RECT(10.0 10.0,10.0 20.0)"
+        );
+
+        // Test invalid bounds (zero height)
+        let err = RandomPartitionedDataBuilder::new()
+            .bounds(Rect::new(
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 20.0, y: 10.0 },
+            ))
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Error during planning: Expected valid bounds but got RECT(10.0 10.0,20.0 10.0)"
+        );
     }
 }
