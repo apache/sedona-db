@@ -35,7 +35,7 @@ use datafusion_expr::{
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
-    item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type},
+    item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type_strip_crs},
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
@@ -145,7 +145,7 @@ impl SedonaScalarKernel for STSetSRID {
         return_type: &SedonaType,
         _num_rows: usize,
     ) -> Result<ColumnarValue> {
-        let (item_type, maybe_crs_type) = parse_item_crs_arg_type(&arg_types[0])?;
+        let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
         let item_crs_matcher = ArgMatcher::is_item_crs();
@@ -204,7 +204,7 @@ impl SedonaScalarKernel for STSetCRS {
         return_type: &SedonaType,
         _num_rows: usize,
     ) -> Result<ColumnarValue> {
-        let (item_type, maybe_crs_type) = parse_item_crs_arg_type(&arg_types[0])?;
+        let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
         let item_crs_matcher = ArgMatcher::is_item_crs();
@@ -241,7 +241,7 @@ fn determine_return_type(
     scalar_args: &[Option<&ScalarValue>],
     maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
 ) -> Result<Option<SedonaType>> {
-    let (item_type, _) = parse_item_crs_arg_type(&args[0])?;
+    let (item_type, _) = parse_item_crs_arg_type_strip_crs(&args[0])?;
 
     // If this is not geometry or geography and/or this is not an item_crs of one,
     // this kernel does not apply.

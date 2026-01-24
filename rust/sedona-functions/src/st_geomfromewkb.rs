@@ -179,11 +179,7 @@ mod tests {
             &tester
                 .invoke_scalar(POINT_WITH_SRID_4326_EWKB.to_vec())
                 .unwrap(),
-            &create_scalar_item_crs(
-                Some("POINT (1 2)"),
-                Some("EPSG:4326"),
-                &WKB_GEOMETRY_ITEM_CRS,
-            ),
+            &create_scalar_item_crs(Some("POINT (1 2)"), Some("EPSG:4326"), &WKB_GEOMETRY),
         );
 
         assert_scalar_equal(
