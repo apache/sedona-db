@@ -21,7 +21,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-@pytest.mark.parametrize("srid", [None, 4326])
+@pytest.mark.parametrize("srid", [0, 4326])
 @pytest.mark.parametrize(
     "geom",
     [
@@ -77,7 +77,7 @@ def test_st_asewkb(eng, srid, geom):
 
     if geom is not None:
         shapely_geom = shapely.from_wkt(geom)
-        if srid is not None:
+        if srid:
             shapely_geom = shapely.set_srid(shapely_geom, srid)
             write_srid = True
         else:
@@ -93,4 +93,14 @@ def test_st_asewkb(eng, srid, geom):
     else:
         expected = None
 
+    # Check rendering of WKB against shapely
     eng.assert_query_result(f"SELECT ST_AsEWKB({geom_or_null(geom, srid)})", expected)
+
+    # Check read of EWKB against read SRID
+    eng.assert_query_result(f"SELECT ST_SRID(ST_GeomFromEWKB({eng.val_or_null(expected)}))", srid)
+
+    # Check read of EWKB against read geometry content
+    # Workaround bug in geoarrow-c
+    if geom == "POINT EMPTY":
+        geom = "POINT (nan nan)"
+    eng.assert_query_result(f"SELECT ST_SetSRID(ST_GeomFromEWKB({eng.val_or_null(expected)}), 0)", geom)

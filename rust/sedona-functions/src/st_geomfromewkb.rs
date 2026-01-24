@@ -80,6 +80,7 @@ impl SedonaScalarKernel for STGeomFromEWKB {
             SedonaType::Arrow(data_type) => match data_type {
                 DataType::Binary => WKB_GEOMETRY,
                 DataType::BinaryView => WKB_VIEW_GEOGRAPHY,
+                DataType::Null => SedonaType::Arrow(DataType::Null),
                 _ => {
                     return sedona_internal_err!(
                         "Unexpected arguments to invoke_batch: {arg_types:?}"
