@@ -536,7 +536,9 @@ pub fn make_item_crs(
 /// Given an input type, separate it into an item and crs type (if the input
 /// is an item_crs type). Otherwise, just return the item type as is and return a
 /// CRS type of None.
-pub fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Option<SedonaType>)> {
+pub fn parse_item_crs_arg_type(
+    sedona_type: &SedonaType,
+) -> Result<(SedonaType, Option<SedonaType>)> {
     if let SedonaType::Arrow(DataType::Struct(fields)) = sedona_type {
         let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
         if field_names != ["item", "crs"] {

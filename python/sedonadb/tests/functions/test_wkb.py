@@ -29,7 +29,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
         "POINT (1 2)",
         "LINESTRING (1 2, 3 4, 5 6)",
         "POLYGON ((0 1, 2 0, 2 3, 0 3, 0 1))",
-        "MULTIPOINT ((1 2), (3 4))",
+        "MULTIPOINT (1 2, 3 4)",
         "MULTILINESTRING ((1 2, 3 4), (5 6, 7 8))",
         "MULTIPOLYGON (((0 1, 2 0, 2 3, 0 3, 0 1)))",
         "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))",
@@ -37,7 +37,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
         "POINT Z (1 2 3)",
         "LINESTRING Z (1 2 3, 4 5 6)",
         "POLYGON Z ((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2))",
-        "MULTIPOINT Z ((1 2 3), (4 5 6))",
+        "MULTIPOINT Z (1 2 3, 4 5 6)",
         "MULTILINESTRING Z ((1 2 3, 4 5 6), (7 8 9, 10 11 12))",
         "MULTIPOLYGON Z (((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2)))",
         "GEOMETRYCOLLECTION Z (POINT Z (1 2 3))",
@@ -45,7 +45,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
         "POINT M (1 2 3)",
         "LINESTRING M (1 2 3, 4 5 6)",
         "POLYGON M ((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2))",
-        "MULTIPOINT M ((1 2 3), (4 5 6))",
+        "MULTIPOINT M (1 2 3, 4 5 6)",
         "MULTILINESTRING M ((1 2 3, 4 5 6), (7 8 9, 10 11 12))",
         "MULTIPOLYGON M (((0 1 2, 3 0 2, 3 4 2, 0 4 2, 0 1 2)))",
         "GEOMETRYCOLLECTION M (POINT M (1 2 3))",
@@ -53,7 +53,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null
         "POINT ZM (1 2 3 4)",
         "LINESTRING ZM (1 2 3 4, 5 6 7 8)",
         "POLYGON ZM ((0 1 2 3, 4 0 2 3, 4 5 2 3, 0 5 2 3, 0 1 2 3))",
-        "MULTIPOINT ZM ((1 2 3 4), (5 6 7 8))",
+        "MULTIPOINT ZM (1 2 3 4, 5 6 7 8)",
         "MULTILINESTRING ZM ((1 2 3 4, 5 6 7 8), (9 10 11 12, 13 14 15 16))",
         "MULTIPOLYGON ZM (((0 1 2 3, 4 0 2 3, 4 5 2 3, 0 5 2 3, 0 1 2 3)))",
         "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4))",
@@ -97,10 +97,16 @@ def test_st_asewkb(eng, srid, geom):
     eng.assert_query_result(f"SELECT ST_AsEWKB({geom_or_null(geom, srid)})", expected)
 
     # Check read of EWKB against read SRID
-    eng.assert_query_result(f"SELECT ST_SRID(ST_GeomFromEWKB({eng.val_or_null(expected)}))", srid)
+    if expected is None:
+        srid = None
+    eng.assert_query_result(
+        f"SELECT ST_SRID(ST_GeomFromEWKB({eng.val_or_null(expected)}))", srid
+    )
 
     # Check read of EWKB against read geometry content
     # Workaround bug in geoarrow-c
     if geom == "POINT EMPTY":
         geom = "POINT (nan nan)"
-    eng.assert_query_result(f"SELECT ST_SetSRID(ST_GeomFromEWKB({eng.val_or_null(expected)}), 0)", geom)
+    eng.assert_query_result(
+        f"SELECT ST_SetSRID(ST_GeomFromEWKB({eng.val_or_null(expected)}), 0)", geom
+    )
