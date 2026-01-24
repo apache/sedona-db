@@ -35,7 +35,7 @@ def test_st_transform(eng):
 def test_st_transform_3d(eng):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        "SELECT ST_Transform(ST_GeomFromText('POINT Z (1 1 1)'), 'EPSG:4326', 'EPSG:4978')",
+        "SELECT ST_Transform(ST_GeomFromText('POINT Z (1 1 1)'), 'EPSG:4979', 'EPSG:4978')",
         "POINT Z (6376201.805927448 111297.016517882 110568.792276973)",
         wkt_precision=9,
     )
