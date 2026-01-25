@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-/// Macro to create Sedona Internal Error that avoids the misleading error message from
-/// DataFusionError::Internal.
+/// Macro to create Sedona Internal Error from places such as `map_err()` that
+/// require a DataFusionError instead of an Err
 #[macro_export]
-macro_rules! sedona_internal_err {
+macro_rules! sedona_internal_datafusion_err {
     ($($args:expr),*) => {{
         let msg = std::format!(
             "SedonaDB internal error: {}{}.\nThis issue was likely caused by a bug in SedonaDB's code. \
@@ -28,7 +28,16 @@ macro_rules! sedona_internal_err {
             datafusion_common::DataFusionError::get_back_trace(),
         );
         // We avoid using Internal to avoid the message suggesting it's internal to DataFusion
-        Err(datafusion_common::DataFusionError::External(msg.into()))
+        datafusion_common::DataFusionError::External(msg.into())
+    }};
+}
+
+/// Macro to create Sedona Internal Error that avoids the misleading error message from
+/// DataFusionError::Internal.
+#[macro_export]
+macro_rules! sedona_internal_err {
+    ($($args:expr),*) => {{
+        Err($crate::sedona_internal_datafusion_err!($($args),*))
     }};
 }
 

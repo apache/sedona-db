@@ -14,8 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import os
 import math
+import os
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Tuple
@@ -27,6 +27,17 @@ if TYPE_CHECKING:
     import pandas
 
     import sedonadb
+
+
+def random_geometry(*args, **kwargs) -> "sedonadb.dataframe.DataFrame":
+    """
+    Generate a DataFrame with random geometries for testing purposes by
+    calling sd_random_geometry() on an isolated SedonaDB session.
+    """
+    import sedonadb
+
+    sd = sedonadb.connect()
+    return sd.funcs.table.sd_random_geometry(*args, **kwargs)
 
 
 def skip_if_not_exists(path: Path):
@@ -624,11 +635,15 @@ class PostGISSingleThread(PostGIS):
             cur.execute("SET max_parallel_workers_per_gather TO 0")
 
 
-def geom_or_null(arg):
+def geom_or_null(arg, srid=None):
     """Format SQL expression for a geometry object or NULL"""
     if arg is None:
         return "NULL"
-    return f"ST_GeomFromText('{arg}')"
+
+    if srid is None:
+        return f"ST_GeomFromText('{arg}')"
+    else:
+        return f"ST_GeomFromEWKT('SRID={srid};{arg}')"
 
 
 def geog_or_null(arg):

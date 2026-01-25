@@ -385,8 +385,12 @@ impl GeoParquetMetadata {
     pub fn try_from_parquet_metadata(metadata: &ParquetMetaData) -> Result<Option<Self>> {
         if let Some(kv) = metadata.file_metadata().key_value_metadata() {
             for item in kv {
-                if item.key == "geo" && item.value.is_some() {
-                    return Ok(Some(Self::try_new(item.value.as_ref().unwrap())?));
+                if item.key != "geo" {
+                    continue;
+                }
+
+                if let Some(value) = &item.value {
+                    return Ok(Some(Self::try_new(value)?));
                 }
             }
         }

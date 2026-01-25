@@ -383,6 +383,20 @@ impl ScalarGeo for ScalarValue {
             | ScalarValue::BinaryView(maybe_item)
             | ScalarValue::LargeBinary(maybe_item) => Ok(maybe_item.as_deref()),
             ScalarValue::Null => Ok(None),
+            ScalarValue::Struct(s)
+                if s.fields().len() == 2
+                    && s.fields()[0].name() == "item"
+                    && s.fields()[1].name() == "crs" =>
+            {
+                let item_type = SedonaType::from_storage_field(&s.fields()[0])?;
+                let mut out = None;
+                s.column(0).iter_as_wkb_bytes(&item_type, 1, |v| {
+                    out = v;
+                    Ok(())
+                })?;
+
+                Ok(out)
+            }
             _ => sedona_internal_err!("Can't iterate over {:?} ScalarValue as &[u8]", self),
         }
     }
