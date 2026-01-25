@@ -228,7 +228,6 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
                predicate, ids1, ids2);
       break;
     }
-
     case GeometryType::kMultiPolygon: {
       using geom2_array_view_t = MultiPolygonArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms2.template GetGeometryArrayView<geom2_array_view_t>(),
@@ -278,7 +277,6 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(const rmm::cuda_stream_view& strea
                geom_array2, predicate, ids1, ids2);
       break;
     }
-
     case GeometryType::kMultiPolygon: {
       using geom1_array_view_t = MultiPolygonArrayView<POINT_T, INDEX_T>;
       Evaluate(stream, geoms1_->template GetGeometryArrayView<geom1_array_view_t>(),
@@ -611,16 +609,12 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
   GPUSPATIAL_LOG_INFO(
       "Unique multi-polygons %zu, memory quota %zu MB, estimated BVH size %zu MB",
       uniq_multi_poly_ids.size(), avail_bytes / (1024 * 1024), bvh_bytes / (1024 * 1024));
-  double t_init = 0, t_compute_aabb = 0, t_build_bvh = 0, t_trace = 0, t_evaluate = 0;
-
-  Stopwatch sw;
 
   for (int batch = 0; batch < n_batches; batch++) {
     auto ids_begin = batch * batch_size;
     auto ids_end = std::min(ids_begin + batch_size, ids_size);
     auto ids_size_batch = ids_end - ids_begin;
 
-    sw.start();
     // Extract multi polygon IDs in this batch
     uniq_multi_poly_ids.resize(ids_size_batch, stream);
 
@@ -641,16 +635,11 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
         aabb_ring_ids(0, stream);
     rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>> aabb_vertex_offsets(0, stream);
     rmm::device_uvector<INDEX_T> uniq_part_begins(0, stream);
-    stream.synchronize();
-    sw.stop();
-    t_init += sw.ms();
 
     auto handle =
         BuildBVH(stream, multi_poly_array, ArrayView<INDEX_T>(uniq_multi_poly_ids),
                  config_.segs_per_aabb, bvh_buffer, aabb_multi_poly_ids, aabb_part_ids,
-                 aabb_ring_ids, aabb_vertex_offsets, uniq_part_begins, t_compute_aabb,
-                 t_build_bvh);
-    sw.start();
+                 aabb_ring_ids, aabb_vertex_offsets, uniq_part_begins);
 
     params_t params;
 
@@ -679,10 +668,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
         stream, GetMultiPolygonPointQueryShaderId<POINT_T>(),
         dim3{static_cast<unsigned int>(ids_size_batch), 1, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
-    stream.synchronize();
-    sw.stop();
-    t_trace += sw.ms();
-    sw.start();
+
     thrust::transform(
         rmm::exec_policy_nosync(stream),
         thrust::make_zip_iterator(thrust::make_tuple(point_ids.begin() + ids_begin,
@@ -702,13 +688,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
           return detail::EvaluatePredicate(predicate, IM) ? res : invalid_tuple;
         });
-    stream.synchronize();
-    sw.stop();
-    t_evaluate += sw.ms();
   }
-  GPUSPATIAL_LOG_INFO(
-      "init time: %.3f ms, compute_aabb: %.3f ms, build_bvh: %.3f ms, trace_time: %.3f ms, evaluate_time: %.3f ms",
-      t_init, t_compute_aabb, t_build_bvh, t_trace, t_evaluate);
   auto end = thrust::remove_if(rmm::exec_policy_nosync(stream), zip_begin, zip_end,
                                [=] __device__(const thrust::tuple<INDEX_T, INDEX_T>& tu) {
                                  return tu == invalid_tuple;
@@ -730,7 +710,7 @@ size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
   // temporary but still needed to consider this part of memory
   auto aabb_size = num_aabbs * sizeof(OptixAabb);
   auto bvh_bytes = rt_engine_->EstimateMemoryUsageForAABB(
-      num_aabbs, config_.bvh_fast_build, config_.bvh_fast_compact);
+      num_aabbs, config_.bvh_fast_build, config_.bvh_compact);
   // BVH size and aabb_poly_ids, aabb_ring_ids, aabb_vertex_offsets
   return aabb_size + bvh_bytes + 4 * sizeof(INDEX_T) * num_aabbs;
 }
@@ -746,7 +726,7 @@ size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
   // temporary but still needed to consider this part of memory
   auto aabb_size = num_aabbs * sizeof(OptixAabb);
   auto bvh_bytes = rt_engine_->EstimateMemoryUsageForAABB(
-      num_aabbs, config_.bvh_fast_build, config_.bvh_fast_compact);
+      num_aabbs, config_.bvh_fast_build, config_.bvh_compact);
   // BVH size and aabb_multi_poly_ids, aabb_part_ids, aabb_ring_ids, aabb_vertex_offsets
   return aabb_size + bvh_bytes + 5 * sizeof(INDEX_T) * num_aabbs;
 }
@@ -854,7 +834,7 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
 
   assert(rt_engine_ != nullptr);
   return rt_engine_->BuildAccelCustom(stream.value(), ArrayView<OptixAabb>(aabbs), buffer,
-                                      config_.bvh_fast_build, config_.bvh_fast_compact);
+                                      config_.bvh_fast_build, config_.bvh_compact);
 }
 
 template <typename POINT_T, typename INDEX_T>
@@ -866,11 +846,8 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
     rmm::device_uvector<INDEX_T>& aabb_part_ids,
     rmm::device_uvector<INDEX_T>& aabb_ring_ids,
     rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets,
-    rmm::device_uvector<INDEX_T>& part_begins, double& t_compute_aabb,
-    double& t_build_bvh) {
+    rmm::device_uvector<INDEX_T>& part_begins) {
   auto n_mult_polygons = multi_poly_ids.size();
-  Stopwatch sw;
-  sw.start();
 
   auto num_aabbs =
       detail::ComputeNumAabbs(stream, multi_polys, multi_poly_ids, segs_per_aabb);
@@ -952,7 +929,6 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                          num_parts.end(), part_begins.begin() + 1);
   num_parts.resize(0, stream);
   num_parts.shrink_to_fit(stream);
-  stream.synchronize();
 
   // Fill AABBs
   thrust::transform(rmm::exec_policy_nosync(stream),
@@ -996,18 +972,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                       aabb.minZ = aabb.maxZ = p_part_begins[seq_id] + part_id;
                       return aabb;
                     });
-  stream.synchronize();
-  sw.stop();
-  t_compute_aabb += sw.ms();
-  sw.start();
   assert(rt_engine_ != nullptr);
-  auto handle =
-      rt_engine_->BuildAccelCustom(stream.value(), ArrayView<OptixAabb>(aabbs), buffer,
-                                   config_.bvh_fast_build, config_.bvh_fast_compact);
-  stream.synchronize();
-  sw.stop();
-  t_build_bvh += sw.ms();
-  return handle;
+
+  return rt_engine_->BuildAccelCustom(stream.value(), ArrayView<OptixAabb>(aabbs), buffer,
+                                      config_.bvh_fast_build, config_.bvh_compact);
 }
 // Explicitly instantiate the template for specific types
 template class RelateEngine<Point<double, 2>, uint32_t>;

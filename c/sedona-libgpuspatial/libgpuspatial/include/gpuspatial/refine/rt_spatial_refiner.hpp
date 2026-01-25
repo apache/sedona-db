@@ -34,6 +34,9 @@ struct RTSpatialRefinerConfig {
   uint32_t parsing_threads = std::thread::hardware_concurrency();
   // How many threads are allowed to call PushStream concurrently
   uint32_t concurrency = 1;
+  // Overlapping parsing and refinement by pipelining multiple batches; 1 means no
+  // pipelining
+  uint32_t pipeline_batches = 1;
   // the host memory quota for WKB parser compared to the available memory
   float wkb_parser_memory_quota = 0.8;
   // the device memory quota for relate engine compared to the available memory
@@ -41,9 +44,6 @@ struct RTSpatialRefinerConfig {
   // this value determines RELATE_MAX_DEPTH
   size_t stack_size_bytes = 3 * 1024;
   bool sort_probe_indices = true;  // Sedona's spatial-join may require ordered output
-  RTSpatialRefinerConfig() : prefer_fast_build(false), compact(false) {
-    concurrency = std::thread::hardware_concurrency();
-  }
 };
 
 std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner(

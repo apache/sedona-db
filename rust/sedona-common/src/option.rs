@@ -97,6 +97,12 @@ config_namespace! {
 
         /// Fall back to CPU if GPU initialization or execution fails
         pub fallback_to_cpu: bool, default = true
+
+        /// Overlapping parsing and refinement by pipelining multiple batches; 1 means no pipelining
+        pub pipeline_batches: usize, default = 1
+
+        /// Compress BVH to reduce memory usage for processing larger datasets at the cost of some performance
+        pub compress_bvh: bool, default = false
     }
 }
 

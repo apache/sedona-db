@@ -14,11 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct ArrowSchema;
+struct ArrowArray;
 
 // Interfaces for ray-tracing engine (OptiX)
 struct GpuSpatialRTEngineConfig {
@@ -116,6 +120,11 @@ struct GpuSpatialRefinerConfig {
   uint32_t concurrency;
   /** Device ID to use, 0 is the first GPU */
   int device_id;
+  /** Whether to compress the BVH structures to save memory */
+  bool compress_bvh;
+  /** Number of batches to pipeline for parsing and refinement; setting to 1 disables
+   * pipelining */
+  uint32_t pipeline_batches;
 };
 
 enum SedonaSpatialRelationPredicate {

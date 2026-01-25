@@ -30,7 +30,7 @@ class RelateEngine {
  public:
   struct Config {
     bool bvh_fast_build = false;
-    bool bvh_fast_compact = true;
+    bool bvh_compact = true;
     float memory_quota = 0.8;
     int segs_per_aabb = 32;
   };
@@ -152,8 +152,7 @@ class RelateEngine {
       rmm::device_uvector<INDEX_T>& aabb_part_ids,
       rmm::device_uvector<INDEX_T>& aabb_ring_ids,
       rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets,
-      rmm::device_uvector<INDEX_T>& part_begins, double& t_compute_aabb,
-      double& t_build_bvh);
+      rmm::device_uvector<INDEX_T>& part_begins);
 
  private:
   Config config_;

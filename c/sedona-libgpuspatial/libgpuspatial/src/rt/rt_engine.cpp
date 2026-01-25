@@ -57,7 +57,6 @@ void context_log_cb(unsigned int level, const char* tag, const char* message, vo
 }  // namespace
 
 namespace gpuspatial {
-
 // --- RTConfig Method Definitions ---
 
 void RTConfig::AddModule(const Module& mod) {
@@ -175,34 +174,34 @@ OptixTraversableHandle RTEngine::BuildAccelCustom(cudaStream_t cuda_stream,
       blas_buffer_sizes.outputSizeInBytes / 1024 / 1024);
 
   rmm::device_buffer temp_buf(blas_buffer_sizes.tempSizeInBytes, cuda_stream);
-  out_buf.resize(blas_buffer_sizes.outputSizeInBytes, cuda_stream);
 
   if (compact) {
+    rmm::device_buffer uncompacted_buf(blas_buffer_sizes.outputSizeInBytes, cuda_stream);
     rmm::device_scalar<uint64_t> compacted_size(cuda_stream);
     OptixAccelEmitDesc emitDesc;
     emitDesc.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
     emitDesc.result = reinterpret_cast<CUdeviceptr>(compacted_size.data());
 
-    OPTIX_CHECK(optixAccelBuild(
-        optix_context_, cuda_stream, &accelOptions, &build_input, 1,
-        reinterpret_cast<CUdeviceptr>(temp_buf.data()), blas_buffer_sizes.tempSizeInBytes,
-        reinterpret_cast<CUdeviceptr>(out_buf.data()),
-        blas_buffer_sizes.outputSizeInBytes, &traversable, &emitDesc, 1));
+    OPTIX_CHECK(optixAccelBuild(optix_context_, cuda_stream, &accelOptions, &build_input,
+                                1, reinterpret_cast<CUdeviceptr>(temp_buf.data()),
+                                blas_buffer_sizes.tempSizeInBytes,
+                                reinterpret_cast<CUdeviceptr>(uncompacted_buf.data()),
+                                uncompacted_buf.size(), &traversable, &emitDesc, 1));
 
     auto size = compacted_size.value(cuda_stream);
     out_buf.resize(size, cuda_stream);
     OPTIX_CHECK(optixAccelCompact(optix_context_, cuda_stream, traversable,
-                                  reinterpret_cast<CUdeviceptr>(out_buf.data()), size,
-                                  &traversable));
+                                  reinterpret_cast<CUdeviceptr>(out_buf.data()),
+                                  out_buf.size(), &traversable));
   } else {
+    out_buf.resize(blas_buffer_sizes.outputSizeInBytes, cuda_stream);
+
     OPTIX_CHECK(optixAccelBuild(
         optix_context_, cuda_stream, &accelOptions, &build_input, 1,
         reinterpret_cast<CUdeviceptr>(temp_buf.data()), blas_buffer_sizes.tempSizeInBytes,
         reinterpret_cast<CUdeviceptr>(out_buf.data()),
         blas_buffer_sizes.outputSizeInBytes, &traversable, nullptr, 0));
   }
-
-  out_buf.shrink_to_fit(cuda_stream);
 
   return traversable;
 }
@@ -506,5 +505,4 @@ void RTEngine::releaseOptixResources() {
   }
   OPTIX_CHECK(optixDeviceContextDestroy(optix_context_));
 }
-
 }  // namespace gpuspatial

@@ -34,7 +34,7 @@ use futures::StreamExt;
 use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::SpatialJoinOptions;
-use sedona_libgpuspatial::GpuSpatial;
+use sedona_libgpuspatial::{GpuSpatial, GpuSpatialOptions};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
@@ -114,12 +114,16 @@ impl GPUSpatialIndexBuilder {
         }
         let build_timer = self.metrics.build_time.timer();
 
+        let gs_options = GpuSpatialOptions {
+            concurrency: self.probe_threads_count as u32,
+            device_id: self.options.gpu.device_id as i32,
+            compress_bvh: self.options.gpu.compress_bvh,
+            pipeline_batches: self.options.gpu.pipeline_batches as u32,
+        };
+
         let mut gs = GpuSpatial::new()
             .and_then(|mut gs| {
-                gs.init(
-                    self.probe_threads_count as u32,
-                    self.options.gpu.device_id as i32,
-                )?;
+                gs.init(gs_options)?;
                 Ok(gs)
             })
             .map_err(|e| {

@@ -132,6 +132,13 @@ pub struct GpuSpatial {
     refiner: Option<GpuSpatialRefinerWrapper>,
 }
 
+pub struct GpuSpatialOptions {
+    pub concurrency: u32,
+    pub device_id: i32,
+    pub compress_bvh: bool,
+    pub pipeline_batches: u32,
+}
+
 impl GpuSpatial {
     pub fn new() -> Result<Self> {
         #[cfg(not(gpu_available))]
@@ -149,7 +156,7 @@ impl GpuSpatial {
         }
     }
 
-    pub fn init(&mut self, concurrency: u32, device_id: i32) -> Result<()> {
+    pub fn init(&mut self, options: GpuSpatialOptions) -> Result<()> {
         #[cfg(not(gpu_available))]
         {
             let _ = (concurrency, device_id);
@@ -171,7 +178,8 @@ impl GpuSpatial {
                     .to_str()
                     .ok_or_else(|| GpuSpatialError::Init("Invalid PTX path".to_string()))?;
 
-                let rt_engine = GpuSpatialRTEngineWrapper::try_new(device_id, ptx_root_str)?;
+                let rt_engine =
+                    GpuSpatialRTEngineWrapper::try_new(options.device_id, ptx_root_str)?;
                 *global_engine_guard = Some(Arc::new(Mutex::new(rt_engine)));
             }
 
@@ -183,13 +191,17 @@ impl GpuSpatial {
 
             let index = GpuSpatialIndexFloat2DWrapper::try_new(
                 self.rt_engine.as_ref().unwrap(),
-                concurrency,
+                options.concurrency,
             )?;
 
             self.index = Some(index);
 
-            let refiner =
-                GpuSpatialRefinerWrapper::try_new(self.rt_engine.as_ref().unwrap(), concurrency)?;
+            let refiner = GpuSpatialRefinerWrapper::try_new(
+                self.rt_engine.as_ref().unwrap(),
+                options.concurrency,
+                options.compress_bvh,
+                options.pipeline_batches,
+            )?;
             self.refiner = Some(refiner);
 
             Ok(())
@@ -449,7 +461,13 @@ mod tests {
     #[test]
     fn test_spatial_index() {
         let mut gs = GpuSpatial::new().unwrap();
-        gs.init(1, 0).expect("Failed to initialize GpuSpatial");
+        let options = GpuSpatialOptions {
+            concurrency: 1,
+            device_id: 0,
+            compress_bvh: false,
+            pipeline_batches: 1,
+        };
+        gs.init(options).expect("Failed to initialize GpuSpatial");
 
         let polygon_values =  &[
             Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),
@@ -503,7 +521,13 @@ mod tests {
     #[test]
     fn test_spatial_refiner() {
         let mut gs = GpuSpatial::new().unwrap();
-        gs.init(1, 0).expect("Failed to initialize GpuSpatial");
+        let options = GpuSpatialOptions {
+            concurrency: 1,
+            device_id: 0,
+            compress_bvh: false,
+            pipeline_batches: 1,
+        };
+        gs.init(options).expect("Failed to initialize GpuSpatial");
 
         let polygon_values =  &[
             Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),

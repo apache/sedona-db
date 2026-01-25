@@ -448,6 +448,8 @@ impl GpuSpatialRefinerWrapper {
     pub fn try_new(
         rt_engine: &Arc<Mutex<GpuSpatialRTEngineWrapper>>,
         concurrency: u32,
+        compress_bvh: bool,
+        pipeline_batches: u32,
     ) -> Result<Self, GpuSpatialError> {
         let mut refiner = SedonaSpatialRefiner {
             clear: None,
@@ -466,6 +468,8 @@ impl GpuSpatialRefinerWrapper {
             rt_engine: &mut engine_guard.rt_engine,
             concurrency,
             device_id: engine_guard.device_id,
+            compress_bvh,
+            pipeline_batches,
         };
         unsafe {
             // Set function pointers to the C functions

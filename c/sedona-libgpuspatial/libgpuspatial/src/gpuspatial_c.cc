@@ -344,6 +344,8 @@ int GpuSpatialRefinerCreate(SedonaSpatialRefiner* refiner,
 
   rt_refiner_config.rt_engine = rt_engine;
   rt_refiner_config.concurrency = config->concurrency;
+  rt_refiner_config.compact = config->compress_bvh;
+  rt_refiner_config.pipeline_batches = config->pipeline_batches;
 
   try {
     if (rt_refiner_config.rt_engine == nullptr) {

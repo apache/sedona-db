@@ -357,7 +357,7 @@ void TestJoiner(ArrowSchema* build_schema, std::vector<ArrowArray*>& build_array
 
 void TestJoinerLoaded(ArrowSchema* build_schema, std::vector<ArrowArray*>& build_arrays,
                       ArrowSchema* probe_schema, std::vector<ArrowArray*>& probe_arrays,
-                      Predicate predicate) {
+                      Predicate predicate, bool pipelined = false) {
   using namespace TestUtils;
   using coord_t = double;
   using fpoint_t = Point<coord_t, 2>;
@@ -377,6 +377,9 @@ void TestJoinerLoaded(ArrowSchema* build_schema, std::vector<ArrowArray*>& build
 
   RTSpatialRefinerConfig refiner_config;
   refiner_config.rt_engine = rt_engine;
+  if (pipelined) {
+    refiner_config.pipeline_batches = 10;
+  }
   auto rt_refiner = CreateRTSpatialRefiner(refiner_config);
   geoarrow::geos::ArrayReader reader;
 
@@ -605,6 +608,45 @@ TEST(JoinerTest, PIPContainsParquetLoaded) {
     }
     TestJoinerLoaded(poly_uniq_schema[0].get(), poly_c_arrays, point_uniq_schema[0].get(),
                      point_c_arrays, Predicate::kContains);
+  }
+}
+
+TEST(JoinerTest, PIPContainsParquetPipelined) {
+  using namespace TestUtils;
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::string> polys{
+      GetTestDataPath("cities/natural-earth_cities_geo.parquet"),
+      GetTestDataPath("countries/natural-earth_countries_geo.parquet")};
+  std::vector<std::string> points{GetTestDataPath("cities/generated_points.parquet"),
+                                  GetTestDataPath("countries/generated_points.parquet")};
+
+  for (int i = 0; i < polys.size(); i++) {
+    auto poly_path = TestUtils::GetTestDataPath(polys[i]);
+    auto point_path = TestUtils::GetCanonicalPath(points[i]);
+    auto poly_arrays = ReadParquet(poly_path, 1000);
+    auto point_arrays = ReadParquet(point_path, 1000);
+    std::vector<nanoarrow::UniqueArray> poly_uniq_arrays, point_uniq_arrays;
+    std::vector<nanoarrow::UniqueSchema> poly_uniq_schema, point_uniq_schema;
+
+    for (auto& arr : poly_arrays) {
+      ARROW_THROW_NOT_OK(arrow::ExportArray(*arr, poly_uniq_arrays.emplace_back().get(),
+                                            poly_uniq_schema.emplace_back().get()));
+    }
+    for (auto& arr : point_arrays) {
+      ARROW_THROW_NOT_OK(arrow::ExportArray(*arr, point_uniq_arrays.emplace_back().get(),
+                                            point_uniq_schema.emplace_back().get()));
+    }
+
+    std::vector<ArrowArray*> poly_c_arrays, point_c_arrays;
+    for (auto& arr : poly_uniq_arrays) {
+      poly_c_arrays.push_back(arr.get());
+    }
+    for (auto& arr : point_uniq_arrays) {
+      point_c_arrays.push_back(arr.get());
+    }
+    TestJoinerLoaded(poly_uniq_schema[0].get(), poly_c_arrays, point_uniq_schema[0].get(),
+                     point_c_arrays, Predicate::kContains, true);
   }
 }
 

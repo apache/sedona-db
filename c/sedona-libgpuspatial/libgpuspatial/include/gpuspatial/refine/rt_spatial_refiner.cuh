@@ -64,6 +64,7 @@ class RTSpatialRefiner : public SpatialRefiner {
   static_assert(sizeof(Box<Point<float, 2>>) == sizeof(box_t),
                 "Box<Point<float, 2>> size mismatch!");
 
+ public:
   struct IndicesMap {
     // Sorted unique original indices
     std::vector<uint32_t> h_uniq_indices;
@@ -71,8 +72,6 @@ class RTSpatialRefiner : public SpatialRefiner {
     // Mapping from original indices to consecutive zero-based indices
     rmm::device_uvector<uint32_t> d_reordered_indices{0, rmm::cuda_stream_default};
   };
-
- public:
   struct SpatialRefinerContext {
     rmm::cuda_stream_view cuda_stream;
 #ifdef GPUSPATIAL_PROFILING
@@ -106,6 +105,10 @@ class RTSpatialRefiner : public SpatialRefiner {
                   Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
                   uint32_t len) override;
 
+  uint32_t RefinePipelined(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
+                           Predicate predicate, uint32_t* build_indices,
+                           uint32_t* probe_indices, uint32_t len);
+
  private:
   RTSpatialRefinerConfig config_;
   std::unique_ptr<rmm::cuda_stream_pool> stream_pool_;
@@ -113,8 +116,9 @@ class RTSpatialRefiner : public SpatialRefiner {
   std::unique_ptr<ParallelWkbLoader<point_t, index_t>> wkb_loader_;
   dev_geometries_t build_geometries_;
 
-  void buildIndicesMap(SpatialRefinerContext* ctx, const uint32_t* indices, size_t len,
-                       IndicesMap& indices_map) const;
+  template <typename INDEX_IT>
+  void buildIndicesMap(rmm::cuda_stream_view stream, INDEX_IT index_begin,
+                       INDEX_IT index_end, IndicesMap& indices_map) const;
 };
 
 }  // namespace gpuspatial
