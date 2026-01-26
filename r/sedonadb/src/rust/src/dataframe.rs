@@ -21,6 +21,7 @@ use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
 use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
+use datafusion_expr::utils::conjunction;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
@@ -33,6 +34,7 @@ use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
+use crate::expression::SedonaDBExprFactory;
 use crate::ffi::{import_schema, FFITableProviderR};
 use crate::runtime::wait_for_future_captured_r;
 
@@ -309,6 +311,23 @@ impl InternalDataFrame {
             .collect::<Result<Vec<_>>>()?;
 
         let inner = self.inner.clone().select(exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn select(&self, exprs_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
+        let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
+        let inner = self.inner.clone().select(exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn filter(&self, exprs_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
+        let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
+        let inner = if let Some(single_filter) = conjunction(exprs) {
+            self.inner.clone().filter(single_filter)?
+        } else {
+            self.inner.clone()
+        };
+
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 }

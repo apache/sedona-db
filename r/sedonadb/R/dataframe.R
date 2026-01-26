@@ -80,7 +80,7 @@ as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NUL
 
 #' Count rows in a DataFrame
 #'
-#' @param .data A sedonadb_dataframe
+#' @param .data A sedonadb_dataframe or an object that can be coerced to one.
 #'
 #' @returns The number of rows after executing the query
 #' @export
@@ -89,6 +89,7 @@ as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NUL
 #' sd_sql("SELECT 1 as one") |> sd_count()
 #'
 sd_count <- function(.data) {
+  .data <- as_sedonadb_dataframe(.data)
   .data$df$count()
 }
 
@@ -193,6 +194,91 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
   invisible(.data)
 }
 
+#' Keep or drop columns of a SedonaDB DataFrame
+#'
+#' @inheritParams sd_count
+#' @param ... One or more bare names. Evaluated like [dplyr::select()].
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = 1:10, y = letters[1:10]) |> sd_select(x)
+#'
+sd_select <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  schema <- nanoarrow::infer_nanoarrow_schema(.data)
+  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
+  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
+
+  df <- .data$df$select_indices(names(loc), loc - 1L)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' Create, modify, and delete columns of a SedonaDB DataFrame
+#'
+#' @inheritParams sd_count
+#' @param ... Named expressions for new columns to create. These are evaluated
+#'   in the same way as [dplyr::transmute()] except does not support extra
+#'   dplyr features such as `across()` or `.by`.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = 1:10) |>
+#'   sd_transmute(y = x + 1L)
+#'
+sd_transmute <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  # Ensure inputs are given aliases to account for the expected column name
+  exprs_names <- names(r_exprs)
+  for (i in seq_along(sd_exprs)) {
+    name <- exprs_names[i]
+    if (!is.na(name) && name != "") {
+      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+    }
+  }
+
+  df <- .data$df$select(sd_exprs)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' Keep rows of a SedonaDB DataFrame that match a condition
+#'
+#' @inheritParams sd_count
+#' @param ... Unnamed expressions for filter conditions. These are evaluated
+#'   in the same way as [dplyr::filter()] except does not support extra
+#'   dplyr features such as `across()` or `.by`.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = 1:10) |> sd_filter(x > 5)
+#'
+sd_filter <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  rlang::check_dots_unnamed()
+
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  df <- .data$df$filter(sd_exprs)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
 #' Write DataFrame to (Geo)Parquet files
 #'
 #' Write this DataFrame to one or more (Geo)Parquet files. For input that contains
@@ -246,6 +332,8 @@ sd_write_parquet <- function(
   geoparquet_version = "1.0",
   overwrite_bbox_columns = FALSE
 ) {
+  .data <- as_sedonadb_dataframe(.data)
+
   # Determine single_file_output default based on path and partition_by
   if (is.null(single_file_output)) {
     single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)

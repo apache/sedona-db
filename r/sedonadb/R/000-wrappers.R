@@ -212,6 +212,16 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_filter` <- function(self) {
+  function(`exprs_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_filter__impl,
+      `self`,
+      `exprs_sexp`
+    ))
+  }
+}
+
 `InternalDataFrame_limit` <- function(self) {
   function(`n`) {
     .savvy_wrap_InternalDataFrame(.Call(savvy_InternalDataFrame_limit__impl, `self`, `n`))
@@ -221,6 +231,16 @@ class(`InternalContext`) <- c(
 `InternalDataFrame_primary_geometry_column_index` <- function(self) {
   function() {
     .Call(savvy_InternalDataFrame_primary_geometry_column_index__impl, `self`)
+  }
+}
+
+`InternalDataFrame_select` <- function(self) {
+  function(`exprs_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_select__impl,
+      `self`,
+      `exprs_sexp`
+    ))
   }
 }
 
@@ -316,10 +336,12 @@ class(`InternalContext`) <- c(
   e$`collect` <- `InternalDataFrame_collect`(ptr)
   e$`compute` <- `InternalDataFrame_compute`(ptr)
   e$`count` <- `InternalDataFrame_count`(ptr)
+  e$`filter` <- `InternalDataFrame_filter`(ptr)
   e$`limit` <- `InternalDataFrame_limit`(ptr)
   e$`primary_geometry_column_index` <- `InternalDataFrame_primary_geometry_column_index`(
     ptr
   )
+  e$`select` <- `InternalDataFrame_select`(ptr)
   e$`select_indices` <- `InternalDataFrame_select_indices`(ptr)
   e$`show` <- `InternalDataFrame_show`(ptr)
   e$`to_arrow_schema` <- `InternalDataFrame_to_arrow_schema`(ptr)

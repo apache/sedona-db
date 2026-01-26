@@ -42,8 +42,10 @@ SEXP savvy_InternalContext_view__ffi(SEXP self__, SEXP c_arg__table_ref);
 SEXP savvy_InternalDataFrame_collect__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_compute__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_count__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_filter__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
 SEXP savvy_InternalDataFrame_limit__ffi(SEXP self__, SEXP c_arg__n);
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_select__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
 SEXP savvy_InternalDataFrame_select_indices__ffi(SEXP self__, SEXP c_arg__names,
                                                  SEXP c_arg__indices);
 SEXP savvy_InternalDataFrame_show__ffi(SEXP self__, SEXP c_arg__ctx,

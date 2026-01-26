@@ -10,7 +10,7 @@ sd_compute(.data)
 sd_collect(.data, ptype = NULL)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{ptype}{The target R object. See \link[nanoarrow:convert_array_stream]{nanoarrow::convert_array_stream}.}
 }

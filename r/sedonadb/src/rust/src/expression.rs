@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{Column, ScalarValue};
+use datafusion_common::{Column, Result, ScalarValue};
 use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
@@ -175,7 +175,7 @@ impl SedonaDBExprFactory {
 }
 
 impl SedonaDBExprFactory {
-    fn exprs(exprs_sexp: savvy::Sexp) -> savvy::Result<Vec<Expr>> {
+    pub fn exprs(exprs_sexp: savvy::Sexp) -> savvy::Result<Vec<Expr>> {
         savvy::ListSexp::try_from(exprs_sexp)?
             .iter()
             .map(|(_, item)| -> savvy::Result<Expr> {

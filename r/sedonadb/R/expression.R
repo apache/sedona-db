@@ -138,6 +138,7 @@ print.SedonaDBExpr <- function(x, ...) {
 #'
 #' @param expr An R expression (e.g., the result of `quote()`).
 #' @param expr_ctx An `sd_expr_ctx()`
+#' @param env An evaluation environment. Defaults to the calling environment.
 #'
 #' @returns A `SedonaDBExpr`
 #' @noRd
