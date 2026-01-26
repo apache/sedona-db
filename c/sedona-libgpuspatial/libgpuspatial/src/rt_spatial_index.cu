@@ -643,7 +643,11 @@ void RTSpatialIndex<SCALAR_T, N_DIM>::filter(SpatialIndexContext& ctx,
 template <typename SCALAR_T, int N_DIM>
 std::unique_ptr<SpatialIndex<SCALAR_T, N_DIM>> CreateRTSpatialIndex(
     const RTSpatialIndexConfig& config) {
-  return std::make_unique<RTSpatialIndex<SCALAR_T, N_DIM>>(config);
+  auto index = std::make_unique<RTSpatialIndex<SCALAR_T, N_DIM>>(config);
+  GPUSPATIAL_LOG_INFO(
+      "Create RTSpatialIndex %p, fast_build = %d, compact = %d, concurrency = %d",
+      index.get(), config.prefer_fast_build, config.compact, config.concurrency);
+  return std::move(index);
 }
 
 template std::unique_ptr<SpatialIndex<float, 2>> CreateRTSpatialIndex(

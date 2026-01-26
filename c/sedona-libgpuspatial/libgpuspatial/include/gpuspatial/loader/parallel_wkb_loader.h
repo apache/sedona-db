@@ -661,7 +661,7 @@ class ParallelWkbLoader {
           for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
                work_offset++) {
             // Use iterator indexing (Requires RandomAccessIterator)
-            auto arrow_offset = begin[work_offset];
+            auto arrow_offset = begin[chunk_start + work_offset];
 
             // handle null value
             if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {

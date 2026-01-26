@@ -237,8 +237,9 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowSchema* probe_schema,
   int n_batches = config_.pipeline_batches;
   size_t batch_size = (len + n_batches - 1) / n_batches;
 
-  GPUSPATIAL_LOG_INFO("RTSpatialRefiner %p, pipeline refinement, total len %u, batches %d, batch size %zu",
-                      this, len, n_batches, batch_size);
+  GPUSPATIAL_LOG_INFO(
+      "RTSpatialRefiner %p, pipeline refinement, total len %u, batches %d, batch size %zu",
+      this, len, n_batches, batch_size);
 
   // Resource allocation for slots
   using loader_t = ParallelWkbLoader<point_t, index_t>;
@@ -533,7 +534,15 @@ void RTSpatialRefiner::buildIndicesMap(rmm::cuda_stream_view stream, INDEX_IT in
 
 std::unique_ptr<SpatialRefiner> CreateRTSpatialRefiner(
     const RTSpatialRefinerConfig& config) {
-  return std::make_unique<RTSpatialRefiner>(config);
+  auto refiner = std::make_unique<RTSpatialRefiner>(config);
+  GPUSPATIAL_LOG_INFO(
+      "Create RTSpatialRefiner %p, fast_build = %d, compact = %d, "
+      "parsing_threads = %u, concurrency = %u, pipeline_batches = %u, "
+      "wkb_parser_memory_quota = %.2f, relate_engine_memory_quota = %.2f",
+      refiner.get(), config.prefer_fast_build, config.compact, config.parsing_threads,
+      config.concurrency, config.pipeline_batches, config.wkb_parser_memory_quota,
+      config.relate_engine_memory_quota);
+  return std::move(refiner);
 }
 
 }  // namespace gpuspatial
