@@ -112,6 +112,9 @@ config_namespace! {
 
         /// Force spilling while collecting the build side or not
         pub force_spill: bool, default = false
+
+        /// Seed for random processes in the spatial join for testing purpose
+        pub random_seed: Option<u64>, default = None
     }
 }
 

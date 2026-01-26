@@ -48,6 +48,10 @@ pub async fn build_index(
     metrics: ExecutionPlanMetricsSet,
     seed: u64,
 ) -> Result<SpatialIndex> {
+    log::debug!(
+        "Building spatial index for running spatial join, seed = {}",
+        seed
+    );
     let session_config = context.session_config();
     let sedona_options = session_config
         .options()
