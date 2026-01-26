@@ -56,7 +56,7 @@ pip install geopandas sqlalchemy psycopg2-binary adbc-driver-postgresql
 
 ## PostGIS Setup 
 
-Keep SQL **static** (do NOT execute).
+Keep SQL static(do NOT execute).
 
 ### Preparing a PostGIS table
 
