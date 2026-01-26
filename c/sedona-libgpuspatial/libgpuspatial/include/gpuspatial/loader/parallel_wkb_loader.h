@@ -652,7 +652,7 @@ class ParallelWkbLoader {
           host_geometries_t local_geoms(geometry_type_);
           GeoArrowWKBReader reader;
           GeoArrowError error;
-          GEOARROW_THROW_NOT_OK(nullptr, GeoArrowWKBReaderInit(&reader));
+          GEOARROW_THROW_NOT_OK(&error, GeoArrowWKBReaderInit(&reader));
 
           uint64_t chunk_bytes =
               estimateTotalBytes(begin + thread_work_start, begin + thread_work_end);
@@ -678,6 +678,7 @@ class ParallelWkbLoader {
             }
           }
 
+          GeoArrowWKBReaderReset(&reader);
           return std::move(local_geoms);
         };
         pending_local_geoms.push_back(std::move(thread_pool_->enqueue(run, thread_idx)));
