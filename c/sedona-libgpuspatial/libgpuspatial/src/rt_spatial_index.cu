@@ -117,65 +117,82 @@ rmm::device_uvector<OptixAabb> ComputeAABBs(
   ArrayView<box_t> v_mbrs(mbrs);
   // each warp takes an AABB and processes points_per_aabb points
   LaunchKernel(stream, [=] __device__() mutable {
-    typedef cub::WarpReduce<scalar_t> WarpReduce;
+    using WarpReduce = cub::WarpReduce<scalar_t>;
+    // One temp storage slot per active warp
     __shared__ typename WarpReduce::TempStorage temp_storage[MAX_BLOCK_SIZE / 32];
-    auto warp_id = threadIdx.x / 32;
-    auto lane_id = threadIdx.x % 32;
-    auto global_warp_id = TID_1D / 32;
-    auto n_warps = TOTAL_THREADS_1D / 32;
+    const int warp_id = threadIdx.x / 32;
+    const int lane_id = threadIdx.x % 32;
+    // Calculate global ID of the warp to stride through AABBs
+    const int global_warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+    const int total_warps = (gridDim.x * blockDim.x) / 32;
 
-    for (uint32_t aabb_id = global_warp_id; aabb_id < n_aabbs; aabb_id += n_warps) {
-      POINT_T min_corner, max_corner;
-      size_t idx_begin = aabb_id * group_size;
-      size_t idx_end = std::min(np, idx_begin + group_size);
-      size_t idx_end_rup = (idx_end + 31) / 32;
+    // Grid-Stride Loop: Each warp processes one AABB (one group of points)
+    for (uint32_t aabb_id = global_warp_id; aabb_id < n_aabbs; aabb_id += total_warps) {
+      INDEX_T idx_begin = aabb_id * group_size;
+      INDEX_T idx_end = thrust::min((INDEX_T)np, (INDEX_T)(idx_begin + group_size));
+      int count = idx_end - idx_begin;
 
-      idx_end_rup *= 32;  // round up to the next multiple of 32
-      p_np_per_aabb[aabb_id] = idx_end - idx_begin;
+      // 1. Initialize Thread-Local Accumulators (Registers)
+      // Initialize to limits so empty/out-of-bounds threads don't affect reduction
+      scalar_t thread_min[n_dim];
+      scalar_t thread_max[n_dim];
 
-      for (auto idx = idx_begin + lane_id; idx < idx_end_rup; idx += 32) {
-        POINT_T p;
-        auto warp_begin = idx - lane_id;
-        auto warp_end = std::min(warp_begin + 32, idx_end);
-        auto n_valid = warp_end - warp_begin;
+#pragma unroll
+      for (int d = 0; d < n_dim; d++) {
+        thread_min[d] = std::numeric_limits<scalar_t>::max();
+        thread_max[d] = std::numeric_limits<scalar_t>::lowest();
+      }
 
-        if (idx < idx_end) {
-          auto point_idx = p_reordered_indices[idx];
-          p = v_points[point_idx];
-        } else {
-          p.set_empty();
-        }
+      // 2. Loop over the points in the group (Stride by 32)
+      // Every thread processes roughly group_size/32 points
+      for (int i = lane_id; i < count; i += 32) {
+        // Load index (Coalesced access to indices)
+        INDEX_T point_idx = p_reordered_indices[idx_begin + i];
 
-        if (!p.empty()) {
-          for (int dim = 0; dim < n_dim; dim++) {
-            auto min_val =
-                WarpReduce(temp_storage[warp_id])
-                    .Reduce(p.get_coordinate(dim), thrust::minimum<scalar_t>(), n_valid);
-            if (lane_id == 0) {
-              min_corner.set_coordinate(dim, min_val);
-            }
-            auto max_val =
-                WarpReduce(temp_storage[warp_id])
-                    .Reduce(p.get_coordinate(dim), thrust::maximum<scalar_t>(), n_valid);
-            if (lane_id == 0) {
-              max_corner.set_coordinate(dim, max_val);
-            }
-          }
+        // Load Point (Indirect access - unavoidable due to reordering)
+        const POINT_T& p = v_points[point_idx];
+
+// Accumulate min/max locally in registers
+#pragma unroll
+        for (int d = 0; d < n_dim; d++) {
+          scalar_t val = p.get_coordinate(d);
+          thread_min[d] = thrust::min(thread_min[d], val);
+          thread_max[d] = thrust::max(thread_max[d], val);
         }
       }
 
+      // 3. Warp Reduction (Perform once per dimension per AABB)
+      POINT_T final_min, final_max;
+#pragma unroll
+      for (int d = 0; d < n_dim; d++) {
+        // CUB WarpReduce handles the cross-lane communication
+        scalar_t agg_min =
+            WarpReduce(temp_storage[warp_id]).Reduce(thread_min[d], thrust::minimum<>());
+        scalar_t agg_max =
+            WarpReduce(temp_storage[warp_id]).Reduce(thread_max[d], thrust::maximum<>());
+
+        // Only lane 0 holds the valid reduction result
+        if (lane_id == 0) {
+          final_min.set_coordinate(d, agg_min);
+          final_max.set_coordinate(d, agg_max);
+        }
+      }
+
+      // 4. Store Results to Global Memory
       if (lane_id == 0) {
-        if (min_corner.empty() || max_corner.empty()) {
+        p_np_per_aabb[aabb_id] = count;
+
+        if (count > 0) {
+          box_t ext_mbr(final_min, final_max);
+          v_mbrs[aabb_id] = ext_mbr;
+          p_aabbs[aabb_id] = ext_mbr.ToOptixAabb();
+        } else {
+          // Handle empty AABB case
           OptixAabb empty_aabb;
           empty_aabb.minX = empty_aabb.minY = empty_aabb.minZ = 0.0f;
           empty_aabb.maxX = empty_aabb.maxY = empty_aabb.maxZ = -1.0f;
-          v_mbrs[aabb_id] = box_t();  // empty box
+          v_mbrs[aabb_id] = box_t();
           p_aabbs[aabb_id] = empty_aabb;
-        } else {
-          box_t ext_mbr(min_corner, max_corner);
-
-          v_mbrs[aabb_id] = ext_mbr;
-          p_aabbs[aabb_id] = ext_mbr.ToOptixAabb();
         }
       }
     }
