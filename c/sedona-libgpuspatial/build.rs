@@ -128,7 +128,7 @@ fn main() {
 
         let mut config = cmake::Config::new("./libgpuspatial");
         config
-            .define("CMAKE_CUDA_ARCHITECTURES", "native") // or your variable
+            .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures) // or your variable
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
             .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN");
         let profile = env::var("PROFILE").unwrap();
