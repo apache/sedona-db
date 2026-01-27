@@ -53,8 +53,19 @@ if(GPUSPATIAL_BUILD_TESTS)
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
 
-  add_executable(joiner_test main.cc array_stream.cc joiner_test.cu)
-  target_link_libraries(joiner_test
+  add_executable(index_test main.cc index_test.cu)
+  target_link_libraries(index_test
+                        PRIVATE cuda
+                                GTest::gtest_main
+                                GTest::gmock_main
+                                gpuspatial
+                                GEOS::geos
+                                GEOS::geos_c)
+  target_compile_options(index_test
+                         PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
+                                 --expt-relaxed-constexpr>)
+  add_executable(refiner_test main.cc array_stream.cc refiner_test.cu)
+  target_link_libraries(refiner_test
                         PRIVATE cuda
                                 GTest::gtest_main
                                 GTest::gmock_main
@@ -65,7 +76,7 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 Arrow::arrow_static
                                 Parquet::parquet_static
                                 nanoarrow::nanoarrow_ipc)
-  target_compile_options(joiner_test
+  target_compile_options(refiner_test
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
 
@@ -83,14 +94,19 @@ if(GPUSPATIAL_BUILD_TESTS)
                                  --expt-relaxed-constexpr>)
 
   add_executable(c_wrapper_test main.cc c_wrapper_test.cc array_stream.cc)
-  target_link_libraries(c_wrapper_test PRIVATE GTest::gtest_main GTest::gmock_main
-                                               gpuspatial_c nanoarrow::nanoarrow_ipc)
+  target_link_libraries(c_wrapper_test
+                        PRIVATE GTest::gtest_main
+                                GTest::gmock_main
+                                gpuspatial_c
+                                GEOS::geos
+                                GEOS::geos_c
+                                geoarrow_geos
+                                nanoarrow::nanoarrow_ipc)
 
   include(GoogleTest)
 
   gtest_discover_tests(gpuspatial_testing_test)
   gtest_discover_tests(array_stream_test)
   gtest_discover_tests(loader_test)
-  gtest_discover_tests(joiner_test)
   gtest_discover_tests(relate_test)
 endif()

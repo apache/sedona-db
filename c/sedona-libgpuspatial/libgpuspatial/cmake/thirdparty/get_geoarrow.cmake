@@ -47,6 +47,7 @@ function(find_and_configure_geoarrow)
                   "BUILD_SHARED_LIBS OFF"
                   ${_exclude_from_all})
   set_target_properties(geoarrow PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(geoarrow PRIVATE -Wno-conversion)
   rapids_export_find_package_root(BUILD
                                   geoarrow
                                   "${geoarrow_BINARY_DIR}"

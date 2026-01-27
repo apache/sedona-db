@@ -40,8 +40,11 @@ which = "8.0"
 arrow-array = { workspace = true, features = ["ffi"] }
 arrow-schema = { workspace = true }
 thiserror = { workspace = true }
+geo = { workspace = true }
+wkt = { workspace = true }
 log = "0.4"
 sedona-schema = { path = "../../rust/sedona-schema" }
+nvml-wrapper = "0.10.0"
 
 [dev-dependencies]
 sedona-expr = { path = "../../rust/sedona-expr" }

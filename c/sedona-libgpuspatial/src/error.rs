@@ -24,7 +24,8 @@ pub enum GpuSpatialError {
     Init(String),
     PushBuild(String),
     FinishBuild(String),
-    PushStream(String),
+    Probe(String),
+    Refine(String),
 }
 
 impl From<ArrowError> for GpuSpatialError {
@@ -48,8 +49,11 @@ impl fmt::Display for GpuSpatialError {
             GpuSpatialError::FinishBuild(errmsg) => {
                 write!(f, "Finish building failed: {}", errmsg)
             }
-            GpuSpatialError::PushStream(errmsg) => {
-                write!(f, "Push stream failed: {}", errmsg)
+            GpuSpatialError::Probe(errmsg) => {
+                write!(f, "Probe failed: {}", errmsg)
+            }
+            GpuSpatialError::Refine(errmsg) => {
+                write!(f, "Refine failed: {}", errmsg)
             }
         }
     }
