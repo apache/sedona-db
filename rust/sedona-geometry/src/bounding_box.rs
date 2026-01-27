@@ -69,6 +69,16 @@ impl BoundingBox {
         }
     }
 
+    /// Create an empty BoundingBox
+    pub fn empty() -> Self {
+        Self {
+            x: WraparoundInterval::empty(),
+            y: Interval::empty(),
+            z: None,
+            m: None,
+        }
+    }
+
     /// The x interval
     pub fn x(&self) -> &WraparoundInterval {
         &self.x
@@ -89,6 +99,11 @@ impl BoundingBox {
     /// content of the M dimension is not known)
     pub fn m(&self) -> &Option<Interval> {
         &self.m
+    }
+
+    /// Check whether this BoundingBox is empty
+    pub fn is_empty(&self) -> bool {
+        self.x.is_empty() || self.y.is_empty()
     }
 
     /// Calculate intersection with another BoundingBox
