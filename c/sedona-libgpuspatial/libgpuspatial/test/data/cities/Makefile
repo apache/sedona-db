@@ -19,7 +19,7 @@ URL := https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-e
 INPUT_FILE := natural-earth_cities_geo.parquet
 PYTHON_SCRIPT := ../gen_points.py
 OUTPUT_POINTS := generated_points.parquet
-NUM_POINTS := 1000
+NUM_POINTS := 10000
 
 .PHONY: all clean generate
 

@@ -17,106 +17,143 @@
 
 use crate::error::GpuSpatialError;
 use crate::libgpuspatial_glue_bindgen::*;
-use arrow_array::{ffi::FFI_ArrowArray, ArrayRef};
+use arrow_array::{ffi::FFI_ArrowArray, Array, ArrayRef};
+use arrow_schema::ffi::FFI_ArrowSchema;
 use std::convert::TryFrom;
 use std::ffi::CString;
 use std::mem::transmute;
-use std::os::raw::{c_uint, c_void};
+use std::os::raw::c_uint;
+use std::sync::{Arc, Mutex};
 
-pub struct GpuSpatialJoinerWrapper {
-    joiner: GpuSpatialJoiner,
+pub struct GpuSpatialRuntimeWrapper {
+    runtime: GpuSpatialRuntime,
 }
 
-#[repr(u32)]
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum GpuSpatialPredicateWrapper {
-    Equals = 0,
-    Disjoint = 1,
-    Touches = 2,
-    Contains = 3,
-    Covers = 4,
-    Intersects = 5,
-    Within = 6,
-    CoveredBy = 7,
-}
-
-impl TryFrom<c_uint> for GpuSpatialPredicateWrapper {
-    type Error = &'static str;
-
-    fn try_from(v: c_uint) -> Result<Self, Self::Error> {
-        match v {
-            0 => Ok(GpuSpatialPredicateWrapper::Equals),
-            1 => Ok(GpuSpatialPredicateWrapper::Disjoint),
-            2 => Ok(GpuSpatialPredicateWrapper::Touches),
-            3 => Ok(GpuSpatialPredicateWrapper::Contains),
-            4 => Ok(GpuSpatialPredicateWrapper::Covers),
-            5 => Ok(GpuSpatialPredicateWrapper::Intersects),
-            6 => Ok(GpuSpatialPredicateWrapper::Within),
-            7 => Ok(GpuSpatialPredicateWrapper::CoveredBy),
-            _ => Err("Invalid GpuSpatialPredicate value"),
-        }
-    }
-}
-
-impl Default for GpuSpatialJoinerWrapper {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl GpuSpatialJoinerWrapper {
-    pub fn new() -> Self {
-        GpuSpatialJoinerWrapper {
-            joiner: GpuSpatialJoiner {
-                init: None,
-                clear: None,
-                create_context: None,
-                destroy_context: None,
-                push_build: None,
-                finish_building: None,
-                push_stream: None,
-                get_build_indices_buffer: None,
-                get_stream_indices_buffer: None,
-                release: None,
-                private_data: std::ptr::null_mut(),
-                last_error: std::ptr::null(),
-            },
-        }
-    }
-
-    /// # Initializes the GpuSpatialJoiner
-    /// This function should only be called once per joiner instance.
-    ///
+impl GpuSpatialRuntimeWrapper {
+    /// # Initializes the GpuSpatialRuntime
+    /// This function should only be called once per engine instance.
     /// # Arguments
-    /// * `concurrency` - How many threads will call the joiner concurrently.
+    /// * `device_id` - The GPU device ID to use.
     /// * `ptx_root` - The root directory for PTX files.
-    pub fn init(&mut self, concurrency: u32, ptx_root: &str) -> Result<(), GpuSpatialError> {
-        let joiner_ptr: *mut GpuSpatialJoiner = &mut self.joiner;
+    pub fn try_new(
+        device_id: i32,
+        ptx_root: &str,
+        use_cuda_memory_pool: bool,
+        cuda_memory_pool_init_precent: i32,
+    ) -> Result<GpuSpatialRuntimeWrapper, GpuSpatialError> {
+        let mut runtime = GpuSpatialRuntime {
+            init: None,
+            release: None,
+            get_last_error: None,
+            private_data: std::ptr::null_mut(),
+        };
 
         unsafe {
             // Set function pointers to the C functions
-            GpuSpatialJoinerCreate(joiner_ptr);
+            GpuSpatialRuntimeCreate(&mut runtime);
         }
 
-        if let Some(init_fn) = self.joiner.init {
+        if let Some(init_fn) = runtime.init {
             let c_ptx_root = CString::new(ptx_root).expect("CString::new failed");
 
-            let mut config = GpuSpatialJoinerConfig {
-                concurrency,
+            let mut config = GpuSpatialRuntimeConfig {
+                device_id,
                 ptx_root: c_ptx_root.as_ptr(),
+                use_cuda_memory_pool,
+                cuda_memory_pool_init_precent,
             };
 
             // This is an unsafe call because it's calling a C function from the bindings.
             unsafe {
-                if init_fn(&self.joiner as *const _ as *mut _, &mut config) != 0 {
-                    let error_message = self.joiner.last_error;
+                if init_fn(&runtime as *const _ as *mut _, &mut config) != 0 {
+                    let error_message =
+                        runtime.get_last_error.unwrap()(&runtime as *const _ as *mut _);
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     return Err(GpuSpatialError::Init(error_string));
                 }
             }
         }
-        Ok(())
+
+        Ok(GpuSpatialRuntimeWrapper { runtime })
+    }
+}
+
+impl Default for GpuSpatialRuntimeWrapper {
+    fn default() -> Self {
+        GpuSpatialRuntimeWrapper {
+            runtime: GpuSpatialRuntime {
+                init: None,
+                release: None,
+                get_last_error: None,
+                private_data: std::ptr::null_mut(),
+            },
+        }
+    }
+}
+
+impl Drop for GpuSpatialRuntimeWrapper {
+    fn drop(&mut self) {
+        // Call the release function if it exists
+        if let Some(release_fn) = self.runtime.release {
+            unsafe {
+                release_fn(&mut self.runtime as *mut _);
+            }
+        }
+    }
+}
+
+pub struct GpuSpatialIndexFloat2DWrapper {
+    index: SedonaFloatIndex2D,
+    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the index
+}
+
+impl GpuSpatialIndexFloat2DWrapper {
+    /// # Initializes the GpuSpatialJoiner
+    /// This function should only be called once per joiner instance.
+    ///
+    /// # Arguments
+    /// * `runtime` - The GPUSpatial runtime to use for GPU operations.
+    /// * `concurrency` - How many threads will call the joiner concurrently.
+    pub fn try_new(
+        runtime: &Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+        concurrency: u32,
+    ) -> Result<Self, GpuSpatialError> {
+        let mut index = SedonaFloatIndex2D {
+            clear: None,
+            create_context: None,
+            destroy_context: None,
+            push_build: None,
+            finish_building: None,
+            probe: None,
+            get_build_indices_buffer: None,
+            get_probe_indices_buffer: None,
+            get_last_error: None,
+            context_get_last_error: None,
+            release: None,
+            private_data: std::ptr::null_mut(),
+        };
+        let mut engine_guard = runtime
+            .lock()
+            .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
+        let config = GpuSpatialIndexConfig {
+            runtime: &mut engine_guard.runtime,
+            concurrency,
+        };
+
+        unsafe {
+            // Set function pointers to the C functions
+            if GpuSpatialIndexFloat2DCreate(&mut index, &config) != 0 {
+                let error_message = index.get_last_error.unwrap()(&runtime as *const _ as *mut _);
+                let c_str = std::ffi::CStr::from_ptr(error_message);
+                let error_string = c_str.to_string_lossy().into_owned();
+                return Err(GpuSpatialError::Init(error_string));
+            }
+        }
+        Ok(GpuSpatialIndexFloat2DWrapper {
+            index,
+            _runtime: runtime.clone(),
+        })
     }
 
     /// # Clears the GpuSpatialJoiner
@@ -126,69 +163,43 @@ impl GpuSpatialJoinerWrapper {
     /// instead of building a new one because creating a new joiner is expensive.
     /// **This method is not thread-safe and should be called from a single thread.**
     pub fn clear(&mut self) {
-        if let Some(clear_fn) = self.joiner.clear {
+        if let Some(clear_fn) = self.index.clear {
             unsafe {
-                clear_fn(&mut self.joiner as *mut _);
+                clear_fn(&mut self.index as *mut _);
             }
         }
     }
 
-    /// # Pushes an array of WKBs to the build side of the joiner
+    /// # Pushes an array of rectangles to the build side of the joiner
     /// This function can be called multiple times to push multiple arrays.
-    /// The joiner will internally parse the WKBs and build a spatial index.
+    /// The joiner will internally parse the rectangles and build a spatial index.
     /// After pushing all build data, you must call `finish_building()` to build the
     /// spatial index.
     /// **This method is not thread-safe and should be called from a single thread.**
     /// # Arguments
-    /// * `array` - The array of WKBs to push.
-    /// * `offset` - The offset of the array to push.
-    /// * `length` - The length of the array to push.
-    pub fn push_build(
+    /// * `buf` - The array pointer to the rectangles to push.
+    /// * `n_rects` - The number of rectangles in the array.
+    /// # Safety
+    /// This function is unsafe because it takes a raw pointer to the rectangles.
+    ///
+    pub unsafe fn push_build(
         &mut self,
-        array: &ArrayRef,
-        offset: i64,
-        length: i64,
+        buf: *const f32,
+        n_rects: u32,
     ) -> Result<(), GpuSpatialError> {
-        log::info!(
-            "DEBUG FFI: push_build called with offset={}, length={}",
-            offset,
-            length
-        );
-        log::info!(
-            "DEBUG FFI: Array length={}, null_count={}",
-            array.len(),
-            array.null_count()
-        );
+        log::debug!("DEBUG FFI: push_build called with length={}", n_rects);
 
-        // 1. Convert the single ArrayRef to its FFI representation
-        let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
-
-        log::info!("DEBUG FFI: FFI conversion successful");
-        log::info!("DEBUG FFI: FFI array null_count={}", ffi_array.null_count());
-
-        // 2. Get the raw pointer to the FFI_ArrowArray struct
-        // let arrow_ptr = &mut ffi_array as *mut FFI_ArrowArray as *mut ArrowArray;
-
-        if let Some(push_build_fn) = self.joiner.push_build {
+        if let Some(push_build_fn) = self.index.push_build {
             unsafe {
-                let ffi_array_ptr: *const ArrowArray =
-                    transmute(&ffi_array as *const FFI_ArrowArray);
-                log::info!("DEBUG FFI: Calling C++ push_build function");
-                if push_build_fn(
-                    &mut self.joiner as *mut _,
-                    std::ptr::null_mut(), // schema is unused currently
-                    ffi_array_ptr as *mut _,
-                    offset,
-                    length,
-                ) != 0
-                {
-                    let error_message = self.joiner.last_error;
+                if push_build_fn(&mut self.index as *mut _, buf, n_rects) != 0 {
+                    let error_message =
+                        self.index.get_last_error.unwrap()(&mut self.index as *mut _);
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     log::error!("DEBUG FFI: push_build failed: {}", error_string);
                     return Err(GpuSpatialError::PushBuild(error_string));
                 }
-                log::info!("DEBUG FFI: push_build C++ call succeeded");
+                log::debug!("DEBUG FFI: push_build C++ call succeeded");
             }
         }
         Ok(())
@@ -201,10 +212,11 @@ impl GpuSpatialJoinerWrapper {
     /// for spatial join operations.
     /// **This method is not thread-safe and should be called from a single thread.**
     pub fn finish_building(&mut self) -> Result<(), GpuSpatialError> {
-        if let Some(finish_building_fn) = self.joiner.finish_building {
+        if let Some(finish_building_fn) = self.index.finish_building {
             unsafe {
-                if finish_building_fn(&mut self.joiner as *mut _) != 0 {
-                    let error_message = self.joiner.last_error;
+                if finish_building_fn(&mut self.index as *mut _) != 0 {
+                    let error_message =
+                        self.index.get_last_error.unwrap()(&mut self.index as *mut _);
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     return Err(GpuSpatialError::FinishBuild(error_string));
@@ -224,89 +236,73 @@ impl GpuSpatialJoinerWrapper {
     /// The context can be destroyed by calling the `destroy_context` function pointer in the `GpuSpatialJoiner` struct.
     /// The context should be destroyed before destroying the joiner.
     /// **This method is thread-safe.**
-    pub fn create_context(&mut self, ctx: &mut GpuSpatialJoinerContext) {
-        if let Some(create_context_fn) = self.joiner.create_context {
+    pub fn create_context(&self, ctx: &mut SedonaSpatialIndexContext) {
+        if let Some(create_context_fn) = self.index.create_context {
             unsafe {
-                create_context_fn(&mut self.joiner as *mut _, ctx as *mut _);
+                // Cast the shared reference to a raw pointer, then to a mutable raw pointer
+                create_context_fn(ctx as *mut _);
             }
         }
     }
 
-    pub fn destroy_context(&mut self, ctx: &mut GpuSpatialJoinerContext) {
-        if let Some(destroy_context_fn) = self.joiner.destroy_context {
+    pub fn destroy_context(&self, ctx: &mut SedonaSpatialIndexContext) {
+        if let Some(destroy_context_fn) = self.index.destroy_context {
             unsafe {
                 destroy_context_fn(ctx as *mut _);
             }
         }
     }
 
-    pub fn push_stream(
-        &mut self,
-        ctx: &mut GpuSpatialJoinerContext,
-        array: &ArrayRef,
-        offset: i64,
-        length: i64,
-        predicate: GpuSpatialPredicateWrapper,
-        array_index_offset: i32,
+    /// # Probes an array of rectangles against the built spatial index
+    /// This function probes an array of rectangles against the spatial index built
+    /// using `push_build()` and `finish_building()`. It finds all pairs of rectangles
+    /// that satisfy the spatial relation defined by the index.
+    /// The results are stored in the context passed to the function.
+    /// **This method is thread-safe if each thread uses its own context.**
+    /// # Arguments
+    /// * `ctx` - The context for the thread performing the spatial join.
+    /// * `buf` - A pointer to the array of rectangles to probe.
+    /// * `n_rects` - The number of rectangles in the array.
+    /// # Safety
+    /// This function is unsafe because it takes a raw pointer to the rectangles.
+    pub unsafe fn probe(
+        &self,
+        ctx: &mut SedonaSpatialIndexContext,
+        buf: *const f32,
+        n_rects: u32,
     ) -> Result<(), GpuSpatialError> {
-        log::info!(
-            "DEBUG FFI: push_stream called with offset={}, length={}, predicate={:?}",
-            offset,
-            length,
-            predicate
-        );
-        log::info!(
-            "DEBUG FFI: Array length={}, null_count={}",
-            array.len(),
-            array.null_count()
-        );
+        log::debug!("DEBUG FFI: probe called with length={}", n_rects);
 
-        // 1. Convert the single ArrayRef to its FFI representation
-        let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
-
-        log::info!("DEBUG FFI: FFI conversion successful");
-        log::info!("DEBUG FFI: FFI array null_count={}", ffi_array.null_count());
-
-        // 2. Get the raw pointer to the FFI_ArrowArray struct
-        // let arrow_ptr = &mut ffi_array as *mut FFI_ArrowArray as *mut ArrowArray;
-
-        if let Some(push_stream_fn) = self.joiner.push_stream {
+        if let Some(probe_fn) = self.index.probe {
             unsafe {
-                let ffi_array_ptr: *const ArrowArray =
-                    transmute(&ffi_array as *const FFI_ArrowArray);
-                log::info!("DEBUG FFI: Calling C++ push_stream function");
-                if push_stream_fn(
-                    &mut self.joiner as *mut _,
+                if probe_fn(
+                    &self.index as *const _ as *mut _,
                     ctx as *mut _,
-                    std::ptr::null_mut(), // schema is unused currently
-                    ffi_array_ptr as *mut _,
-                    offset,
-                    length,
-                    predicate as c_uint,
-                    array_index_offset,
+                    buf,
+                    n_rects,
                 ) != 0
                 {
-                    let error_message = ctx.last_error;
+                    let error_message = self.index.context_get_last_error.unwrap()(ctx);
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
-                    log::error!("DEBUG FFI: push_stream failed: {}", error_string);
-                    return Err(GpuSpatialError::PushStream(error_string));
+                    log::error!("DEBUG FFI: probe failed: {}", error_string);
+                    return Err(GpuSpatialError::Probe(error_string));
                 }
-                log::info!("DEBUG FFI: push_stream C++ call succeeded");
+                log::debug!("DEBUG FFI: probe C++ call succeeded");
             }
         }
         Ok(())
     }
 
-    pub fn get_build_indices_buffer(&self, ctx: &mut GpuSpatialJoinerContext) -> &[u32] {
-        if let Some(get_build_indices_buffer_fn) = self.joiner.get_build_indices_buffer {
-            let mut build_indices_ptr: *mut c_void = std::ptr::null_mut();
+    pub fn get_build_indices_buffer(&self, ctx: &mut SedonaSpatialIndexContext) -> &[u32] {
+        if let Some(get_build_indices_buffer_fn) = self.index.get_build_indices_buffer {
+            let mut build_indices_ptr: *mut u32 = std::ptr::null_mut();
             let mut build_indices_len: u32 = 0;
 
             unsafe {
                 get_build_indices_buffer_fn(
                     ctx as *mut _,
-                    &mut build_indices_ptr as *mut *mut c_void,
+                    &mut build_indices_ptr as *mut *mut u32,
                     &mut build_indices_len as *mut u32,
                 );
 
@@ -331,179 +327,387 @@ impl GpuSpatialJoinerWrapper {
         &[]
     }
 
-    pub fn get_stream_indices_buffer(&self, ctx: &mut GpuSpatialJoinerContext) -> &[u32] {
-        if let Some(get_stream_indices_buffer_fn) = self.joiner.get_stream_indices_buffer {
-            let mut stream_indices_ptr: *mut c_void = std::ptr::null_mut();
-            let mut stream_indices_len: u32 = 0;
+    pub fn get_probe_indices_buffer(&self, ctx: &mut SedonaSpatialIndexContext) -> &[u32] {
+        if let Some(get_probe_indices_buffer_fn) = self.index.get_probe_indices_buffer {
+            let mut probe_indices_ptr: *mut u32 = std::ptr::null_mut();
+            let mut probe_indices_len: u32 = 0;
 
             unsafe {
-                get_stream_indices_buffer_fn(
+                get_probe_indices_buffer_fn(
                     ctx as *mut _,
-                    &mut stream_indices_ptr as *mut *mut c_void,
-                    &mut stream_indices_len as *mut u32,
+                    &mut probe_indices_ptr as *mut *mut u32,
+                    &mut probe_indices_len as *mut u32,
                 );
 
                 // Check length first - empty vectors return empty slice
-                if stream_indices_len == 0 {
+                if probe_indices_len == 0 {
                     return &[];
                 }
 
                 // Validate pointer (should not be null if length > 0)
-                if stream_indices_ptr.is_null() {
+                if probe_indices_ptr.is_null() {
                     return &[];
                 }
 
                 // Convert the raw pointer to a slice. This is safe to do because
                 // we've validated the pointer is non-null and length is valid.
-                let typed_ptr = stream_indices_ptr as *const u32;
+                let typed_ptr = probe_indices_ptr as *const u32;
 
                 // Safety: We've checked ptr is non-null and len > 0
-                return std::slice::from_raw_parts(typed_ptr, stream_indices_len as usize);
+                return std::slice::from_raw_parts(typed_ptr, probe_indices_len as usize);
             }
         }
         &[]
     }
+}
 
-    pub fn release(&mut self) {
-        // Call the release function if it exists
-        if let Some(release_fn) = self.joiner.release {
-            unsafe {
-                release_fn(&mut self.joiner as *mut _);
-            }
+impl Default for GpuSpatialIndexFloat2DWrapper {
+    fn default() -> Self {
+        GpuSpatialIndexFloat2DWrapper {
+            index: SedonaFloatIndex2D {
+                clear: None,
+                create_context: None,
+                destroy_context: None,
+                push_build: None,
+                finish_building: None,
+                probe: None,
+                get_build_indices_buffer: None,
+                get_probe_indices_buffer: None,
+                get_last_error: None,
+                context_get_last_error: None,
+                release: None,
+                private_data: std::ptr::null_mut(),
+            },
+            _runtime: Arc::new(Mutex::new(GpuSpatialRuntimeWrapper::default())),
         }
     }
 }
 
-impl Drop for GpuSpatialJoinerWrapper {
+impl Drop for GpuSpatialIndexFloat2DWrapper {
     fn drop(&mut self) {
         // Call the release function if it exists
-        if let Some(release_fn) = self.joiner.release {
+        if let Some(release_fn) = self.index.release {
             unsafe {
-                release_fn(&mut self.joiner as *mut _);
+                release_fn(&mut self.index as *mut _);
             }
         }
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_geos::register::scalar_kernels;
-    use sedona_schema::crs::lnglat;
-    use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
-    use sedona_testing::create::create_array_storage;
-    use sedona_testing::testers::ScalarUdfTester;
-    use std::env;
-    use std::path::PathBuf;
+#[repr(u32)]
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum GpuSpatialRelationPredicateWrapper {
+    Equals = 0,
+    Disjoint = 1,
+    Touches = 2,
+    Contains = 3,
+    Covers = 4,
+    Intersects = 5,
+    Within = 6,
+    CoveredBy = 7,
+}
 
-    #[test]
-    fn test_gpu_joiner_end2end() {
-        let mut joiner = GpuSpatialJoinerWrapper::new();
+impl TryFrom<c_uint> for GpuSpatialRelationPredicateWrapper {
+    type Error = &'static str;
 
-        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-        let ptx_root = out_path.join("share/gpuspatial/shaders");
-
-        joiner
-            .init(
-                1,
-                ptx_root.to_str().expect("Failed to convert path to string"),
-            )
-            .expect("Failed to init GpuSpatialJoiner");
-
-        let polygon_values =  &[
-            Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),
-            Some("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))"),
-            Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 3 2, 3 3, 2 3, 2 2), (6 6, 8 6, 8 8, 6 8, 6 6))"),
-            Some("POLYGON ((30 0, 60 20, 50 50, 10 50, 0 20, 30 0), (20 30, 25 40, 15 40, 20 30), (30 30, 35 40, 25 40, 30 30), (40 30, 45 40, 35 40, 40 30))"),
-            Some("POLYGON ((40 0, 50 30, 80 20, 90 70, 60 90, 30 80, 20 40, 40 0), (50 20, 65 30, 60 50, 45 40, 50 20), (30 60, 50 70, 45 80, 30 60))"),
-        ];
-        let polygons = create_array_storage(polygon_values, &WKB_GEOMETRY);
-
-        // Let the gpusaptial joiner to parse WKBs and get building boxes
-        joiner
-            .push_build(&polygons, 0, polygons.len().try_into().unwrap())
-            .expect("Failed to push building");
-        // Build a spatial index for Build internally on GPU
-        joiner.finish_building().expect("Failed to finish building");
-
-        // Each thread that performs spatial joins should have its own context.
-        // The context is passed to PushStream calls to perform spatial joins.
-        let mut ctx = GpuSpatialJoinerContext {
-            last_error: std::ptr::null(),
-            private_data: std::ptr::null_mut(),
-            build_indices: std::ptr::null_mut(),
-            stream_indices: std::ptr::null_mut(),
-        };
-
-        joiner.create_context(&mut ctx);
-
-        let point_values = &[
-            Some("POINT (30 20)"), // poly0
-            Some("POINT (20 20)"), // poly1
-            Some("POINT (1 1)"),   // poly2
-            Some("POINT (70 70)"),
-            Some("POINT (55 35)"), // poly4
-        ];
-        let points = create_array_storage(point_values, &WKB_GEOMETRY);
-
-        // array_index_offset offsets the result of stream indices
-        let array_index_offset = 0;
-        joiner
-            .push_stream(
-                &mut ctx,
-                &points,
-                0,
-                points.len().try_into().unwrap(),
-                GpuSpatialPredicateWrapper::Intersects,
-                array_index_offset,
-            )
-            .expect("Failed to push building");
-
-        let build_indices = joiner.get_build_indices_buffer(&mut ctx);
-        let stream_indices = joiner.get_stream_indices_buffer(&mut ctx);
-
-        let mut result_pairs: Vec<(u32, u32)> = Vec::new();
-
-        for (build_index, stream_index) in build_indices.iter().zip(stream_indices.iter()) {
-            result_pairs.push((*build_index, *stream_index));
+    fn try_from(v: c_uint) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(GpuSpatialRelationPredicateWrapper::Equals),
+            1 => Ok(GpuSpatialRelationPredicateWrapper::Disjoint),
+            2 => Ok(GpuSpatialRelationPredicateWrapper::Touches),
+            3 => Ok(GpuSpatialRelationPredicateWrapper::Contains),
+            4 => Ok(GpuSpatialRelationPredicateWrapper::Covers),
+            5 => Ok(GpuSpatialRelationPredicateWrapper::Intersects),
+            6 => Ok(GpuSpatialRelationPredicateWrapper::Within),
+            7 => Ok(GpuSpatialRelationPredicateWrapper::CoveredBy),
+            _ => Err("Invalid GpuSpatialPredicate value"),
         }
+    }
+}
 
-        let kernels = scalar_kernels();
+pub struct GpuSpatialRefinerWrapper {
+    refiner: SedonaSpatialRefiner,
+    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the refiner
+}
 
-        // Iterate through the vector and find the one named "st_intersects"
-        let st_intersects = kernels
-            .into_iter()
-            .find(|(name, _)| *name == "st_intersects")
-            .map(|(_, kernel_ref)| kernel_ref)
-            .unwrap();
-
-        let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let udf = SedonaScalarUDF::from_kernel("st_intersects", st_intersects);
-        let tester =
-            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
-
-        let mut answer_pairs: Vec<(u32, u32)> = Vec::new();
-
-        for (poly_index, poly) in polygon_values.iter().enumerate() {
-            for (point_index, point) in point_values.iter().enumerate() {
-                let result = tester
-                    .invoke_scalar_scalar(poly.unwrap(), point.unwrap())
-                    .unwrap();
-                if result == true.into() {
-                    answer_pairs.push((poly_index as u32, point_index as u32));
-                }
+impl GpuSpatialRefinerWrapper {
+    /// # Initializes the GpuSpatialJoiner
+    /// This function should only be called once per joiner instance.
+    ///
+    /// # Arguments
+    /// * `concurrency` - How many threads will call the joiner concurrently.
+    /// * `ptx_root` - The root directory for PTX files.
+    pub fn try_new(
+        runtime: &Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+        concurrency: u32,
+        compress_bvh: bool,
+        pipeline_batches: u32,
+    ) -> Result<Self, GpuSpatialError> {
+        let mut refiner = SedonaSpatialRefiner {
+            clear: None,
+            push_build: None,
+            finish_building: None,
+            refine_loaded: None,
+            refine: None,
+            get_last_error: None,
+            release: None,
+            private_data: std::ptr::null_mut(),
+        };
+        let mut engine_guard = runtime
+            .lock()
+            .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
+        let config = GpuSpatialRefinerConfig {
+            runtime: &mut engine_guard.runtime,
+            concurrency,
+            compress_bvh,
+            pipeline_batches,
+        };
+        unsafe {
+            // Set function pointers to the C functions
+            if GpuSpatialRefinerCreate(&mut refiner, &config) != 0 {
+                let error_message = refiner.get_last_error.unwrap()(&refiner as *const _ as *mut _);
+                let c_str = std::ffi::CStr::from_ptr(error_message);
+                let error_string = c_str.to_string_lossy().into_owned();
+                return Err(GpuSpatialError::Init(error_string));
             }
         }
+        Ok(GpuSpatialRefinerWrapper {
+            refiner,
+            _runtime: runtime.clone(),
+        })
+    }
 
-        // Sort both vectors. The default sort on tuples compares element by element.
-        result_pairs.sort();
-        answer_pairs.sort();
+    pub fn clear(&self) {
+        log::debug!("DEBUG FFI: clear called");
+        if let Some(clear_fn) = self.refiner.clear {
+            unsafe {
+                clear_fn(&self.refiner as *const _ as *mut _);
+            }
+            log::debug!("DEBUG FFI: clear completed");
+        }
+    }
 
-        // Assert that the two sorted vectors are equal.
-        assert_eq!(result_pairs, answer_pairs);
+    /// # Loads a build array into the GPU spatial refiner
+    /// This function loads an array of geometries into the GPU spatial refiner
+    /// for parsing and loading on the GPU side.
+    /// # Arguments
+    /// * `array` - The array of geometries to load.
+    /// # Returns
+    /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
+    pub fn push_build(&self, array: &ArrayRef) -> Result<(), GpuSpatialError> {
+        log::debug!("DEBUG FFI: push_build called with array={}", array.len(),);
 
-        joiner.destroy_context(&mut ctx);
-        joiner.release();
+        let (ffi_array, ffi_schema) = arrow_array::ffi::to_ffi(&array.to_data())?;
+        log::debug!("DEBUG FFI: FFI conversion successful");
+        if let Some(load_fn) = self.refiner.push_build {
+            unsafe {
+                let ffi_array_ptr: *const ArrowArray =
+                    transmute(&ffi_array as *const FFI_ArrowArray);
+                let ffi_schema_ptr: *const ArrowSchema =
+                    transmute(&ffi_schema as *const FFI_ArrowSchema);
+                log::debug!("DEBUG FFI: Calling C++ refine function");
+                let _new_len: u32 = 0;
+                if load_fn(
+                    &self.refiner as *const _ as *mut _,
+                    ffi_schema_ptr as *mut _,
+                    ffi_array_ptr as *mut _,
+                ) != 0
+                {
+                    let error_message =
+                        self.refiner.get_last_error.unwrap()(&self.refiner as *const _ as *mut _);
+                    let c_str = std::ffi::CStr::from_ptr(error_message);
+                    let error_string = c_str.to_string_lossy().into_owned();
+                    log::error!("DEBUG FFI: push_build failed: {}", error_string);
+                    return Err(GpuSpatialError::PushBuild(error_string));
+                }
+                log::debug!("DEBUG FFI: push_build C++ call succeeded");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn finish_building(&self) -> Result<(), GpuSpatialError> {
+        log::debug!("DEBUG FFI: finish_building called");
+
+        if let Some(finish_building_fn) = self.refiner.finish_building {
+            unsafe {
+                if finish_building_fn(&self.refiner as *const _ as *mut _) != 0 {
+                    let error_message =
+                        self.refiner.get_last_error.unwrap()(&self.refiner as *const _ as *mut _);
+                    let c_str = std::ffi::CStr::from_ptr(error_message);
+                    let error_string = c_str.to_string_lossy().into_owned();
+                    log::error!("DEBUG FFI: finish_building failed: {}", error_string);
+                    return Err(GpuSpatialError::FinishBuild(error_string));
+                }
+                log::debug!("DEBUG FFI: finish_building C++ call succeeded");
+            }
+        }
+        Ok(())
+    }
+
+    /// # Refines candidate pairs using the GPU spatial refiner
+    /// This function refines candidate pairs of geometries using the GPU spatial refiner.
+    /// It takes the probe side array of geometries and a predicate, and outputs the refined pairs of
+    /// indices that satisfy the predicate.
+    /// # Arguments
+    /// * `array` - The array of geometries on the probe side.
+    /// * `predicate` - The spatial relation predicate to use for refinement.
+    /// * `build_indices` - The input/output vector of indices for the first array.
+    /// * `probe_indices` - The input/output vector of indices for the second array.
+    /// # Returns
+    /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
+    pub fn refine_loaded(
+        &self,
+        array: &ArrayRef,
+        predicate: GpuSpatialRelationPredicateWrapper,
+        build_indices: &mut Vec<u32>,
+        probe_indices: &mut Vec<u32>,
+    ) -> Result<(), GpuSpatialError> {
+        log::debug!(
+            "DEBUG FFI: refine called with array={}, indices={}, predicate={:?}",
+            array.len(),
+            build_indices.len(),
+            predicate
+        );
+
+        let (ffi_array, ffi_schema) = arrow_array::ffi::to_ffi(&array.to_data())?;
+
+        log::debug!("DEBUG FFI: FFI conversion successful");
+
+        if let Some(refine_fn) = self.refiner.refine_loaded {
+            unsafe {
+                let ffi_array_ptr: *const ArrowArray =
+                    transmute(&ffi_array as *const FFI_ArrowArray);
+                let ffi_schema_ptr: *const ArrowSchema =
+                    transmute(&ffi_schema as *const FFI_ArrowSchema);
+                log::debug!("DEBUG FFI: Calling C++ refine function");
+                let mut new_len: u32 = 0;
+                if refine_fn(
+                    &self.refiner as *const _ as *mut _,
+                    ffi_schema_ptr as *mut _,
+                    ffi_array_ptr as *mut _,
+                    predicate as c_uint,
+                    build_indices.as_mut_ptr(),
+                    probe_indices.as_mut_ptr(),
+                    build_indices.len() as u32,
+                    &mut new_len as *mut u32,
+                ) != 0
+                {
+                    let error_message =
+                        self.refiner.get_last_error.unwrap()(&self.refiner as *const _ as *mut _);
+                    let c_str = std::ffi::CStr::from_ptr(error_message);
+                    let error_string = c_str.to_string_lossy().into_owned();
+                    log::error!("DEBUG FFI: refine failed: {}", error_string);
+                    return Err(GpuSpatialError::Refine(error_string));
+                }
+                log::debug!("DEBUG FFI: refine C++ call succeeded");
+                // Update the lengths of the output index vectors
+                build_indices.truncate(new_len as usize);
+                probe_indices.truncate(new_len as usize);
+            }
+        }
+        Ok(())
+    }
+    /// # Refines candidate pairs using the GPU spatial refiner
+    /// This function refines candidate pairs of geometries using the GPU spatial refiner.
+    /// It takes two arrays of geometries and a predicate, and outputs the refined pairs of
+    /// indices that satisfy the predicate.
+    /// # Arguments
+    /// * `array1` - The first array of geometries.
+    /// * `array2` - The second array of geometries.
+    /// * `predicate` - The spatial relation predicate to use for refinement.
+    /// * `indices1` - The input/output vector of indices for the first array.
+    /// * `indices2` - The input/output vector of indices for the second array.
+    /// # Returns
+    /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
+    pub fn refine(
+        &self,
+        array1: &ArrayRef,
+        array2: &ArrayRef,
+        predicate: GpuSpatialRelationPredicateWrapper,
+        indices1: &mut Vec<u32>,
+        indices2: &mut Vec<u32>,
+    ) -> Result<(), GpuSpatialError> {
+        log::debug!(
+            "DEBUG FFI: refine called with array1={}, array2={}, indices={}, predicate={:?}",
+            array1.len(),
+            array2.len(),
+            indices1.len(),
+            predicate
+        );
+
+        let (ffi_array1, ffi_schema1) = arrow_array::ffi::to_ffi(&array1.to_data())?;
+        let (ffi_array2, ffi_schema2) = arrow_array::ffi::to_ffi(&array2.to_data())?;
+
+        log::debug!("DEBUG FFI: FFI conversion successful");
+
+        if let Some(refine_fn) = self.refiner.refine {
+            unsafe {
+                let ffi_array1_ptr: *const ArrowArray =
+                    transmute(&ffi_array1 as *const FFI_ArrowArray);
+                let ffi_schema1_ptr: *const ArrowSchema =
+                    transmute(&ffi_schema1 as *const FFI_ArrowSchema);
+                let ffi_array2_ptr: *const ArrowArray =
+                    transmute(&ffi_array2 as *const FFI_ArrowArray);
+                let ffi_schema2_ptr: *const ArrowSchema =
+                    transmute(&ffi_schema2 as *const FFI_ArrowSchema);
+                log::debug!("DEBUG FFI: Calling C++ refine function");
+                let mut new_len: u32 = 0;
+                if refine_fn(
+                    &self.refiner as *const _ as *mut _,
+                    ffi_schema1_ptr as *mut _,
+                    ffi_array1_ptr as *mut _,
+                    ffi_schema2_ptr as *mut _,
+                    ffi_array2_ptr as *mut _,
+                    predicate as c_uint,
+                    indices1.as_mut_ptr(),
+                    indices2.as_mut_ptr(),
+                    indices1.len() as u32,
+                    &mut new_len as *mut u32,
+                ) != 0
+                {
+                    let error_message =
+                        self.refiner.get_last_error.unwrap()(&self.refiner as *const _ as *mut _);
+                    let c_str = std::ffi::CStr::from_ptr(error_message);
+                    let error_string = c_str.to_string_lossy().into_owned();
+                    log::error!("DEBUG FFI: refine failed: {}", error_string);
+                    return Err(GpuSpatialError::Refine(error_string));
+                }
+                log::debug!("DEBUG FFI: refine C++ call succeeded");
+                // Update the lengths of the output index vectors
+                indices1.truncate(new_len as usize);
+                indices2.truncate(new_len as usize);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for GpuSpatialRefinerWrapper {
+    fn default() -> Self {
+        GpuSpatialRefinerWrapper {
+            refiner: SedonaSpatialRefiner {
+                clear: None,
+                push_build: None,
+                finish_building: None,
+                refine_loaded: None,
+                refine: None,
+                get_last_error: None,
+                release: None,
+                private_data: std::ptr::null_mut(),
+            },
+            _runtime: Arc::new(Mutex::new(GpuSpatialRuntimeWrapper::default())),
+        }
+    }
+}
+
+impl Drop for GpuSpatialRefinerWrapper {
+    fn drop(&mut self) {
+        // Call the release function if it exists
+        if let Some(release_fn) = self.refiner.release {
+            unsafe {
+                release_fn(&mut self.refiner as *mut _);
+            }
+        }
     }
 }

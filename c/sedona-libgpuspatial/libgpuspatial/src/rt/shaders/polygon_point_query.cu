@@ -14,11 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include "gpuspatial/geom/line_segment.cuh"
-#include "gpuspatial/geom/ray_crossing_counter.cuh"
-#include "gpuspatial/index/detail/launch_parameters.h"
-#include "gpuspatial/relate/relate.cuh"
-#include "shader_config.h"
+#include "gpuspatial/geom/ray_crossing_counter.hpp"
+#include "gpuspatial/relate/relate.hpp"
+#include "gpuspatial/rt/launch_parameters.cuh"
+#include "gpuspatial/utils/helpers.cuh"
+#include "shader_config.hpp"
 
 #include <cuda_runtime.h>
 #include <optix_device.h>
@@ -41,32 +41,34 @@ extern "C" __global__ void __intersection__gpuspatial() {
   auto point_on_seg = optixGetPayload_5();
   auto point_part_id = optixGetPayload_6();
   const auto& polygons = params.polygons;
-  auto point_idx = params.ids[query_idx].first;
-  auto polygon_idx = params.ids[query_idx].second;
+  auto point_idx = params.query_point_ids[query_idx];
+  auto polygon_idx = params.query_polygon_ids[query_idx];
   auto hit_polygon_idx = params.aabb_poly_ids[aabb_id];
   auto hit_ring_idx = params.aabb_ring_ids[aabb_id];
+  const auto& vertex_offsets = params.aabb_vertex_offsets[aabb_id];
   // the seg being hit is not from the query polygon
   if (hit_polygon_idx != polygon_idx || hit_ring_idx != ring_idx) {
     return;
   }
 
-  uint32_t local_v1_idx = aabb_id - params.seg_begins[reordered_polygon_idx];
-  uint32_t global_v1_idx = v_offset + local_v1_idx;
-  uint32_t global_v2_idx = global_v1_idx + 1;
-
-  auto vertices = polygons.get_vertices();
-  // segment being hit
-  const auto& v1 = vertices[global_v1_idx];
-  const auto& v2 = vertices[global_v2_idx];
-
+  auto ring = polygons[polygon_idx].get_ring(ring_idx);
   RayCrossingCounter locator(crossing_count, point_on_seg);
-  if (!params.points.empty()) {
-    const auto& p = params.points[point_idx];
-    locator.countSegment(p, v1, v2);
-  } else if (!params.multi_points.empty()) {
-    const auto& p = params.multi_points[point_idx].get_point(point_part_id);
-    locator.countSegment(p, v1, v2);
+
+  // For each segment in the AABB, count crossings
+  for (auto vertex_offset = vertex_offsets.first; vertex_offset < vertex_offsets.second;
+       ++vertex_offset) {
+    const auto& v1 = ring.get_point(vertex_offset);
+    const auto& v2 = ring.get_point(vertex_offset + 1);
+
+    if (!params.points.empty()) {
+      const auto& p = params.points[point_idx];
+      locator.countSegment(p, v1, v2);
+    } else if (!params.multi_points.empty()) {
+      const auto& p = params.multi_points[point_idx].get_point(point_part_id);
+      locator.countSegment(p, v1, v2);
+    }
   }
+
   optixSetPayload_4(locator.get_crossing_count());
   optixSetPayload_5(locator.get_point_on_segment());
 }
@@ -74,32 +76,30 @@ extern "C" __global__ void __intersection__gpuspatial() {
 extern "C" __global__ void __raygen__gpuspatial() {
   using namespace gpuspatial;
   using point_t = gpuspatial::ShaderPointType;
-  const auto& ids = params.ids;
   const auto& polygons = params.polygons;
 
-  for (uint32_t i = optixGetLaunchIndex().x; i < ids.size();
+  for (uint32_t i = optixGetLaunchIndex().x; i < params.query_size;
        i += optixGetLaunchDimensions().x) {
-    auto point_idx = ids[i].first;
-    auto polygon_idx = ids[i].second;
+    auto point_idx = params.query_point_ids[i];
+    auto polygon_idx = params.query_polygon_ids[i];
 
-    auto it = thrust::lower_bound(thrust::seq, params.polygon_ids.begin(),
-                                  params.polygon_ids.end(), polygon_idx);
-    assert(it != params.polygon_ids.end());
-    uint32_t reordered_polygon_idx = thrust::distance(params.polygon_ids.begin(), it);
-    assert(params.polygon_ids[reordered_polygon_idx] == polygon_idx);
+    auto it = thrust::lower_bound(thrust::seq, params.uniq_polygon_ids.begin(),
+                                  params.uniq_polygon_ids.end(), polygon_idx);
+    assert(it != params.uniq_polygon_ids.end());
+    uint32_t reordered_polygon_idx =
+        thrust::distance(params.uniq_polygon_ids.begin(), it);
+    assert(params.uniq_polygon_ids[reordered_polygon_idx] == polygon_idx);
 
     auto handle_point = [&](const point_t& p, uint32_t point_part_id, int& IM) {
-      float3 origin;
-      // each polygon takes a z-plane
-      origin.x = p.x();
-      origin.y = p.y();
+      assert(!p.empty());
       // cast ray toward positive x-axis
       float3 dir = {1, 0, 0};
       const auto& polygon = polygons[polygon_idx];
       const auto& mbr = polygon.get_mbr();
       auto width = mbr.get_max().x() - mbr.get_min().x();
       float tmin = 0;
-      float tmax = width;
+      // ensure the floating number is greater than the double
+      float tmax = next_float_from_double(width, 1, 2);
 
       // first polygon offset
       uint32_t ring_offset = polygons.get_prefix_sum_polygons()[polygon_idx];
@@ -119,7 +119,11 @@ extern "C" __global__ void __raygen__gpuspatial() {
       IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
       uint32_t ring = 0;
       locator.Init();
-      origin.z = reordered_polygon_idx;
+      float3 origin;
+      // each polygon takes a z-plane
+      origin.x = p.x();
+      origin.y = p.y();
+      origin.z = polygon_idx;
       // test exterior
       optixTrace(params.handle, origin, dir, tmin, tmax, 0, OptixVisibilityMask(255),
                  OPTIX_RAY_FLAG_NONE,             // OPTIX_RAY_FLAG_NONE,

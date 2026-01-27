@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 #pragma once
-#include "gpuspatial/utils/exception.h"
+#include "gpuspatial/utils/exception.hpp"
 
 #include <cuda_runtime.h>
 namespace gpuspatial {

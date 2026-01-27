@@ -16,9 +16,9 @@
 // under the License.
 #pragma once
 
-#include "gpuspatial/geom/point.cuh"
-#include "gpuspatial/utils/array_view.h"
-#include "gpuspatial/utils/pinned_vector.h"
+#include "gpuspatial/geom/point.hpp"
+#include "gpuspatial/utils/array_view.hpp"
+#include "gpuspatial/utils/pinned_vector.hpp"
 
 #include "gtest/gtest.h"
 #include "rmm/cuda_stream_view.hpp"
