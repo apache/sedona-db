@@ -32,8 +32,8 @@ use geo::Rect;
 pub use error::GpuSpatialError;
 #[cfg(gpu_available)]
 pub use libgpuspatial::{
-    GpuSpatialIndexFloat2DWrapper, GpuSpatialRTEngineWrapper, GpuSpatialRefinerWrapper,
-    GpuSpatialRelationPredicateWrapper,
+    GpuSpatialIndexFloat2DWrapper, GpuSpatialRefinerWrapper, GpuSpatialRelationPredicateWrapper,
+    GpuSpatialRuntimeWrapper,
 };
 #[cfg(gpu_available)]
 pub use libgpuspatial_glue_bindgen::SedonaSpatialIndexContext;
@@ -47,9 +47,9 @@ use nvml_wrapper::Nvml;
 #[cfg(gpu_available)]
 unsafe impl Send for SedonaSpatialIndexContext {}
 #[cfg(gpu_available)]
-unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRTEngine {}
+unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
 #[cfg(gpu_available)]
-unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRTEngine {}
+unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
 
 #[cfg(gpu_available)]
 unsafe impl Send for libgpuspatial_glue_bindgen::SedonaFloatIndex2D {}
@@ -119,13 +119,14 @@ impl From<GpuSpatialRelationPredicate> for GpuSpatialRelationPredicateWrapper {
     }
 }
 
-/// Global shared GPU RT engine. Building an instance is expensive, so we share it across all GpuSpatial instances.
+/// Global shared GpuSpatialRuntime. Building an instance is expensive, so we share it across all GpuSpatial instances.
 #[cfg(gpu_available)]
-static GLOBAL_RT_ENGINE: Mutex<Option<Arc<Mutex<GpuSpatialRTEngineWrapper>>>> = Mutex::new(None);
+static GLOBAL_GPUSPATIAL_RUNTIME: Mutex<Option<Arc<Mutex<GpuSpatialRuntimeWrapper>>>> =
+    Mutex::new(None);
 /// High-level wrapper for GPU spatial operations
 pub struct GpuSpatial {
     #[cfg(gpu_available)]
-    rt_engine: Option<Arc<Mutex<GpuSpatialRTEngineWrapper>>>,
+    runtime: Option<Arc<Mutex<GpuSpatialRuntimeWrapper>>>,
     #[cfg(gpu_available)]
     index: Option<GpuSpatialIndexFloat2DWrapper>,
     #[cfg(gpu_available)]
@@ -133,6 +134,7 @@ pub struct GpuSpatial {
 }
 
 pub struct GpuSpatialOptions {
+    pub cuda_init_memory_pool_ratio: f32,
     pub concurrency: u32,
     pub device_id: i32,
     pub compress_bvh: bool,
@@ -149,7 +151,7 @@ impl GpuSpatial {
         #[cfg(gpu_available)]
         {
             Ok(Self {
-                rt_engine: None,
+                runtime: None,
                 index: None,
                 refiner: None,
             })
@@ -166,11 +168,11 @@ impl GpuSpatial {
         #[cfg(gpu_available)]
         {
             // Get PTX path from OUT_DIR
-            // Acquire the lock for the global shared engine
-            let mut global_engine_guard = GLOBAL_RT_ENGINE.lock().unwrap();
+            // Acquire the lock for the global shared runtime
+            let mut global_runtime_guard = GLOBAL_GPUSPATIAL_RUNTIME.lock().unwrap();
 
-            // Initialize the global engine if it hasn't been initialized yet
-            if global_engine_guard.is_none() {
+            // Initialize the global runtime if it hasn't been initialized yet
+            if global_runtime_guard.is_none() {
                 // Get PTX path from OUT_DIR
                 let out_path = std::path::PathBuf::from(env!("OUT_DIR"));
                 let ptx_root = out_path.join("share/gpuspatial/shaders");
@@ -178,26 +180,29 @@ impl GpuSpatial {
                     .to_str()
                     .ok_or_else(|| GpuSpatialError::Init("Invalid PTX path".to_string()))?;
 
-                let rt_engine =
-                    GpuSpatialRTEngineWrapper::try_new(options.device_id, ptx_root_str)?;
-                *global_engine_guard = Some(Arc::new(Mutex::new(rt_engine)));
+                let runtime = GpuSpatialRuntimeWrapper::try_new(
+                    options.device_id,
+                    ptx_root_str,
+                    options.cuda_init_memory_pool_ratio,
+                )?;
+                *global_runtime_guard = Some(Arc::new(Mutex::new(runtime)));
             }
 
-            // Get a clone of the Arc to the shared engine
+            // Get a clone of the Arc to the shared runtime
             // safe to unwrap here because we just ensured it is Some
-            let rt_engine_ref = global_engine_guard.as_ref().unwrap().clone();
+            let runtime_ref = global_runtime_guard.as_ref().unwrap().clone();
             // Assign to self
-            self.rt_engine = Some(rt_engine_ref);
+            self.runtime = Some(runtime_ref);
 
             let index = GpuSpatialIndexFloat2DWrapper::try_new(
-                self.rt_engine.as_ref().unwrap(),
+                self.runtime.as_ref().unwrap(),
                 options.concurrency,
             )?;
 
             self.index = Some(index);
 
             let refiner = GpuSpatialRefinerWrapper::try_new(
-                self.rt_engine.as_ref().unwrap(),
+                self.runtime.as_ref().unwrap(),
                 options.concurrency,
                 options.compress_bvh,
                 options.pipeline_batches,
@@ -466,6 +471,7 @@ mod tests {
             device_id: 0,
             compress_bvh: false,
             pipeline_batches: 1,
+            cuda_init_memory_pool_ratio: 0.1,
         };
         gs.init(options).expect("Failed to initialize GpuSpatial");
 
@@ -526,6 +532,7 @@ mod tests {
             device_id: 0,
             compress_bvh: false,
             pipeline_batches: 1,
+            cuda_init_memory_pool_ratio: 0.1,
         };
         gs.init(options).expect("Failed to initialize GpuSpatial");
 

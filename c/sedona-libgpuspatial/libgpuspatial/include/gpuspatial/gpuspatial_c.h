@@ -25,33 +25,34 @@ struct ArrowSchema;
 struct ArrowArray;
 
 // Interfaces for ray-tracing engine (OptiX)
-struct GpuSpatialRTEngineConfig {
+struct GpuSpatialRuntimeConfig {
   /** Path to PTX files */
   const char* ptx_root;
   /** Device ID to use, 0 is the first GPU */
   int device_id;
+  /** Ratio of initial memory pool size to total GPU memory, between 0.0 and 1.0; zero is
+   * effectively disable async memory allocation and using cudaMalloc */
+  float cuda_init_memory_pool_ratio;
 };
 
-struct GpuSpatialRTEngine {
-  /** Initialize the ray-tracing engine (OptiX) with the given configuration
+struct GpuSpatialRuntime {
+  /** Initialize the runtime (OptiX) with the given configuration
    * @return 0 on success, non-zero on failure
    */
-  int (*init)(struct GpuSpatialRTEngine* self, struct GpuSpatialRTEngineConfig* config);
-  void (*release)(struct GpuSpatialRTEngine* self);
-  const char* (*get_last_error)(struct GpuSpatialRTEngine* self);
+  int (*init)(struct GpuSpatialRuntime* self, struct GpuSpatialRuntimeConfig* config);
+  void (*release)(struct GpuSpatialRuntime* self);
+  const char* (*get_last_error)(struct GpuSpatialRuntime* self);
   void* private_data;
 };
 
-/** Create an instance of GpuSpatialRTEngine */
-int GpuSpatialRTEngineCreate(struct GpuSpatialRTEngine* instance);
+/** Create an instance of GpuSpatialRuntime */
+void GpuSpatialRuntimeCreate(struct GpuSpatialRuntime* runtime);
 
 struct GpuSpatialIndexConfig {
-  /** Pointer to an initialized GpuSpatialRTEngine struct */
-  struct GpuSpatialRTEngine* rt_engine;
+  /** Pointer to an initialized GpuSpatialRuntime struct */
+  struct GpuSpatialRuntime* runtime;
   /** How many threads will concurrently call Probe method */
   uint32_t concurrency;
-  /** Device ID to use, 0 is the first GPU */
-  int device_id;
 };
 
 // An opaque context for concurrent probing
@@ -114,12 +115,10 @@ int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
                                  const struct GpuSpatialIndexConfig* config);
 
 struct GpuSpatialRefinerConfig {
-  /** Pointer to an initialized GpuSpatialRTEngine struct */
-  struct GpuSpatialRTEngine* rt_engine;
+  /** Pointer to an initialized GpuSpatialRuntime struct */
+  struct GpuSpatialRuntime* runtime;
   /** How many threads will concurrently call Probe method */
   uint32_t concurrency;
-  /** Device ID to use, 0 is the first GPU */
-  int device_id;
   /** Whether to compress the BVH structures to save memory */
   bool compress_bvh;
   /** Number of batches to pipeline for parsing and refinement; setting to 1 disables

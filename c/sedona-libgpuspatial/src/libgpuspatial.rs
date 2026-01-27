@@ -25,13 +25,12 @@ use std::mem::transmute;
 use std::os::raw::c_uint;
 use std::sync::{Arc, Mutex};
 
-pub struct GpuSpatialRTEngineWrapper {
-    rt_engine: GpuSpatialRTEngine,
-    device_id: i32,
+pub struct GpuSpatialRuntimeWrapper {
+    runtime: GpuSpatialRuntime,
 }
 
-impl GpuSpatialRTEngineWrapper {
-    /// # Initializes the GpuSpatialRTEngine
+impl GpuSpatialRuntimeWrapper {
+    /// # Initializes the GpuSpatialRuntime
     /// This function should only be called once per engine instance.
     /// # Arguments
     /// * `device_id` - The GPU device ID to use.
@@ -39,8 +38,9 @@ impl GpuSpatialRTEngineWrapper {
     pub fn try_new(
         device_id: i32,
         ptx_root: &str,
-    ) -> Result<GpuSpatialRTEngineWrapper, GpuSpatialError> {
-        let mut rt_engine = GpuSpatialRTEngine {
+        cuda_init_memory_pool_ratio: f32,
+    ) -> Result<GpuSpatialRuntimeWrapper, GpuSpatialError> {
+        let mut runtime = GpuSpatialRuntime {
             init: None,
             release: None,
             get_last_error: None,
@@ -49,28 +49,23 @@ impl GpuSpatialRTEngineWrapper {
 
         unsafe {
             // Set function pointers to the C functions
-            if GpuSpatialRTEngineCreate(&mut rt_engine) != 0 {
-                let error_message =
-                    rt_engine.get_last_error.unwrap()(&rt_engine as *const _ as *mut _);
-                let c_str = std::ffi::CStr::from_ptr(error_message);
-                let error_string = c_str.to_string_lossy().into_owned();
-                return Err(GpuSpatialError::Init(error_string));
-            }
+            GpuSpatialRuntimeCreate(&mut runtime);
         }
 
-        if let Some(init_fn) = rt_engine.init {
+        if let Some(init_fn) = runtime.init {
             let c_ptx_root = CString::new(ptx_root).expect("CString::new failed");
 
-            let mut config = GpuSpatialRTEngineConfig {
+            let mut config = GpuSpatialRuntimeConfig {
                 device_id,
                 ptx_root: c_ptx_root.as_ptr(),
+                cuda_init_memory_pool_ratio,
             };
 
             // This is an unsafe call because it's calling a C function from the bindings.
             unsafe {
-                if init_fn(&rt_engine as *const _ as *mut _, &mut config) != 0 {
+                if init_fn(&runtime as *const _ as *mut _, &mut config) != 0 {
                     let error_message =
-                        rt_engine.get_last_error.unwrap()(&rt_engine as *const _ as *mut _);
+                        runtime.get_last_error.unwrap()(&runtime as *const _ as *mut _);
                     let c_str = std::ffi::CStr::from_ptr(error_message);
                     let error_string = c_str.to_string_lossy().into_owned();
                     return Err(GpuSpatialError::Init(error_string));
@@ -78,33 +73,29 @@ impl GpuSpatialRTEngineWrapper {
             }
         }
 
-        Ok(GpuSpatialRTEngineWrapper {
-            rt_engine,
-            device_id,
-        })
+        Ok(GpuSpatialRuntimeWrapper { runtime })
     }
 }
 
-impl Default for GpuSpatialRTEngineWrapper {
+impl Default for GpuSpatialRuntimeWrapper {
     fn default() -> Self {
-        GpuSpatialRTEngineWrapper {
-            rt_engine: GpuSpatialRTEngine {
+        GpuSpatialRuntimeWrapper {
+            runtime: GpuSpatialRuntime {
                 init: None,
                 release: None,
                 get_last_error: None,
                 private_data: std::ptr::null_mut(),
             },
-            device_id: 0,
         }
     }
 }
 
-impl Drop for GpuSpatialRTEngineWrapper {
+impl Drop for GpuSpatialRuntimeWrapper {
     fn drop(&mut self) {
         // Call the release function if it exists
-        if let Some(release_fn) = self.rt_engine.release {
+        if let Some(release_fn) = self.runtime.release {
             unsafe {
-                release_fn(&mut self.rt_engine as *mut _);
+                release_fn(&mut self.runtime as *mut _);
             }
         }
     }
@@ -112,7 +103,7 @@ impl Drop for GpuSpatialRTEngineWrapper {
 
 pub struct GpuSpatialIndexFloat2DWrapper {
     index: SedonaFloatIndex2D,
-    _rt_engine: Arc<Mutex<GpuSpatialRTEngineWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the index
+    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the index
 }
 
 impl GpuSpatialIndexFloat2DWrapper {
@@ -120,10 +111,10 @@ impl GpuSpatialIndexFloat2DWrapper {
     /// This function should only be called once per joiner instance.
     ///
     /// # Arguments
-    /// * `rt_engine` - The ray-tracing engine to use for GPU operations.
+    /// * `runtime` - The GPUSpatial runtime to use for GPU operations.
     /// * `concurrency` - How many threads will call the joiner concurrently.
     pub fn try_new(
-        rt_engine: &Arc<Mutex<GpuSpatialRTEngineWrapper>>,
+        runtime: &Arc<Mutex<GpuSpatialRuntimeWrapper>>,
         concurrency: u32,
     ) -> Result<Self, GpuSpatialError> {
         let mut index = SedonaFloatIndex2D {
@@ -140,19 +131,18 @@ impl GpuSpatialIndexFloat2DWrapper {
             release: None,
             private_data: std::ptr::null_mut(),
         };
-        let mut engine_guard = rt_engine
+        let mut engine_guard = runtime
             .lock()
             .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
         let config = GpuSpatialIndexConfig {
-            rt_engine: &mut engine_guard.rt_engine,
+            runtime: &mut engine_guard.runtime,
             concurrency,
-            device_id: engine_guard.device_id,
         };
 
         unsafe {
             // Set function pointers to the C functions
             if GpuSpatialIndexFloat2DCreate(&mut index, &config) != 0 {
-                let error_message = index.get_last_error.unwrap()(&rt_engine as *const _ as *mut _);
+                let error_message = index.get_last_error.unwrap()(&runtime as *const _ as *mut _);
                 let c_str = std::ffi::CStr::from_ptr(error_message);
                 let error_string = c_str.to_string_lossy().into_owned();
                 return Err(GpuSpatialError::Init(error_string));
@@ -160,7 +150,7 @@ impl GpuSpatialIndexFloat2DWrapper {
         }
         Ok(GpuSpatialIndexFloat2DWrapper {
             index,
-            _rt_engine: rt_engine.clone(),
+            _runtime: runtime.clone(),
         })
     }
 
@@ -386,7 +376,7 @@ impl Default for GpuSpatialIndexFloat2DWrapper {
                 release: None,
                 private_data: std::ptr::null_mut(),
             },
-            _rt_engine: Arc::new(Mutex::new(GpuSpatialRTEngineWrapper::default())),
+            _runtime: Arc::new(Mutex::new(GpuSpatialRuntimeWrapper::default())),
         }
     }
 }
@@ -435,7 +425,7 @@ impl TryFrom<c_uint> for GpuSpatialRelationPredicateWrapper {
 
 pub struct GpuSpatialRefinerWrapper {
     refiner: SedonaSpatialRefiner,
-    _rt_engine: Arc<Mutex<GpuSpatialRTEngineWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the refiner
+    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>, // Keep a reference to the RT engine to ensure it lives as long as the refiner
 }
 
 impl GpuSpatialRefinerWrapper {
@@ -446,7 +436,7 @@ impl GpuSpatialRefinerWrapper {
     /// * `concurrency` - How many threads will call the joiner concurrently.
     /// * `ptx_root` - The root directory for PTX files.
     pub fn try_new(
-        rt_engine: &Arc<Mutex<GpuSpatialRTEngineWrapper>>,
+        runtime: &Arc<Mutex<GpuSpatialRuntimeWrapper>>,
         concurrency: u32,
         compress_bvh: bool,
         pipeline_batches: u32,
@@ -461,13 +451,12 @@ impl GpuSpatialRefinerWrapper {
             release: None,
             private_data: std::ptr::null_mut(),
         };
-        let mut engine_guard = rt_engine
+        let mut engine_guard = runtime
             .lock()
             .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
         let config = GpuSpatialRefinerConfig {
-            rt_engine: &mut engine_guard.rt_engine,
+            runtime: &mut engine_guard.runtime,
             concurrency,
-            device_id: engine_guard.device_id,
             compress_bvh,
             pipeline_batches,
         };
@@ -482,7 +471,7 @@ impl GpuSpatialRefinerWrapper {
         }
         Ok(GpuSpatialRefinerWrapper {
             refiner,
-            _rt_engine: rt_engine.clone(),
+            _runtime: runtime.clone(),
         })
     }
 
@@ -705,7 +694,7 @@ impl Default for GpuSpatialRefinerWrapper {
                 release: None,
                 private_data: std::ptr::null_mut(),
             },
-            _rt_engine: Arc::new(Mutex::new(GpuSpatialRTEngineWrapper::default())),
+            _runtime: Arc::new(Mutex::new(GpuSpatialRuntimeWrapper::default())),
         }
     }
 }

@@ -119,6 +119,8 @@ impl GPUSpatialIndexBuilder {
             device_id: self.options.gpu.device_id as i32,
             compress_bvh: self.options.gpu.compress_bvh,
             pipeline_batches: self.options.gpu.pipeline_batches as u32,
+            cuda_init_memory_pool_ratio: self.options.gpu.init_memory_pool_percentage as f32
+                / 100.0, // convert percentage to ratio
         };
 
         let mut gs = GpuSpatial::new()

@@ -101,6 +101,9 @@ config_namespace! {
         /// Overlapping parsing and refinement by pipelining multiple batches; 1 means no pipelining
         pub pipeline_batches: usize, default = 1
 
+        /// Ratio of total GPU memory to initialize CUDA memory pool (between 0% and 100%)
+        pub init_memory_pool_percentage: usize, default = 50
+
         /// Compress BVH to reduce memory usage for processing larger datasets at the cost of some performance
         pub compress_bvh: bool, default = false
     }

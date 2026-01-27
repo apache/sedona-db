@@ -19,12 +19,12 @@
 #include "gpuspatial/refine/rt_spatial_refiner.cuh"
 #include "gpuspatial/relate/relate_engine.cuh"
 #include "gpuspatial/utils/logger.hpp"
-#include "gpuspatial/utils/stopwatch.h"
 
 #include "rt/shaders/shader_id.hpp"
 
 #include "rmm/cuda_stream_pool.hpp"
 #include "rmm/exec_policy.hpp"
+
 
 #include <thrust/gather.h>
 #include <thrust/sort.h>

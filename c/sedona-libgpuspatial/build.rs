@@ -126,22 +126,11 @@ fn main() {
             "Release"
         };
 
-        let mut config = cmake::Config::new("./libgpuspatial");
-        config
-            .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures) // or your variable
-            .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
-            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN");
-        let profile = env::var("PROFILE").unwrap();
-        if profile == "debug" {
-            println!("cargo:warning=Building with AddressSanitizer (ASan) enabled.");
-            config
-                .define(
-                    "CMAKE_CXX_FLAGS",
-                    "-fsanitize=address -fno-omit-frame-pointer",
-                )
-                .define("CMAKE_SHARED_LINKER_FLAGS", "-fsanitize=address");
-        }
-        let dst = config.build();
+        let dst = cmake::Config::new("./libgpuspatial")
+            .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures)
+            .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
+            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "INFO") // Set logging level
+            .build();
         let include_path = dst.join("include");
         println!(
             "cargo:rustc-link-search=native={}",

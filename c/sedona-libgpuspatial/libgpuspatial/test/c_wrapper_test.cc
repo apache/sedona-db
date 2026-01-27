@@ -27,30 +27,32 @@
 #include "geoarrow_geos/geoarrow_geos.hpp"
 #include "nanoarrow/nanoarrow.hpp"
 
-TEST(RTEngineTest, InitializeEngine) {
-  GpuSpatialRTEngine engine;
-  GpuSpatialRTEngineCreate(&engine);
-  GpuSpatialRTEngineConfig engine_config;
+TEST(RuntimeTest, InitializeRuntime) {
+  GpuSpatialRuntime runtime;
+  GpuSpatialRuntimeCreate(&runtime);
+  GpuSpatialRuntimeConfig config;
 
   std::string ptx_root = TestUtils::GetTestShaderPath();
-  engine_config.ptx_root = ptx_root.c_str();
-  engine_config.device_id = 0;
-  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+  config.ptx_root = ptx_root.c_str();
+  config.device_id = 0;
+  config.cuda_init_memory_pool_ratio = 0;
+  ASSERT_EQ(runtime.init(&runtime, &config), 0);
 
-  engine.release(&engine);
+  runtime.release(&runtime);
 }
 
-TEST(RTEngineTest, ErrorTest) {
-  GpuSpatialRTEngine engine;
-  GpuSpatialRTEngineCreate(&engine);
-  GpuSpatialRTEngineConfig engine_config;
+TEST(RuntimeTest, ErrorTest) {
+  GpuSpatialRuntime runtime;
+  GpuSpatialRuntimeCreate(&runtime);
+  GpuSpatialRuntimeConfig runtime_config;
 
-  engine_config.ptx_root = "/invalid/path/to/ptx";
-  engine_config.device_id = 0;
+  runtime_config.ptx_root = "/invalid/path/to/ptx";
+  runtime_config.device_id = 0;
+  runtime_config.cuda_init_memory_pool_ratio = 0;
 
-  EXPECT_NE(engine.init(&engine, &engine_config), 0);
+  EXPECT_NE(runtime.init(&runtime, &runtime_config), 0);
 
-  const char* raw_error = engine.get_last_error(&engine);
+  const char* raw_error = runtime.get_last_error(&runtime);
   printf("Error received: %s\n", raw_error);
 
   std::string error_msg(raw_error);
@@ -58,53 +60,53 @@ TEST(RTEngineTest, ErrorTest) {
   EXPECT_NE(error_msg.find("No such file or directory"), std::string::npos)
       << "Error message was corrupted or incorrect. Got: " << error_msg;
 
-  engine.release(&engine);
+  runtime.release(&runtime);
 }
 
 TEST(SpatialIndexTest, InitializeIndex) {
-  GpuSpatialRTEngine engine;
-  GpuSpatialRTEngineCreate(&engine);
-  GpuSpatialRTEngineConfig engine_config;
+  GpuSpatialRuntime runtime;
+  GpuSpatialRuntimeCreate(&runtime);
+  GpuSpatialRuntimeConfig runtime_config;
 
   std::string ptx_root = TestUtils::GetTestShaderPath();
-  engine_config.ptx_root = ptx_root.c_str();
-  engine_config.device_id = 0;
-  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+  runtime_config.ptx_root = ptx_root.c_str();
+  runtime_config.device_id = 0;
+  runtime_config.cuda_init_memory_pool_ratio = 0.1;
+  ASSERT_EQ(runtime.init(&runtime, &runtime_config), 0);
 
   SedonaFloatIndex2D index;
   GpuSpatialIndexConfig index_config;
 
-  index_config.rt_engine = &engine;
-  index_config.device_id = 0;
+  index_config.runtime = &runtime;
   index_config.concurrency = 1;
 
   ASSERT_EQ(GpuSpatialIndexFloat2DCreate(&index, &index_config), 0);
 
   index.release(&index);
-  engine.release(&engine);
+  runtime.release(&runtime);
 }
 
 TEST(RefinerTest, InitializeRefiner) {
-  GpuSpatialRTEngine engine;
-  GpuSpatialRTEngineCreate(&engine);
-  GpuSpatialRTEngineConfig engine_config;
+  GpuSpatialRuntime runtime;
+  GpuSpatialRuntimeCreate(&runtime);
+  GpuSpatialRuntimeConfig runtime_config;
 
   std::string ptx_root = TestUtils::GetTestShaderPath();
-  engine_config.ptx_root = ptx_root.c_str();
-  engine_config.device_id = 0;
-  ASSERT_EQ(engine.init(&engine, &engine_config), 0);
+  runtime_config.ptx_root = ptx_root.c_str();
+  runtime_config.device_id = 0;
+  runtime_config.cuda_init_memory_pool_ratio = 0.1;
+  ASSERT_EQ(runtime.init(&runtime, &runtime_config), 0);
 
   SedonaSpatialRefiner refiner;
   GpuSpatialRefinerConfig refiner_config;
 
-  refiner_config.rt_engine = &engine;
-  refiner_config.device_id = 0;
+  refiner_config.runtime = &runtime;
   refiner_config.concurrency = 1;
 
   ASSERT_EQ(GpuSpatialRefinerCreate(&refiner, &refiner_config), 0);
 
   refiner.release(&refiner);
-  engine.release(&engine);
+  runtime.release(&runtime);
 }
 
 class CWrapperTest : public ::testing::Test {
@@ -112,25 +114,24 @@ class CWrapperTest : public ::testing::Test {
   void SetUp() override {
     std::string ptx_root = TestUtils::GetTestShaderPath();
 
-    GpuSpatialRTEngineCreate(&engine_);
-    GpuSpatialRTEngineConfig engine_config;
+    GpuSpatialRuntimeCreate(&runtime_);
+    GpuSpatialRuntimeConfig runtime_config;
 
-    engine_config.ptx_root = ptx_root.c_str();
-    engine_config.device_id = 0;
-    ASSERT_EQ(engine_.init(&engine_, &engine_config), 0);
+    runtime_config.ptx_root = ptx_root.c_str();
+    runtime_config.device_id = 0;
+    runtime_config.cuda_init_memory_pool_ratio = 0.1;
+    ASSERT_EQ(runtime_.init(&runtime_, &runtime_config), 0);
 
     GpuSpatialIndexConfig index_config;
 
-    index_config.rt_engine = &engine_;
-    index_config.device_id = 0;
+    index_config.runtime = &runtime_;
     index_config.concurrency = 1;
 
     ASSERT_EQ(GpuSpatialIndexFloat2DCreate(&index_, &index_config), 0);
 
     GpuSpatialRefinerConfig refiner_config;
 
-    refiner_config.rt_engine = &engine_;
-    refiner_config.device_id = 0;
+    refiner_config.runtime = &runtime_;
     refiner_config.concurrency = 1;
 
     ASSERT_EQ(GpuSpatialRefinerCreate(&refiner_, &refiner_config), 0);
@@ -139,9 +140,9 @@ class CWrapperTest : public ::testing::Test {
   void TearDown() override {
     refiner_.release(&refiner_);
     index_.release(&index_);
-    engine_.release(&engine_);
+    runtime_.release(&runtime_);
   }
-  GpuSpatialRTEngine engine_;
+  GpuSpatialRuntime runtime_;
   SedonaFloatIndex2D index_;
   SedonaSpatialRefiner refiner_;
 };

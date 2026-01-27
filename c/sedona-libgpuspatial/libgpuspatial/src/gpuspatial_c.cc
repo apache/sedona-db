@@ -22,6 +22,10 @@
 #include "gpuspatial/rt/rt_engine.hpp"
 #include "gpuspatial/utils/exception.h"
 
+#include "rmm/mr/device/cuda_async_memory_resource.hpp"
+#include "rmm/mr/device/per_device_resource.hpp"
+#include "rmm/mr/device/pool_memory_resource.hpp"
+
 #include <threads.h>
 #include <algorithm>
 #include <cstring>
@@ -58,56 +62,81 @@ int SafeExecute(GpuSpatialWrapper<T>* wrapper, Func&& func) {
 // IMPLEMENTATION
 // -----------------------------------------------------------------------------
 
-struct GpuSpatialRTEngineExporter {
-  using private_data_t = GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>;
-  static void Export(private_data_t* private_data, struct GpuSpatialRTEngine* out) {
+struct GpuSpatialRuntimeExporter {
+  struct Payload {
+    std::shared_ptr<gpuspatial::RTEngine> rt_engine;
+    std::unique_ptr<rmm::mr::cuda_async_memory_resource> upstream_mr;
+    std::unique_ptr<rmm::mr::pool_memory_resource<rmm::mr::cuda_async_memory_resource>>
+        pool_mr;
+    int device_id;
+  };
+
+  using private_data_t = GpuSpatialWrapper<Payload>;
+  static void Export(struct GpuSpatialRuntime* out) {
+    private_data_t* private_data =
+        new private_data_t{Payload{std::make_shared<gpuspatial::RTEngine>()}, ""};
     out->init = CInit;
     out->release = CRelease;
     out->get_last_error = CGetLastError;
     out->private_data = private_data;
   }
 
-  static int CInit(GpuSpatialRTEngine* self, GpuSpatialRTEngineConfig* config) {
+  static int CInit(GpuSpatialRuntime* self, GpuSpatialRuntimeConfig* config) {
     return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
       std::string ptx_root(config->ptx_root);
       auto rt_config = gpuspatial::get_default_rt_config(ptx_root);
 
+      GPUSPATIAL_LOG_INFO("Initializing GpuSpatialRuntime on device %d, PTX root %s",
+                          config->device_id, config->ptx_root);
+
       CUDA_CHECK(cudaSetDevice(config->device_id));
-      static_cast<private_data_t*>(self->private_data)->payload->Init(rt_config);
+
+      float mem_pool_ratio = config->cuda_init_memory_pool_ratio;
+
+      if (mem_pool_ratio < 0 || mem_pool_ratio > 1) {
+        throw std::invalid_argument(
+            "cuda_init_memory_pool_ratio must be between 0 and 1");
+      }
+
+      if (mem_pool_ratio > 0) {
+        auto async_mr = std::make_unique<rmm::mr::cuda_async_memory_resource>();
+        auto pool_size = rmm::percent_of_free_device_memory(mem_pool_ratio);
+
+        GPUSPATIAL_LOG_INFO("Creating RMM pool memory resource with size %zu MB",
+                            pool_size / 1024 / 1024);
+
+        auto pool_mr = std::make_unique<
+            rmm::mr::pool_memory_resource<rmm::mr::cuda_async_memory_resource>>(
+            async_mr.get(), pool_size);
+
+        rmm::mr::set_current_device_resource(pool_mr.get());
+        static_cast<private_data_t*>(self->private_data)->payload.upstream_mr =
+            std::move(async_mr);
+        static_cast<private_data_t*>(self->private_data)->payload.pool_mr =
+            std::move(pool_mr);
+      }
+
+      static_cast<private_data_t*>(self->private_data)
+          ->payload.rt_engine->Init(rt_config);
     });
   }
 
-  static void CRelease(GpuSpatialRTEngine* self) {
+  static void CRelease(GpuSpatialRuntime* self) {
     delete static_cast<private_data_t*>(self->private_data);
     self->private_data = nullptr;
   }
 
-  static const char* CGetLastError(GpuSpatialRTEngine* self) {
+  static const char* CGetLastError(GpuSpatialRuntime* self) {
     auto* private_data = static_cast<private_data_t*>(self->private_data);
     return private_data->last_error.c_str();
   }
 };
 
-int GpuSpatialRTEngineCreate(struct GpuSpatialRTEngine* instance) {
-  try {
-    auto rt_engine = std::make_shared<gpuspatial::RTEngine>();
-    GpuSpatialRTEngineExporter::Export(
-        new GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>{rt_engine},
-        instance);
-  } catch (std::exception& e) {
-    GpuSpatialRTEngineExporter::Export(
-        new GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>{nullptr, e.what()},
-        instance);
-    return EINVAL;
-  } catch (...) {
-    GpuSpatialRTEngineExporter::Export(
-        new GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>{nullptr,
-                                                                     "Unknown error"},
-        instance);
-    return EINVAL;
-  }
-  return 0;
+void GpuSpatialRuntimeCreate(struct GpuSpatialRuntime* runtime) {
+  GpuSpatialRuntimeExporter::Export(runtime);
 }
+
+using runtime_data_t = GpuSpatialRuntimeExporter::private_data_t;
 
 struct GpuSpatialIndexFloat2DExporter {
   using scalar_t = float;
@@ -117,7 +146,7 @@ struct GpuSpatialIndexFloat2DExporter {
 
   struct Payload {
     std::unique_ptr<spatial_index_t> index;
-    int device_id;
+    runtime_data_t* rdata;
   };
 
   struct ResultBuffer {
@@ -135,8 +164,20 @@ struct GpuSpatialIndexFloat2DExporter {
   using private_data_t = GpuSpatialWrapper<Payload>;
   using context_t = GpuSpatialWrapper<ResultBuffer>;
 
-  static void Export(std::unique_ptr<spatial_index_t> index, int device_id,
-                     const std::string& last_error, struct SedonaFloatIndex2D* out) {
+  static void Export(const struct GpuSpatialIndexConfig* config,
+                     struct SedonaFloatIndex2D* out) {
+    auto* rdata = static_cast<runtime_data_t*>(config->runtime->private_data);
+
+    gpuspatial::RTSpatialIndexConfig index_config;
+
+    index_config.rt_engine = rdata->payload.rt_engine;
+    index_config.concurrency = config->concurrency;
+
+    // Create SpatialIndex may involve GPU operations, set device here
+    CUDA_CHECK(cudaSetDevice(rdata->payload.device_id));
+
+    auto uniq_index = gpuspatial::CreateRTSpatialIndex<float, 2>(index_config);
+
     out->clear = &CClear;
     out->create_context = &CCreateContext;
     out->destroy_context = &CDestroyContext;
@@ -148,8 +189,7 @@ struct GpuSpatialIndexFloat2DExporter {
     out->get_last_error = &CGetLastError;
     out->context_get_last_error = &CContextGetLastError;
     out->release = &CRelease;
-    out->private_data =
-        new private_data_t{Payload{std::move(index), device_id}, last_error};
+    out->private_data = new private_data_t{Payload{std::move(uniq_index), rdata}, ""};
   }
 
   static void CCreateContext(struct SedonaSpatialIndexContext* context) {
@@ -220,35 +260,19 @@ struct GpuSpatialIndexFloat2DExporter {
 
   static spatial_index_t& use_index(self_t* self) {
     auto* private_data = static_cast<private_data_t*>(self->private_data);
+    auto* r_data = private_data->payload.rdata;
 
-    CUDA_CHECK(cudaSetDevice(private_data->payload.device_id));
-    if (private_data->payload.index == nullptr) {
-      throw std::runtime_error("SpatialIndex is not initialized");
-    }
+    CUDA_CHECK(cudaSetDevice(r_data->payload.device_id));
     return *(private_data->payload.index);
   }
 };
 
 int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
                                  const struct GpuSpatialIndexConfig* config) {
-  gpuspatial::RTSpatialIndexConfig rt_index_config;
-  auto rt_engine = static_cast<GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>*>(
-                       config->rt_engine->private_data)
-                       ->payload;
-  rt_index_config.rt_engine = rt_engine;
-  rt_index_config.concurrency = config->concurrency;
   try {
-    if (rt_index_config.rt_engine == nullptr) {
-      throw std::runtime_error("RTEngine is not initialized");
-    }
-    // Create SpatialIndex may involve GPU operations, set device here
-    CUDA_CHECK(cudaSetDevice(config->device_id));
-
-    auto uniq_index = gpuspatial::CreateRTSpatialIndex<float, 2>(rt_index_config);
-    GpuSpatialIndexFloat2DExporter::Export(std::move(uniq_index), config->device_id, "",
-                                           index);
+    GpuSpatialIndexFloat2DExporter::Export(config, index);
   } catch (std::exception& e) {
-    GpuSpatialIndexFloat2DExporter::Export(nullptr, config->device_id, e.what(), index);
+    GPUSPATIAL_LOG_ERROR("Failed to create GpuSpatialIndexFloat2D: %s", e.what());
     return EINVAL;
   }
   return 0;
@@ -257,12 +281,26 @@ int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
 struct GpuSpatialRefinerExporter {
   struct Payload {
     std::unique_ptr<gpuspatial::SpatialRefiner> refiner;
-    int device_id;
+    runtime_data_t* rdata;
   };
   using private_data_t = GpuSpatialWrapper<Payload>;
 
-  static void Export(std::unique_ptr<gpuspatial::SpatialRefiner> refiner, int device_id,
-                     const std::string& last_error, struct SedonaSpatialRefiner* out) {
+  static void Export(const GpuSpatialRefinerConfig* config,
+                     struct SedonaSpatialRefiner* out) {
+    auto* rdata = static_cast<runtime_data_t*>(config->runtime->private_data);
+
+    gpuspatial::RTSpatialRefinerConfig refiner_config;
+
+    refiner_config.rt_engine = rdata->payload.rt_engine;
+    refiner_config.concurrency = config->concurrency;
+    refiner_config.compact = config->compress_bvh;
+    refiner_config.pipeline_batches = config->pipeline_batches;
+
+    // Create Refinner may involve GPU operations, set device here
+    CUDA_CHECK(cudaSetDevice(rdata->payload.device_id));
+
+    auto refiner = gpuspatial::CreateRTSpatialRefiner(refiner_config);
+
     out->clear = &CClear;
     out->push_build = &CPushBuild;
     out->finish_building = &CFinishBuilding;
@@ -270,8 +308,7 @@ struct GpuSpatialRefinerExporter {
     out->refine = &CRefine;
     out->get_last_error = &CGetLastError;
     out->release = &CRelease;
-    out->private_data =
-        new private_data_t{Payload{std::move(refiner), device_id}, last_error};
+    out->private_data = new private_data_t{Payload{std::move(refiner), rdata}, ""};
   }
 
   static int CClear(SedonaSpatialRefiner* self) {
@@ -326,39 +363,19 @@ struct GpuSpatialRefinerExporter {
 
   static gpuspatial::SpatialRefiner& use_refiner(SedonaSpatialRefiner* self) {
     auto* private_data = static_cast<private_data_t*>(self->private_data);
+    auto* r_data = private_data->payload.rdata;
 
-    CUDA_CHECK(cudaSetDevice(private_data->payload.device_id));
-    if (private_data->payload.refiner == nullptr) {
-      throw std::runtime_error("SpatialRefiner is not initialized");
-    }
+    CUDA_CHECK(cudaSetDevice(r_data->payload.device_id));
     return *(private_data->payload.refiner);
   }
 };
 
 int GpuSpatialRefinerCreate(SedonaSpatialRefiner* refiner,
                             const GpuSpatialRefinerConfig* config) {
-  gpuspatial::RTSpatialRefinerConfig rt_refiner_config;
-  auto rt_engine = static_cast<GpuSpatialWrapper<std::shared_ptr<gpuspatial::RTEngine>>*>(
-                       config->rt_engine->private_data)
-                       ->payload;
-
-  rt_refiner_config.rt_engine = rt_engine;
-  rt_refiner_config.concurrency = config->concurrency;
-  rt_refiner_config.compact = config->compress_bvh;
-  rt_refiner_config.pipeline_batches = config->pipeline_batches;
-
   try {
-    if (rt_refiner_config.rt_engine == nullptr) {
-      throw std::runtime_error("RTEngine is not initialized");
-    }
-    // Create Refinner may involve GPU operations, set device here
-    CUDA_CHECK(cudaSetDevice(config->device_id));
-
-    auto uniq_refiner = gpuspatial::CreateRTSpatialRefiner(rt_refiner_config);
-    GpuSpatialRefinerExporter::Export(std::move(uniq_refiner), config->device_id, "",
-                                      refiner);
+    GpuSpatialRefinerExporter::Export(config, refiner);
   } catch (std::exception& e) {
-    GpuSpatialRefinerExporter::Export(nullptr, config->device_id, e.what(), refiner);
+    GPUSPATIAL_LOG_ERROR("Failed to create GpuSpatialRefiner: %s", e.what());
     return EINVAL;
   }
   return 0;
