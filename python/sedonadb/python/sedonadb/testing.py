@@ -18,7 +18,7 @@ import math
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Tuple, Any
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
@@ -124,6 +124,10 @@ class DBEngine:
             pytest.skip(
                 f"Failed to create engine tester {cls.name()}: {e}\n{cls.install_hint()}"
             )
+
+    def val_or_null(self, arg: Any) -> str:
+        """Format SQL expression for a value or NULL"""
+        return val_or_null(arg)
 
     def assert_query_result(self, query: str, expected, **kwargs) -> "DBEngine":
         """Assert a SQL query result matches an expected target
@@ -334,6 +338,12 @@ class SedonaDB(DBEngine):
         # Don't allow this to fail with a skip
         return cls(*args, **kwargs)
 
+    def val_or_null(self, arg):
+        if isinstance(arg, bytes):
+            return f"X'{arg.hex()}'"
+        else:
+            return super().val_or_null(arg)
+
     def create_table_parquet(self, name, paths) -> "SedonaDB":
         self.con.read_parquet(paths).to_memtable().to_view(name, overwrite=True)
         return self
@@ -453,6 +463,12 @@ class PostGIS(DBEngine):
             "- Run `pip install adbc-driver-postgresql` to install the required driver\n"
             "- Run `docker compose up postgis` to start a test PostGIS runtime"
         )
+
+    def val_or_null(self, arg):
+        if isinstance(arg, bytes):
+            return f"'\\x{arg.hex()}'::bytea"
+        else:
+            return super().val_or_null(arg)
 
     def create_table_parquet(self, name, paths) -> "PostGIS":
         import json
@@ -654,10 +670,20 @@ def geog_or_null(arg):
 
 
 def val_or_null(arg):
-    """Format SQL expression for a value or NULL"""
+    """Format SQL expression for a value or NULL
+
+    Use an engine-specific method when formatting bytes as there is no
+    engine-agnostic way to to represent bytes as a SQL literal.
+
+    This is not secure (i.e., does not prevent SQL injection of any kind)
+    and should only be used for testing.
+    """
     if arg is None:
         return "NULL"
-    return arg
+    elif isinstance(arg, bytes):
+        raise NotImplementedError("Use eng.val_or_null() to format bytes to SQL")
+    else:
+        return arg
 
 
 def _geometry_columns(schema):

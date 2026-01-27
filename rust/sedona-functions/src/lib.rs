@@ -44,6 +44,7 @@ pub mod st_envelope_agg;
 pub mod st_flipcoordinates;
 mod st_geometryn;
 mod st_geometrytype;
+mod st_geomfromewkb;
 mod st_geomfromwkb;
 mod st_geomfromwkt;
 mod st_haszm;
