@@ -16,7 +16,7 @@
 # under the License.
 
 import inspect
-from typing import Any, Literal, Optional, List, Union
+from typing import Any, List, Literal, Optional, Union
 
 from sedonadb._lib import sedona_scalar_udf
 from sedonadb.utility import sedona  # noqa: F401
@@ -172,7 +172,7 @@ def arrow_udf(
         │      0 │
         └────────┘
 
-        >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_SetSRID(ST_Point(0, 0), 3857), 2.0)) as col").show()
+        >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_Point(0, 0, 3857), 2.0)) as col").show()
         ┌────────┐
         │   col  │
         │ uint32 │

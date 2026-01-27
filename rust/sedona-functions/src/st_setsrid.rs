@@ -95,9 +95,7 @@ fn set_srid_doc() -> Documentation {
     )
     .with_argument("geom", "geometry: Input geometry or geography")
     .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
-    .with_sql_example(
-        "SELECT ST_SetSRID(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 4326)".to_string(),
-    )
+    .with_sql_example("SELECT ST_GeomFromWKT('POINT (-64.363049 45.091501)', 4326)".to_string())
     .build()
 }
 

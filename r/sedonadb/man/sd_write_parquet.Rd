@@ -58,7 +58,7 @@ fewer row groups when only a subset of the file is needed for a given query.
 \examples{
 tmp_parquet <- tempfile(fileext = ".parquet")
 
-sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom") |>
+sd_sql("SELECT ST_Point(1, 2, 4326) as geom") |>
   sd_write_parquet(tmp_parquet)
 
 sd_read_parquet(tmp_parquet)

@@ -144,7 +144,7 @@ WHERE
     is_underground = FALSE
     AND height IS NOT NULL
     AND height > 20
-    AND ST_Intersects(geometry, ST_SetSRID(ST_GeomFromText('{nyc_bbox_wkt}'), 4326))
+    AND ST_Intersects(geometry, ST_GeomFromText('{nyc_bbox_wkt}', 4326))
 LIMIT 5;
 """).show()
 ```
