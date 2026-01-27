@@ -112,6 +112,10 @@ impl CollectBuildSideMetrics {
             spill_metrics: SpillMetrics::new(metrics, partition),
         }
     }
+
+    pub fn spill_metrics(&self) -> SpillMetrics {
+        self.spill_metrics.clone()
+    }
 }
 
 impl BuildSideBatchesCollector {
@@ -571,7 +575,7 @@ mod tests {
         let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
         assert!(is_external, "Expected batches to spill to disk");
         assert_eq!(collect_ids(&batches), vec![10, 11, 12]);
-        let spill_metrics = metrics.spill_metrics;
+        let spill_metrics = metrics.spill_metrics();
         assert!(spill_metrics.spill_file_count.value() >= 1);
         assert!(spill_metrics.spilled_rows.value() >= 1);
         Ok(())

@@ -27,7 +27,6 @@ use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
-use datafusion_execution::memory_pool::MemoryReservation;
 use float_next_after::NextAfter;
 use geo::BoundingRect;
 use geo_index::rtree::{
@@ -95,11 +94,6 @@ pub struct SpatialIndex {
 
     /// Shared KNN components (distance metrics and geometry cache) for efficient KNN queries
     pub(crate) knn_components: Option<KnnComponents>,
-
-    /// Memory reservation for tracking the memory usage of the spatial index
-    /// Cleared on `SpatialIndex` drop
-    #[expect(dead_code)]
-    pub(crate) reservation: MemoryReservation,
 }
 
 impl SpatialIndex {
@@ -108,7 +102,6 @@ impl SpatialIndex {
         schema: SchemaRef,
         options: SpatialJoinOptions,
         probe_threads_counter: AtomicUsize,
-        reservation: MemoryReservation,
     ) -> Self {
         let evaluator = create_operand_evaluator(&spatial_predicate, options.clone());
         let refiner = create_refiner(
@@ -133,7 +126,6 @@ impl SpatialIndex {
             visited_build_side: None,
             probe_threads_counter,
             knn_components,
-            reservation,
         }
     }
 
@@ -681,7 +673,6 @@ mod tests {
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;
-    use datafusion_execution::memory_pool::GreedyMemoryPool;
     use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
     use geo_traits::Dimensions;
@@ -692,7 +683,6 @@ mod tests {
 
     #[test]
     fn test_spatial_index_builder_empty() {
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -711,7 +701,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -724,7 +713,6 @@ mod tests {
 
     #[test]
     fn test_spatial_index_builder_add_batch() {
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -750,7 +738,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -779,7 +766,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_with_sample_data() {
         // Create a spatial index with sample geometry data
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -807,7 +793,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -878,7 +863,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_with_different_k_values() {
         // Create spatial index with more data points
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -905,7 +889,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -969,7 +952,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_with_spheroid_distance() {
         // Create spatial index
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -996,7 +978,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1066,7 +1047,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_edge_cases() {
         // Create spatial index
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1093,7 +1073,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1159,7 +1138,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_empty_index() {
         // Create empty spatial index
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1181,7 +1159,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1207,7 +1184,6 @@ mod tests {
     #[test]
     fn test_knn_query_execution_with_tie_breakers() {
         // Create a spatial index with sample geometry data
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1234,7 +1210,6 @@ mod tests {
             options,
             JoinType::Inner,
             1, // probe_threads_count
-            memory_pool.clone(),
             metrics,
         )
         .unwrap();
@@ -1322,7 +1297,6 @@ mod tests {
     #[test]
     fn test_query_knn_with_geometry_distance() {
         // Create a spatial index with sample geometry data
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1350,7 +1324,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1407,7 +1380,6 @@ mod tests {
     fn test_query_knn_with_mixed_geometries() {
         // Create a spatial index with complex geometries where geometry-based
         // distance should differ from centroid-based distance
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1435,7 +1407,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1489,7 +1460,6 @@ mod tests {
     #[test]
     fn test_query_knn_with_tie_breakers_geometry_distance() {
         // Create a spatial index with geometries that have identical distances for tie-breaker testing
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1516,7 +1486,6 @@ mod tests {
             options,
             JoinType::Inner,
             4,
-            memory_pool,
             metrics,
         )
         .unwrap();
@@ -1610,7 +1579,6 @@ mod tests {
     #[test]
     fn test_knn_query_with_empty_geometry() {
         // Create a spatial index with sample geometry data like other tests
-        let memory_pool = Arc::new(GreedyMemoryPool::new(1024 * 1024));
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -1638,7 +1606,6 @@ mod tests {
             options,
             JoinType::Inner,
             1, // probe_threads_count
-            memory_pool.clone(),
             metrics,
         )
         .unwrap();
@@ -1687,7 +1654,6 @@ mod tests {
         build_geoms: &[Option<&str>],
         options: SpatialJoinOptions,
     ) -> Arc<SpatialIndex> {
-        let memory_pool = Arc::new(GreedyMemoryPool::new(100 * 1024 * 1024));
         let metrics = SpatialJoinBuildMetrics::default();
         let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
             Arc::new(Column::new("left", 0)),
@@ -1706,7 +1672,6 @@ mod tests {
             options,
             JoinType::Inner,
             1,
-            memory_pool,
             metrics,
         )
         .unwrap();
