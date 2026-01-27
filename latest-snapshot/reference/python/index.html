@@ -5010,7 +5010,7 @@ the name of the provided function.</p>
 <span class="err">│</span>      <span class="mi">0</span> <span class="err">│</span>
 <span class="err">└────────┘</span>
 
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_SRID(shapely_udf(ST_SetSRID(ST_Point(0, 0), 3857), 2.0)) as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_SRID(shapely_udf(ST_Point(0, 0, 3857), 2.0)) as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌────────┐</span>
 <span class="err">│</span>   <span class="n">col</span>  <span class="err">│</span>
 <span class="err">│</span> <span class="n">uint32</span> <span class="err">│</span>
