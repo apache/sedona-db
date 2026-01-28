@@ -26,7 +26,6 @@ Two approaches are covered:
 1. A GeoPandas-based workflow for simplicity and exploratory use.
 2. A high-performance ADBC-based workflow for large datasets and production use cases.
 
-
 ## Prerequisites
 
 This notebook assumes:
@@ -44,61 +43,71 @@ This notebook assumes:
 If you are running this notebook interactively, you can install the required
 dependencies using:
 
-```bash
+````bash
 pip install geopandas sqlalchemy psycopg2-binary adbc-driver-postgresql
 
 
-> Note:
-> SedonaDB is not currently distributed via PyPI.
-> To run the SedonaDB examples in this notebook, you must install SedonaDB
-> from source or use a development environment where SedonaDB is available.
+## PostGIS Setup
 
+This tutorial assumes a running PostgreSQL instance with PostGIS enabled.
 
-## PostGIS Setup 
+For development and testing, the SedonaDB repository provides a PostGIS
+Docker container that can be started with:
 
-Keep SQL static(do NOT execute).
-
-### Preparing a PostGIS table
-
-```md
-
-The following SQL creates a simple PostGIS table that SedonaDB can read.
-
-```sql
-CREATE TABLE my_places (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100),
-    geom GEOMETRY(Point, 4326)
-);
-
-INSERT INTO my_places (name, geom) VALUES
-    ('New York', ST_SetSRID(ST_MakePoint(-74.006, 40.7128), 4326)),
-    ('Los Angeles', ST_SetSRID(ST_MakePoint(-118.2437, 34.0522), 4326)),
-    ('Chicago', ST_SetSRID(ST_MakePoint(-87.6298, 41.8781), 4326));
-
-## PostGIS → SedonaDB using GeoPandas
-
-```md
-
-This approach reads a PostGIS table into a GeoPandas DataFrame and then converts it into a SedonaDB DataFrame.
+```bash
+docker compose up --detach
 
 
 
 ```python
 import geopandas as gpd
+from shapely.geometry import Point
+from sqlalchemy import create_engine
+
+# Create example GeoDataFrame
+gdf = gpd.GeoDataFrame(
+    {
+        "name": ["New York", "Los Angeles", "Chicago"],
+        "geometry": [
+            Point(-74.006, 40.7128),
+            Point(-118.2437, 34.0522),
+            Point(-87.6298, 41.8781),
+        ],
+    },
+    crs="EPSG:4326",
+)
+
+# Connect to PostGIS (Docker container)
+engine = create_engine(
+    "postgresql://postgres:password@localhost:5432/postgres"
+)
+
+# Write data into PostGIS
+gdf.to_postgis(
+    "my_places",
+    engine,
+    if_exists="replace",
+    index=False,
+)
+
+gdf
+````
+
+## PostGIS → SedonaDB using GeoPandas
+
+This approach reads a PostGIS table into a GeoPandas DataFrame and then converts it into a SedonaDB DataFrame.
+
+```python
+import geopandas as gpd
 from sqlalchemy import create_engine
 import sedona.db
-
 ```
-
 
 ```python
 engine = create_engine(
     "postgresql://<user>:<password>@localhost:5432/<database>"
 )
-
 ```
-
 
 ```python
 gdf = gpd.read_postgis(
@@ -106,12 +115,13 @@ gdf = gpd.read_postgis(
     engine,
     geom_col="geom"
 )
+```
 
+```python
 sd = sedona.db.connect()
 df = sd.create_data_frame(gdf)
 df.show()
 df.schema
-
 ```
 
 ## High-performance PostGIS integration using ADBC
@@ -122,8 +132,6 @@ transfer between databases and analytical engines. This approach is especially u
 By using `adbc_ingest()` and `fetch_arrow()`, this approach avoids row-wise
 iteration and intermediate Pandas DataFrames, making it well suited for
 large datasets and performance-critical pipelines.
-
-
 
 ```python
 import sedona.db
@@ -138,8 +146,6 @@ conn = adbc_driver_postgresql.dbapi.connect(
 ```
 
 ### Writing data from SedonaDB to PostGIS using ADBC
-
-
 
 ```python
 with conn.cursor() as cur:
@@ -160,7 +166,6 @@ with conn.cursor() as cur:
 
 ```
 
-
 ```python
 with conn.cursor() as cur:
     cur.executescript("""
@@ -174,8 +179,6 @@ with conn.cursor() as cur:
 ```
 
 ### Reading data from PostGIS into SedonaDB using ADBC
-
-
 
 ```python
 with conn.cursor() as cur:
@@ -195,14 +198,12 @@ with conn.cursor() as cur:
 
 ```
 
-
 ```python
 df.head(5).show()
 ```
 
 ### Choosing an approach
 
-- Use the **GeoPandas-based approach** for simplicity and exploratory workflows.
-- Use the **ADBC-based approach** for large datasets or production pipelines
+- Use the GeoPandas-based approach for simplicity and exploratory workflows.
+- Use the ADBC-based approach for large datasets or production pipelines
   where performance and memory efficiency are critical.
-
