@@ -51,6 +51,7 @@ nav:
         - CRS Examples: crs-examples.md
         - Delta Lake: delta-lake.md
         - Iceberg: iceberg.md
+        - PostGIS: postgis.md
         - Working with Parquet Files: working-with-parquet-files.md
         - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
       - Contributors Guide: contributors-guide.md
