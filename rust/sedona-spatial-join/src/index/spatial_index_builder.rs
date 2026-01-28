@@ -22,16 +22,15 @@ use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 
 use datafusion_common::{utils::proxy::VecAllocExt, Result};
-use datafusion_execution::memory_pool::{MemoryConsumer, MemoryPool, MemoryReservation};
 use datafusion_expr::JoinType;
 use futures::StreamExt;
 use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
 use parking_lot::Mutex;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::atomic::AtomicUsize;
 
 use crate::{
-    evaluated_batch::EvaluatedBatch,
-    index::{knn_adapter::KnnComponents, spatial_index::SpatialIndex, BuildPartition},
+    evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
+    index::{knn_adapter::KnnComponents, spatial_index::SpatialIndex},
     operand_evaluator::create_operand_evaluator,
     refine::create_refiner,
     spatial_predicate::SpatialPredicate,
@@ -63,8 +62,6 @@ pub struct SpatialIndexBuilder {
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
-    /// Memory reservation for tracking the memory usage of the spatial index
-    reservation: MemoryReservation,
 
     /// Statistics for indexed geometries
     stats: GeoStatistics,
@@ -99,12 +96,8 @@ impl SpatialIndexBuilder {
         options: SpatialJoinOptions,
         join_type: JoinType,
         probe_threads_count: usize,
-        memory_pool: Arc<dyn MemoryPool>,
         metrics: SpatialJoinBuildMetrics,
     ) -> Result<Self> {
-        let consumer = MemoryConsumer::new("SpatialJoinIndex");
-        let reservation = consumer.register(&memory_pool);
-
         Ok(Self {
             schema,
             spatial_predicate,
@@ -113,7 +106,6 @@ impl SpatialIndexBuilder {
             probe_threads_count,
             metrics,
             indexed_batches: Vec::new(),
-            reservation,
             stats: GeoStatistics::empty(),
             memory_used: 0,
         })
@@ -258,7 +250,6 @@ impl SpatialIndexBuilder {
                 self.schema,
                 self.options,
                 AtomicUsize::new(self.probe_threads_count),
-                self.reservation,
             ));
         }
 
@@ -297,6 +288,10 @@ impl SpatialIndexBuilder {
             }
         };
 
+        log::debug!(
+            "Estimated memory used by spatial index: {}",
+            self.memory_used
+        );
         Ok(SpatialIndex {
             schema: self.schema,
             options: self.options,
@@ -309,26 +304,19 @@ impl SpatialIndexBuilder {
             visited_build_side,
             probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
             knn_components: knn_components_opt,
-            reservation: self.reservation,
         })
     }
 
-    pub async fn add_partitions(&mut self, partitions: Vec<BuildPartition>) -> Result<()> {
-        for partition in partitions {
-            self.add_partition(partition).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn add_partition(&mut self, mut partition: BuildPartition) -> Result<()> {
-        let mut stream = partition.build_side_batch_stream;
+    pub async fn add_stream(
+        &mut self,
+        mut stream: SendableEvaluatedBatchStream,
+        geo_statistics: GeoStatistics,
+    ) -> Result<()> {
         while let Some(batch) = stream.next().await {
             let indexed_batch = batch?;
             self.add_batch(indexed_batch)?;
         }
-        self.merge_stats(partition.geo_statistics);
-        let mem_bytes = partition.reservation.free();
-        self.reservation.try_grow(mem_bytes)?;
+        self.merge_stats(geo_statistics);
         Ok(())
     }
 

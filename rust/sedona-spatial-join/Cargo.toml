@@ -48,6 +48,7 @@ futures = { workspace = true }
 pin-project-lite = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+tokio = { workspace = true }
 geo = { workspace = true }
 sedona-geo-generic-alg = { workspace = true }
 geo-traits = { workspace = true, features = ["geo-types"] }

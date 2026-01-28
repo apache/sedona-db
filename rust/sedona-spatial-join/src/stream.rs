@@ -38,8 +38,10 @@ use std::sync::Arc;
 use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
+use crate::index::partitioned_index_provider::PartitionedIndexProvider;
 use crate::index::SpatialIndex;
 use crate::operand_evaluator::create_operand_evaluator;
+use crate::prepare::SpatialJoinComponents;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
     adjust_indices_by_join_type, apply_join_filter_to_indices, build_batch_from_indices,
@@ -52,6 +54,8 @@ use sedona_common::option::SpatialJoinOptions;
 
 /// Stream for producing spatial join result batches.
 pub(crate) struct SpatialJoinStream {
+    /// The partition id of the probe side stream
+    probe_partition_id: usize,
     /// Schema of joined results
     schema: Arc<Schema>,
     /// join filter
@@ -73,13 +77,18 @@ pub(crate) struct SpatialJoinStream {
     options: SpatialJoinOptions,
     /// Target output batch size
     target_output_batch_size: usize,
-    /// Once future for the spatial index
-    once_fut_spatial_index: OnceFut<SpatialIndex>,
-    /// Once async for the spatial index, will be manually disposed by the last finished stream
-    /// to avoid unnecessary memory usage.
-    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
+    /// Once future for the shared partitioned index provider
+    once_fut_spatial_join_components: OnceFut<SpatialJoinComponents>,
+    /// Once async for the provider, disposed by the last finished stream
+    once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
+    /// Cached index provider reference after it becomes available
+    index_provider: Option<Arc<PartitionedIndexProvider>>,
     /// The spatial index
     spatial_index: Option<Arc<SpatialIndex>>,
+    /// Pending future for building or waiting on a partitioned index
+    pending_index_future: Option<BoxFuture<'static, Option<Result<Arc<SpatialIndex>>>>>,
+    /// Total number of regular partitions produced by the provider
+    num_regular_partitions: Option<u32>,
     /// The spatial predicate being evaluated
     spatial_predicate: SpatialPredicate,
 }
@@ -87,6 +96,7 @@ pub(crate) struct SpatialJoinStream {
 impl SpatialJoinStream {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        probe_partition_id: usize,
         schema: Arc<Schema>,
         on: &SpatialPredicate,
         filter: Option<JoinFilter>,
@@ -97,8 +107,8 @@ impl SpatialJoinStream {
         join_metrics: SpatialJoinProbeMetrics,
         options: SpatialJoinOptions,
         target_output_batch_size: usize,
-        once_fut_spatial_index: OnceFut<SpatialIndex>,
-        once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
+        once_fut_spatial_join_components: OnceFut<SpatialJoinComponents>,
+        once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
     ) -> Self {
         let evaluator = create_operand_evaluator(on, options.clone());
         let probe_stream = create_evaluated_probe_stream(
@@ -107,6 +117,7 @@ impl SpatialJoinStream {
             join_metrics.join_time.clone(),
         );
         Self {
+            probe_partition_id,
             schema,
             filter,
             join_type,
@@ -114,12 +125,15 @@ impl SpatialJoinStream {
             column_indices,
             probe_side_ordered,
             join_metrics,
-            state: SpatialJoinStreamState::WaitBuildIndex,
+            state: SpatialJoinStreamState::WaitPrepareSpatialJoinComponents,
             options,
             target_output_batch_size,
-            once_fut_spatial_index,
-            once_async_spatial_index,
+            once_fut_spatial_join_components,
+            once_async_spatial_join_components,
+            index_provider: None,
             spatial_index: None,
+            pending_index_future: None,
+            num_regular_partitions: None,
             spatial_predicate: on.clone(),
         }
     }
@@ -169,6 +183,8 @@ impl SpatialJoinProbeMetrics {
 /// This enumeration represents various states of the nested loop join algorithm.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum SpatialJoinStreamState {
+    /// The initial mode: waiting for the spatial join components to become available
+    WaitPrepareSpatialJoinComponents,
     /// The initial mode: waiting for the spatial index to be built
     WaitBuildIndex,
     /// Indicates that build-side has been collected, and stream is ready for
@@ -193,6 +209,9 @@ impl SpatialJoinStream {
     ) -> Poll<Option<Result<RecordBatch>>> {
         loop {
             return match &mut self.state {
+                SpatialJoinStreamState::WaitPrepareSpatialJoinComponents => {
+                    handle_state!(ready!(self.wait_create_spatial_join_components(cx)))
+                }
                 SpatialJoinStreamState::WaitBuildIndex => {
                     handle_state!(ready!(self.wait_build_index(cx)))
                 }
@@ -213,14 +232,95 @@ impl SpatialJoinStream {
         }
     }
 
+    fn wait_create_spatial_join_components(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
+        if self.index_provider.is_none() {
+            let spatial_join_components =
+                ready!(self.once_fut_spatial_join_components.get_shared(cx))?;
+            let provider = Arc::clone(&spatial_join_components.partitioned_index_provider);
+            self.num_regular_partitions = Some(provider.num_regular_partitions() as u32);
+            self.index_provider = Some(provider);
+        }
+
+        let num_partitions = self
+            .num_regular_partitions
+            .expect("num_regular_partitions should be available");
+        if num_partitions == 0 {
+            // Usually does not happen. The indexed side should have at least 1 partition.
+            self.state = SpatialJoinStreamState::Completed;
+            return Poll::Ready(Ok(StatefulStreamResult::Continue));
+        }
+
+        if num_partitions > 1 {
+            return Poll::Ready(sedona_internal_err!(
+                "Multi-partitioned spatial join is not supported yet"
+            ));
+        }
+
+        self.state = SpatialJoinStreamState::WaitBuildIndex;
+        Poll::Ready(Ok(StatefulStreamResult::Continue))
+    }
+
     fn wait_build_index(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        let index = ready!(self.once_fut_spatial_index.get_shared(cx))?;
-        self.spatial_index = Some(index);
-        self.state = SpatialJoinStreamState::FetchProbeBatch;
-        Poll::Ready(Ok(StatefulStreamResult::Continue))
+        let num_partitions = self
+            .num_regular_partitions
+            .expect("num_regular_partitions should be available");
+        let partition_id = 0;
+        if partition_id >= num_partitions {
+            self.state = SpatialJoinStreamState::Completed;
+            return Poll::Ready(Ok(StatefulStreamResult::Continue));
+        }
+
+        if self.pending_index_future.is_none() {
+            let provider = Arc::clone(
+                self.index_provider
+                    .as_ref()
+                    .expect("Partitioned index provider should be available"),
+            );
+            let future = {
+                log::debug!(
+                    "[Partition {}] Building index for spatial partition {}",
+                    self.probe_partition_id,
+                    partition_id
+                );
+                async move { provider.build_or_wait_for_index(partition_id).await }.boxed()
+            };
+            self.pending_index_future = Some(future);
+        }
+
+        let future = self
+            .pending_index_future
+            .as_mut()
+            .expect("pending future must exist");
+
+        match future.poll_unpin(cx) {
+            Poll::Ready(Some(Ok(index))) => {
+                self.pending_index_future = None;
+                self.spatial_index = Some(index);
+                log::debug!(
+                    "[Partition {}] Start probing spatial partition {}",
+                    self.probe_partition_id,
+                    partition_id
+                );
+                self.state = SpatialJoinStreamState::FetchProbeBatch;
+                Poll::Ready(Ok(StatefulStreamResult::Continue))
+            }
+            Poll::Ready(Some(Err(err))) => {
+                self.pending_index_future = None;
+                Poll::Ready(Err(err))
+            }
+            Poll::Ready(None) => {
+                self.pending_index_future = None;
+                self.state = SpatialJoinStreamState::Completed;
+                Poll::Ready(Ok(StatefulStreamResult::Continue))
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 
     fn fetch_probe_batch(
@@ -318,8 +418,13 @@ impl SpatialJoinStream {
 
             // Drop the once async to avoid holding a long-living reference to the spatial index.
             // The spatial index will be dropped when this stream is dropped.
-            let mut once_async = self.once_async_spatial_index.lock();
+            let mut once_async = self.once_async_spatial_join_components.lock();
             once_async.take();
+
+            if let Some(provider) = self.index_provider.as_ref() {
+                provider.dispose_index(0);
+                assert!(provider.num_loaded_indexes() == 0);
+            }
         }
 
         // Initial setup for processing unmatched build batches
