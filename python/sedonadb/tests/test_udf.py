@@ -122,6 +122,19 @@ def test_shapely_udf(con):
         pd.DataFrame({"col": [3857]}, dtype=np.uint32),
     )
 
+    # Ensure we can collect with >1 batch without hanging
+    con.funcs.table.sd_random_geometry("Point", 20000).to_view("pts", overwrite=True)
+    df = con.sql(
+        "SELECT ST_Area(shapely_udf(ST_Point(0, 0), 2.0)) as col FROM pts"
+    ).to_pandas()
+    assert len(df) == 20000
+
+    # Ensure we can execute with >1 batch without hanging
+    count = con.sql(
+        "SELECT ST_Area(shapely_udf(ST_Point(0, 0), 2.0)) as col FROM pts"
+    ).execute()
+    assert count == 20000
+
 
 def test_py_sedona_value(con):
     @udf.arrow_udf(pa.int64())
