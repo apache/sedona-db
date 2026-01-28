@@ -19,6 +19,7 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_string_view_array, as_struct_array};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
@@ -99,6 +100,7 @@ impl SedonaScalarKernel for STTransform {
         args: &[ColumnarValue],
         _return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let inputs = zip(arg_types, args)
             .map(|(arg_type, arg)| ArgInput::from_arg(arg_type, arg))

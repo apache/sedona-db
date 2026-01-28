@@ -20,6 +20,7 @@ use std::{fmt::Debug, iter::zip, sync::Arc};
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, FieldRef};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
     exec_err, DataFusionError, Result, ScalarValue,
@@ -102,8 +103,16 @@ impl SedonaScalarKernel for ItemCrsKernel {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         num_rows: usize,
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        invoke_handle_item_crs(self.inner.as_ref(), arg_types, args, return_type, num_rows)
+        invoke_handle_item_crs(
+            self.inner.as_ref(),
+            arg_types,
+            args,
+            return_type,
+            num_rows,
+            config_options,
+        )
     }
 
     fn invoke_batch(
@@ -444,6 +453,7 @@ fn invoke_handle_item_crs(
     args: &[ColumnarValue],
     return_type: &SedonaType,
     num_rows: usize,
+    config_options: Option<&ConfigOptions>,
 ) -> Result<ColumnarValue> {
     // Separate the argument types into item and Option<crs>
     // Don't strip the CRSes because we need them to compare with
@@ -485,8 +495,13 @@ fn invoke_handle_item_crs(
         None => return sedona_internal_err!("Expected inner kernel to match types {item_types:?}"),
     };
 
-    let item_result =
-        kernel.invoke_batch_from_args(&item_types, &item_args, return_type, num_rows)?;
+    let item_result = kernel.invoke_batch_from_args(
+        &item_types,
+        &item_args,
+        return_type,
+        num_rows,
+        config_options,
+    )?;
 
     if ArgMatcher::is_geometry_or_geography().match_type(&out_item_type) {
         make_item_crs(&out_item_type, item_result, crs_result, None)

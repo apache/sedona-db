@@ -20,6 +20,7 @@ use arrow_array::{
     make_array, ArrayRef,
 };
 use arrow_schema::{ArrowError, Field};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{plan_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
@@ -101,6 +102,7 @@ impl SedonaScalarKernel for ImportedScalarKernel {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let arg_scalars = args
             .iter()
@@ -560,6 +562,7 @@ impl ExportedScalarKernelImpl {
                     &args,
                     return_type,
                     num_rows as usize,
+                    None,
                 )?;
 
                 // Convert the result to an ArrayRef

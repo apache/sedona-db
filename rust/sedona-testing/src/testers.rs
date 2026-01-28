@@ -27,7 +27,7 @@ use datafusion_expr::{
     ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF,
 };
 use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -240,12 +240,53 @@ impl AggregateUdfTester {
 pub struct ScalarUdfTester {
     udf: ScalarUDF,
     arg_types: Vec<SedonaType>,
+    config_options: Arc<ConfigOptions>,
 }
 
 impl ScalarUdfTester {
     /// Create a new tester
     pub fn new(udf: ScalarUDF, arg_types: Vec<SedonaType>) -> Self {
-        Self { udf, arg_types }
+        let mut config_options = ConfigOptions::default();
+        let sedona_options = SedonaOptions::default();
+        config_options.extensions.insert(sedona_options);
+        Self {
+            udf,
+            arg_types,
+            config_options: Arc::new(config_options),
+        }
+    }
+
+    /// Returns the [`ConfigOptions`] used when invoking the UDF.
+    ///
+    /// This is the same structure DataFusion threads through [`ScalarFunctionArgs`].
+    /// Sedona-specific options are stored in `config_options.extensions`.
+    pub fn config_options(&self) -> &ConfigOptions {
+        &self.config_options
+    }
+
+    /// Returns a mutable reference to the [`ConfigOptions`] used when invoking the UDF.
+    ///
+    /// Use this to tweak DataFusion options or to insert/update Sedona options via
+    /// `config_options.extensions` before calling the tester's `invoke_*` helpers.
+    pub fn config_options_mut(&mut self) -> &mut ConfigOptions {
+        // config_options can only be owned by this tester, so it's safe to get a mutable reference.
+        Arc::get_mut(&mut self.config_options).expect("ConfigOptions is shared")
+    }
+
+    /// Returns the [`SedonaOptions`] stored in `config_options.extensions`, if present.
+    pub fn sedona_options(&self) -> &SedonaOptions {
+        self.config_options
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions does not exist")
+    }
+
+    /// Returns a mutable reference to the [`SedonaOptions`] stored in `config_options.extensions`, if present.
+    pub fn sedona_options_mut(&mut self) -> &mut SedonaOptions {
+        self.config_options_mut()
+            .extensions
+            .get_mut::<SedonaOptions>()
+            .expect("SedonaOptions does not exist")
     }
 
     /// Assert the return type of the function for the argument types used
@@ -610,9 +651,7 @@ impl ScalarUdfTester {
             arg_fields: self.arg_fields(),
             number_rows,
             return_field: return_type.to_storage_field("", true)?.into(),
-            // TODO: Consider piping actual ConfigOptions for more realistic testing
-            // See: https://github.com/apache/sedona-db/issues/248
-            config_options: Arc::new(ConfigOptions::default()),
+            config_options: Arc::clone(&self.config_options),
         };
 
         self.udf.invoke_with_args(args)

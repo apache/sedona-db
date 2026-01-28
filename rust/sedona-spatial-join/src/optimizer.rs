@@ -1176,8 +1176,6 @@ mod tests {
     ) -> Arc<ScalarFunctionExpr> {
         let return_type = udf.return_type(&[]).unwrap();
         let field = Arc::new(arrow::datatypes::Field::new("result", return_type, false));
-        // TODO: Pipe actual ConfigOptions from session instead of using defaults
-        // See: https://github.com/apache/sedona-db/issues/248
         Arc::new(ScalarFunctionExpr::new(
             udf.name(),
             Arc::clone(&udf),
