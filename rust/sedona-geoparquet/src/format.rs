@@ -302,11 +302,18 @@ impl FileFormat for GeoParquetFormat {
     async fn create_writer_physical_plan(
         &self,
         input: Arc<dyn ExecutionPlan>,
-        _state: &dyn Session,
+        session: &dyn Session,
         conf: FileSinkConfig,
         order_requirements: Option<LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        create_geoparquet_writer_physical_plan(input, conf, order_requirements, &self.options)
+        let session_config_options = session.config().options();
+        create_geoparquet_writer_physical_plan(
+            input,
+            conf,
+            order_requirements,
+            &self.options,
+            session_config_options,
+        )
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {

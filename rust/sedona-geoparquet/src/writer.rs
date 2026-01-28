@@ -69,6 +69,7 @@ pub fn create_geoparquet_writer_physical_plan(
     mut conf: FileSinkConfig,
     order_requirements: Option<LexRequirement>,
     options: &TableGeoParquetOptions,
+    session_config_options: &Arc<ConfigOptions>,
 ) -> Result<Arc<dyn ExecutionPlan>> {
     if conf.insert_op != InsertOp::Append {
         return not_impl_err!("Overwrites are not implemented yet for Parquet");
@@ -93,8 +94,11 @@ pub fn create_geoparquet_writer_physical_plan(
         }
         GeoParquetVersion::V1_1 => {
             metadata.version = "1.1.0".to_string();
-            (bbox_projection, bbox_columns) =
-                project_bboxes(&input, options.overwrite_bbox_columns)?;
+            (bbox_projection, bbox_columns) = project_bboxes(
+                &input,
+                options.overwrite_bbox_columns,
+                session_config_options,
+            )?;
             parquet_output_schema = compute_final_schema(&bbox_projection, &input.schema())?;
             output_geometry_column_indices = conf.output_schema.geometry_column_indices()?;
         }
@@ -291,6 +295,7 @@ type ProjectBboxesResult = (
 fn project_bboxes(
     input: &Arc<dyn ExecutionPlan>,
     overwrite_bbox_columns: bool,
+    session_config_options: &Arc<ConfigOptions>,
 ) -> Result<ProjectBboxesResult> {
     let input_schema = input.schema();
     let matcher = ArgMatcher::is_geometry();
@@ -310,14 +315,12 @@ fn project_bboxes(
             column.return_field(&input_schema)?.as_ref(),
         )?) {
             let bbox_field_name = bbox_column_name(f.name());
-            // TODO: Pipe actual ConfigOptions from session instead of using defaults
-            // See: https://github.com/apache/sedona-db/issues/248
             let expr = Arc::new(ScalarFunctionExpr::new(
                 bbox_udf_name,
                 bbox_udf.clone(),
                 vec![column],
                 Arc::new(Field::new("", bbox_type(), true)),
-                Arc::new(ConfigOptions::default()),
+                Arc::clone(session_config_options),
             ));
 
             bbox_exprs.insert(i, (expr, bbox_field_name.clone()));
