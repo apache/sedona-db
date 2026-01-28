@@ -25,6 +25,7 @@ use arrow_array::{
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
     cast::{as_int64_array, as_string_view_array},
     error::Result,
@@ -144,6 +145,7 @@ impl SedonaScalarKernel for STSetSRID {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let item_crs_matcher = ArgMatcher::is_item_crs();
         if item_crs_matcher.match_type(return_type) {
@@ -200,6 +202,7 @@ impl SedonaScalarKernel for STSetCRS {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let item_crs_matcher = ArgMatcher::is_item_crs();
         if item_crs_matcher.match_type(return_type) {
