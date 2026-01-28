@@ -261,7 +261,7 @@ def test_dataframe_to_arrow(con):
     # ...but not otherwise (yet)
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match="Requested schema != DataFrame schema not yet supported",
+        match="Requested schema != actual schema not yet supported",
     ):
         df.to_arrow_table(schema=pa.schema({}))
 
