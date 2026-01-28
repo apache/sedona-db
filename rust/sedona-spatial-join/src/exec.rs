@@ -36,7 +36,7 @@ use parking_lot::Mutex;
 use sedona_common::SpatialJoinOptions;
 
 use crate::{
-    prepare::{prepare_spatial_join_components, SpatialJoinComponents},
+    prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
     utils::{
@@ -481,16 +481,16 @@ impl ExecutionPlan for SpatialJoinExec {
 
                             let probe_thread_count =
                                 self.right.output_partitioning().partition_count();
-                            Ok(prepare_spatial_join_components(
+                            let spatial_join_components_builder = SpatialJoinComponentsBuilder::new(
                                 Arc::clone(&context),
                                 build_side.schema(),
-                                build_streams,
                                 self.on.clone(),
                                 self.join_type,
                                 probe_thread_count,
                                 self.metrics.clone(),
                                 self.seed,
-                            ))
+                            );
+                            Ok(spatial_join_components_builder.build(build_streams))
                         })?
                 };
 
@@ -574,16 +574,16 @@ impl SpatialJoinExec {
                     }
 
                     let probe_thread_count = probe_plan.output_partitioning().partition_count();
-                    Ok(prepare_spatial_join_components(
+                    let spatial_join_components_builder = SpatialJoinComponentsBuilder::new(
                         Arc::clone(&context),
                         build_side.schema(),
-                        build_streams,
                         self.on.clone(),
                         self.join_type,
                         probe_thread_count,
                         self.metrics.clone(),
                         self.seed,
-                    ))
+                    );
+                    Ok(spatial_join_components_builder.build(build_streams))
                 })?
         };
 

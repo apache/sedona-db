@@ -33,6 +33,16 @@ pub(crate) enum CellSetError {
 /// An asynchronous cell that can be set at most once before either being
 /// disposed or read by any number of waiters.
 ///
+/// This is used as a lightweight one-shot coordination primitive in the spatial
+/// join implementation. For example, `PartitionedIndexProvider` keeps one
+/// `DisposableAsyncCell` per regular partition to publish either a successfully
+/// built `SpatialIndex` (or the build error) exactly once. Concurrent
+/// `SpatialJoinStream`s racing to probe the same partition can then await the
+/// same shared result instead of building duplicate indexes.
+///
+/// When an index is no longer needed (e.g. the last stream finishes a
+/// partition), the cell can be disposed to free resources.
+///
 /// Awaiters calling [`DisposableAsyncCell::get`] will park until a value is set
 /// or the cell is disposed. Once disposed, `get` returns `None` and `set`
 /// returns [`CellSetError::Disposed`].

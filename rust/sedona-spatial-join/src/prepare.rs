@@ -33,9 +33,10 @@ use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::{
     index::{
-        memory_plan::{compute_memory_plan, PartitionMemorySummary},
+        memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
         partitioned_index_provider::PartitionedIndexProvider,
-        BuildSideBatchesCollector, CollectBuildSideMetrics, SpatialJoinBuildMetrics,
+        BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
+        SpatialJoinBuildMetrics,
     },
     partitioning::{
         kdb::KDBPartitioner,
@@ -50,122 +51,226 @@ pub(crate) struct SpatialJoinComponents {
     pub partitioned_index_provider: Arc<PartitionedIndexProvider>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn prepare_spatial_join_components(
+/// Builder for constructing `SpatialJoinComponents` from build-side streams.
+///
+/// Calling `build(...)` performs the full preparation flow:
+/// - collect (and spill if needed) build-side batches,
+/// - compute memory plan and pick single- or multi-partition mode,
+/// - repartition the build side into spatial partitions in multi-partition mode,
+/// - create the appropriate `PartitionedIndexProvider` for creating spatial indexes.
+pub(crate) struct SpatialJoinComponentsBuilder {
     context: Arc<TaskContext>,
     build_schema: SchemaRef,
-    build_streams: Vec<SendableRecordBatchStream>,
     spatial_predicate: SpatialPredicate,
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
     seed: u64,
-) -> Result<SpatialJoinComponents> {
-    let session_config = context.session_config();
-    let target_batch_size = session_config.batch_size();
-    let sedona_options = session_config
-        .options()
-        .extensions
-        .get::<SedonaOptions>()
-        .cloned()
-        .unwrap_or_default();
-    let concurrent = sedona_options.spatial_join.concurrent_build_side_collection;
-    let spilled_batch_in_memory_size_threshold = if sedona_options
-        .spatial_join
-        .spilled_batch_in_memory_size_threshold
-        == 0
-    {
-        None
-    } else {
-        Some(
-            sedona_options
-                .spatial_join
-                .spilled_batch_in_memory_size_threshold,
-        )
-    };
-    let spill_compression = session_config.spill_compression();
-    let memory_pool = context.memory_pool();
-    let num_partitions = build_streams.len();
-    if num_partitions == 0 {
-        log::debug!("Build side has no data. Creating empty spatial index.");
-        let partitioned_index_provider = PartitionedIndexProvider::new_empty(
+    sedona_options: SedonaOptions,
+}
+
+impl SpatialJoinComponentsBuilder {
+    /// Create a new builder capturing the execution context and configuration
+    /// required to produce `SpatialJoinComponents` from build-side streams.
+    pub fn new(
+        context: Arc<TaskContext>,
+        build_schema: SchemaRef,
+        spatial_predicate: SpatialPredicate,
+        join_type: JoinType,
+        probe_threads_count: usize,
+        metrics: ExecutionPlanMetricsSet,
+        seed: u64,
+    ) -> Self {
+        let session_config = context.session_config();
+        let sedona_options = session_config
+            .options()
+            .extensions
+            .get::<SedonaOptions>()
+            .cloned()
+            .unwrap_or_default();
+        Self {
+            context,
             build_schema,
             spatial_predicate,
-            sedona_options.spatial_join,
             join_type,
             probe_threads_count,
-            SpatialJoinBuildMetrics::new(0, &metrics),
-        );
-        return Ok(SpatialJoinComponents {
-            partitioned_index_provider: Arc::new(partitioned_index_provider),
-        });
+            metrics,
+            seed,
+            sedona_options,
+        }
     }
 
-    let runtime_env = context.runtime_env();
-    let collector = BuildSideBatchesCollector::new(
-        spatial_predicate.clone(),
-        sedona_options.spatial_join.clone(),
-        Arc::clone(&runtime_env),
-        spill_compression,
-    );
-    let mut collect_metrics_vec = Vec::with_capacity(num_partitions);
-    let mut reservations = Vec::with_capacity(num_partitions);
-    for k in 0..num_partitions {
-        let consumer =
-            MemoryConsumer::new(format!("SpatialJoinCollectBuildSide[{k}]")).with_can_spill(true);
-        let reservation = consumer.register(memory_pool);
-        reservations.push(reservation);
-        collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &metrics));
+    /// Prepare and return `SpatialJoinComponents` for the given build-side
+    /// streams. This drives the end-to-end preparation flow and returns a
+    /// ready-to-use `SpatialJoinComponents` for the spatial join operator.
+    pub async fn build(
+        mut self,
+        build_streams: Vec<SendableRecordBatchStream>,
+    ) -> Result<SpatialJoinComponents> {
+        let num_partitions = build_streams.len();
+        if num_partitions == 0 {
+            log::debug!("Build side has no data. Creating empty spatial index.");
+            let partitioned_index_provider = PartitionedIndexProvider::new_empty(
+                self.build_schema,
+                self.spatial_predicate,
+                self.sedona_options.spatial_join,
+                self.join_type,
+                self.probe_threads_count,
+                SpatialJoinBuildMetrics::new(0, &self.metrics),
+            );
+            return Ok(SpatialJoinComponents {
+                partitioned_index_provider: Arc::new(partitioned_index_provider),
+            });
+        }
+
+        let mut rng = Rng::with_seed(self.seed);
+        let mut build_partitions = self
+            .collect_build_partitions(build_streams, rng.u64(0..0xFFFF))
+            .await?;
+
+        // Determine the number of spatial partitions based on the memory reserved and the estimated amount of
+        // memory required for loading the entire build side into a spatial index
+        let memory_plan =
+            compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
+        log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
+        let num_partitions = match self
+            .sedona_options
+            .spatial_join
+            .debug
+            .num_spatial_partitions
+        {
+            NumSpatialPartitionsConfig::Auto => memory_plan.num_partitions,
+            NumSpatialPartitionsConfig::Fixed(n) => {
+                log::debug!("Override number of spatial partitions to {}", n);
+                n
+            }
+        };
+
+        if num_partitions == 1 {
+            log::debug!("Running single-partitioned in-memory spatial join");
+            let partitioned_index_provider = PartitionedIndexProvider::new_single_partition(
+                self.build_schema,
+                self.spatial_predicate,
+                self.sedona_options.spatial_join,
+                self.join_type,
+                self.probe_threads_count,
+                build_partitions,
+                SpatialJoinBuildMetrics::new(0, &self.metrics),
+            );
+            Ok(SpatialJoinComponents {
+                partitioned_index_provider: Arc::new(partitioned_index_provider),
+            })
+        } else {
+            // Collect all memory reservations grown during build side collection
+            let mut reservations = Vec::with_capacity(build_partitions.len());
+            for partition in &mut build_partitions {
+                reservations.push(partition.reservation.take());
+            }
+
+            // Partition the build side into multiple spatial partitions, each partition can be fully
+            // loaded into an in-memory spatial index
+            let build_partitioner = self.build_spatial_partitioner(
+                num_partitions,
+                &mut build_partitions,
+                rng.u64(0..0xFFFF),
+            )?;
+            let partitioned_spill_files_vec = self
+                .repartition_build_side(build_partitions, build_partitioner, &memory_plan)
+                .await?;
+
+            let merged_spilled_partitions = merge_spilled_partitions(partitioned_spill_files_vec)?;
+            log::debug!(
+                "Build side spatial partitions:\n{}",
+                merged_spilled_partitions.debug_str()
+            );
+
+            // Sanity check: Multi and None partitions must be empty. All the geometries in the build side
+            // should fall into regular partitions
+            for partition in [SpatialPartition::None, SpatialPartition::Multi] {
+                let spilled_partition = merged_spilled_partitions.spilled_partition(partition)?;
+                if !spilled_partition.spill_files().is_empty() {
+                    return sedona_internal_err!(
+                        "Build side spatial partitions {:?} should be empty",
+                        partition
+                    );
+                }
+            }
+
+            let partitioned_index_provider = PartitionedIndexProvider::new_multi_partition(
+                self.build_schema,
+                self.spatial_predicate,
+                self.sedona_options.spatial_join,
+                self.join_type,
+                self.probe_threads_count,
+                merged_spilled_partitions,
+                SpatialJoinBuildMetrics::new(0, &self.metrics),
+                reservations,
+            );
+
+            Ok(SpatialJoinComponents {
+                partitioned_index_provider: Arc::new(partitioned_index_provider),
+            })
+        }
     }
 
-    let mut rng = Rng::with_seed(seed);
-    let mut build_partitions = collector
-        .collect_all(
-            build_streams,
-            reservations,
-            collect_metrics_vec.clone(),
-            concurrent,
-            rng.u64(0..0xFFFF),
-        )
-        .await?;
-    let memory_plan =
-        compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
-    log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
-    let num_partitions = match sedona_options.spatial_join.debug.num_spatial_partitions {
-        NumSpatialPartitionsConfig::Auto => memory_plan.num_partitions,
-        NumSpatialPartitionsConfig::Fixed(n) => {
-            log::debug!("Override number of spatial partitions to {}", n);
-            n
-        }
-    };
-    let memory_for_intermittent_usage = match sedona_options
-        .spatial_join
-        .debug
-        .memory_for_intermittent_usage
-    {
-        Some(value) => {
-            log::debug!("Override memory for intermittent usage to {}", value);
-            value
-        }
-        None => memory_plan.memory_for_intermittent_usage,
-    };
+    /// Collect build-side batches from the provided streams and return a
+    /// vector of `BuildPartition` entries representing the collected data.
+    /// The collector may spill to disk according to the configured options.
+    async fn collect_build_partitions(
+        &mut self,
+        build_streams: Vec<SendableRecordBatchStream>,
+        seed: u64,
+    ) -> Result<Vec<BuildPartition>> {
+        let runtime_env = self.context.runtime_env();
+        let session_config = self.context.session_config();
+        let spill_compression = session_config.spill_compression();
 
-    if num_partitions == 1 {
-        log::debug!("Running single-partitioned in-memory spatial join");
-        let partitioned_index_provider = PartitionedIndexProvider::new_single_partition(
-            build_schema,
-            spatial_predicate,
-            sedona_options.spatial_join,
-            join_type,
-            probe_threads_count,
-            build_partitions,
-            SpatialJoinBuildMetrics::new(0, &metrics),
+        let num_partitions = build_streams.len();
+        let mut collect_metrics_vec = Vec::with_capacity(num_partitions);
+        let mut reservations = Vec::with_capacity(num_partitions);
+        let memory_pool = self.context.memory_pool();
+        for k in 0..num_partitions {
+            let consumer = MemoryConsumer::new(format!("SpatialJoinCollectBuildSide[{k}]"))
+                .with_can_spill(true);
+            let reservation = consumer.register(memory_pool);
+            reservations.push(reservation);
+            collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
+        }
+
+        let collector = BuildSideBatchesCollector::new(
+            self.spatial_predicate.clone(),
+            self.sedona_options.spatial_join.clone(),
+            Arc::clone(&runtime_env),
+            spill_compression,
         );
-        Ok(SpatialJoinComponents {
-            partitioned_index_provider: Arc::new(partitioned_index_provider),
-        })
-    } else {
-        if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(..)) {
+        let build_partitions = collector
+            .collect_all(
+                build_streams,
+                reservations,
+                collect_metrics_vec.clone(),
+                self.sedona_options
+                    .spatial_join
+                    .concurrent_build_side_collection,
+                seed,
+            )
+            .await?;
+
+        Ok(build_partitions)
+    }
+
+    /// Construct a `SpatialPartitioner` (e.g. KDB) from collected samples so
+    /// the build and probe sides can be partitioned spatially across
+    /// `num_partitions`.
+    fn build_spatial_partitioner(
+        &self,
+        num_partitions: usize,
+        build_partitions: &mut Vec<BuildPartition>,
+        seed: u64,
+    ) -> Result<Arc<dyn SpatialPartitioner>> {
+        if matches!(
+            self.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(..)
+        ) {
             return sedona_internal_err!("Partitioned KNN join is not supported yet");
         }
 
@@ -175,7 +280,8 @@ pub(crate) async fn prepare_spatial_join_components(
             // The KDB partitioner is built using the collected bounding box samples.
             let mut bbox_samples = BoundingBoxSamples::empty();
             let mut geo_stats = GeoStatistics::empty();
-            for partition in &mut build_partitions {
+            let mut rng = Rng::with_seed(seed);
+            for partition in build_partitions {
                 let samples = mem::take(&mut partition.bbox_samples);
                 bbox_samples = bbox_samples.combine(samples, &mut rng);
                 geo_stats.merge(&partition.geo_statistics);
@@ -207,18 +313,56 @@ pub(crate) async fn prepare_spatial_join_components(
             Arc::new(kdb_partitioner)
         };
 
-        let num_partitions = build_partitioner.num_regular_partitions();
-        log::debug!("Actual number of spatial partitions: {}", num_partitions);
+        Ok(build_partitioner)
+    }
 
+    /// Repartition the collected build-side partitions using the provided
+    /// `SpatialPartitioner`. Returns the spilled partitions for each spatial partition.
+    async fn repartition_build_side(
+        &self,
+        build_partitions: Vec<BuildPartition>,
+        build_partitioner: Arc<dyn SpatialPartitioner>,
+        memory_plan: &MemoryPlan,
+    ) -> Result<Vec<SpilledPartitions>> {
         // Spawn each task for each build partition to repartition the data using the spatial partitioner for
         // the build/indexed side
+        let runtime_env = self.context.runtime_env();
+        let session_config = self.context.session_config();
+        let target_batch_size = session_config.batch_size();
+        let spill_compression = session_config.spill_compression();
+        let spilled_batch_in_memory_size_threshold = if self
+            .sedona_options
+            .spatial_join
+            .spilled_batch_in_memory_size_threshold
+            == 0
+        {
+            None
+        } else {
+            Some(
+                self.sedona_options
+                    .spatial_join
+                    .spilled_batch_in_memory_size_threshold,
+            )
+        };
+
+        let memory_for_intermittent_usage = match self
+            .sedona_options
+            .spatial_join
+            .debug
+            .memory_for_intermittent_usage
+        {
+            Some(value) => {
+                log::debug!("Override memory for intermittent usage to {}", value);
+                value
+            }
+            None => memory_plan.memory_for_intermittent_usage,
+        };
+
         let mut join_set = JoinSet::new();
         let buffer_bytes_threshold = memory_for_intermittent_usage / build_partitions.len();
-        let mut reservations = Vec::with_capacity(build_partitions.len());
-        for (k, partition) in build_partitions.into_iter().enumerate() {
+        for partition in build_partitions {
             let stream = partition.build_side_batch_stream;
-            let reservation = partition.reservation;
-            let metrics = &collect_metrics_vec[k];
+            let metrics = &partition.metrics;
             let spill_metrics = metrics.spill_metrics();
             let runtime_env = Arc::clone(&runtime_env);
             let partitioner = Arc::clone(&build_partitioner);
@@ -238,44 +382,11 @@ pub(crate) async fn prepare_spatial_join_components(
                 .await;
                 partitioned_spill_files
             });
-            reservations.push(reservation);
         }
 
         let results = join_set.join_all().await;
         let partitioned_spill_files_vec = results.into_iter().collect::<Result<Vec<_>>>()?;
-
-        let merged_spilled_partitions = merge_spilled_partitions(partitioned_spill_files_vec)?;
-        log::debug!(
-            "Build side spatial partitions:\n{}",
-            merged_spilled_partitions.debug_str()
-        );
-
-        // Sanity check: Multi and None partitions must be empty. All the geometries in the build side
-        // should fall into regular partitions
-        for partition in [SpatialPartition::None, SpatialPartition::Multi] {
-            let spilled_partition = merged_spilled_partitions.spilled_partition(partition)?;
-            if !spilled_partition.spill_files().is_empty() {
-                return sedona_internal_err!(
-                    "Build side spatial partitions {:?} should be empty",
-                    partition
-                );
-            }
-        }
-
-        let partitioned_index_provider = PartitionedIndexProvider::new_multi_partition(
-            build_schema,
-            spatial_predicate,
-            sedona_options.spatial_join,
-            join_type,
-            probe_threads_count,
-            merged_spilled_partitions,
-            SpatialJoinBuildMetrics::new(0, &metrics),
-            reservations,
-        );
-
-        Ok(SpatialJoinComponents {
-            partitioned_index_provider: Arc::new(partitioned_index_provider),
-        })
+        Ok(partitioned_spill_files_vec)
     }
 }
 

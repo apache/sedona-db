@@ -305,7 +305,7 @@ impl PartitionedIndexProvider {
         // Spawn tasks to load indexed batches from spilled files concurrently
         let (spill_files, geo_statistics, _) = spilled_partition.into_inner();
         let mut join_set: JoinSet<Result<(), DataFusionError>> = JoinSet::new();
-        let (tx, mut rx) = mpsc::channel(self.probe_threads_count);
+        let (tx, mut rx) = mpsc::channel(spill_files.len() * 2 + 1);
         for spill_file in spill_files {
             let tx = tx.clone();
             join_set.spawn(async move {
@@ -364,15 +364,18 @@ async fn get_index_from_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evaluated_batch::{
-        evaluated_batch_stream::{
-            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
-        },
-        EvaluatedBatch,
-    };
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
+    use crate::{
+        evaluated_batch::{
+            evaluated_batch_stream::{
+                in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
+            },
+            EvaluatedBatch,
+        },
+        index::CollectBuildSideMetrics,
+    };
     use arrow_array::{ArrayRef, BinaryArray, Int32Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema, SchemaRef};
     use datafusion::config::SpillCompression;
@@ -471,6 +474,7 @@ mod tests {
             bbox_samples: BoundingBoxSamples::empty(),
             estimated_spatial_index_memory_usage: estimated_usage,
             reservation: new_reservation(memory_pool),
+            metrics: CollectBuildSideMetrics::new(0, &ExecutionPlanMetricsSet::new()),
         })
     }
 
