@@ -130,13 +130,7 @@ pub(crate) async fn prepare_spatial_join_components(
         .await?;
     let memory_plan =
         compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
-    let mut memory_plan_str = String::new();
-    if memory_plan.debug_print(&mut memory_plan_str).is_ok() {
-        log::debug!(
-            "Computed memory plan for spatial join:\n{}",
-            memory_plan_str
-        );
-    }
+    log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
     let num_partitions = match sedona_options.spatial_join.debug.num_spatial_partitions {
         NumSpatialPartitionsConfig::Auto => memory_plan.num_partitions,
         NumSpatialPartitionsConfig::Fixed(n) => {
@@ -171,6 +165,10 @@ pub(crate) async fn prepare_spatial_join_components(
             partitioned_index_provider: Arc::new(partitioned_index_provider),
         })
     } else {
+        if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(..)) {
+            return sedona_internal_err!("Partitioned KNN join is not supported yet");
+        }
+
         let build_partitioner: Arc<dyn SpatialPartitioner> = {
             // Use spatial partitioners to partition the build side and the probe side, this will
             // reduce the amount of work needed for probing each partitioned index.
@@ -183,15 +181,7 @@ pub(crate) async fn prepare_spatial_join_components(
                 geo_stats.merge(&partition.geo_statistics);
             }
 
-            let extent = geo_stats
-                .bbox()
-                .cloned()
-                .unwrap_or(BoundingBox::xy((0, 0), (0, 0)));
-            let extent = if extent.is_empty() {
-                BoundingBox::xy((0, 0), (0, 0))
-            } else {
-                extent
-            };
+            let extent = geo_stats.bbox().cloned().unwrap_or(BoundingBox::empty());
             let mut samples = bbox_samples.take_samples();
             let max_items_per_node = 1.max(samples.len() / num_partitions);
             let max_levels = num_partitions;
@@ -209,10 +199,10 @@ pub(crate) async fn prepare_spatial_join_components(
                 "Built KDB spatial partitioner with {} partitions",
                 num_partitions
             );
-            let mut kdb_dbg_str = String::new();
-            if kdb_partitioner.debug_print(&mut kdb_dbg_str).is_ok() {
-                log::debug!("KDB partitioner debug info:\n{}", kdb_dbg_str);
-            }
+            log::debug!(
+                "KDB partitioner debug info:\n{}",
+                kdb_partitioner.debug_str()
+            );
 
             Arc::new(kdb_partitioner)
         };
@@ -252,16 +242,13 @@ pub(crate) async fn prepare_spatial_join_components(
         }
 
         let results = join_set.join_all().await;
-        let mut partitioned_spill_files_vec = Vec::with_capacity(results.len());
-        for result in results {
-            partitioned_spill_files_vec.push(result?);
-        }
+        let partitioned_spill_files_vec = results.into_iter().collect::<Result<Vec<_>>>()?;
 
         let merged_spilled_partitions = merge_spilled_partitions(partitioned_spill_files_vec)?;
-        let mut dbg_str = String::new();
-        if merged_spilled_partitions.debug_print(&mut dbg_str).is_ok() {
-            log::debug!("Build side spatial partitions:\n{}", dbg_str);
-        }
+        log::debug!(
+            "Build side spatial partitions:\n{}",
+            merged_spilled_partitions.debug_str()
+        );
 
         // Sanity check: Multi and None partitions must be empty. All the geometries in the build side
         // should fall into regular partitions

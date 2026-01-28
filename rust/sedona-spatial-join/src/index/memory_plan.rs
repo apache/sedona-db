@@ -67,32 +67,6 @@ pub(crate) struct MemoryPlan {
     pub num_partitions: usize,
 }
 
-impl MemoryPlan {
-    /// Write debug info for this memory plan
-    pub fn debug_print(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        writeln!(f, "Memory Plan:")?;
-        writeln!(f, "  Num rows: {}", self.num_rows)?;
-        writeln!(f, "  Reserved memory: {} bytes", self.reserved_memory)?;
-        writeln!(
-            f,
-            "  Estimated index memory usage: {} bytes",
-            self.estimated_index_memory_usage
-        )?;
-        writeln!(
-            f,
-            "  Memory for spatial index: {} bytes",
-            self.memory_for_spatial_index
-        )?;
-        writeln!(
-            f,
-            "  Memory for intermittent usage: {} bytes",
-            self.memory_for_intermittent_usage
-        )?;
-        writeln!(f, "  Num partitions: {}", self.num_partitions)?;
-        Ok(())
-    }
-}
-
 /// Compute the memory plan for running spatial join based on the memory summaries of
 /// build side partitions.
 pub(crate) fn compute_memory_plan<I>(partition_summaries: I) -> Result<MemoryPlan>

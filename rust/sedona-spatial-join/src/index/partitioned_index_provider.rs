@@ -237,7 +237,7 @@ impl PartitionedIndexProvider {
         }
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub async fn wait_for_index(&self, partition_id: u32) -> Option<Result<Arc<SpatialIndex>>> {
         let cell = match self.index_cells.get(partition_id as usize) {
             Some(cell) => cell,
@@ -305,7 +305,7 @@ impl PartitionedIndexProvider {
         // Spawn tasks to load indexed batches from spilled files concurrently
         let (spill_files, geo_statistics, _) = spilled_partition.into_inner();
         let mut join_set: JoinSet<Result<(), DataFusionError>> = JoinSet::new();
-        let (tx, mut rx) = mpsc::channel(spill_files.len() * 2 + 1);
+        let (tx, mut rx) = mpsc::channel(self.probe_threads_count);
         for spill_file in spill_files {
             let tx = tx.clone();
             join_set.spawn(async move {

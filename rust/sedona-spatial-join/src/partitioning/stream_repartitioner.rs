@@ -280,6 +280,13 @@ impl SpilledPartitions {
         }
         Ok(())
     }
+
+    /// Return debug info for this spilled partitions as a string.
+    pub fn debug_str(&self) -> String {
+        let mut output = String::new();
+        let _ = self.debug_print(&mut output);
+        output
+    }
 }
 
 /// Incremental (stateful) repartitioner for an [`EvaluatedBatch`] stream.
