@@ -191,7 +191,7 @@ impl OptimizerRule for SpatialJoinOptimizer {
 
 /// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
-pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
+fn is_spatial_predicate(expr: &Expr) -> bool {
     fn is_distance_expr(expr: &Expr) -> bool {
         let Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) = expr else {
             return false;
@@ -360,7 +360,7 @@ impl SpatialJoinOptimizer {
 
                 // Create SpatialJoinExec without projection first
                 // Use try_new_with_options to mark this as converted from HashJoin
-                let spatial_join = Arc::new(SpatialJoinExec::try_new_with_options(
+                let spatial_join = Arc::new(SpatialJoinExec::try_new_from_hash_join(
                     hash_join.left().clone(),
                     hash_join.right().clone(),
                     spatial_predicate,

@@ -17,7 +17,7 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{project_schema, JoinSide, Result};
+use datafusion_common::{project_schema, DataFusionError, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{JoinType, Operator};
 use datafusion_physical_expr::{
@@ -83,15 +83,19 @@ fn extract_equality_conditions(
 /// We determine which execution plan corresponds to probe/build by analyzing the column indices
 /// in the context of the overall join schema structure.
 fn determine_knn_build_probe_plans<'a>(
-    _knn_pred: &KNNPredicate,
+    knn_pred: &KNNPredicate,
     left_plan: &'a Arc<dyn ExecutionPlan>,
     right_plan: &'a Arc<dyn ExecutionPlan>,
     _join_schema: &SchemaRef,
 ) -> Result<BuildProbePlans<'a>> {
-    // For SpatialJoinExec, `left` is always build and `right` is always probe.
-    // The KNNPredicate.probe_side is used for expression interpretation, not for
-    // swapping execution plan roles.
-    Ok((left_plan, right_plan))
+    // Use the probe_side information from the optimizer to determine build/probe assignment
+    match knn_pred.probe_side {
+        JoinSide::Left => Ok((right_plan, left_plan)),
+        JoinSide::Right => Ok((left_plan, right_plan)),
+        JoinSide::None => Err(DataFusionError::Internal(
+            "KNN join requires explicit probe_side designation".to_string(),
+        )),
+    }
 }
 
 /// Physical execution plan for performing spatial joins between two tables. It uses a spatial
@@ -149,14 +153,14 @@ impl SpatialJoinExec {
         projection: Option<Vec<usize>>,
         options: &SpatialJoinOptions,
     ) -> Result<Self> {
-        Self::try_new_with_options(
-            left, right, on, filter, join_type, projection, options, false,
-        )
+        let seed = options
+            .debug
+            .random_seed
+            .unwrap_or(fastrand::u64(0..0xFFFF));
+        Self::try_new_internal(left, right, on, filter, join_type, projection, false, seed)
     }
 
-    /// Create a new SpatialJoinExec with additional options
-    #[allow(clippy::too_many_arguments)]
-    pub fn try_new_with_options(
+    pub fn try_new_from_hash_join(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
         on: SpatialPredicate,
@@ -165,6 +169,34 @@ impl SpatialJoinExec {
         projection: Option<Vec<usize>>,
         options: &SpatialJoinOptions,
         converted_from_hash_join: bool,
+    ) -> Result<Self> {
+        let seed = options
+            .debug
+            .random_seed
+            .unwrap_or(fastrand::u64(0..0xFFFF));
+        Self::try_new_internal(
+            left,
+            right,
+            on,
+            filter,
+            join_type,
+            projection,
+            converted_from_hash_join,
+            seed,
+        )
+    }
+
+    /// Create a new SpatialJoinExec with additional options
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new_internal(
+        left: Arc<dyn ExecutionPlan>,
+        right: Arc<dyn ExecutionPlan>,
+        on: SpatialPredicate,
+        filter: Option<JoinFilter>,
+        join_type: &JoinType,
+        projection: Option<Vec<usize>>,
+        converted_from_hash_join: bool,
+        seed: u64,
     ) -> Result<Self> {
         let left_schema = left.schema();
         let right_schema = right.schema();
@@ -182,11 +214,6 @@ impl SpatialJoinExec {
             filter.as_ref(),
             converted_from_hash_join,
         )?;
-
-        let seed = options
-            .debug
-            .random_seed
-            .unwrap_or(fastrand::u64(0..0xFFFF));
 
         Ok(SpatialJoinExec {
             left,
@@ -416,21 +443,17 @@ impl ExecutionPlan for SpatialJoinExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(SpatialJoinExec {
-            left: children[0].clone(),
-            right: children[1].clone(),
-            on: self.on.clone(),
-            filter: self.filter.clone(),
-            join_type: self.join_type,
-            join_schema: self.join_schema.clone(),
-            column_indices: self.column_indices.clone(),
-            projection: self.projection.clone(),
-            metrics: Default::default(),
-            cache: self.cache.clone(),
-            once_async_spatial_index: Arc::new(Mutex::new(None)),
-            converted_from_hash_join: self.converted_from_hash_join,
-            seed: self.seed,
-        }))
+        let new_exec = SpatialJoinExec::try_new_internal(
+            Arc::clone(&children[0]),
+            Arc::clone(&children[1]),
+            self.on.clone(),
+            self.filter.clone(),
+            &self.join_type,
+            self.projection.clone(),
+            self.converted_from_hash_join,
+            self.seed,
+        )?;
+        Ok(Arc::new(new_exec))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -643,6 +666,8 @@ mod tests {
         SpatialLibrary,
     };
 
+    use crate::register_spatial_join_optimizer;
+
     use super::*;
 
     type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
@@ -747,6 +772,9 @@ mod tests {
             // (Join(filter)->SpatialJoinExec). Intentionally avoid physical plan rewrites.
             state_builder = crate::register_spatial_join_logical_optimizer(state_builder);
             state_builder = crate::register_spatial_join_planner(state_builder);
+
+            // state_builder = register_spatial_join_optimizer(state_builder);
+
             let opts = session_config
                 .options_mut()
                 .extensions
@@ -1470,6 +1498,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_knn_join_correctness() -> Result<()> {
+        env_logger::init();
+
         // Generate slightly larger data
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;

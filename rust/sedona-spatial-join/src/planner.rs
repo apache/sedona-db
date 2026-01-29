@@ -33,12 +33,10 @@ use datafusion_expr::logical_plan::{
     Extension, Join as LogicalJoin, UserDefinedLogicalNode, UserDefinedLogicalNodeCore,
 };
 use datafusion_expr::{BinaryExpr, Expr, JoinConstraint, JoinType, LogicalPlan, Operator};
-use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
 
 use crate::exec::SpatialJoinExec;
 use crate::optimizer::{is_spatial_predicate_supported, transform_join_filter};
-use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 
 pub struct SedonaSpatialQueryPlanner;
@@ -382,30 +380,8 @@ impl ExtensionPlanner for SpatialJoinPlanner {
 
                 // If the build side was previously coerced to a single partition by other rules,
                 // drop that wrapper for SpatialJoinExec.
-                let left = if let Some(coalesce_partitions) =
-                    nlj.left().as_any().downcast_ref::<CoalescePartitionsExec>()
-                {
-                    coalesce_partitions.input().clone()
-                } else {
-                    nlj.left().clone()
-                };
+                let left = nlj.left().clone();
                 let right = nlj.right().clone();
-
-                // KNN joins are asymmetric (probe side depends on ST_KNN argument order). Ensure
-                // SpatialJoinExec sees the probe side on the right, so partition execution matches.
-                let (left, right) = match &spatial_predicate {
-                    SpatialPredicate::KNearestNeighbors(knn) => {
-                        match knn.probe_side {
-                            datafusion_common::JoinSide::Left => {
-                                // Probe is NLJ left. Swap so probe becomes right.
-                                (right, left)
-                            }
-                            datafusion_common::JoinSide::Right => (left, right),
-                            _ => return Ok(Transformed::no(plan)),
-                        }
-                    }
-                    _ => (left, right),
-                };
 
                 if !is_spatial_predicate_supported(
                     &spatial_predicate,

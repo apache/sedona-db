@@ -5397,6 +5397,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "env_logger 0.11.8",
  "fastrand",
  "float_next_after",
  "futures",
