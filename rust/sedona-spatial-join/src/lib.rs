@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod build_index;
 pub mod evaluated_batch;
 pub mod exec;
 mod index;
 pub mod operand_evaluator;
 pub mod optimizer;
 pub mod partitioning;
+mod prepare;
 pub mod refine;
 pub mod spatial_predicate;
 mod stream;
@@ -31,7 +31,6 @@ pub use exec::SpatialJoinExec;
 pub use optimizer::register_spatial_join_optimizer;
 
 // Re-export types needed for external usage (e.g., in Comet)
-pub use build_index::build_index;
 pub use index::{SpatialIndex, SpatialJoinBuildMetrics};
 pub use spatial_predicate::SpatialPredicate;
 

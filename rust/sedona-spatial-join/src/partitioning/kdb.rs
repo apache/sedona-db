@@ -43,7 +43,9 @@
 use std::sync::Arc;
 
 use crate::partitioning::{
-    util::{bbox_to_geo_rect, rect_contains_point, rect_intersection_area, rects_intersect},
+    util::{
+        bbox_to_geo_rect, make_rect, rect_contains_point, rect_intersection_area, rects_intersect,
+    },
     SpatialPartition, SpatialPartitioner,
 };
 use datafusion_common::Result;
@@ -126,9 +128,12 @@ impl KDBTree {
         if max_items_per_node == 0 {
             return sedona_internal_err!("max_items_per_node must be greater than 0");
         }
-        let Some(extent_rect) = bbox_to_geo_rect(&extent)? else {
-            return sedona_internal_err!("KDBTree extent cannot be empty");
-        };
+
+        // extent_rect is a sentinel rect if the bounding box is empty. In that case,
+        // almost all insertions will be ignored. We are free to partition the data
+        // arbitrarily when the extent is empty.
+        let extent_rect = bbox_to_geo_rect(&extent)?.unwrap_or(make_rect(0.0, 0.0, 0.0, 0.0));
+
         Ok(Self::new_with_level(
             max_items_per_node,
             max_levels,
@@ -506,6 +511,13 @@ impl KDBPartitioner {
             writeln!(f, "Leaf ID: {}, Extent: {}", leaf.leaf_id(), extent)?;
         }
         Ok(())
+    }
+
+    /// Return the tree structure in human-readable format for debugging purposes.
+    pub fn debug_str(&self) -> String {
+        let mut output = String::new();
+        let _ = self.debug_print(&mut output);
+        output
     }
 }
 
@@ -965,5 +977,20 @@ mod tests {
             partitioner.partition_no_multi(&bbox).unwrap(),
             SpatialPartition::None
         );
+    }
+
+    #[test]
+    fn test_kdb_partitioner_empty_extent() {
+        let extent = BoundingBox::empty();
+        let bboxes = vec![
+            BoundingBox::xy((0.0, 10.0), (0.0, 10.0)),
+            BoundingBox::xy((1.0, 10.0), (1.0, 10.0)),
+        ];
+        let partitioner = KDBPartitioner::build(bboxes.clone().into_iter(), 10, 4, extent).unwrap();
+
+        // Partition calls should succeed
+        for test_bbox in bboxes {
+            assert!(partitioner.partition(&test_bbox).is_ok());
+        }
     }
 }
