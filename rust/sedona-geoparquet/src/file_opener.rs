@@ -21,7 +21,7 @@ use datafusion::datasource::{
     listing::PartitionedFile,
     physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
 };
-use datafusion_common::Result;
+use datafusion_common::{plan_datafusion_err, Result};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
@@ -34,7 +34,11 @@ use sedona_expr::{
     spatial_filter::{SpatialFilter, TableGeoStatistics},
     statistics::GeoStatistics,
 };
-use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    interval::{Interval, IntervalTrait},
+    types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::metadata::GeoParquetMetadata;
@@ -146,6 +150,14 @@ impl FileOpener for GeoParquetFileOpener {
                         &parquet_metadata,
                         &self_clone.metrics,
                     )?;
+
+                    filter_access_plan_using_native_geostats(
+                        &self_clone.file_schema,
+                        &mut access_plan,
+                        &spatial_filter,
+                        &parquet_metadata,
+                        &self_clone.metrics,
+                    )?;
                 }
             }
 
@@ -215,6 +227,51 @@ fn filter_access_plan_using_geoparquet_covering(
         // Generate row group statistics based on the covering statistics
         let row_group_column_geo_stats =
             row_group_covering_geo_stats(parquet_metadata.row_group(i), &covering_specs);
+        let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &row_group_column_geo_stats,
+            file_schema,
+        )?;
+
+        // Evaluate predicate!
+        if !spatial_filter.evaluate(&row_group_geo_stats)? {
+            metrics.row_groups_spatial_pruned.add(1);
+            access_plan.skip(i);
+        } else {
+            metrics.row_groups_spatial_matched.add(1);
+        }
+    }
+
+    Ok(())
+}
+
+/// Filter an access plan using the Parquet GeoStatistics, if present
+///
+/// Iterates through an existing access plan and skips row groups based on
+/// the Parquet format GeoStatistics (i.e., Geometry/Geography Parquet types).
+fn filter_access_plan_using_native_geostats(
+    file_schema: &SchemaRef,
+    access_plan: &mut ParquetAccessPlan,
+    spatial_filter: &SpatialFilter,
+    parquet_metadata: &ParquetMetaData,
+    metrics: &GeoParquetFileOpenerMetrics,
+) -> Result<()> {
+    let row_group_indices_to_scan = access_plan.row_group_indexes();
+
+    // What we're about to do is a bit of work, so skip it if we can.
+    if row_group_indices_to_scan.is_empty() {
+        return Ok(());
+    }
+
+    // Get the indices we need to index in to the Parquet column()s.
+    // For schemas with no nested columns, this will be a sequential
+    // range of 0..n.
+    let top_level_indices = top_level_column_indices(parquet_metadata);
+
+    // Iterate through the row groups
+    for i in row_group_indices_to_scan {
+        // Generate row group statistics based on the covering statistics
+        let row_group_column_geo_stats =
+            row_group_native_geo_stats(parquet_metadata.row_group(i), &top_level_indices)?;
         let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
             &row_group_column_geo_stats,
             file_schema,
@@ -369,6 +426,83 @@ fn parse_column_coverings(
             }
         })
         .collect()
+}
+
+/// Calculates a Vec of [GeoStatistics] based on Parquet-native GeoStatistics
+///
+/// Each element is either a [GeoStatistics] populated with a [BoundingBox]
+/// or [GeoStatistics::unspecified], which is a value that will ensure that
+/// any spatial predicate that references those statistics will evaluate to
+/// true.
+fn row_group_native_geo_stats(
+    row_group_metadata: &RowGroupMetaData,
+    column_indices: &[usize],
+) -> Result<Vec<GeoStatistics>> {
+    column_indices
+        .iter()
+        .map(|column_index| {
+            let native_geo_stats_opt = row_group_metadata.column(*column_index).geo_statistics();
+            native_geo_stats_opt
+                .map(|native_geo_stats| {
+                    let mut out = GeoStatistics::unspecified();
+
+                    if let Some(native_bbox) = native_geo_stats.bounding_box() {
+                        let x_range = (native_bbox.get_xmin(), native_bbox.get_xmax());
+                        let y_range = (native_bbox.get_ymin(), native_bbox.get_ymax());
+                        let z_range = match (native_bbox.get_zmin(), native_bbox.get_zmax()) {
+                            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+                            _ => None,
+                        };
+                        let m_range = match (native_bbox.get_mmin(), native_bbox.get_mmax()) {
+                            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+                            _ => None,
+                        };
+
+                        out = out
+                            .with_bbox(Some(BoundingBox::xyzm(x_range, y_range, z_range, m_range)));
+                    }
+
+                    if let Some(native_geometry_types) = native_geo_stats.geospatial_types() {
+                        let mut geometry_types = GeometryTypeAndDimensionsSet::new();
+                        for wkb_id in native_geometry_types {
+                            let type_and_dim =
+                                GeometryTypeAndDimensions::try_from_wkb_id(*wkb_id as u32)
+                                    .map_err(|_| {
+                                        plan_datafusion_err!(
+                                    "Invalid geometry type ID in Parquet statistics: {wkb_id}"
+                                )
+                                    })?;
+                            geometry_types.insert_or_ignore(&type_and_dim);
+                        }
+
+                        if !geometry_types.is_empty() {
+                            out = out.with_geometry_types(Some(geometry_types))
+                        }
+                    }
+
+                    Ok(out)
+                })
+                .unwrap_or(Ok(GeoStatistics::unspecified()))
+        })
+        .collect()
+}
+
+/// Calculates column indices for top-level columns of file_schema
+///
+/// We need to build a list of top-level indices, where the indices refer to the
+/// flattened list of columns (e.g., `.column(i)` in row group metadata).
+/// anyway.
+fn top_level_column_indices(parquet_metadata: &ParquetMetaData) -> Vec<usize> {
+    let mut top_level_indices = Vec::new();
+    let schema_descr = parquet_metadata.file_metadata().schema_descr();
+    for (i, col) in schema_descr.columns().iter().enumerate() {
+        let path_vec = col.path().parts();
+        if path_vec.len() == 1 {
+            top_level_indices.push(i);
+        }
+    }
+
+    top_level_indices
 }
 
 /// Returns true if there are any fields with GeoArrow metadata
