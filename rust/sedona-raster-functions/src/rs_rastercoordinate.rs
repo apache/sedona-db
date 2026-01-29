@@ -233,7 +233,10 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::Array;
+    use arrow_array::StructArray;
     use arrow_schema::DataType;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
@@ -367,5 +370,109 @@ mod tests {
             .invoke_arrays(vec![Arc::new(rasters), world_x, world_y])
             .unwrap();
         assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_xy_with_scalar_raster_array_coords(#[values(Coord::Y, Coord::X)] coord: Coord) {
+        let udf = match coord {
+            Coord::X => rs_worldtorastercoordx_udf(),
+            Coord::Y => rs_worldtorastercoordy_udf(),
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+
+        // Use raster 1 (invertible) as scalar.
+        let rasters = generate_test_rasters(2, Some(0)).unwrap();
+        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
+        let raster_struct_one = raster_struct
+            .slice(1, 1)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap()
+            .clone();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_struct_one));
+
+        let world_x = Arc::new(arrow_array::Float64Array::from(vec![2.0, 2.0, 2.0]));
+        let world_y = Arc::new(arrow_array::Float64Array::from(vec![3.0, 3.0, 3.0]));
+
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(scalar_raster),
+                ColumnarValue::Array(world_x),
+                ColumnarValue::Array(world_y),
+            ])
+            .unwrap();
+
+        let array = match result {
+            ColumnarValue::Array(array) => array,
+            ColumnarValue::Scalar(_) => panic!("Expected array result"),
+        };
+
+        let int_array = array
+            .as_any()
+            .downcast_ref::<arrow_array::Int64Array>()
+            .expect("Expected Int64Array");
+        assert_eq!(int_array.len(), 3);
+
+        // At upper-left world coordinate, raster coords should be (0,0).
+        for i in 0..3 {
+            assert!(!int_array.is_null(i));
+            assert_eq!(int_array.value(i), 0_i64);
+        }
+    }
+
+    #[test]
+    fn udf_invoke_pt_with_scalar_raster_array_coords() {
+        let udf = rs_worldtorastercoord_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+
+        let rasters = generate_test_rasters(2, Some(0)).unwrap();
+        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
+        let raster_struct_one = raster_struct
+            .slice(1, 1)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap()
+            .clone();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_struct_one));
+
+        let world_x = Arc::new(arrow_array::Float64Array::from(vec![2.0, 2.0, 2.0]));
+        let world_y = Arc::new(arrow_array::Float64Array::from(vec![3.0, 3.0, 3.0]));
+
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(scalar_raster),
+                ColumnarValue::Array(world_x),
+                ColumnarValue::Array(world_y),
+            ])
+            .unwrap();
+
+        let array = match result {
+            ColumnarValue::Array(array) => array,
+            ColumnarValue::Scalar(_) => panic!("Expected array result"),
+        };
+
+        let expected = create_array(
+            &[
+                Some("POINT (0 0)"),
+                Some("POINT (0 0)"),
+                Some("POINT (0 0)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&array, &expected);
     }
 }

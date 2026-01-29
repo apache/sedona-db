@@ -95,14 +95,24 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             ColumnarValue::Scalar(scalar_value) => match scalar_value {
                 ScalarValue::Struct(arc_struct) => {
                     let raster_array = RasterStructArray::new(arc_struct.as_ref());
-                    if raster_array.is_null(0) {
-                        func(0, None)
-                    } else {
+                    for i in 0..self.num_iterations {
+                        if raster_array.is_null(0) {
+                            func(i, None)?;
+                            continue;
+                        }
+
+                        // Broadcast scalar raster across all iterations.
                         let raster = raster_array.get(0)?;
-                        func(0, Some(raster))
+                        func(i, Some(raster))?;
                     }
+                    Ok(())
                 }
-                ScalarValue::Null => func(0, None),
+                ScalarValue::Null => {
+                    for i in 0..self.num_iterations {
+                        func(i, None)?;
+                    }
+                    Ok(())
+                }
                 _ => Err(DataFusionError::Internal(
                     "Expected Struct scalar for raster".to_string(),
                 )),
