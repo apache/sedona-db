@@ -19,18 +19,13 @@ use std::{fmt::Formatter, sync::Arc};
 use arrow_schema::SchemaRef;
 use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
-use datafusion_expr::{JoinType, Operator};
-use datafusion_physical_expr::{
-    equivalence::{join_equivalence_properties, ProjectionMapping},
-    expressions::{BinaryExpr, Column},
-    PhysicalExpr,
-};
+use datafusion_expr::JoinType;
+use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
 use datafusion_physical_plan::{
-    execution_plan::EmissionType,
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
-    PlanProperties,
+    projection::{EmbeddedProjection, ProjectionExec},
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
@@ -40,35 +35,16 @@ use crate::{
     spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::SpatialJoinStream,
     utils::{
-        join_utils::{asymmetric_join_output_partitioning, boundedness_from_children},
+        join_utils::{
+            asymmetric_join_output_partitioning, boundedness_from_children,
+            compute_join_emission_type,
+        },
         once_fut::OnceAsync,
     },
 };
 
 /// Type alias for build and probe execution plans
 type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPlan>);
-
-/// Extract equality join conditions from a JoinFilter
-/// Returns column pairs that represent equality conditions as PhysicalExprs
-fn extract_equality_conditions(
-    filter: &JoinFilter,
-) -> Vec<(Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>)> {
-    let mut equalities = Vec::new();
-
-    if let Some(binary_expr) = filter.expression().as_any().downcast_ref::<BinaryExpr>() {
-        if binary_expr.op() == &Operator::Eq {
-            // Check if both sides are column references
-            if let (Some(_left_col), Some(_right_col)) = (
-                binary_expr.left().as_any().downcast_ref::<Column>(),
-                binary_expr.right().as_any().downcast_ref::<Column>(),
-            ) {
-                equalities.push((binary_expr.left().clone(), binary_expr.right().clone()));
-            }
-        }
-    }
-
-    equalities
-}
 
 /// Determine the correct build/probe execution plan assignment for KNN joins.
 ///
@@ -86,7 +62,6 @@ fn determine_knn_build_probe_plans<'a>(
     knn_pred: &KNNPredicate,
     left_plan: &'a Arc<dyn ExecutionPlan>,
     right_plan: &'a Arc<dyn ExecutionPlan>,
-    _join_schema: &SchemaRef,
 ) -> Result<BuildProbePlans<'a>> {
     // Use the probe_side information from the optimizer to determine build/probe assignment
     match knn_pred.probe_side {
@@ -134,9 +109,6 @@ pub struct SpatialJoinExec {
     /// This future runs only once before probing starts, and can be disposed by the last finished
     /// stream so the provider does not outlive the execution plan unnecessarily.
     once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
-    /// Indicates if this SpatialJoin was converted from a HashJoin
-    /// When true, we preserve HashJoin's equivalence properties and partitioning
-    converted_from_hash_join: bool,
     /// A random seed for making random procedures in spatial join deterministic
     seed: u64,
 }
@@ -152,22 +124,23 @@ impl SpatialJoinExec {
         projection: Option<Vec<usize>>,
         options: &SpatialJoinOptions,
     ) -> Result<Self> {
-        Self::try_new_with_options(
-            left, right, on, filter, join_type, projection, options, false,
-        )
+        let seed = options
+            .debug
+            .random_seed
+            .unwrap_or(fastrand::u64(0..0xFFFF));
+        Self::try_new_internal(left, right, on, filter, join_type, projection, seed)
     }
 
     /// Create a new SpatialJoinExec with additional options
     #[allow(clippy::too_many_arguments)]
-    pub fn try_new_with_options(
+    pub fn try_new_internal(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
         on: SpatialPredicate,
         filter: Option<JoinFilter>,
         join_type: &JoinType,
         projection: Option<Vec<usize>>,
-        options: &SpatialJoinOptions,
-        converted_from_hash_join: bool,
+        seed: u64,
     ) -> Result<Self> {
         let left_schema = left.schema();
         let right_schema = right.schema();
@@ -182,13 +155,7 @@ impl SpatialJoinExec {
             Arc::clone(&join_schema),
             *join_type,
             projection.as_ref(),
-            filter.as_ref(),
-            converted_from_hash_join,
         )?;
-        let seed = options
-            .debug
-            .random_seed
-            .unwrap_or(fastrand::u64(0..0xFFFF));
 
         Ok(SpatialJoinExec {
             left,
@@ -202,7 +169,6 @@ impl SpatialJoinExec {
             metrics: Default::default(),
             cache,
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
-            converted_from_hash_join,
             seed,
         })
     }
@@ -212,44 +178,31 @@ impl SpatialJoinExec {
         &self.join_type
     }
 
-    /// Returns a vector indicating whether the left and right inputs maintain their order.
-    /// The first element corresponds to the left input, and the second to the right.
-    ///
-    /// The left (build-side) input's order may change, but the right (probe-side) input's
-    /// order is maintained for INNER, RIGHT, RIGHT ANTI, and RIGHT SEMI joins.
-    ///
-    /// Maintaining the right input's order helps optimize the nodes down the pipeline
-    /// (See [`ExecutionPlan::maintains_input_order`]).
-    ///
-    /// This is a separate method because it is also called when computing properties, before
-    /// a [`NestedLoopJoinExec`] is created. It also takes [`JoinType`] as an argument, as
-    /// opposed to `Self`, for the same reason.
-    fn maintains_input_order(join_type: JoinType) -> Vec<bool> {
-        vec![
-            false,
-            matches!(
-                join_type,
-                JoinType::Inner | JoinType::Right | JoinType::RightAnti | JoinType::RightSemi
-            ),
-        ]
-    }
-
     /// Does this join has a projection on the joined columns
     pub fn contains_projection(&self) -> bool {
         self.projection.is_some()
     }
 
+    /// Returns a new `ExecutionPlan` that runs NestedLoopsJoins with the left
+    /// and right inputs swapped.
+    ///
+    /// # Notes:
+    ///
+    /// This function should be called BEFORE inserting any repartitioning
+    /// operators on the join's children. Check [`super::HashJoinExec::swap_inputs`]
+    /// for more details.
+    pub fn swap_inputs(&self) -> Result<Arc<dyn ExecutionPlan>> {
+        // TODO: implement this
+        todo!()
+    }
+
+    pub fn with_projection(&self, _projection: Option<Vec<usize>>) -> Result<Self> {
+        // TODO: implement this
+        todo!()
+    }
+
     /// This function creates the cache object that stores the plan properties such as schema,
     /// equivalence properties, ordering, partitioning, etc.
-    ///
-    /// NOTICE: The implementation of this function should be identical to the one in
-    /// [`datafusion_physical_plan::physical_plan::join::NestedLoopJoinExec::compute_properties`].
-    /// This is because SpatialJoinExec is transformed from NestedLoopJoinExec in physical plan
-    /// optimization phase. If the properties are not the same, the plan will be incorrect.
-    ///
-    /// When converted from HashJoin, we preserve HashJoin's equivalence properties by extracting
-    /// equality conditions from the filter.
-    #[allow(clippy::too_many_arguments)]
     fn compute_properties(
         left: &Arc<dyn ExecutionPlan>,
         right: &Arc<dyn ExecutionPlan>,
@@ -257,16 +210,7 @@ impl SpatialJoinExec {
         schema: SchemaRef,
         join_type: JoinType,
         projection: Option<&Vec<usize>>,
-        filter: Option<&JoinFilter>,
-        converted_from_hash_join: bool,
     ) -> Result<PlanProperties> {
-        // Extract equality conditions from filter if this was converted from HashJoin
-        let on_columns = if converted_from_hash_join {
-            filter.map_or(vec![], extract_equality_conditions)
-        } else {
-            vec![]
-        };
-
         let mut eq_properties = join_equivalence_properties(
             left.equivalence_properties().clone(),
             right.equivalence_properties().clone(),
@@ -275,73 +219,29 @@ impl SpatialJoinExec {
             &[false, false],
             None,
             // Pass extracted equality conditions to preserve equivalences
-            &on_columns,
-        );
+            &[],
+        )?;
 
-        // Use symmetric partitioning (like HashJoin) when converted from HashJoin
-        // Otherwise use asymmetric partitioning (like NestedLoopJoin)
-        let mut output_partitioning = if let SpatialPredicate::KNearestNeighbors(knn) = on {
-            match knn.probe_side {
-                JoinSide::Left => left.output_partitioning().clone(),
-                JoinSide::Right => right.output_partitioning().clone(),
-                _ => asymmetric_join_output_partitioning(left, right, &join_type)?,
-            }
-        } else if converted_from_hash_join {
-            // Replicate HashJoin's symmetric partitioning logic
-            // HashJoin preserves partitioning from both sides for inner joins
-            // and from one side for outer joins
-
-            match join_type {
-                JoinType::Inner | JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti => {
-                    left.output_partitioning().clone()
-                }
-                JoinType::Right | JoinType::RightSemi | JoinType::RightAnti => {
-                    right.output_partitioning().clone()
-                }
-                JoinType::Full => {
-                    // For full outer join, we can't preserve partitioning
-                    Partitioning::UnknownPartitioning(left.output_partitioning().partition_count())
-                }
-                _ => asymmetric_join_output_partitioning(left, right, &join_type)?,
-            }
+        let probe_side = if let SpatialPredicate::KNearestNeighbors(knn) = on {
+            knn.probe_side
         } else {
-            asymmetric_join_output_partitioning(left, right, &join_type)?
+            JoinSide::Right
         };
+        let mut output_partitioning =
+            asymmetric_join_output_partitioning(left, right, &join_type, probe_side)?;
 
         if let Some(projection) = projection {
             // construct a map from the input expressions to the output expression of the Projection
             let projection_mapping = ProjectionMapping::from_indices(projection, &schema)?;
             let out_schema = project_schema(&schema, Some(projection))?;
-            let eq_props = eq_properties?;
-            output_partitioning = output_partitioning.project(&projection_mapping, &eq_props);
-            eq_properties = Ok(eq_props.project(&projection_mapping, out_schema));
+            output_partitioning = output_partitioning.project(&projection_mapping, &eq_properties);
+            eq_properties = eq_properties.project(&projection_mapping, out_schema);
         }
 
-        let emission_type = if left.boundedness().is_unbounded() {
-            EmissionType::Final
-        } else if right.pipeline_behavior() == EmissionType::Incremental {
-            match join_type {
-                // If we only need to generate matched rows from the probe side,
-                // we can emit rows incrementally.
-                JoinType::Inner
-                | JoinType::LeftSemi
-                | JoinType::RightSemi
-                | JoinType::Right
-                | JoinType::RightAnti => EmissionType::Incremental,
-                // If we need to generate unmatched rows from the *build side*,
-                // we need to emit them at the end.
-                JoinType::Left
-                | JoinType::LeftAnti
-                | JoinType::LeftMark
-                | JoinType::RightMark
-                | JoinType::Full => EmissionType::Both,
-            }
-        } else {
-            right.pipeline_behavior()
-        };
+        let emission_type = compute_join_emission_type(left, right, join_type, probe_side);
 
         Ok(PlanProperties::new(
-            eq_properties?,
+            eq_properties,
             output_partitioning,
             emission_type,
             boundedness_from_children([left, right]),
@@ -407,32 +307,38 @@ impl ExecutionPlan for SpatialJoinExec {
     }
 
     fn maintains_input_order(&self) -> Vec<bool> {
-        Self::maintains_input_order(self.join_type)
+        vec![false, false]
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.left, &self.right]
     }
 
+    /// Tries to push `projection` down through `SpatialJoinExec`. If possible, performs the
+    /// pushdown and returns a new [`SpatialJoinExec`] as the top plan which has projections
+    /// as its children. Otherwise, returns `None`.
+    fn try_swapping_with_projection(
+        &self,
+        _projection: &ProjectionExec,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        // TODO: implement this
+        Ok(None)
+    }
+
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(Arc::new(SpatialJoinExec {
-            left: children[0].clone(),
-            right: children[1].clone(),
-            on: self.on.clone(),
-            filter: self.filter.clone(),
-            join_type: self.join_type,
-            join_schema: self.join_schema.clone(),
-            column_indices: self.column_indices.clone(),
-            projection: self.projection.clone(),
-            metrics: Default::default(),
-            cache: self.cache.clone(),
-            once_async_spatial_join_components: Arc::new(Mutex::new(None)),
-            converted_from_hash_join: self.converted_from_hash_join,
-            seed: self.seed,
-        }))
+        let new_exec = SpatialJoinExec::try_new_internal(
+            Arc::clone(&children[0]),
+            Arc::clone(&children[1]),
+            self.on.clone(),
+            self.filter.clone(),
+            &self.join_type,
+            self.projection.clone(),
+            self.seed,
+        )?;
+        Ok(Arc::new(new_exec))
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
@@ -520,5 +426,11 @@ impl ExecutionPlan for SpatialJoinExec {
             once_fut_spatial_join_components,
             Arc::clone(&self.once_async_spatial_join_components),
         )))
+    }
+}
+
+impl EmbeddedProjection for SpatialJoinExec {
+    fn with_projection(&self, projection: Option<Vec<usize>>) -> Result<Self> {
+        self.with_projection(projection)
     }
 }
