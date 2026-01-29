@@ -221,7 +221,7 @@ impl FileFormat for GeoParquetFormat {
         // "Not seen" and "No geometry metadata" are identical here. When merging new
         // metadata we check definitions for individual fields to ensure consistency
         // but it is OK to have a file without geometry. Exactly how this gets merged
-        // and adapated changed in DataFusion 52...the method here is prone to inconsistency
+        // and adapted changed in DataFusion 52...the method here is prone to inconsistency
         // when some files contain geometry and some do not.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
