@@ -642,7 +642,6 @@ mod tests {
     use sedona_testing::datagen::RandomPartitionedDataBuilder;
     use tokio::sync::OnceCell;
 
-    use crate::register_spatial_join_optimizer;
     use sedona_common::{
         option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
         SpatialLibrary,
@@ -748,7 +747,10 @@ mod tests {
         session_config = add_sedona_option_extension(session_config);
         let mut state_builder = SessionStateBuilder::new();
         if let Some(options) = options {
-            state_builder = register_spatial_join_optimizer(state_builder);
+            // Logical rewrite (Filter(CrossJoin)->Join(filter)) + extension-based planning
+            // (Join(filter)->SpatialJoinExec). Intentionally avoid physical plan rewrites.
+            state_builder = crate::register_spatial_join_logical_optimizer(state_builder);
+            state_builder = crate::register_spatial_join_planner(state_builder);
             let opts = session_config
                 .options_mut()
                 .extensions

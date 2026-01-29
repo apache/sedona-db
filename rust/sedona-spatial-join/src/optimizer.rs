@@ -191,7 +191,7 @@ impl OptimizerRule for SpatialJoinOptimizer {
 
 /// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
-fn is_spatial_predicate(expr: &Expr) -> bool {
+pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
     fn is_distance_expr(expr: &Expr) -> bool {
         let Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) = expr else {
             return false;
@@ -576,6 +576,16 @@ pub fn register_spatial_join_optimizer(
         .with_physical_optimizer_rule(Arc::new(SanityCheckPlan::new()))
 }
 
+/// Register only the logical spatial join optimizer rule.
+///
+/// This enables building `Join(filter=...)` from patterns like `Filter(CrossJoin)`.
+/// It intentionally does not register any physical plan rewrite rules.
+pub fn register_spatial_join_logical_optimizer(
+    session_state_builder: SessionStateBuilder,
+) -> SessionStateBuilder {
+    session_state_builder.with_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
+}
+
 /// Transform the join filter to a spatial predicate and a remainder.
 ///
 ///   * The spatial predicate is a spatial predicate that is extracted from the join filter.
@@ -583,7 +593,7 @@ pub fn register_spatial_join_optimizer(
 ///
 /// The remainder may reference fewer columns than the original join filter. If that's the case,
 /// the columns that are not referenced by the remainder will be pruned.
-fn transform_join_filter(
+pub(crate) fn transform_join_filter(
     join_filter: &JoinFilter,
 ) -> Option<(SpatialPredicate, Option<JoinFilter>)> {
     let (spatial_predicate, remainder) =
@@ -1026,7 +1036,7 @@ fn replace_join_filter_expr(expr: &Arc<dyn PhysicalExpr>, join_filter: &JoinFilt
     )
 }
 
-fn is_spatial_predicate_supported(
+pub(crate) fn is_spatial_predicate_supported(
     spatial_predicate: &SpatialPredicate,
     left_schema: &Schema,
     right_schema: &Schema,

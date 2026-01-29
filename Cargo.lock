@@ -5388,6 +5388,7 @@ dependencies = [
  "arrow",
  "arrow-array",
  "arrow-schema",
+ "async-trait",
  "criterion",
  "datafusion",
  "datafusion-common",
