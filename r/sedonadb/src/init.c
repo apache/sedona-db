@@ -149,6 +149,11 @@ SEXP savvy_InternalDataFrame_count__impl(SEXP self__) {
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_filter__impl(SEXP self__, SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_filter__ffi(self__, c_arg__exprs_sexp);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_limit__impl(SEXP self__, SEXP c_arg__n) {
   SEXP res = savvy_InternalDataFrame_limit__ffi(self__, c_arg__n);
   return handle_result(res);
@@ -156,6 +161,11 @@ SEXP savvy_InternalDataFrame_limit__impl(SEXP self__, SEXP c_arg__n) {
 
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__impl(SEXP self__) {
   SEXP res = savvy_InternalDataFrame_primary_geometry_column_index__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalDataFrame_select__impl(SEXP self__, SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_select__ffi(self__, c_arg__exprs_sexp);
   return handle_result(res);
 }
 
@@ -312,10 +322,14 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_compute__impl, 2},
     {"savvy_InternalDataFrame_count__impl",
      (DL_FUNC)&savvy_InternalDataFrame_count__impl, 1},
+    {"savvy_InternalDataFrame_filter__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_filter__impl, 2},
     {"savvy_InternalDataFrame_limit__impl",
      (DL_FUNC)&savvy_InternalDataFrame_limit__impl, 2},
     {"savvy_InternalDataFrame_primary_geometry_column_index__impl",
      (DL_FUNC)&savvy_InternalDataFrame_primary_geometry_column_index__impl, 1},
+    {"savvy_InternalDataFrame_select__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_select__impl, 2},
     {"savvy_InternalDataFrame_select_indices__impl",
      (DL_FUNC)&savvy_InternalDataFrame_select_indices__impl, 3},
     {"savvy_InternalDataFrame_show__impl",

@@ -110,7 +110,7 @@ def test_st_envelope_agg_many_groups(eng, con):
     num_groups = 1000
 
     df_points = con.sql("""
-        SELECT id, geometry FROM sd_random_geometry('{"target_rows": 100000, "seed": 9728}')
+        SELECT id, geometry FROM sd_random_geometry('{"num_rows": 100000, "seed": 9728}')
     """)
     eng.create_table_arrow("df_points", df_points.to_arrow_table())
 

@@ -7,7 +7,7 @@
 sd_to_view(.data, table_ref, overwrite = FALSE)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{table_ref}{The name of the view reference}
 

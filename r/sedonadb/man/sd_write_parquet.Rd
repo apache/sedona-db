@@ -15,7 +15,7 @@ sd_write_parquet(
 )
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{path}{A filename or directory to which parquet file(s) should be written}
 
@@ -58,7 +58,7 @@ fewer row groups when only a subset of the file is needed for a given query.
 \examples{
 tmp_parquet <- tempfile(fileext = ".parquet")
 
-sd_sql("SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom") |>
+sd_sql("SELECT ST_Point(1, 2, 4326) as geom") |>
   sd_write_parquet(tmp_parquet)
 
 sd_read_parquet(tmp_parquet)

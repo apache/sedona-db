@@ -228,6 +228,18 @@ impl CrsTransform for ProjTransform {
         coord.1 = res.1;
         Ok(())
     }
+
+    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+        let res = self.proj.borrow_mut().transform_xyz(*coord).map_err(|e| {
+            SedonaGeometryError::Invalid(format!(
+                "PROJ coordinate transformation failed with error: {e}"
+            ))
+        })?;
+        coord.0 = res.0;
+        coord.1 = res.1;
+        coord.2 = res.2;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

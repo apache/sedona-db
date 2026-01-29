@@ -33,6 +33,7 @@ use datafusion_physical_plan::{
     PlanProperties,
 };
 use parking_lot::Mutex;
+use sedona_common::SpatialJoinOptions;
 
 use crate::{
     build_index::build_index,
@@ -137,6 +138,8 @@ pub struct SpatialJoinExec {
     /// Indicates if this SpatialJoin was converted from a HashJoin
     /// When true, we preserve HashJoin's equivalence properties and partitioning
     converted_from_hash_join: bool,
+    /// A random seed for making random procedures in spatial join deterministic
+    seed: u64,
 }
 
 impl SpatialJoinExec {
@@ -148,11 +151,15 @@ impl SpatialJoinExec {
         filter: Option<JoinFilter>,
         join_type: &JoinType,
         projection: Option<Vec<usize>>,
+        options: &SpatialJoinOptions,
     ) -> Result<Self> {
-        Self::try_new_with_options(left, right, on, filter, join_type, projection, false)
+        Self::try_new_with_options(
+            left, right, on, filter, join_type, projection, options, false,
+        )
     }
 
     /// Create a new SpatialJoinExec with additional options
+    #[allow(clippy::too_many_arguments)]
     pub fn try_new_with_options(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
@@ -160,6 +167,7 @@ impl SpatialJoinExec {
         filter: Option<JoinFilter>,
         join_type: &JoinType,
         projection: Option<Vec<usize>>,
+        options: &SpatialJoinOptions,
         converted_from_hash_join: bool,
     ) -> Result<Self> {
         let left_schema = left.schema();
@@ -179,6 +187,11 @@ impl SpatialJoinExec {
             converted_from_hash_join,
         )?;
 
+        let seed = options
+            .debug
+            .random_seed
+            .unwrap_or(fastrand::u64(0..0xFFFF));
+
         Ok(SpatialJoinExec {
             left,
             right,
@@ -192,6 +205,7 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_index: Arc::new(Mutex::new(None)),
             converted_from_hash_join,
+            seed,
         })
     }
 
@@ -419,6 +433,7 @@ impl ExecutionPlan for SpatialJoinExec {
             cache: self.cache.clone(),
             once_async_spatial_index: Arc::new(Mutex::new(None)),
             converted_from_hash_join: self.converted_from_hash_join,
+            seed: self.seed,
         }))
     }
 
@@ -472,6 +487,7 @@ impl ExecutionPlan for SpatialJoinExec {
                                 self.join_type,
                                 probe_thread_count,
                                 self.metrics.clone(),
+                                self.seed,
                             ))
                         })?
                 };
@@ -563,6 +579,7 @@ impl SpatialJoinExec {
                         self.join_type,
                         probe_thread_count,
                         self.metrics.clone(),
+                        self.seed,
                     ))
                 })?
         };
@@ -1330,7 +1347,7 @@ mod tests {
         let sql = "SELECT * FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry)";
 
         // Create SpatialJoinExec plan
-        let ctx = setup_context(Some(options), batch_size)?;
+        let ctx = setup_context(Some(options.clone()), batch_size)?;
         ctx.register_table("L", mem_table_left.clone())?;
         ctx.register_table("R", mem_table_right.clone())?;
         let df = ctx.sql(sql).await?;
@@ -1345,6 +1362,7 @@ mod tests {
             original_exec.filter.clone(),
             &join_type,
             None,
+            &options,
         )?;
 
         // Create NestedLoopJoinExec plan for comparison

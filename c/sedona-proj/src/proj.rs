@@ -371,6 +371,17 @@ impl Proj {
         Ok((xyzt_out.0, xyzt_out.1))
     }
 
+    /// Transform XYZ coordinates
+    pub(crate) fn transform_xyz(
+        &mut self,
+        point: (f64, f64, f64),
+    ) -> Result<(f64, f64, f64), SedonaProjError> {
+        // Filling extra dimensions with zeroes is what PostGIS does
+        let xyzt = (point.0, point.1, point.2, 0.0);
+        let xyzt_out = self.transform(xyzt)?;
+        Ok((xyzt_out.0, xyzt_out.1, xyzt_out.2))
+    }
+
     /// Transform XYZT coordinates
     pub(crate) fn transform(
         &mut self,

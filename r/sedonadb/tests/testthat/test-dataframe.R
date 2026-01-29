@@ -241,7 +241,7 @@ test_that("sd_write_parquet can sort data", {
 
 test_that("sd_write_parquet can write geometry data", {
   df <- sd_sql(
-    "SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom, 'test' as name"
+    "SELECT ST_Point(1, 2, 4326) as geom, 'test' as name"
   )
 
   tmp_parquet_file <- tempfile(fileext = ".parquet")
@@ -261,7 +261,7 @@ test_that("sd_write_parquet can write geometry data", {
 
 test_that("sd_write_parquet validates geoparquet_version parameter", {
   df <- sd_sql(
-    "SELECT ST_SetSRID(ST_Point(1, 2), 4326) as geom, 'test' as name"
+    "SELECT ST_Point(1, 2, 4326) as geom, 'test' as name"
   )
   tmp_parquet_file <- tempfile(fileext = ".parquet")
   on.exit(unlink(tmp_parquet_file))
@@ -284,5 +284,73 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
   expect_error(
     sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "2.0"),
     "geoparquet_version must be"
+  )
+})
+
+test_that("sd_select() works with dplyr-like select syntax", {
+  skip_if_not_installed("tidyselect")
+
+  df_in <- data.frame(one = 1, two = "two", THREE = 3.0)
+
+  expect_identical(
+    df_in |> sd_select(2:3) |> sd_collect(),
+    data.frame(two = "two", THREE = 3.0)
+  )
+
+  expect_identical(
+    df_in |> sd_select(three_renamed = THREE, one) |> sd_collect(),
+    data.frame(three_renamed = 3.0, one = 1)
+  )
+
+  expect_identical(
+    df_in |> sd_select(TWO = two) |> sd_collect(),
+    data.frame(TWO = "two")
+  )
+})
+
+test_that("sd_transmute() works with dplyr-like transmute syntax", {
+  df_in <- data.frame(x = 1:10)
+
+  # checks that (1) unnamed inputs like `x` are named `x` in the output
+  # and (2) named inputs are given an alias and (3) expressions are
+  # translated.
+  expect_identical(
+    df_in |> sd_transmute(x, y = x + 1L) |> sd_collect(),
+    data.frame(x = 1:10, y = 2:11)
+  )
+
+  # Check that the calling environment is handled
+  integer_one <- 1L
+  expect_identical(
+    df_in |> sd_transmute(x, y = x + integer_one) |> sd_collect(),
+    data.frame(x = 1:10, y = 2:11)
+  )
+})
+
+test_that("sd_filter() works with dplyr-like filter syntax", {
+  df_in <- data.frame(x = 1:10)
+
+  # Zero conditions
+  expect_identical(
+    df_in |> sd_filter() |> sd_collect(),
+    df_in
+  )
+
+  # One condition
+  expect_identical(
+    df_in |> sd_filter(x >= 5) |> sd_collect(),
+    data.frame(x = 5:10)
+  )
+
+  # Multiple conditions
+  expect_identical(
+    df_in |> sd_filter(x >= 5, x >= 6) |> sd_collect(),
+    data.frame(x = 6:10)
+  )
+
+  # Ensure null handling of conditions is dplyr-like (drops nulls)
+  expect_identical(
+    df_in |> sd_filter(x >= NA_integer_) |> sd_collect(),
+    data.frame(x = integer())
   )
 })

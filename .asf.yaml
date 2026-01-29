@@ -47,8 +47,6 @@ github:
     - jesspav
     - kadolor
     - MrPowers
-    - paleolimbot
-    - petern48
 notifications:
   commits: commits@sedona.apache.org
   issues_status: issues@sedona.apache.org

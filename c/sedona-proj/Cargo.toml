@@ -51,6 +51,7 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
 proj-sys = { version = "0.26.0", optional = true }
+sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-geometry = { workspace = true }

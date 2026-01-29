@@ -1419,7 +1419,7 @@ Since: v0.1.
 #### SQL Example
 
 ```sql
-SELECT ST_SetSRID(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 4326);
+SELECT ST_GeomFromWKT('POINT (-64.363049 45.091501)', 4326);
 ```
 
 ## ST_SRID
@@ -1531,7 +1531,7 @@ Since: v0.1.
 
 ```sql
 -- Transform a WGS84 polygon to UTM zone 49N
-SELECT ST_Transform(ST_SetSRID(ST_GeomFromWkt('POLYGON((170 50,170 72,-130 72,-130 50,170 50))'), 4326), 'EPSG:32649');
+SELECT ST_Transform(ST_GeomFromWkt('POLYGON((170 50,170 72,-130 72,-130 50,170 50))', 4326), 'EPSG:32649');
 ```
 
 ## ST_Translate

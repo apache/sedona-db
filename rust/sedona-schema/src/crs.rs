@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{plan_datafusion_err, plan_err, DataFusionError, Result};
 use lru::LruCache;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
@@ -322,9 +322,8 @@ impl FromStr for ProjJSON {
     type Err = DataFusionError;
 
     fn from_str(s: &str) -> Result<Self> {
-        let value: Value = serde_json::from_str(s).map_err(|err| {
-            DataFusionError::Internal(format!("Error deserializing PROJJSON Crs: {err}"))
-        })?;
+        let value: Value = serde_json::from_str(s)
+            .map_err(|err| plan_datafusion_err!("Error deserializing PROJJSON Crs: {err}"))?;
 
         Self::try_new(value)
     }
@@ -333,9 +332,7 @@ impl FromStr for ProjJSON {
 impl ProjJSON {
     pub fn try_new(value: Value) -> Result<Self> {
         if !value.is_object() {
-            return Err(DataFusionError::Internal(format!(
-                "Can't create PROJJSON from non-object: {value}"
-            )));
+            return plan_err!("Can't create PROJJSON from non-object: {value}");
         }
 
         Ok(Self { value })

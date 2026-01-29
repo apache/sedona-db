@@ -41,11 +41,11 @@ test_that("views can be created and dropped", {
 })
 
 test_that("scalar udfs can be registered", {
-  udf <- ctx()$scalar_udf_xptr("st_point")
+  udf <- ctx()$scalar_udf_xptr("st_envelope")
   expect_s3_class(udf, "datafusion_scalar_udf")
 
   sd_register_udf(udf)
-  df <- sd_sql("SELECT ST_Point(0, 1) as geom") |> sd_collect()
+  df <- sd_sql("SELECT ST_Envelope(ST_Point(0, 1)) as geom") |> sd_collect()
   expect_identical(
     wk::as_wkt(df$geom),
     wk::wkt("POINT (0 1)")

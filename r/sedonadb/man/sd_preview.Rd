@@ -7,7 +7,7 @@
 sd_preview(.data, n = NULL, ascii = NULL, width = NULL)
 }
 \arguments{
-\item{.data}{A sedonadb_dataframe}
+\item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{n}{The number of rows to preview. Use \code{Inf} to preview all rows.
 Defaults to \code{getOption("pillar.print_max")}.}
