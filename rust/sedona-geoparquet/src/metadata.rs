@@ -21,8 +21,10 @@
 /// to remove the dependency on GeoArrow since we mostly don't need that here yet).
 /// This should be synchronized with that crate when possible.
 /// https://github.com/geoarrow/geoarrow-rs/blob/ad2d29ef90050c5cfcfa7dfc0b4a3e5d12e51bbe/rust/geoarrow-geoparquet/src/metadata.rs
-use datafusion_common::Result;
+use datafusion_common::{plan_err, Result};
+use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
 use parquet::file::metadata::ParquetMetaData;
+use parquet::schema::types::SchemaDescriptor;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::{Interval, IntervalTrait};
@@ -383,6 +385,9 @@ impl GeoParquetMetadata {
 
     /// Construct a [`GeoParquetMetadata`] from a [`ParquetMetaData`]
     pub fn try_from_parquet_metadata(metadata: &ParquetMetaData) -> Result<Option<Self>> {
+        let mut columns_from_schema =
+            Self::columns_from_parquet_schema(metadata.file_metadata().schema_descr())?;
+
         if let Some(kv) = metadata.file_metadata().key_value_metadata() {
             for item in kv {
                 if item.key != "geo" {
@@ -390,12 +395,65 @@ impl GeoParquetMetadata {
                 }
 
                 if let Some(value) = &item.value {
+                    // Values in the GeoParquet metadata take precedence over those from the
+                    // Parquet schema
+                    let mut out = Self::try_new(value)?;
+                    for (k, v) in columns_from_schema.drain() {
+                        out.columns.entry(k).or_insert(v);
+                    }
+
                     return Ok(Some(Self::try_new(value)?));
                 }
             }
         }
 
         Ok(None)
+    }
+
+    pub fn columns_from_parquet_schema(
+        parquet_schema: &SchemaDescriptor,
+    ) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
+        let mut columns = HashMap::new();
+        let schema = parquet_schema.root_schema();
+
+        for field in schema.get_fields() {
+            if let Some(logical_type) = field.get_basic_info().logical_type_ref() {
+                let name = field.name().to_string();
+                let mut column_metadata = GeoParquetColumnMetadata::default();
+
+                match logical_type {
+                    LogicalType::Geometry { crs } => {
+                        if let Some(crs_str) = crs {
+                            column_metadata.crs = Some(Value::String(crs_str.clone()));
+                        }
+                    }
+                    LogicalType::Geography { crs, algorithm } => {
+                        if let Some(crs_str) = crs {
+                            column_metadata.crs = Some(Value::String(crs_str.clone()));
+                        }
+
+                        let edges = match algorithm {
+                            None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
+                            Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
+                            Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
+                            Some(EdgeInterpolationAlgorithm::THOMAS) => "thomas",
+                            Some(EdgeInterpolationAlgorithm::KARNEY) => "karney",
+                            Some(_) => {
+                                return plan_err!(
+                                    "Unsupported edge interpolation algorithm in Parquet schema"
+                                )
+                            }
+                        };
+                        column_metadata.edges = Some(edges.to_string());
+                    }
+                    _ => continue,
+                }
+
+                columns.insert(name, column_metadata);
+            }
+        }
+
+        Ok(columns)
     }
 
     /// Update a GeoParquetMetadata from another file's metadata
