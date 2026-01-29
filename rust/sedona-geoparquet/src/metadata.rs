@@ -408,8 +408,7 @@ impl GeoParquetMetadata {
         // No geo metadata key, but we have geo columns from the schema
         if !columns_from_schema.is_empty() {
             // To keep metadata valid, ensure we set a primary column deterministically
-            let mut column_names = columns_from_schema.keys()
-                .collect::<Vec<_>>();
+            let mut column_names = columns_from_schema.keys().collect::<Vec<_>>();
             column_names.sort();
             let primary_column = column_names[0].to_string();
 
