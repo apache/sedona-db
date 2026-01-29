@@ -19,6 +19,7 @@ import math
 import pyarrow
 import pytest
 import shapely
+import sedonadb
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
 
 
@@ -1709,7 +1710,7 @@ def test_st_geomfromwkbunchecked_invalid_wkb(eng):
     )
 
     # Using invalid WKB elsewhere may result in undefined behavior.
-    with pytest.raises(pyarrow.lib.ArrowInvalid, match="failed to fill whole buffer"):
+    with pytest.raises(sedonadb._lib.SedonaError, match="failed to fill whole buffer"):
         eng.execute_and_collect("SELECT ST_AsText(ST_GeomFromWKBUnchecked(0x01))")
 
 
