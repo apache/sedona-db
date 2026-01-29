@@ -59,7 +59,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// 4. Calling the provided function with each raster
     pub fn execute_raster_void<F>(&self, mut func: F) -> Result<()>
     where
-        F: FnMut(usize, Option<RasterRefImpl<'_>>) -> Result<()>,
+        F: FnMut(usize, Option<&RasterRefImpl<'_>>) -> Result<()>,
     {
         if self.arg_types[0] != RASTER {
             return sedona_internal_err!("First argument must be a raster type");
@@ -87,7 +87,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         continue;
                     }
                     let raster = raster_array.get(i)?;
-                    func(i, Some(raster))?;
+                    func(i, Some(&raster))?;
                 }
 
                 Ok(())
@@ -95,15 +95,13 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             ColumnarValue::Scalar(scalar_value) => match scalar_value {
                 ScalarValue::Struct(arc_struct) => {
                     let raster_array = RasterStructArray::new(arc_struct.as_ref());
+                    let raster_opt = if raster_array.is_null(0) {
+                        None
+                    } else {
+                        Some(raster_array.get(0)?)
+                    };
                     for i in 0..self.num_iterations {
-                        if raster_array.is_null(0) {
-                            func(i, None)?;
-                            continue;
-                        }
-
-                        // Broadcast scalar raster across all iterations.
-                        let raster = raster_array.get(0)?;
-                        func(i, Some(raster))?;
+                        func(i, raster_opt.as_ref())?;
                     }
                     Ok(())
                 }

@@ -155,7 +155,7 @@ impl SedonaScalarKernel for RsCoordinateMapper {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (raster_x, raster_y) = to_raster_coordinate(&raster, x, y)?;
+                    let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
                     match self.coord {
                         Coord::X => builder.append_value(raster_x),
                         Coord::Y => builder.append_value(raster_y),
@@ -216,7 +216,7 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(world_x), Some(world_y)) => {
-                    let (raster_x, raster_y) = to_raster_coordinate(&raster, world_x, world_y)?;
+                    let (raster_x, raster_y) = to_raster_coordinate(raster, world_x, world_y)?;
                     item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
                     item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
                     builder.append_value(item);
