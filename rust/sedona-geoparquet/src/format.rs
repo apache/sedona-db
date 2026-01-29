@@ -218,26 +218,23 @@ impl FileFormat for GeoParquetFormat {
             .try_collect()
             .await?;
 
-        // Combine multiple partitioned geoparquet files' metadata into a single one
-        // See comments in `try_update(..)` for the specific behaviors.
+        // "Not seen" and "No geometry metadata" are identical here. When merging new
+        // metadata we check definitions for individual fields to ensure consistency
+        // but it is OK to have a file without geometry. Exactly how this gets merged
+        // and adapated changed in DataFusion 52...the method here is prone to inconsistency
+        // when some files contain geometry and some do not.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
-            if let Some(kv) = metadata.file_metadata().key_value_metadata() {
-                for item in kv {
-                    if item.key != "geo" {
-                        continue;
-                    }
-                    if let Some(value) = &item.value {
-                        let this_geoparquet_metadata = GeoParquetMetadata::try_new(value)?;
-
-                        match geoparquet_metadata.as_mut() {
-                            Some(existing) => {
-                                existing.try_update(&this_geoparquet_metadata)?;
-                            }
-                            None => geoparquet_metadata = Some(this_geoparquet_metadata),
-                        }
-                    }
+            let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(metadata)?;
+            match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
+                (Some(existing_metadata), Some(this_metadata)) => {
+                    existing_metadata.try_update(&this_metadata)?;
                 }
+                (None, Some(this_metadata)) => {
+                    geoparquet_metadata.replace(this_metadata);
+                }
+                (None, None) => {}
+                (Some(_), None) => {}
             }
         }
 

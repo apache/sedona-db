@@ -23,8 +23,7 @@
 /// https://github.com/geoarrow/geoarrow-rs/blob/ad2d29ef90050c5cfcfa7dfc0b4a3e5d12e51bbe/rust/geoarrow-geoparquet/src/metadata.rs
 use datafusion_common::{plan_err, Result};
 use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
-use parquet::file::metadata::ParquetMetaData;
-use parquet::schema::types::SchemaDescriptor;
+use parquet::file::metadata::{KeyValue, ParquetMetaData};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::{Interval, IntervalTrait};
@@ -385,8 +384,7 @@ impl GeoParquetMetadata {
 
     /// Construct a [`GeoParquetMetadata`] from a [`ParquetMetaData`]
     pub fn try_from_parquet_metadata(metadata: &ParquetMetaData) -> Result<Option<Self>> {
-        let mut columns_from_schema =
-            Self::columns_from_parquet_schema(metadata.file_metadata().schema_descr())?;
+        let mut columns_from_schema = columns_from_parquet_schema(metadata)?;
 
         if let Some(kv) = metadata.file_metadata().key_value_metadata() {
             for item in kv {
@@ -407,53 +405,22 @@ impl GeoParquetMetadata {
             }
         }
 
-        Ok(None)
-    }
+        // No geo metadata key, but we have geo columns from the schema
+        if !columns_from_schema.is_empty() {
+            // To keep metadata valid, ensure we set a primary column deterministically
+            let mut column_names = columns_from_schema.keys()
+                .collect::<Vec<_>>();
+            column_names.sort();
+            let primary_column = column_names[0].to_string();
 
-    pub fn columns_from_parquet_schema(
-        parquet_schema: &SchemaDescriptor,
-    ) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
-        let mut columns = HashMap::new();
-        let schema = parquet_schema.root_schema();
-
-        for field in schema.get_fields() {
-            if let Some(logical_type) = field.get_basic_info().logical_type_ref() {
-                let name = field.name().to_string();
-                let mut column_metadata = GeoParquetColumnMetadata::default();
-
-                match logical_type {
-                    LogicalType::Geometry { crs } => {
-                        if let Some(crs_str) = crs {
-                            column_metadata.crs = Some(Value::String(crs_str.clone()));
-                        }
-                    }
-                    LogicalType::Geography { crs, algorithm } => {
-                        if let Some(crs_str) = crs {
-                            column_metadata.crs = Some(Value::String(crs_str.clone()));
-                        }
-
-                        let edges = match algorithm {
-                            None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
-                            Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
-                            Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
-                            Some(EdgeInterpolationAlgorithm::THOMAS) => "thomas",
-                            Some(EdgeInterpolationAlgorithm::KARNEY) => "karney",
-                            Some(_) => {
-                                return plan_err!(
-                                    "Unsupported edge interpolation algorithm in Parquet schema"
-                                )
-                            }
-                        };
-                        column_metadata.edges = Some(edges.to_string());
-                    }
-                    _ => continue,
-                }
-
-                columns.insert(name, column_metadata);
-            }
+            Ok(Some(Self {
+                version: "2.0.0".to_string(),
+                columns: columns_from_schema,
+                primary_column,
+            }))
+        } else {
+            Ok(None)
         }
-
-        Ok(columns)
     }
 
     /// Update a GeoParquetMetadata from another file's metadata
@@ -607,6 +574,84 @@ impl GeoParquetColumnMetadata {
             None
         }
     }
+}
+
+fn columns_from_parquet_schema(
+    metadata: &ParquetMetaData,
+) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
+    let mut columns = HashMap::new();
+    let schema = metadata.file_metadata().schema_descr().root_schema();
+    let kv_metadata = metadata.file_metadata().key_value_metadata();
+
+    for field in schema.get_fields() {
+        if let Some(logical_type) = field.get_basic_info().logical_type_ref() {
+            let name = field.name().to_string();
+            let mut column_metadata = GeoParquetColumnMetadata::default();
+
+            match logical_type {
+                LogicalType::Geometry { crs } => {
+                    column_metadata.crs = crs_from_logical_type(crs.as_ref(), kv_metadata);
+                }
+                LogicalType::Geography { crs, algorithm } => {
+                    column_metadata.crs = crs_from_logical_type(crs.as_ref(), kv_metadata);
+
+                    let edges = match algorithm {
+                        None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
+                        Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
+                        Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
+                        Some(EdgeInterpolationAlgorithm::THOMAS) => "thomas",
+                        Some(EdgeInterpolationAlgorithm::KARNEY) => "karney",
+                        Some(_) => {
+                            return plan_err!(
+                                "Unsupported edge interpolation algorithm in Parquet schema"
+                            )
+                        }
+                    };
+                    column_metadata.edges = Some(edges.to_string());
+                }
+                _ => continue,
+            }
+
+            columns.insert(name, column_metadata);
+        }
+    }
+
+    Ok(columns)
+}
+
+fn crs_from_logical_type(
+    crs: Option<&String>,
+    kv_metadata: Option<&Vec<KeyValue>>,
+) -> Option<Value> {
+    if let Some(crs_str) = crs {
+        if let Some(crs_kv_key) = crs_str.strip_prefix("projjson:") {
+            if let Some(crs_from_kv) = crs_from_key_value(crs_kv_key, kv_metadata) {
+                return Some(Value::String(crs_from_kv.to_string()));
+            }
+        }
+
+        if let Some(srid_string) = crs_str.strip_prefix("srid:") {
+            Some(Value::String(srid_string.to_string()))
+        } else {
+            Some(Value::String(crs_str.to_string()))
+        }
+    } else {
+        None
+    }
+}
+
+fn crs_from_key_value(key: &str, kv_metadata: Option<&Vec<KeyValue>>) -> Option<String> {
+    if let Some(kv_metadata) = kv_metadata {
+        for kv in kv_metadata {
+            if kv.key == key {
+                if let Some(value) = &kv.value {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
