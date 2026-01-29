@@ -16,7 +16,6 @@
 # under the License.
 import math
 
-import pyarrow
 import pytest
 import shapely
 import sedonadb
