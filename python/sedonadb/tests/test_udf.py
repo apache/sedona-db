@@ -18,6 +18,7 @@
 import pandas as pd
 import pyarrow as pa
 import pytest
+import sedonadb
 from sedonadb import udf
 
 
@@ -183,7 +184,7 @@ def test_udf_bad_return_object(con):
 
     con.register_udf(questionable_udf)
     with pytest.raises(
-        ValueError,
+        sedonadb._lib.SedonaError,
         match="Expected result of user-defined function to return an object implementing __arrow_c_array__",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
@@ -196,7 +197,7 @@ def test_udf_bad_return_type(con):
 
     con.register_udf(questionable_udf)
     with pytest.raises(
-        ValueError,
+        sedonadb._lib.SedonaError,
         match=(
             "Expected result of user-defined function to "
             "return array of type Binary or its storage "
@@ -213,7 +214,7 @@ def test_udf_bad_return_length(con):
 
     con.register_udf(questionable_udf)
     with pytest.raises(
-        ValueError,
+        sedonadb._lib.SedonaError,
         match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
