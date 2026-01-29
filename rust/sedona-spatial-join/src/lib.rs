@@ -19,8 +19,8 @@ pub mod evaluated_batch;
 pub mod exec;
 mod index;
 pub mod operand_evaluator;
-pub mod optimizer;
 pub mod partitioning;
+pub mod planner;
 mod prepare;
 pub mod refine;
 pub mod spatial_predicate;
@@ -28,7 +28,9 @@ mod stream;
 pub mod utils;
 
 pub use exec::SpatialJoinExec;
-pub use optimizer::register_spatial_join_optimizer;
+
+// Re-export function for register the spatial join planner
+pub use planner::register_planner;
 
 // Re-export types needed for external usage (e.g., in Comet)
 pub use index::{SpatialIndex, SpatialJoinBuildMetrics};

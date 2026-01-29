@@ -391,6 +391,7 @@ def test_spatial_join_with_pandas_metadata(con):
         SELECT p.idx
         FROM points AS p, polygons AS poly
         WHERE ST_Intersects(p.geometry, poly.geometry)
+        ORDER BY p.idx
     """
 
     res = con.sql(query).to_pandas()
