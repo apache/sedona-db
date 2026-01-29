@@ -251,7 +251,7 @@ impl SedonaScalarKernel for RsGeoTransform {
                     let metadata = raster.metadata();
                     match self.param {
                         GeoTransformParam::Rotation => {
-                            let rotation = rotation(&raster);
+                            let rotation = rotation(raster);
                             builder.append_value(rotation);
                         }
                         GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),

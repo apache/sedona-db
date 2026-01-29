@@ -153,7 +153,7 @@ impl SedonaScalarKernel for RsCoordinateMapper {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(&raster, x, y);
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
                     match self.coord {
                         Coord::X => builder.append_value(world_x),
                         Coord::Y => builder.append_value(world_y),
@@ -214,7 +214,7 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(&raster, x, y);
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
                     item[5..13].copy_from_slice(&world_x.to_le_bytes());
                     item[13..21].copy_from_slice(&world_y.to_le_bytes());
                     builder.append_value(item);
@@ -232,6 +232,8 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 mod tests {
     use super::*;
     use arrow_array::Array;
+    use arrow_array::StructArray;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
@@ -356,5 +358,104 @@ mod tests {
                 assert!((float_array.value(2) - 3.28).abs() < 1e-10);
             }
         }
+    }
+
+    #[rstest]
+    fn udf_invoke_xy_with_scalar_raster_array_coords(#[values(Coord::Y, Coord::X)] coord: Coord) {
+        let udf = match coord {
+            Coord::X => rs_rastertoworldcoordx_udf(),
+            Coord::Y => rs_rastertoworldcoordy_udf(),
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+
+        // Use raster 0 as scalar; it has scale/skew of 0, so all pixels map to upper left.
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_struct.clone()));
+
+        let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(vec![0, 1, 2]));
+        let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 0]));
+
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(scalar_raster),
+                ColumnarValue::Array(x_coords),
+                ColumnarValue::Array(y_coords),
+            ])
+            .unwrap();
+
+        let array = match result {
+            ColumnarValue::Array(array) => array,
+            ColumnarValue::Scalar(_) => panic!("Expected array result"),
+        };
+
+        let float_array = array
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .expect("Expected Float64Array");
+        assert_eq!(float_array.len(), 3);
+
+        match coord {
+            Coord::X => {
+                assert_eq!(float_array.value(0), 1.0);
+                assert_eq!(float_array.value(1), 1.0);
+                assert_eq!(float_array.value(2), 1.0);
+            }
+            Coord::Y => {
+                assert_eq!(float_array.value(0), 2.0);
+                assert_eq!(float_array.value(1), 2.0);
+                assert_eq!(float_array.value(2), 2.0);
+            }
+        }
+    }
+
+    #[test]
+    fn udf_invoke_pt_with_scalar_raster_array_coords() {
+        let udf = rs_rastertoworldcoord_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_struct.clone()));
+
+        let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(vec![0, 1, 2]));
+        let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 0]));
+
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(scalar_raster),
+                ColumnarValue::Array(x_coords),
+                ColumnarValue::Array(y_coords),
+            ])
+            .unwrap();
+
+        let array = match result {
+            ColumnarValue::Array(array) => array,
+            ColumnarValue::Scalar(_) => panic!("Expected array result"),
+        };
+
+        let expected = create_array(
+            &[
+                Some("POINT (1 2)"),
+                Some("POINT (1 2)"),
+                Some("POINT (1 2)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&array, &expected);
     }
 }
