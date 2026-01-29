@@ -22,24 +22,23 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use arrow_schema::Schema;
 use datafusion::execution::context::QueryPlanner;
 use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
 use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, PhysicalPlanner};
-use datafusion_common::tree_node::Transformed;
-use datafusion_common::{plan_err, DFSchema, DFSchemaRef, NullEquality, Result};
+use datafusion_common::tree_node::{Transformed, TreeNode};
+use datafusion_common::{plan_err, DFSchemaRef, NullEquality, Result};
 use datafusion_expr::logical_plan::{
-    Extension, UserDefinedLogicalNode, UserDefinedLogicalNodeCore,
+    Extension, Join as LogicalJoin, UserDefinedLogicalNode, UserDefinedLogicalNodeCore,
 };
-use datafusion_expr::{Expr, JoinConstraint, JoinType, LogicalPlan, Operator};
+use datafusion_expr::{BinaryExpr, Expr, JoinConstraint, JoinType, LogicalPlan, Operator};
 use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
-use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
 
 use crate::exec::SpatialJoinExec;
 use crate::optimizer::{is_spatial_predicate_supported, transform_join_filter};
+use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 
 pub struct SedonaSpatialQueryPlanner;
@@ -123,12 +122,28 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             return Ok(Transformed::no(plan));
         }
 
+        // Build new filter expression including equi-join conditions
+        let filter = filter.clone();
+        let eq_op = if join.null_equality == NullEquality::NullEqualsNothing {
+            Operator::Eq
+        } else {
+            Operator::IsNotDistinctFrom
+        };
+        let filter = join.on.iter().fold(filter, |acc, (l, r)| {
+            let eq_expr = Expr::BinaryExpr(BinaryExpr::new(
+                Box::new(l.clone()),
+                eq_op,
+                Box::new(r.clone()),
+            ));
+            Expr::and(acc, eq_expr)
+        });
+
         let schema = Arc::clone(&join.schema);
         let node = SpatialJoinPlanNode {
             left: join.left.as_ref().clone(),
             right: join.right.as_ref().clone(),
             join_type: join.join_type,
-            filter: filter.clone(),
+            filter,
             schema,
             join_constraint: join.join_constraint,
             null_equality: join.null_equality,
@@ -313,6 +328,18 @@ impl ExtensionPlanner for SpatialJoinPlanner {
         physical_inputs: &[Arc<dyn ExecutionPlan>],
         session_state: &SessionState,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        let Some(ext) = session_state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+        else {
+            return Ok(None);
+        };
+
+        if !ext.spatial_join.enable {
+            return Ok(None);
+        }
+
         let Some(spatial_node) = node.as_any().downcast_ref::<SpatialJoinPlanNode>() else {
             return Ok(None);
         };
@@ -320,164 +347,88 @@ impl ExtensionPlanner for SpatialJoinPlanner {
             return plan_err!("SpatialJoinPlanNode expects 2 inputs");
         }
 
-        let ext = session_state
-            .config_options()
-            .extensions
-            .get::<SedonaOptions>();
-
-        let left = physical_inputs[0].clone();
-        let right = physical_inputs[1].clone();
-
-        let join_filter = build_join_filter(
-            planner,
-            &spatial_node.filter,
-            spatial_node.left.schema(),
-            spatial_node.right.schema(),
-            &left.schema(),
-            &right.schema(),
-            session_state,
+        // Delegate join planning to DataFusion using the *real* logical inputs.
+        //
+        // This avoids re-implementing DataFusion's NestedLoopJoinExec / JoinFilter construction,
+        // and also avoids having to swap children into a template plan (which can be incorrect if
+        // DataFusion reorders join sides).
+        let df_join = LogicalJoin::try_new(
+            Arc::new(spatial_node.left.clone()),
+            Arc::new(spatial_node.right.clone()),
+            vec![],
+            Some(spatial_node.filter.clone()),
+            spatial_node.join_type,
+            JoinConstraint::On,
+            spatial_node.null_equality,
         )?;
+        let df_join_plan = LogicalPlan::Join(df_join);
 
-        let join_filter = join_filter.map(|filter| {
-            if filter.column_indices().len()
-                == left.schema().fields().len() + right.schema().fields().len()
-            {
-                filter
-            } else {
-                JoinFilter::new(
-                    filter.expression().clone(),
-                    build_full_join_column_indices(&left.schema(), &right.schema()),
-                    filter.schema().clone(),
-                )
-            }
-        });
+        let planned_join = planner
+            .create_physical_plan(&df_join_plan, session_state)
+            .await?;
 
-        let nlj = NestedLoopJoinExec::try_new(
-            left,
-            right,
-            join_filter.clone(),
-            &spatial_node.join_type,
-            None,
-        )?;
-
-        // Try to emit SpatialJoinExec (optimized). If anything doesn't match, fall back
-        // to DataFusion's NestedLoopJoinExec to preserve correctness.
-        if let Some(ext) = ext {
-            if ext.spatial_join.enable {
-                let Some(join_filter) = nlj.filter() else {
-                    return Ok(Some(Arc::new(nlj)));
+        let transformed = planned_join
+            .transform_up(|plan| {
+                let Some(nlj) = plan.as_any().downcast_ref::<NestedLoopJoinExec>() else {
+                    return Ok(Transformed::no(plan));
                 };
-                if let Some((spatial_predicate, remainder)) = transform_join_filter(join_filter) {
-                    // Match the optimizer conversion: drop CoalescePartitions on the build side
-                    // so SpatialJoinExec can consume partitions directly.
-                    let left = if let Some(coalesce_partitions) =
-                        nlj.left().as_any().downcast_ref::<CoalescePartitionsExec>()
-                    {
-                        coalesce_partitions.input().clone()
-                    } else {
-                        nlj.left().clone()
-                    };
-                    let right = nlj.right().clone();
+                let Some(join_filter) = nlj.filter() else {
+                    return Ok(Transformed::no(plan));
+                };
+                let Some((spatial_predicate, remainder)) = transform_join_filter(join_filter)
+                else {
+                    return Ok(Transformed::no(plan));
+                };
 
-                    if is_spatial_predicate_supported(
-                        &spatial_predicate,
-                        &left.schema(),
-                        &right.schema(),
-                    )? {
-                        let exec = SpatialJoinExec::try_new(
-                            left,
-                            right,
-                            spatial_predicate,
-                            remainder,
-                            nlj.join_type(),
-                            nlj.projection().cloned(),
-                            &ext.spatial_join,
-                        )?;
-                        return Ok(Some(Arc::new(exec)));
+                // If the build side was previously coerced to a single partition by other rules,
+                // drop that wrapper for SpatialJoinExec.
+                let left = if let Some(coalesce_partitions) =
+                    nlj.left().as_any().downcast_ref::<CoalescePartitionsExec>()
+                {
+                    coalesce_partitions.input().clone()
+                } else {
+                    nlj.left().clone()
+                };
+                let right = nlj.right().clone();
+
+                // KNN joins are asymmetric (probe side depends on ST_KNN argument order). Ensure
+                // SpatialJoinExec sees the probe side on the right, so partition execution matches.
+                let (left, right) = match &spatial_predicate {
+                    SpatialPredicate::KNearestNeighbors(knn) => {
+                        match knn.probe_side {
+                            datafusion_common::JoinSide::Left => {
+                                // Probe is NLJ left. Swap so probe becomes right.
+                                (right, left)
+                            }
+                            datafusion_common::JoinSide::Right => (left, right),
+                            _ => return Ok(Transformed::no(plan)),
+                        }
                     }
+                    _ => (left, right),
+                };
+
+                if !is_spatial_predicate_supported(
+                    &spatial_predicate,
+                    &left.schema(),
+                    &right.schema(),
+                )? {
+                    return Ok(Transformed::no(plan));
                 }
-            }
-        }
 
-        Ok(Some(Arc::new(nlj)))
+                let exec = SpatialJoinExec::try_new(
+                    left,
+                    right,
+                    spatial_predicate,
+                    remainder,
+                    nlj.join_type(),
+                    nlj.projection().cloned(),
+                    &ext.spatial_join,
+                )?;
+
+                Ok(Transformed::yes(Arc::new(exec) as Arc<dyn ExecutionPlan>))
+            })?
+            .data;
+
+        Ok(Some(transformed))
     }
-}
-
-fn build_join_filter(
-    planner: &dyn PhysicalPlanner,
-    expr: &Expr,
-    left_df_schema: &DFSchemaRef,
-    right_df_schema: &DFSchemaRef,
-    left_schema: &Schema,
-    right_schema: &Schema,
-    session_state: &SessionState,
-) -> Result<Option<JoinFilter>> {
-    // Build JoinFilter the same way DataFusion's physical planner does:
-    // - build an *intermediate* schema containing only referenced columns
-    // - create the physical expression against that intermediate schema
-    // - column_indices map intermediate columns back to left/right inputs
-
-    let cols = expr.column_refs();
-    let mut left_field_indices = cols
-        .iter()
-        .filter_map(|c| left_df_schema.index_of_column(c).ok())
-        .collect::<Vec<_>>();
-    left_field_indices.sort_unstable();
-    let mut right_field_indices = cols
-        .iter()
-        .filter_map(|c| right_df_schema.index_of_column(c).ok())
-        .collect::<Vec<_>>();
-    right_field_indices.sort_unstable();
-
-    let mut filter_df_fields =
-        Vec::with_capacity(left_field_indices.len() + right_field_indices.len());
-    let mut filter_fields =
-        Vec::with_capacity(left_field_indices.len() + right_field_indices.len());
-
-    for i in &left_field_indices {
-        let (qual, field) = left_df_schema.qualified_field(*i);
-        filter_df_fields.push((qual.cloned(), Arc::new(field.clone())));
-        filter_fields.push(left_schema.field(*i).clone());
-    }
-    for i in &right_field_indices {
-        let (qual, field) = right_df_schema.qualified_field(*i);
-        filter_df_fields.push((qual.cloned(), Arc::new(field.clone())));
-        filter_fields.push(right_schema.field(*i).clone());
-    }
-
-    let metadata: std::collections::HashMap<String, String> = left_df_schema
-        .metadata()
-        .clone()
-        .into_iter()
-        .chain(right_df_schema.metadata().clone())
-        .collect();
-    let filter_df_schema = DFSchema::new_with_metadata(filter_df_fields, metadata.clone())?;
-    let filter_schema = Arc::new(Schema::new_with_metadata(filter_fields, metadata));
-
-    let filter_expr = planner.create_physical_expr(expr, &filter_df_schema, session_state)?;
-    let column_indices = JoinFilter::build_column_indices(left_field_indices, right_field_indices);
-
-    Ok(Some(JoinFilter::new(
-        filter_expr,
-        column_indices,
-        filter_schema,
-    )))
-}
-
-fn build_full_join_column_indices(left_schema: &Schema, right_schema: &Schema) -> Vec<ColumnIndex> {
-    let mut column_indices =
-        Vec::with_capacity(left_schema.fields().len() + right_schema.fields().len());
-    for (index, _field) in left_schema.fields().iter().enumerate() {
-        column_indices.push(ColumnIndex {
-            index,
-            side: datafusion_common::JoinSide::Left,
-        });
-    }
-    for (index, _field) in right_schema.fields().iter().enumerate() {
-        column_indices.push(ColumnIndex {
-            index,
-            side: datafusion_common::JoinSide::Right,
-        });
-    }
-    column_indices
 }

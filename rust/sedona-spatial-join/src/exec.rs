@@ -17,7 +17,7 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{project_schema, DataFusionError, JoinSide, Result};
+use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{JoinType, Operator};
 use datafusion_physical_expr::{
@@ -83,19 +83,15 @@ fn extract_equality_conditions(
 /// We determine which execution plan corresponds to probe/build by analyzing the column indices
 /// in the context of the overall join schema structure.
 fn determine_knn_build_probe_plans<'a>(
-    knn_pred: &KNNPredicate,
+    _knn_pred: &KNNPredicate,
     left_plan: &'a Arc<dyn ExecutionPlan>,
     right_plan: &'a Arc<dyn ExecutionPlan>,
     _join_schema: &SchemaRef,
 ) -> Result<BuildProbePlans<'a>> {
-    // Use the probe_side information from the optimizer to determine build/probe assignment
-    match knn_pred.probe_side {
-        JoinSide::Left => Ok((right_plan, left_plan)),
-        JoinSide::Right => Ok((left_plan, right_plan)),
-        JoinSide::None => Err(DataFusionError::Internal(
-            "KNN join requires explicit probe_side designation".to_string(),
-        )),
-    }
+    // For SpatialJoinExec, `left` is always build and `right` is always probe.
+    // The KNNPredicate.probe_side is used for expression interpretation, not for
+    // swapping execution plan roles.
+    Ok((left_plan, right_plan))
 }
 
 /// Physical execution plan for performing spatial joins between two tables. It uses a spatial
