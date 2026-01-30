@@ -15,6 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! DataFusion planner integration for Sedona spatial joins.
+//!
+//! This module wires Sedona's logical optimizer rules and physical planning extensions that
+//! can produce `SpatialJoinExec`.
+
 use datafusion::execution::SessionStateBuilder;
 
 mod logical_plan_node;
@@ -22,6 +27,10 @@ mod optimizer;
 mod physical_planner;
 mod spatial_expr_utils;
 
+/// Register Sedona spatial join planning hooks.
+///
+/// Enables logical rewrites (to surface join filters) and a query planner extension that can
+/// plan `SpatialJoinExec`.
 pub fn register_planner(state_builder: SessionStateBuilder) -> SessionStateBuilder {
     // Enable the logical rewrite that turns Filter(CrossJoin) into Join(filter=...)
     let state_builder = optimizer::register_spatial_join_logical_optimizer(state_builder);

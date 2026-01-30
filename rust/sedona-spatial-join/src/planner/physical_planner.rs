@@ -35,12 +35,15 @@ use crate::planner::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::spatial_expr_utils::{is_spatial_predicate_supported, transform_join_filter};
 use sedona_common::option::SedonaOptions;
 
-/// Register logical rewrite and a query planner that can produce [`SpatialJoinExec`]
-/// directly from a rewritten extension node.
+/// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
 pub fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
     builder.with_query_planner(Arc::new(SedonaSpatialQueryPlanner))
 }
 
+/// Query planner that enables Sedona's spatial join planning.
+///
+/// Installs an [`ExtensionPlanner`] that recognizes `SpatialJoinPlanNode` and produces
+/// `SpatialJoinExec` when supported and enabled.
 pub struct SedonaSpatialQueryPlanner;
 
 impl fmt::Debug for SedonaSpatialQueryPlanner {
@@ -65,6 +68,7 @@ impl QueryPlanner for SedonaSpatialQueryPlanner {
     }
 }
 
+/// Physical planner hook for `SpatialJoinPlanNode`.
 struct SpatialJoinExtensionPlanner;
 
 #[async_trait]

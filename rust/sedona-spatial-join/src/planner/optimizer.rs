@@ -37,10 +37,12 @@ pub fn register_spatial_join_logical_optimizer(
     session_state_builder: SessionStateBuilder,
 ) -> SessionStateBuilder {
     session_state_builder
-        .with_optimizer_rule(Arc::new(MergeSpatialProjectionIntoJoin::new()))
+        .with_optimizer_rule(Arc::new(MergeSpatialProjectionIntoJoin))
         .with_optimizer_rule(Arc::new(SpatialJoinLogicalRewrite))
 }
-
+/// Logical optimizer rule that enables spatial join planning.
+///
+/// This rule turns eligible `Join(filter=...)` nodes into a `SpatialJoinPlanNode` extension.
 #[derive(Default, Debug)]
 struct SpatialJoinLogicalRewrite;
 
@@ -124,18 +126,12 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
     }
 }
 
-/// Physical planner extension for spatial joins
+/// Logical optimizer rule that enables spatial join planning.
 ///
-/// This extension recognizes nested loop join operations with spatial predicates
-/// and converts them to SpatialJoinExec, which is specially optimized for spatial joins.
+/// This rule turns eligible `Filter(Join(filter=...))` nodes into a `Join(filter=...)` node,
+/// so that the spatial join can be rewritten later by [SpatialJoinLogicalRewrite].
 #[derive(Debug, Default)]
-pub struct MergeSpatialProjectionIntoJoin;
-
-impl MergeSpatialProjectionIntoJoin {
-    pub fn new() -> Self {
-        Self
-    }
-}
+struct MergeSpatialProjectionIntoJoin;
 
 impl OptimizerRule for MergeSpatialProjectionIntoJoin {
     fn name(&self) -> &str {
@@ -171,9 +167,8 @@ impl OptimizerRule for MergeSpatialProjectionIntoJoin {
     /// ```
     ///
     /// This is for enabling this logical join operator to be converted to a [SpatialJoinPlanNode]
-    /// by [SedonaSpatialQueryPlanner] with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
-    /// physical node. Please refer to the `PhysicalOptimizerRule` implementation of this struct
-    /// and [SpatialJoinOptimizer::try_optimize_join] for details.
+    /// by [SpatialJoinLogicalRewrite], so that it could subsequently be optimized to a SpatialJoin
+    /// physical node.
     fn rewrite(
         &self,
         plan: LogicalPlan,

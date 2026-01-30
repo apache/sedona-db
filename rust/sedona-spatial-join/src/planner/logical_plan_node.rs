@@ -23,6 +23,10 @@ use datafusion_common::{plan_err, DFSchemaRef, NullEquality, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNodeCore;
 use datafusion_expr::{Expr, JoinConstraint, JoinType, LogicalPlan};
 
+/// Logical extension node used as a planning hook for spatial joins.
+///
+/// Carries a join's inputs and filter expression so the physical planner can recognize and plan
+/// a `SpatialJoinExec`.
 #[derive(PartialEq, Eq, Hash)]
 pub(crate) struct SpatialJoinPlanNode {
     pub left: LogicalPlan,
