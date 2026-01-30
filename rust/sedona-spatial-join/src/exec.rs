@@ -21,12 +21,17 @@ use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
 use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
+use datafusion_physical_expr::projection::update_expr;
 use datafusion_physical_plan::{
     common::can_project,
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
     joins::utils::{reorder_output_after_swap, swap_join_projection},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    projection::{try_embed_projection, EmbeddedProjection, ProjectionExec},
+    projection::{
+        join_allows_pushdown, join_table_borders, new_join_children, physical_to_column_exprs,
+        try_embed_projection, update_join_filter, EmbeddedProjection, ProjectionExec,
+        ProjectionExpr,
+    },
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use parking_lot::Mutex;
@@ -34,8 +39,8 @@ use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
-    spatial_predicate::{KNNPredicate, SpatialPredicate},
-    stream::SpatialJoinStream,
+    spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
+    stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
     utils::{
         join_utils::{
             asymmetric_join_output_partitioning, boundedness_from_children,
@@ -47,6 +52,90 @@ use crate::{
 
 /// Type alias for build and probe execution plans
 type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPlan>);
+
+fn update_spatial_predicate_for_child_projections(
+    on: &SpatialPredicate,
+    projected_left_exprs: &[ProjectionExpr],
+    projected_right_exprs: &[ProjectionExpr],
+) -> Result<Option<SpatialPredicate>> {
+    let updated = match on {
+        SpatialPredicate::Relation(pred) => {
+            let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
+                return Ok(None);
+            };
+            let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
+                return Ok(None);
+            };
+
+            SpatialPredicate::Relation(RelationPredicate {
+                left,
+                right,
+                relation_type: pred.relation_type,
+            })
+        }
+        SpatialPredicate::Distance(pred) => {
+            let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
+                return Ok(None);
+            };
+            let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
+                return Ok(None);
+            };
+
+            let distance = match pred.distance_side {
+                JoinSide::Left => {
+                    let Some(distance) = update_expr(&pred.distance, projected_left_exprs, false)?
+                    else {
+                        return Ok(None);
+                    };
+                    distance
+                }
+                JoinSide::Right => {
+                    let Some(distance) = update_expr(&pred.distance, projected_right_exprs, false)?
+                    else {
+                        return Ok(None);
+                    };
+                    distance
+                }
+                JoinSide::None => Arc::clone(&pred.distance),
+            };
+
+            SpatialPredicate::Distance(DistancePredicate {
+                left,
+                right,
+                distance,
+                distance_side: pred.distance_side,
+            })
+        }
+        SpatialPredicate::KNearestNeighbors(pred) => {
+            let (probe_exprs, build_exprs) = match pred.probe_side {
+                JoinSide::Left => (projected_left_exprs, projected_right_exprs),
+                JoinSide::Right => (projected_right_exprs, projected_left_exprs),
+                JoinSide::None => {
+                    return sedona_internal_err!(
+                        "KNN join requires explicit probe_side designation"
+                    )
+                }
+            };
+
+            let Some(left) = update_expr(&pred.left, probe_exprs, false)? else {
+                return Ok(None);
+            };
+            let Some(right) = update_expr(&pred.right, build_exprs, false)? else {
+                return Ok(None);
+            };
+
+            SpatialPredicate::KNearestNeighbors(KNNPredicate {
+                left,
+                right,
+                k: pred.k,
+                use_spheroid: pred.use_spheroid,
+                probe_side: pred.probe_side,
+            })
+        }
+    };
+
+    Ok(Some(updated))
+}
 
 /// Determine the correct build/probe execution plan assignment for KNN joins.
 ///
@@ -375,7 +464,82 @@ impl ExecutionPlan for SpatialJoinExec {
         if self.contains_projection() {
             return Ok(None);
         }
-        try_embed_projection(projection, self)
+
+        // For join types where the output is not a concatenation of left + right columns
+        // (e.g. semi/anti/mark), the generic join projection pushdown logic does not apply.
+        // Fall back to embedding.
+        match self.join_type {
+            JoinType::LeftAnti
+            | JoinType::LeftSemi
+            | JoinType::RightAnti
+            | JoinType::RightSemi
+            | JoinType::LeftMark
+            | JoinType::RightMark => return try_embed_projection(projection, self),
+            _ => {}
+        }
+
+        // Try full pushdown first, and fall back to embedding.
+        let Some(projection_as_columns) = physical_to_column_exprs(projection.expr()) else {
+            return try_embed_projection(projection, self);
+        };
+
+        let (far_right_left_col_ind, far_left_right_col_ind) =
+            join_table_borders(self.left.schema().fields().len(), &projection_as_columns);
+
+        if !join_allows_pushdown(
+            &projection_as_columns,
+            &self.join_schema,
+            far_right_left_col_ind,
+            far_left_right_col_ind,
+        ) {
+            return try_embed_projection(projection, self);
+        }
+
+        let (projected_left_child, projected_right_child) = new_join_children(
+            &projection_as_columns,
+            far_right_left_col_ind,
+            far_left_right_col_ind,
+            &self.left,
+            &self.right,
+        )?;
+
+        let new_filter = if let Some(filter) = self.filter.as_ref() {
+            let left_cols = &projection_as_columns[0..=far_right_left_col_ind as usize];
+            let right_cols = &projection_as_columns[far_left_right_col_ind as usize..];
+            match update_join_filter(
+                left_cols,
+                right_cols,
+                filter,
+                self.left.schema().fields().len(),
+            ) {
+                Some(updated) => Some(updated),
+                None => return try_embed_projection(projection, self),
+            }
+        } else {
+            None
+        };
+
+        let projected_left_exprs = projected_left_child.expr();
+        let projected_right_exprs = projected_right_child.expr();
+        let Some(new_on) = update_spatial_predicate_for_child_projections(
+            &self.on,
+            projected_left_exprs,
+            projected_right_exprs,
+        )?
+        else {
+            return try_embed_projection(projection, self);
+        };
+
+        let new_exec = SpatialJoinExec::try_new_internal(
+            Arc::new(projected_left_child),
+            Arc::new(projected_right_child),
+            new_on,
+            new_filter,
+            &self.join_type,
+            None,
+            self.seed,
+        )?;
+        Ok(Some(Arc::new(new_exec)))
     }
 
     fn with_new_children(
