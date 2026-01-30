@@ -22,9 +22,11 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
 use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
 use datafusion_physical_plan::{
+    common::can_project,
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
+    joins::utils::{reorder_output_after_swap, swap_join_projection},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    projection::{EmbeddedProjection, ProjectionExec},
+    projection::{try_embed_projection, EmbeddedProjection, ProjectionExec},
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use parking_lot::Mutex;
@@ -192,13 +194,62 @@ impl SpatialJoinExec {
     /// operators on the join's children. Check [`super::HashJoinExec::swap_inputs`]
     /// for more details.
     pub fn swap_inputs(&self) -> Result<Arc<dyn ExecutionPlan>> {
-        // TODO: implement this
-        todo!()
+        let left_schema = self.left.schema();
+        let right_schema = self.right.schema();
+
+        let swapped_on = self.on.swap_for_swapped_children();
+
+        let swapped_projection = swap_join_projection(
+            left_schema.fields().len(),
+            right_schema.fields().len(),
+            self.projection.as_ref(),
+            &self.join_type,
+        );
+
+        let swapped_join = SpatialJoinExec::try_new_internal(
+            Arc::clone(&self.right),
+            Arc::clone(&self.left),
+            swapped_on,
+            self.filter.as_ref().map(|f| f.swap()),
+            &self.join_type.swap(),
+            swapped_projection,
+            self.seed,
+        )?;
+
+        let swapped_join: Arc<dyn ExecutionPlan> = Arc::new(swapped_join);
+
+        match self.join_type {
+            JoinType::LeftAnti
+            | JoinType::LeftSemi
+            | JoinType::RightAnti
+            | JoinType::RightSemi
+            | JoinType::LeftMark
+            | JoinType::RightMark => Ok(swapped_join),
+            _ if self.contains_projection() => Ok(swapped_join),
+            _ => {
+                reorder_output_after_swap(swapped_join, left_schema.as_ref(), right_schema.as_ref())
+            }
+        }
     }
 
-    pub fn with_projection(&self, _projection: Option<Vec<usize>>) -> Result<Self> {
-        // TODO: implement this
-        todo!()
+    pub fn with_projection(&self, projection: Option<Vec<usize>>) -> Result<Self> {
+        can_project(&self.schema(), projection.as_ref())?;
+
+        let projection = match (&self.projection, projection) {
+            (Some(existing), Some(new)) => Some(new.into_iter().map(|i| existing[i]).collect()),
+            (Some(_), None) => self.projection.clone(),
+            (None, other) => other,
+        };
+
+        SpatialJoinExec::try_new_internal(
+            Arc::clone(&self.left),
+            Arc::clone(&self.right),
+            self.on.clone(),
+            self.filter.clone(),
+            &self.join_type,
+            projection,
+            self.seed,
+        )
     }
 
     /// This function creates the cache object that stores the plan properties such as schema,
@@ -319,10 +370,12 @@ impl ExecutionPlan for SpatialJoinExec {
     /// as its children. Otherwise, returns `None`.
     fn try_swapping_with_projection(
         &self,
-        _projection: &ProjectionExec,
+        projection: &ProjectionExec,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        // TODO: implement this
-        Ok(None)
+        if self.contains_projection() {
+            return Ok(None);
+        }
+        try_embed_projection(projection, self)
     }
 
     fn with_new_children(
