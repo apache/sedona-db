@@ -536,14 +536,10 @@ impl DisplayColumn {
         // Never return content longer than WIDTH_MAX because comfy table may
         // do arithmetic with it without checking for overflow.
         let content_str = content.to_string();
-        let content_safe = if content_str.chars().count() > WIDTH_MAX as usize {
-            content_str
-                .chars()
-                .take(WIDTH_MAX as usize)
-                .collect::<String>()
-        } else {
-            content_str
-        };
+        let content_safe: String = content_str
+            .chars()
+            .take(WIDTH_MAX as usize)
+            .collect();
 
         let cell = Cell::new(content_safe).set_delimiter('\0');
         let is_numeric = ArgMatcher::is_numeric();
