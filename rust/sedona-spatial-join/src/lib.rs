@@ -30,7 +30,6 @@ pub mod utils;
 
 pub use exec::SpatialJoinExec;
 pub use optimizer::register_spatial_join_logical_optimizer;
-pub use optimizer::register_spatial_join_optimizer;
 pub use planner::register_spatial_join_planner;
 
 // Re-export types needed for external usage (e.g., in Comet)

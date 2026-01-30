@@ -31,7 +31,7 @@ use datafusion_common::cast::as_boolean_array;
 use datafusion_common::{JoinSide, Result};
 use datafusion_expr::JoinType;
 use datafusion_physical_expr::Partitioning;
-use datafusion_physical_plan::execution_plan::Boundedness;
+use datafusion_physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion_physical_plan::joins::utils::{
     adjust_right_output_partitioning, ColumnIndex, JoinFilter,
 };
@@ -463,21 +463,49 @@ pub(crate) fn asymmetric_join_output_partitioning(
     left: &Arc<dyn ExecutionPlan>,
     right: &Arc<dyn ExecutionPlan>,
     join_type: &JoinType,
+    probe_side: JoinSide,
 ) -> Result<Partitioning> {
     let result = match join_type {
-        JoinType::Inner | JoinType::Right => adjust_right_output_partitioning(
-            right.output_partitioning(),
-            left.schema().fields().len(),
-        )?,
-        JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark => {
-            right.output_partitioning().clone()
+        JoinType::Inner => {
+            if probe_side == JoinSide::Right {
+                adjust_right_output_partitioning(
+                    right.output_partitioning(),
+                    left.schema().fields().len(),
+                )?
+            } else {
+                left.output_partitioning().clone()
+            }
         }
-        JoinType::Left
-        | JoinType::LeftSemi
-        | JoinType::LeftAnti
-        | JoinType::Full
-        | JoinType::LeftMark => {
-            Partitioning::UnknownPartitioning(right.output_partitioning().partition_count())
+        JoinType::Right => {
+            if probe_side == JoinSide::Right {
+                adjust_right_output_partitioning(
+                    right.output_partitioning(),
+                    left.schema().fields().len(),
+                )?
+            } else {
+                Partitioning::UnknownPartitioning(left.output_partitioning().partition_count())
+            }
+        }
+        JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark => {
+            if probe_side == JoinSide::Right {
+                right.output_partitioning().clone()
+            } else {
+                Partitioning::UnknownPartitioning(left.output_partitioning().partition_count())
+            }
+        }
+        JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark => {
+            if probe_side == JoinSide::Left {
+                left.output_partitioning().clone()
+            } else {
+                Partitioning::UnknownPartitioning(right.output_partitioning().partition_count())
+            }
+        }
+        JoinType::Full => {
+            if probe_side == JoinSide::Right {
+                Partitioning::UnknownPartitioning(right.output_partitioning().partition_count())
+            } else {
+                Partitioning::UnknownPartitioning(left.output_partitioning().partition_count())
+            }
         }
     };
     Ok(result)
@@ -515,5 +543,370 @@ pub(crate) fn boundedness_from_children<'a>(
         }
     } else {
         Boundedness::Bounded
+    }
+}
+
+pub(crate) fn compute_join_emission_type(
+    build: &Arc<dyn ExecutionPlan>,
+    probe: &Arc<dyn ExecutionPlan>,
+    join_type: JoinType,
+    probe_side: JoinSide,
+) -> EmissionType {
+    if build.boundedness().is_unbounded() {
+        return EmissionType::Final;
+    }
+
+    if probe.pipeline_behavior() == EmissionType::Incremental {
+        match join_type {
+            // If we only need to generate matched rows from the probe side,
+            // we can emit rows incrementally.
+            JoinType::Inner => EmissionType::Incremental,
+            JoinType::Right | JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark => {
+                if probe_side == JoinSide::Right {
+                    EmissionType::Incremental
+                } else {
+                    EmissionType::Both
+                }
+            }
+            // If we need to generate unmatched rows from the *build side*,
+            // we need to emit them at the end.
+            JoinType::Left | JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark => {
+                if probe_side == JoinSide::Left {
+                    EmissionType::Incremental
+                } else {
+                    EmissionType::Both
+                }
+            }
+            JoinType::Full => EmissionType::Both,
+        }
+    } else {
+        probe.pipeline_behavior()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_schema::DataType;
+    use arrow_schema::Field;
+    use arrow_schema::SchemaRef;
+    use datafusion_expr::JoinType;
+    use datafusion_physical_expr::expressions::Column;
+    use datafusion_physical_expr::Partitioning;
+    use datafusion_physical_plan::empty::EmptyExec;
+    use datafusion_physical_plan::repartition::RepartitionExec;
+    use datafusion_physical_plan::DisplayAs;
+    use datafusion_physical_plan::DisplayFormatType;
+    use datafusion_physical_plan::PlanProperties;
+
+    fn make_schema(prefix: &str, num_fields: usize) -> SchemaRef {
+        Arc::new(Schema::new(
+            (0..num_fields)
+                .map(|i| Field::new(format!("{prefix}{i}"), DataType::Int32, true))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn assert_hash_partitioning_column_indices(
+        partitioning: &Partitioning,
+        expected_indices: &[usize],
+        expected_partition_count: usize,
+    ) {
+        match partitioning {
+            Partitioning::Hash(exprs, size) => {
+                assert_eq!(*size, expected_partition_count);
+                assert_eq!(exprs.len(), expected_indices.len());
+                for (expr, expected_idx) in exprs.iter().zip(expected_indices.iter()) {
+                    let col = expr
+                        .as_any()
+                        .downcast_ref::<Column>()
+                        .expect("expected Column physical expr");
+                    assert_eq!(col.index(), *expected_idx);
+                }
+            }
+            other => panic!("expected Hash partitioning, got {other:?}"),
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct PropertiesOnlyExec {
+        schema: SchemaRef,
+        properties: PlanProperties,
+    }
+
+    impl PropertiesOnlyExec {
+        fn new(
+            schema: SchemaRef,
+            boundedness: datafusion_physical_plan::execution_plan::Boundedness,
+            emission_type: EmissionType,
+        ) -> Self {
+            let schema_ref = Arc::clone(&schema);
+            let properties = PlanProperties::new(
+                datafusion_physical_expr::EquivalenceProperties::new(schema),
+                Partitioning::UnknownPartitioning(1),
+                emission_type,
+                boundedness,
+            );
+            Self {
+                schema: schema_ref,
+                properties,
+            }
+        }
+    }
+
+    impl DisplayAs for PropertiesOnlyExec {
+        fn fmt_as(&self, _t: DisplayFormatType, _f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            Ok(())
+        }
+    }
+
+    impl ExecutionPlan for PropertiesOnlyExec {
+        fn name(&self) -> &'static str {
+            "PropertiesOnlyExec"
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn schema(&self) -> SchemaRef {
+            Arc::clone(&self.schema)
+        }
+
+        fn properties(&self) -> &PlanProperties {
+            &self.properties
+        }
+
+        fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+            vec![]
+        }
+
+        fn with_new_children(
+            self: Arc<Self>,
+            _children: Vec<Arc<dyn ExecutionPlan>>,
+        ) -> Result<Arc<dyn ExecutionPlan>> {
+            Ok(self)
+        }
+
+        fn execute(
+            &self,
+            _partition: usize,
+            _context: Arc<datafusion_execution::TaskContext>,
+        ) -> Result<datafusion_execution::SendableRecordBatchStream> {
+            unimplemented!("PropertiesOnlyExec is for properties tests only")
+        }
+
+        fn statistics(&self) -> Result<datafusion_common::Statistics> {
+            Ok(datafusion_common::Statistics::new_unknown(
+                self.schema().as_ref(),
+            ))
+        }
+
+        fn partition_statistics(
+            &self,
+            _partition: Option<usize>,
+        ) -> Result<datafusion_common::Statistics> {
+            Ok(datafusion_common::Statistics::new_unknown(
+                self.schema().as_ref(),
+            ))
+        }
+    }
+
+    #[test]
+    fn adjust_right_output_partitioning_offsets_hash_columns() -> Result<()> {
+        let right_part = Partitioning::Hash(vec![Arc::new(Column::new("r0", 0))], 8);
+        let adjusted = adjust_right_output_partitioning(&right_part, 3)?;
+        assert_hash_partitioning_column_indices(&adjusted, &[3], 8);
+
+        let right_part_multi = Partitioning::Hash(
+            vec![
+                Arc::new(Column::new("r0", 0)),
+                Arc::new(Column::new("r2", 2)),
+            ],
+            16,
+        );
+        let adjusted_multi = adjust_right_output_partitioning(&right_part_multi, 5)?;
+        assert_hash_partitioning_column_indices(&adjusted_multi, &[5, 7], 16);
+        Ok(())
+    }
+
+    #[test]
+    fn adjust_right_output_partitioning_passthrough_non_hash() -> Result<()> {
+        let right_part = Partitioning::UnknownPartitioning(4);
+        let adjusted = adjust_right_output_partitioning(&right_part, 10)?;
+        assert!(matches!(adjusted, Partitioning::UnknownPartitioning(4)));
+        Ok(())
+    }
+
+    #[test]
+    fn asymmetric_join_output_partitioning_adjusts_right_hash_for_join_output_schema() -> Result<()>
+    {
+        let left_len = 3;
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("l", left_len)));
+
+        let right_input: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("r", 2)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(RepartitionExec::try_new(
+            right_input,
+            Partitioning::Hash(vec![Arc::new(Column::new("r0", 0))], 8),
+        )?);
+
+        let out =
+            asymmetric_join_output_partitioning(&left, &right, &JoinType::Inner, JoinSide::Right)?;
+        assert_hash_partitioning_column_indices(&out, &[left_len], 8);
+
+        let out_right =
+            asymmetric_join_output_partitioning(&left, &right, &JoinType::Right, JoinSide::Right)?;
+        assert_hash_partitioning_column_indices(&out_right, &[left_len], 8);
+
+        Ok(())
+    }
+
+    #[test]
+    fn asymmetric_join_output_partitioning_uses_actual_probe_side_partitioning_for_knn_like_left_probe(
+    ) -> Result<()> {
+        let left_input: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("l", 3)));
+        let left: Arc<dyn ExecutionPlan> = Arc::new(RepartitionExec::try_new(
+            left_input,
+            Partitioning::Hash(vec![Arc::new(Column::new("l0", 0))], 8),
+        )?);
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("r", 2)));
+
+        let out =
+            asymmetric_join_output_partitioning(&left, &right, &JoinType::Inner, JoinSide::Left)?;
+        assert_hash_partitioning_column_indices(&out, &[0], 8);
+
+        Ok(())
+    }
+
+    #[test]
+    fn asymmetric_join_output_partitioning_does_not_adjust_right_hash_for_right_semi_output_schema(
+    ) -> Result<()> {
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("l", 3)));
+
+        let right_input: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(make_schema("r", 2)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(RepartitionExec::try_new(
+            right_input,
+            Partitioning::Hash(vec![Arc::new(Column::new("r0", 0))], 8),
+        )?);
+
+        let out = asymmetric_join_output_partitioning(
+            &left,
+            &right,
+            &JoinType::RightSemi,
+            JoinSide::Right,
+        )?;
+        assert_hash_partitioning_column_indices(&out, &[0], 8);
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_join_emission_type_prefers_final_for_unbounded_build() {
+        let schema = make_schema("x", 1);
+        let build: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            Arc::clone(&schema),
+            datafusion_physical_plan::execution_plan::Boundedness::Unbounded {
+                requires_infinite_memory: false,
+            },
+            EmissionType::Incremental,
+        ));
+        let probe: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            schema,
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Inner, JoinSide::Right),
+            EmissionType::Final
+        );
+    }
+
+    #[test]
+    fn compute_join_emission_type_uses_probe_behavior_when_not_incremental() {
+        let schema = make_schema("x", 1);
+        let build: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            Arc::clone(&schema),
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+        let probe: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            schema,
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Both,
+        ));
+
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Inner, JoinSide::Right),
+            EmissionType::Both
+        );
+    }
+
+    #[test]
+    fn compute_join_emission_type_incremental_inner_is_incremental() {
+        let schema = make_schema("x", 1);
+        let build: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            Arc::clone(&schema),
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+        let probe: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            schema,
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Inner, JoinSide::Right),
+            EmissionType::Incremental
+        );
+    }
+
+    #[test]
+    fn compute_join_emission_type_incremental_right_depends_on_probe_side() {
+        let schema = make_schema("x", 1);
+        let build: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            Arc::clone(&schema),
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+        let probe: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            schema,
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Right, JoinSide::Right),
+            EmissionType::Incremental
+        );
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Right, JoinSide::Left),
+            EmissionType::Both
+        );
+    }
+
+    #[test]
+    fn compute_join_emission_type_incremental_left_depends_on_probe_side() {
+        let schema = make_schema("x", 1);
+        let build: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            Arc::clone(&schema),
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+        let probe: Arc<dyn ExecutionPlan> = Arc::new(PropertiesOnlyExec::new(
+            schema,
+            datafusion_physical_plan::execution_plan::Boundedness::Bounded,
+            EmissionType::Incremental,
+        ));
+
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Left, JoinSide::Left),
+            EmissionType::Incremental
+        );
+        assert_eq!(
+            compute_join_emission_type(&build, &probe, JoinType::Left, JoinSide::Right),
+            EmissionType::Both
+        );
     }
 }
