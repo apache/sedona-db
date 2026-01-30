@@ -101,6 +101,12 @@ pub(crate) fn apply_join_filter_to_indices(
     filter: &JoinFilter,
     build_side: JoinSide,
 ) -> Result<(UInt64Array, UInt32Array)> {
+    // Forked from DataFusion 50.2.0 `apply_join_filter_to_indices`.
+    // https://github.com/apache/datafusion/blob/50.2.0/datafusion/physical-plan/src/joins/utils.rs
+    //
+    // Changes vs upstream:
+    // - Removes the `max_intermediate_size` parameter and its chunking logic.
+    // - Calls our forked `build_batch_from_indices(..., join_type)` (needed for mark-join semantics).
     if build_indices.is_empty() && probe_indices.is_empty() {
         return Ok((build_indices, probe_indices));
     };
@@ -142,6 +148,14 @@ pub(crate) fn build_batch_from_indices(
     build_side: JoinSide,
     join_type: JoinType,
 ) -> Result<RecordBatch> {
+    // Forked from DataFusion 50.2.0 `build_batch_from_indices`.
+    // https://github.com/apache/datafusion/blob/50.2.0/datafusion/physical-plan/src/joins/utils.rs
+    //
+    // Changes vs upstream:
+    // - Adds the `join_type` parameter so we can special-case mark joins.
+    // - Fixes `RightMark` mark-column construction: for right-mark joins, the mark column must
+    //   reflect match status for the *right* rows, so we build it from `build_indices` (the
+    //   build-side indices) rather than `probe_indices`.
     if schema.fields().is_empty() {
         let options = RecordBatchOptions::new()
             .with_match_field_names(true)
@@ -202,6 +216,13 @@ pub(crate) fn adjust_indices_by_join_type(
     join_type: JoinType,
     preserve_order_for_right: bool,
 ) -> Result<(UInt64Array, UInt32Array)> {
+    // Forked from DataFusion 50.2.0 `adjust_indices_by_join_type`.
+    // https://github.com/apache/datafusion/blob/50.2.0/datafusion/physical-plan/src/joins/utils.rs
+    //
+    // Changes vs upstream:
+    // - Fixes `RightMark` handling to match our `SpatialJoinStream` contract:
+    //   `right_indices` becomes the probe row indices (`adjust_range`), and `left_indices` is a
+    //   mark array (null/non-null) indicating match status.
     match join_type {
         JoinType::Inner => {
             // matched
@@ -381,6 +402,12 @@ pub(crate) fn get_mark_indices<T: ArrowPrimitiveType, R: ArrowPrimitiveType>(
 where
     NativeAdapter<T>: From<<T as ArrowPrimitiveType>::Native>,
 {
+    // Forked from DataFusion 50.2.0 `get_mark_indices`.
+    // https://github.com/apache/datafusion/blob/50.2.0/datafusion/physical-plan/src/joins/utils.rs
+    //
+    // Changes vs upstream:
+    // - Generalizes the output array element type (generic `R`) so we can build mark arrays of
+    //   different physical types while still using the null buffer to encode match status.
     let mut bitmap = build_range_bitmap(range, input_indices);
     PrimitiveArray::new(
         vec![R::Native::default(); range.len()].into(),
