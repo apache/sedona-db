@@ -651,3 +651,246 @@ impl EmbeddedProjection for SpatialJoinExec {
         self.with_projection(projection)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use arrow_array::{Array, RecordBatch};
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion::{
+        catalog::{MemTable, TableProvider},
+        execution::SessionStateBuilder,
+        prelude::{SessionConfig, SessionContext},
+    };
+    use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion_expr::ColumnarValue;
+    use datafusion_physical_expr::expressions::Column;
+    use datafusion_physical_plan::empty::EmptyExec;
+    use datafusion_physical_plan::joins::NestedLoopJoinExec;
+    use geo::{Distance, Euclidean};
+    use geo_types::{Coord, Rect};
+    use rstest::rstest;
+    use sedona_geo::to_geo::GeoTypesExecutor;
+    use sedona_geometry::types::GeometryTypeId;
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+    use sedona_testing::datagen::RandomPartitionedDataBuilder;
+    use tokio::sync::OnceCell;
+
+    use sedona_common::{
+        option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
+        SpatialLibrary,
+    };
+
+    use super::*;
+
+    fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
+        Arc::new(Schema::new(
+            fields
+                .iter()
+                .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn proj_expr(
+        schema: &SchemaRef,
+        index: usize,
+    ) -> (Arc<dyn datafusion_physical_expr::PhysicalExpr>, String) {
+        let name = schema.field(index).name().to_string();
+        (Arc::new(Column::new(&name, index)), name)
+    }
+
+    #[test]
+    fn test_try_swapping_with_projection_pushes_down_and_rewrites_relation_predicate() -> Result<()>
+    {
+        use crate::spatial_predicate::SpatialRelationType;
+
+        // left: [l0, l1, l2], right: [r0, r1]
+        let left_schema = make_schema(&[
+            ("l0", DataType::Int32),
+            ("l1", DataType::Int32),
+            ("l2", DataType::Int32),
+        ]);
+        let right_schema = make_schema(&[("r0", DataType::Int32), ("r1", DataType::Int32)]);
+        let left_len = left_schema.fields().len();
+
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        // on: ST_Intersects(l2, r1) (types don't matter for rewrite-only test)
+        let on = SpatialPredicate::Relation(RelationPredicate {
+            left: Arc::new(Column::new("l2", 2)),
+            right: Arc::new(Column::new("r1", 1)),
+            relation_type: SpatialRelationType::Intersects,
+        });
+
+        let exec = Arc::new(SpatialJoinExec::try_new_internal(
+            left,
+            right,
+            on,
+            None,
+            &JoinType::Inner,
+            None,
+            0,
+        )?);
+
+        // Project only columns used by the predicate: l2 then r1.
+        let join_schema = exec.schema();
+        let exprs = vec![
+            proj_expr(&join_schema, 2),
+            proj_expr(&join_schema, left_len + 1),
+        ];
+        let proj = ProjectionExec::try_new(exprs, Arc::clone(&exec) as Arc<dyn ExecutionPlan>)?;
+
+        let Some(new_plan) = exec.try_swapping_with_projection(&proj)? else {
+            return sedona_internal_err!("expected try_swapping_with_projection to succeed");
+        };
+
+        let new_exec = new_plan
+            .as_any()
+            .downcast_ref::<SpatialJoinExec>()
+            .expect("expected SpatialJoinExec");
+
+        // Projection is pushed down into children; join has no embedded projection.
+        assert!(!new_exec.contains_projection());
+        assert!(new_exec
+            .children()
+            .iter()
+            .all(|c| c.as_any().downcast_ref::<ProjectionExec>().is_some()));
+
+        // Predicate columns should be remapped to match the projected children (both become 0).
+        let SpatialPredicate::Relation(new_on) = &new_exec.on else {
+            return sedona_internal_err!("expected Relation predicate");
+        };
+        let new_left = new_on
+            .left
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        let new_right = new_on
+            .right
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        assert_eq!(new_left.index(), 0);
+        assert_eq!(new_right.index(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_swapping_with_projection_pushes_down_and_rewrites_knn_predicate_by_probe_side(
+    ) -> Result<()> {
+        // left: [l0, lgeom], right: [r0, rgeom]
+        let left_schema = make_schema(&[("l0", DataType::Int32), ("lgeom", DataType::Binary)]);
+        let right_schema = make_schema(&[("r0", DataType::Int32), ("rgeom", DataType::Binary)]);
+        let left_len = left_schema.fields().len();
+
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        // KNN where queries are on the RIGHT plan (probe_side=Right): ST_KNN(rgeom, lgeom, ...)
+        let on = SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left: Arc::new(Column::new("rgeom", 1)),
+            right: Arc::new(Column::new("lgeom", 1)),
+            k: 3,
+            use_spheroid: false,
+            probe_side: JoinSide::Right,
+        });
+
+        let exec = Arc::new(SpatialJoinExec::try_new_internal(
+            left,
+            right,
+            on,
+            None,
+            &JoinType::Inner,
+            None,
+            0,
+        )?);
+
+        // Project only geometry columns (left then right) so pushdown is allowed.
+        let join_schema = exec.schema();
+        let exprs = vec![
+            proj_expr(&join_schema, 1),
+            proj_expr(&join_schema, left_len + 1),
+        ];
+        let proj = ProjectionExec::try_new(exprs, Arc::clone(&exec) as Arc<dyn ExecutionPlan>)?;
+
+        let Some(new_plan) = exec.try_swapping_with_projection(&proj)? else {
+            return sedona_internal_err!("expected try_swapping_with_projection to succeed");
+        };
+        let new_exec = new_plan
+            .as_any()
+            .downcast_ref::<SpatialJoinExec>()
+            .expect("expected SpatialJoinExec");
+
+        let SpatialPredicate::KNearestNeighbors(new_on) = &new_exec.on else {
+            return sedona_internal_err!("expected KNN predicate");
+        };
+
+        // Both sides should be remapped to 0 in their respective projected children.
+        let new_probe = new_on
+            .left
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        let new_build = new_on
+            .right
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        assert_eq!(new_probe.index(), 0);
+        assert_eq!(new_build.index(), 0);
+        assert_eq!(new_on.probe_side, JoinSide::Right);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_swap_inputs_flips_knn_probe_side_without_swapping_exprs() -> Result<()> {
+        let left_schema = make_schema(&[("l0", DataType::Int32), ("lgeom", DataType::Binary)]);
+        let right_schema = make_schema(&[("r0", DataType::Int32), ("rgeom", DataType::Binary)]);
+
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let on = SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left: Arc::new(Column::new("rgeom", 1)),
+            right: Arc::new(Column::new("lgeom", 1)),
+            k: 3,
+            use_spheroid: false,
+            probe_side: JoinSide::Right,
+        });
+        let exec =
+            SpatialJoinExec::try_new_internal(left, right, on, None, &JoinType::Inner, None, 0)?;
+
+        let swapped = exec.swap_inputs()?;
+        let spatial_execs = collect_spatial_join_exec(&swapped)?;
+        assert_eq!(spatial_execs.len(), 1);
+
+        let swapped_exec = spatial_execs[0];
+        let SpatialPredicate::KNearestNeighbors(knn) = &swapped_exec.on else {
+            return sedona_internal_err!("expected KNN predicate");
+        };
+
+        // Children swapped, so probe_side flips.
+        assert_eq!(knn.probe_side, JoinSide::Left);
+
+        // Expressions are not swapped (remain pointing at original table schemas).
+        let probe_expr = knn
+            .left
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        let build_expr = knn
+            .right
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        assert_eq!(probe_expr.name(), "rgeom");
+        assert_eq!(probe_expr.index(), 1);
+        assert_eq!(build_expr.name(), "lgeom");
+        assert_eq!(build_expr.index(), 1);
+
+        Ok(())
+    }
+}
