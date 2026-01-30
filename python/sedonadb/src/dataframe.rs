@@ -163,18 +163,12 @@ impl InternalDataFrame {
         let batches = wait_for_future(py, &self.runtime, async move {
             let mut stream = df.execute_stream().await?;
             let schema = stream.schema();
-            let mut count = 0usize;
             let mut batches = Vec::new();
             while let Some(batch) = stream.try_next().await? {
-                count += batch.num_rows();
                 batches.push(batch);
             }
 
-            Ok::<_, DataFusionError>(Batches {
-                schema,
-                batches,
-                count,
-            })
+            Ok::<_, DataFusionError>(Batches { schema, batches })
         })??;
 
         Ok(batches)
@@ -314,15 +308,10 @@ impl InternalDataFrame {
 pub struct Batches {
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
-    count: usize,
 }
 
 #[pymethods]
 impl Batches {
-    fn __len__(&self) -> usize {
-        self.count
-    }
-
     #[pyo3(signature = (requested_schema=None))]
     fn __arrow_c_stream__<'py>(
         &self,
