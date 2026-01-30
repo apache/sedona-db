@@ -244,10 +244,9 @@ impl DistanceOperandEvaluator {
         match &distance_columnar_value {
             ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
                 result.rects.iter_mut().for_each(|rect_opt| {
-                    let Some(rect) = rect_opt else {
-                        return;
+                    if let Some(rect) = rect_opt {
+                        expand_rect_in_place(rect, *distance);
                     };
-                    expand_rect_in_place(rect, *distance);
                 });
             }
             ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
@@ -259,10 +258,9 @@ impl DistanceOperandEvaluator {
                     for (geom_idx, rect_opt) in result.rects.iter_mut().enumerate() {
                         if !array.is_null(geom_idx) {
                             let dist = array.value(geom_idx);
-                            let Some(rect) = rect_opt else {
-                                continue;
+                            if let Some(rect) = rect_opt {
+                                expand_rect_in_place(rect, dist);
                             };
-                            expand_rect_in_place(rect, dist);
                         }
                     }
                 } else {

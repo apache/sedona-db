@@ -73,7 +73,7 @@ log = { workspace = true }
 criterion = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }
 rstest = { workspace = true }
-sedona-testing = { workspace = true}
+sedona-testing = { workspace = true }
 wkt = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 rand = { workspace = true }

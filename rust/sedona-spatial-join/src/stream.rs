@@ -17,7 +17,9 @@
 use arrow::array::BooleanBufferBuilder;
 use arrow::compute::interleave_record_batch;
 use arrow_array::{UInt32Array, UInt64Array};
+use datafusion::prelude::SessionConfig;
 use datafusion_common::{JoinSide, Result};
+use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_expr::JoinType;
 use datafusion_physical_plan::joins::utils::StatefulStreamResult;
 use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
@@ -25,10 +27,9 @@ use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBui
 use datafusion_physical_plan::{handle_state, RecordBatchStream, SendableRecordBatchStream};
 use futures::future::BoxFuture;
 use futures::stream::StreamExt;
-use futures::FutureExt;
-use futures::{ready, task::Poll};
+use futures::{ready, task::Poll, FutureExt};
 use parking_lot::Mutex;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use std::collections::HashMap;
@@ -38,14 +39,17 @@ use std::sync::Arc;
 use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::partitioned_index_provider::PartitionedIndexProvider;
-use crate::index::SpatialIndex;
+use crate::index::{partitioned_index_provider::PartitionedIndexProvider, SpatialIndex};
 use crate::operand_evaluator::create_operand_evaluator;
+use crate::partitioning::SpatialPartition;
 use crate::prepare::SpatialJoinComponents;
+use crate::probe::partitioned_stream_provider::PartitionedProbeStreamProvider;
+use crate::probe::ProbeStreamMetrics;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
-    adjust_indices_by_join_type, apply_join_filter_to_indices, build_batch_from_indices,
-    get_final_indices_from_bit_map, need_produce_result_in_final,
+    adjust_indices_with_visited_info, apply_join_filter_to_indices, build_batch_from_indices,
+    get_final_indices_from_bit_map, need_probe_multi_partition_bitmap,
+    need_produce_result_in_final,
 };
 use crate::utils::once_fut::{OnceAsync, OnceFut};
 use arrow::array::RecordBatch;
@@ -63,7 +67,9 @@ pub(crate) struct SpatialJoinStream {
     /// type of the join
     join_type: JoinType,
     /// The stream of the probe side
-    probe_stream: SendableEvaluatedBatchStream,
+    probe_stream: Option<SendableEvaluatedBatchStream>,
+    /// The schema of the probe side
+    probe_stream_schema: SchemaRef,
     /// Information of index and left / right placement of columns
     column_indices: Vec<ColumnIndex>,
     /// Maintains the order of the probe side
@@ -72,8 +78,9 @@ pub(crate) struct SpatialJoinStream {
     join_metrics: SpatialJoinProbeMetrics,
     /// Current state of the stream
     state: SpatialJoinStreamState,
+    /// DataFusion runtime environment
+    runtime_env: Arc<RuntimeEnv>,
     /// Options for the spatial join
-    #[allow(unused)]
     options: SpatialJoinOptions,
     /// Target output batch size
     target_output_batch_size: usize,
@@ -83,14 +90,24 @@ pub(crate) struct SpatialJoinStream {
     once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
     /// Cached index provider reference after it becomes available
     index_provider: Option<Arc<PartitionedIndexProvider>>,
-    /// The spatial index
+    /// Probe side evaluated batch stream provider
+    probe_stream_provider: Option<PartitionedProbeStreamProvider>,
+    /// The spatial index for the current partition
     spatial_index: Option<Arc<SpatialIndex>>,
+    /// The probe-side evaluated batch stream for the current partition
+    probe_evaluated_stream: Option<SendableEvaluatedBatchStream>,
     /// Pending future for building or waiting on a partitioned index
     pending_index_future: Option<BoxFuture<'static, Option<Result<Arc<SpatialIndex>>>>>,
     /// Total number of regular partitions produced by the provider
     num_regular_partitions: Option<u32>,
     /// The spatial predicate being evaluated
     spatial_predicate: SpatialPredicate,
+    /// Bitmap for tracking visited rows in the Multi partition of the probe side.
+    /// This is used for outer joins to ensure that we only emit unmatched rows from the Multi
+    /// partition once, after all regular partitions have been processed.
+    visited_multi_probe_side: Option<Arc<Mutex<BooleanBufferBuilder>>>,
+    /// Current offset in the probe side partition
+    probe_offset: usize,
 }
 
 impl SpatialJoinStream {
@@ -104,51 +121,64 @@ impl SpatialJoinStream {
         probe_stream: SendableRecordBatchStream,
         column_indices: Vec<ColumnIndex>,
         probe_side_ordered: bool,
-        join_metrics: SpatialJoinProbeMetrics,
-        options: SpatialJoinOptions,
-        target_output_batch_size: usize,
+        session_config: &SessionConfig,
+        runtime_env: Arc<RuntimeEnv>,
+        metrics: &ExecutionPlanMetricsSet,
         once_fut_spatial_join_components: OnceFut<SpatialJoinComponents>,
         once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
     ) -> Self {
-        let evaluator = create_operand_evaluator(on, options.clone());
+        let target_output_batch_size = session_config.batch_size();
+        let sedona_options = session_config
+            .options()
+            .extensions
+            .get::<SedonaOptions>()
+            .cloned()
+            .unwrap_or_default();
+
+        let evaluator = create_operand_evaluator(on, sedona_options.spatial_join.clone());
+        let join_metrics = SpatialJoinProbeMetrics::new(probe_partition_id, metrics);
         let probe_stream = create_evaluated_probe_stream(
             probe_stream,
             Arc::clone(&evaluator),
             join_metrics.join_time.clone(),
         );
+        let probe_stream_schema = probe_stream.schema();
+
         Self {
             probe_partition_id,
-            schema,
+            schema: schema.clone(),
             filter,
             join_type,
-            probe_stream,
+            probe_stream: Some(probe_stream),
+            probe_stream_schema,
             column_indices,
             probe_side_ordered,
             join_metrics,
             state: SpatialJoinStreamState::WaitPrepareSpatialJoinComponents,
-            options,
+            runtime_env,
+            options: sedona_options.spatial_join,
             target_output_batch_size,
             once_fut_spatial_join_components,
             once_async_spatial_join_components,
             index_provider: None,
+            probe_stream_provider: None,
             spatial_index: None,
+            probe_evaluated_stream: None,
             pending_index_future: None,
             num_regular_partitions: None,
             spatial_predicate: on.clone(),
+            visited_multi_probe_side: None,
+            probe_offset: 0,
         }
     }
 }
 
 /// Metrics for the probe phase of the spatial join.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct SpatialJoinProbeMetrics {
+    pub(crate) probe_stream_metrics: ProbeStreamMetrics,
     /// Total time for joining probe-side batches to the build-side batches
     pub(crate) join_time: metrics::Time,
-    /// Number of batches consumed by probe-side of this operator
-    pub(crate) probe_input_batches: metrics::Count,
-    /// Number of rows consumed by probe-side this operator
-    pub(crate) probe_input_rows: metrics::Count,
-    /// Number of batches produced by this operator
     pub(crate) output_batches: metrics::Count,
     /// Number of rows produced by this operator
     pub(crate) output_rows: metrics::Count,
@@ -165,10 +195,8 @@ pub(crate) struct SpatialJoinProbeMetrics {
 impl SpatialJoinProbeMetrics {
     pub fn new(partition: usize, metrics: &ExecutionPlanMetricsSet) -> Self {
         Self {
+            probe_stream_metrics: ProbeStreamMetrics::new(partition, metrics),
             join_time: MetricBuilder::new(metrics).subset_time("join_time", partition),
-            probe_input_batches: MetricBuilder::new(metrics)
-                .counter("probe_input_batches", partition),
-            probe_input_rows: MetricBuilder::new(metrics).counter("probe_input_rows", partition),
             output_batches: MetricBuilder::new(metrics).counter("output_batches", partition),
             output_rows: MetricBuilder::new(metrics).output_rows(partition),
             join_result_candidates: MetricBuilder::new(metrics)
@@ -185,21 +213,90 @@ impl SpatialJoinProbeMetrics {
 pub(crate) enum SpatialJoinStreamState {
     /// The initial mode: waiting for the spatial join components to become available
     WaitPrepareSpatialJoinComponents,
-    /// The initial mode: waiting for the spatial index to be built
-    WaitBuildIndex,
+    /// Wait for a specific partition's index. The boolean denotes whether this stream should kick
+    /// off building the index (`true`) or simply wait for someone else to build it (`false`).
+    WaitBuildIndex(u32, bool),
     /// Indicates that build-side has been collected, and stream is ready for
-    /// fetching probe-side
-    FetchProbeBatch,
+    /// fetching probe-side batches
+    FetchProbeBatch(PartitionDescriptor),
     /// Indicates that we're processing a probe batch using the batch iterator
     ProcessProbeBatch(
+        PartitionDescriptor,
         BoxFuture<'static, (Box<SpatialJoinBatchIterator>, Result<Option<RecordBatch>>)>,
     ),
-    /// Indicates that probe-side has been fully processed
-    ExhaustedProbeSide,
+    /// Indicates that we have exhausted the current probe stream, move to the Multi partition
+    /// or prepare for emitting unmatched build batch
+    ExhaustedProbeStream(PartitionDescriptor),
+    /// Indicates that probe-side has been fully processed, prepare iterator for producing
+    /// unmatched build side batches for outer join
+    PrepareUnmatchedBuildBatch(PartitionDescriptor),
     /// Indicates that we're processing unmatched build-side batches using an iterator
-    ProcessUnmatchedBuildBatch(UnmatchedBuildBatchIterator),
+    ProcessUnmatchedBuildBatch(PartitionDescriptor, UnmatchedBuildBatchIterator),
+    /// Prepare for processing the next partition.
+    /// If the last partition has been processed, simply transfer to [`SpatialJoinStreamState::Completed`];
+    /// If the there's still more partitions to process, then transfer to [`SpatialJoinStreamState::WaitBuildIndex`] state.
+    /// If we are the last one finishing processing the current partition, we can safely
+    /// drop the current index and kick off the building of the index for the next partition.
+    PrepareForNextPartition(u32, bool),
     /// Indicates that SpatialJoinStream execution is completed
     Completed,
+}
+
+impl std::fmt::Debug for SpatialJoinStreamState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WaitPrepareSpatialJoinComponents => write!(f, "WaitPrepareSpatialJoinComponents"),
+            Self::WaitBuildIndex(id, build) => f
+                .debug_tuple("WaitBuildIndex")
+                .field(id)
+                .field(build)
+                .finish(),
+            Self::FetchProbeBatch(desc) => f.debug_tuple("FetchProbeBatch").field(desc).finish(),
+            Self::ProcessProbeBatch(desc, _) => {
+                f.debug_tuple("ProcessProbeBatch").field(desc).finish()
+            }
+            Self::ExhaustedProbeStream(desc) => {
+                f.debug_tuple("ExhaustedProbeStream").field(desc).finish()
+            }
+            Self::PrepareUnmatchedBuildBatch(desc) => f
+                .debug_tuple("PrepareUnmatchedBuildBatch")
+                .field(desc)
+                .finish(),
+            Self::ProcessUnmatchedBuildBatch(desc, iter) => f
+                .debug_tuple("ProcessUnmatchedBuildBatch")
+                .field(desc)
+                .field(iter)
+                .finish(),
+            Self::PrepareForNextPartition(id, last) => f
+                .debug_tuple("PrepareForNextPartition")
+                .field(id)
+                .field(last)
+                .finish(),
+            Self::Completed => write!(f, "Completed"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PartitionDescriptor {
+    partition_id: u32,
+    partition: SpatialPartition,
+}
+
+impl PartitionDescriptor {
+    fn regular(partition_id: u32) -> Self {
+        Self {
+            partition_id,
+            partition: SpatialPartition::Regular(partition_id),
+        }
+    }
+
+    fn multi(partition_id: u32) -> Self {
+        Self {
+            partition_id,
+            partition: SpatialPartition::Multi,
+        }
+    }
 }
 
 impl SpatialJoinStream {
@@ -208,26 +305,63 @@ impl SpatialJoinStream {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<RecordBatch>>> {
         loop {
-            return match &mut self.state {
+            return match &self.state {
                 SpatialJoinStreamState::WaitPrepareSpatialJoinComponents => {
                     handle_state!(ready!(self.wait_create_spatial_join_components(cx)))
                 }
-                SpatialJoinStreamState::WaitBuildIndex => {
-                    handle_state!(ready!(self.wait_build_index(cx)))
+                SpatialJoinStreamState::WaitBuildIndex(partition_id, should_build) => {
+                    handle_state!(ready!(self.wait_build_index(
+                        *partition_id,
+                        *should_build,
+                        cx
+                    )))
                 }
-                SpatialJoinStreamState::FetchProbeBatch => {
-                    handle_state!(ready!(self.fetch_probe_batch(cx)))
+                SpatialJoinStreamState::FetchProbeBatch(desc) => {
+                    handle_state!(ready!(self.fetch_probe_batch(*desc, cx)))
                 }
-                SpatialJoinStreamState::ProcessProbeBatch(_) => {
+                SpatialJoinStreamState::ProcessProbeBatch(_, _) => {
                     handle_state!(ready!(self.process_probe_batch(cx)))
                 }
-                SpatialJoinStreamState::ExhaustedProbeSide => {
-                    handle_state!(ready!(self.setup_unmatched_build_batch_processing()))
+                SpatialJoinStreamState::ExhaustedProbeStream(desc) => {
+                    self.probe_evaluated_stream = None;
+                    match desc.partition {
+                        SpatialPartition::Regular(_) => {
+                            if self.num_regular_partitions == Some(1) {
+                                // Single-partition spatial join does not have to process the Multi partition.
+                                self.state =
+                                    SpatialJoinStreamState::PrepareUnmatchedBuildBatch(*desc);
+                            } else {
+                                log::debug!(
+                                    "[Partition {}] Start probing the Multi partition",
+                                    self.probe_partition_id
+                                );
+                                self.state = SpatialJoinStreamState::FetchProbeBatch(
+                                    PartitionDescriptor::multi(desc.partition_id),
+                                );
+                            }
+                        }
+                        SpatialPartition::Multi => {
+                            self.state = SpatialJoinStreamState::PrepareUnmatchedBuildBatch(*desc);
+                        }
+                        _ => unreachable!(),
+                    }
+                    continue;
                 }
-                SpatialJoinStreamState::ProcessUnmatchedBuildBatch(_) => {
+                SpatialJoinStreamState::PrepareUnmatchedBuildBatch(desc) => {
+                    handle_state!(ready!(self.setup_unmatched_build_batch_processing(*desc)))
+                }
+                SpatialJoinStreamState::ProcessUnmatchedBuildBatch(_, _) => {
                     handle_state!(ready!(self.process_unmatched_build_batch()))
                 }
-                SpatialJoinStreamState::Completed => Poll::Ready(None),
+                SpatialJoinStreamState::PrepareForNextPartition(partition_id, is_last_stream) => {
+                    handle_state!(ready!(
+                        self.prepare_for_next_partition(*partition_id, *is_last_stream)
+                    ))
+                }
+                SpatialJoinStreamState::Completed => {
+                    log::debug!("[Partition {}] Completed", self.probe_partition_id);
+                    Poll::Ready(None)
+                }
             };
         }
     }
@@ -242,6 +376,21 @@ impl SpatialJoinStream {
             let provider = Arc::clone(&spatial_join_components.partitioned_index_provider);
             self.num_regular_partitions = Some(provider.num_regular_partitions() as u32);
             self.index_provider = Some(provider);
+
+            match self.probe_stream.take() {
+                Some(probe_stream) => {
+                    let probe_stream_provider = PartitionedProbeStreamProvider::new(
+                        Arc::clone(&self.runtime_env),
+                        spatial_join_components.probe_stream_options.clone(),
+                        probe_stream,
+                        self.join_metrics.probe_stream_metrics.clone(),
+                    );
+                    self.probe_stream_provider = Some(probe_stream_provider);
+                }
+                None => {
+                    return Poll::Ready(sedona_internal_err!("Probe stream should be available"));
+                }
+            }
         }
 
         let num_partitions = self
@@ -253,24 +402,19 @@ impl SpatialJoinStream {
             return Poll::Ready(Ok(StatefulStreamResult::Continue));
         }
 
-        if num_partitions > 1 {
-            return Poll::Ready(sedona_internal_err!(
-                "Multi-partitioned spatial join is not supported yet"
-            ));
-        }
-
-        self.state = SpatialJoinStreamState::WaitBuildIndex;
+        self.state = SpatialJoinStreamState::WaitBuildIndex(0, true);
         Poll::Ready(Ok(StatefulStreamResult::Continue))
     }
 
     fn wait_build_index(
         &mut self,
+        partition_id: u32,
+        should_build: bool,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
         let num_partitions = self
             .num_regular_partitions
             .expect("num_regular_partitions should be available");
-        let partition_id = 0;
         if partition_id >= num_partitions {
             self.state = SpatialJoinStreamState::Completed;
             return Poll::Ready(Ok(StatefulStreamResult::Continue));
@@ -282,13 +426,20 @@ impl SpatialJoinStream {
                     .as_ref()
                     .expect("Partitioned index provider should be available"),
             );
-            let future = {
+            let future = if should_build {
                 log::debug!(
                     "[Partition {}] Building index for spatial partition {}",
                     self.probe_partition_id,
                     partition_id
                 );
                 async move { provider.build_or_wait_for_index(partition_id).await }.boxed()
+            } else {
+                log::debug!(
+                    "[Partition {}] Waiting for index for spatial partition {}",
+                    self.probe_partition_id,
+                    partition_id
+                );
+                async move { provider.wait_for_index(partition_id).await }.boxed()
             };
             self.pending_index_future = Some(future);
         }
@@ -307,7 +458,9 @@ impl SpatialJoinStream {
                     self.probe_partition_id,
                     partition_id
                 );
-                self.state = SpatialJoinStreamState::FetchProbeBatch;
+                self.state = SpatialJoinStreamState::FetchProbeBatch(PartitionDescriptor::regular(
+                    partition_id,
+                ));
                 Poll::Ready(Ok(StatefulStreamResult::Continue))
             }
             Poll::Ready(Some(Err(err))) => {
@@ -325,25 +478,60 @@ impl SpatialJoinStream {
 
     fn fetch_probe_batch(
         &mut self,
+        partition_desc: PartitionDescriptor,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        let result = self.probe_stream.poll_next_unpin(cx);
-        match result {
-            Poll::Ready(Some(Ok(batch))) => match self.create_spatial_join_iterator(batch) {
-                Ok(mut iterator) => {
-                    let future = async move {
-                        let result = iterator.next_batch().await;
-                        (iterator, result)
-                    }
-                    .boxed();
-                    self.state = SpatialJoinStreamState::ProcessProbeBatch(future);
-                    Poll::Ready(Ok(StatefulStreamResult::Continue))
+        if self.probe_evaluated_stream.is_none() {
+            let probe_stream_provider = self
+                .probe_stream_provider
+                .as_mut()
+                .expect("Probe stream provider should be available");
+
+            // Initialize visited_multi_probe_side if needed
+            if matches!(partition_desc.partition, SpatialPartition::Multi) {
+                let need_probe_bitmap = need_probe_multi_partition_bitmap(self.join_type);
+
+                if self.visited_multi_probe_side.is_none() && need_probe_bitmap {
+                    let num_rows =
+                        probe_stream_provider.get_partition_row_count(partition_desc.partition)?;
+                    let mut buffer = BooleanBufferBuilder::new(num_rows);
+                    buffer.append_n(num_rows, false);
+                    self.visited_multi_probe_side = Some(Arc::new(Mutex::new(buffer)));
                 }
-                Err(e) => Poll::Ready(Err(e)),
-            },
+            }
+
+            let evaluated_stream = probe_stream_provider.stream_for(partition_desc.partition)?;
+            self.probe_evaluated_stream = Some(evaluated_stream);
+            self.probe_offset = 0;
+        }
+
+        let probe_evaluated_stream = self
+            .probe_evaluated_stream
+            .as_mut()
+            .expect("Probe evaluated stream should be available");
+
+        let result = probe_evaluated_stream.poll_next_unpin(cx);
+        match result {
+            Poll::Ready(Some(Ok(batch))) => {
+                let num_rows = batch.num_rows();
+                match self.create_spatial_join_iterator(partition_desc, batch, self.probe_offset) {
+                    Ok(mut iterator) => {
+                        self.probe_offset += num_rows;
+                        let future = async move {
+                            let result = iterator.next_batch().await;
+                            (iterator, result)
+                        }
+                        .boxed();
+                        self.state =
+                            SpatialJoinStreamState::ProcessProbeBatch(partition_desc, future);
+                        Poll::Ready(Ok(StatefulStreamResult::Continue))
+                    }
+                    Err(e) => Poll::Ready(Err(e)),
+                }
+            }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
             Poll::Ready(None) => {
-                self.state = SpatialJoinStreamState::ExhaustedProbeSide;
+                self.state = SpatialJoinStreamState::ExhaustedProbeStream(partition_desc);
                 Poll::Ready(Ok(StatefulStreamResult::Continue))
             }
             Poll::Pending => Poll::Pending,
@@ -357,27 +545,32 @@ impl SpatialJoinStream {
         let _timer = self.join_metrics.join_time.timer();
 
         // Extract the necessary data first to avoid borrowing conflicts
-        let (mut iterator, batch_opt) = match &mut self.state {
-            SpatialJoinStreamState::ProcessProbeBatch(future) => match future.poll_unpin(cx) {
-                Poll::Ready((iterator, result)) => {
-                    let batch_opt = match result {
-                        Ok(opt) => opt,
-                        Err(e) => {
-                            return Poll::Ready(Err(e));
-                        }
-                    };
-                    (iterator, batch_opt)
+        let (partition_desc, mut iterator, batch_opt) = match &mut self.state {
+            SpatialJoinStreamState::ProcessProbeBatch(desc, future) => {
+                match future.poll_unpin(cx) {
+                    Poll::Ready((iterator, result)) => {
+                        let batch_opt = match result {
+                            Ok(opt) => opt,
+                            Err(e) => {
+                                return Poll::Ready(Err(e));
+                            }
+                        };
+                        (*desc, iterator, batch_opt)
+                    }
+                    Poll::Pending => return Poll::Pending,
                 }
-                Poll::Pending => return Poll::Pending,
-            },
+            }
             _ => unreachable!(),
         };
 
         match batch_opt {
             Some(batch) => {
+                self.join_metrics.output_batches.add(1);
+                self.join_metrics.output_rows.add(batch.num_rows());
+
                 // Check if iterator is complete
                 if iterator.is_complete() {
-                    self.state = SpatialJoinStreamState::FetchProbeBatch;
+                    self.state = SpatialJoinStreamState::FetchProbeBatch(partition_desc);
                 } else {
                     // Iterator is not complete, continue processing the current probe batch
                     let future = async move {
@@ -385,13 +578,13 @@ impl SpatialJoinStream {
                         (iterator, result)
                     }
                     .boxed();
-                    self.state = SpatialJoinStreamState::ProcessProbeBatch(future);
+                    self.state = SpatialJoinStreamState::ProcessProbeBatch(partition_desc, future);
                 }
                 Poll::Ready(Ok(StatefulStreamResult::Ready(Some(batch))))
             }
             None => {
-                // Iterator finished, move to next probe batch
-                self.state = SpatialJoinStreamState::FetchProbeBatch;
+                // Iterator finished, move to the next probe batch
+                self.state = SpatialJoinStreamState::FetchProbeBatch(partition_desc);
                 Poll::Ready(Ok(StatefulStreamResult::Continue))
             }
         }
@@ -399,6 +592,7 @@ impl SpatialJoinStream {
 
     fn setup_unmatched_build_batch_processing(
         &mut self,
+        partition_desc: PartitionDescriptor,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
         let Some(spatial_index) = self.spatial_index.as_ref() else {
             return Poll::Ready(sedona_internal_err!(
@@ -411,20 +605,10 @@ impl SpatialJoinStream {
             // Update the memory used by refiner and execution mode used to the metrics
             self.join_metrics
                 .refiner_mem_used
-                .set(spatial_index.get_refiner_mem_usage());
+                .set_max(spatial_index.get_refiner_mem_usage());
             self.join_metrics
                 .execution_mode
                 .set(spatial_index.get_actual_execution_mode().to_usize());
-
-            // Drop the once async to avoid holding a long-living reference to the spatial index.
-            // The spatial index will be dropped when this stream is dropped.
-            let mut once_async = self.once_async_spatial_join_components.lock();
-            once_async.take();
-
-            if let Some(provider) = self.index_provider.as_ref() {
-                provider.dispose_index(0);
-                assert!(provider.num_loaded_indexes() == 0);
-            }
         }
 
         // Initial setup for processing unmatched build batches
@@ -432,32 +616,46 @@ impl SpatialJoinStream {
             // Only produce left-outer batches if this is the last partition that finished probing.
             // This mechanism is similar to the one in NestedLoopJoinStream.
             if !is_last_stream {
-                self.state = SpatialJoinStreamState::Completed;
-                return Poll::Ready(Ok(StatefulStreamResult::Ready(None)));
+                self.state = SpatialJoinStreamState::PrepareForNextPartition(
+                    partition_desc.partition_id,
+                    is_last_stream,
+                );
+                return Poll::Ready(Ok(StatefulStreamResult::Continue));
             }
 
-            let empty_right_batch = RecordBatch::new_empty(self.probe_stream.schema());
+            log::debug!(
+                "[Partition {}] Producing unmatched build side for spatial partition {}",
+                self.probe_partition_id,
+                partition_desc.partition_id
+            );
 
-            match UnmatchedBuildBatchIterator::new(spatial_index.clone(), empty_right_batch) {
+            let empty_right_batch = RecordBatch::new_empty(Arc::clone(&self.probe_stream_schema));
+
+            match UnmatchedBuildBatchIterator::try_new(spatial_index.clone(), empty_right_batch) {
                 Ok(iterator) => {
-                    self.state = SpatialJoinStreamState::ProcessUnmatchedBuildBatch(iterator);
+                    self.state = SpatialJoinStreamState::ProcessUnmatchedBuildBatch(
+                        partition_desc,
+                        iterator,
+                    );
                     Poll::Ready(Ok(StatefulStreamResult::Continue))
                 }
                 Err(e) => Poll::Ready(Err(e)),
             }
         } else {
             // end of the join loop
-            self.state = SpatialJoinStreamState::Completed;
-            Poll::Ready(Ok(StatefulStreamResult::Ready(None)))
+            self.state = SpatialJoinStreamState::PrepareForNextPartition(
+                partition_desc.partition_id,
+                is_last_stream,
+            );
+            Poll::Ready(Ok(StatefulStreamResult::Continue))
         }
     }
 
     fn process_unmatched_build_batch(
         &mut self,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
-        // Extract the iterator from the state to avoid borrowing conflicts
-        let (batch_opt, is_complete) = match &mut self.state {
-            SpatialJoinStreamState::ProcessUnmatchedBuildBatch(iterator) => {
+        let (partition_desc, batch_opt, is_complete) = match &mut self.state {
+            SpatialJoinStreamState::ProcessUnmatchedBuildBatch(desc, iterator) => {
                 let batch_opt = match iterator.next_batch(
                     &self.schema,
                     self.join_type,
@@ -468,7 +666,7 @@ impl SpatialJoinStream {
                     Err(e) => return Poll::Ready(Err(e)),
                 };
                 let is_complete = iterator.is_complete();
-                (batch_opt, is_complete)
+                (*desc, batch_opt, is_complete)
             }
             _ => {
                 return Poll::Ready(sedona_internal_err!(
@@ -485,27 +683,64 @@ impl SpatialJoinStream {
 
                 // Check if iterator is complete
                 if is_complete {
-                    self.state = SpatialJoinStreamState::Completed;
+                    self.state = SpatialJoinStreamState::PrepareForNextPartition(
+                        partition_desc.partition_id,
+                        true,
+                    );
                 }
 
                 Poll::Ready(Ok(StatefulStreamResult::Ready(Some(batch))))
             }
             None => {
-                // Iterator finished, complete the stream
-                self.state = SpatialJoinStreamState::Completed;
-                Poll::Ready(Ok(StatefulStreamResult::Ready(None)))
+                // Iterator finished, advance to the next spatial partition
+                self.state = SpatialJoinStreamState::PrepareForNextPartition(
+                    partition_desc.partition_id,
+                    true,
+                );
+                Poll::Ready(Ok(StatefulStreamResult::Continue))
             }
         }
     }
 
-    fn create_spatial_join_iterator(
-        &self,
-        probe_evaluated_batch: EvaluatedBatch,
-    ) -> Result<Box<SpatialJoinBatchIterator>> {
-        let num_rows = probe_evaluated_batch.num_rows();
-        self.join_metrics.probe_input_batches.add(1);
-        self.join_metrics.probe_input_rows.add(num_rows);
+    fn prepare_for_next_partition(
+        &mut self,
+        current_partition_id: u32,
+        is_last_stream: bool,
+    ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
+        self.spatial_index = None;
+        if is_last_stream {
+            if let Some(provider) = self.index_provider.as_ref() {
+                provider.dispose_index(current_partition_id);
+                assert!(provider.num_loaded_indexes() == 0);
+            }
+        }
 
+        let num_regular_partitions = self
+            .num_regular_partitions
+            .expect("num_regular_partitions should be available");
+
+        let next_partition_id = current_partition_id + 1;
+
+        if next_partition_id >= num_regular_partitions {
+            if is_last_stream {
+                let mut once_async = self.once_async_spatial_join_components.lock();
+                once_async.take();
+            }
+
+            self.state = SpatialJoinStreamState::Completed;
+            Poll::Ready(Ok(StatefulStreamResult::Continue))
+        } else {
+            self.state = SpatialJoinStreamState::WaitBuildIndex(next_partition_id, is_last_stream);
+            Poll::Ready(Ok(StatefulStreamResult::Continue))
+        }
+    }
+
+    fn create_spatial_join_iterator(
+        &mut self,
+        partition_desc: PartitionDescriptor,
+        probe_evaluated_batch: EvaluatedBatch,
+        probe_offset: usize,
+    ) -> Result<Box<SpatialJoinBatchIterator>> {
         // Get the spatial index
         let spatial_index = self
             .spatial_index
@@ -524,6 +759,19 @@ impl SpatialJoinStream {
             spatial_index.merge_probe_stats(stats);
         }
 
+        let visited_probe_side = if matches!(partition_desc.partition, SpatialPartition::Multi) {
+            self.visited_multi_probe_side.clone()
+        } else {
+            None
+        };
+
+        // Produce unmatched probe rows when processing the last build partition's Multi partition
+        let num_regular_partitions = self
+            .num_regular_partitions
+            .expect("num_regular_partitions should be available");
+        let is_last_build_partition = matches!(partition_desc.partition, SpatialPartition::Multi)
+            && (partition_desc.partition_id + 1) == num_regular_partitions;
+
         // For KNN joins, we may have swapped build/probe sides, so build_side might be Right;
         // For regular joins, build_side is always Left.
         let build_side = match &self.spatial_predicate {
@@ -538,12 +786,15 @@ impl SpatialJoinStream {
             column_indices: self.column_indices.clone(),
             build_side,
             spatial_index: spatial_index.clone(),
-            probe_evaluated_batch: Arc::new(probe_evaluated_batch),
             join_metrics: self.join_metrics.clone(),
             max_batch_size: self.target_output_batch_size,
             probe_side_ordered: self.probe_side_ordered,
             spatial_predicate: self.spatial_predicate.clone(),
             options: self.options.clone(),
+            visited_probe_side,
+            probe_offset,
+            produce_unmatched_probe_rows: is_last_build_partition,
+            probe_evaluated_batch: Arc::new(probe_evaluated_batch),
         })?;
         Ok(Box::new(iterator))
     }
@@ -601,6 +852,14 @@ pub(crate) struct SpatialJoinBatchIterator {
     spatial_predicate: SpatialPredicate,
     /// The spatial join options
     options: SpatialJoinOptions,
+    /// Bitmap for tracking visited rows in the probe side. This will only be `Some`
+    /// when processing the Multi partition for spatial-partitioned right outer joins.
+    visited_probe_side: Option<Arc<Mutex<BooleanBufferBuilder>>>,
+    /// Offset of the probe batch in the partition
+    offset_in_partition: usize,
+    /// Whether produce unmatched probe rows for right outer joins. This is only effective
+    /// when [Self::visited_probe_side] is `Some`.
+    produce_unmatched_probe_rows: bool,
     /// Progress of probing
     progress: Option<ProbeProgress>,
 }
@@ -722,6 +981,9 @@ pub(crate) struct SpatialJoinBatchIteratorParams {
     pub probe_side_ordered: bool,
     pub spatial_predicate: SpatialPredicate,
     pub options: SpatialJoinOptions,
+    pub visited_probe_side: Option<Arc<Mutex<BooleanBufferBuilder>>>,
+    pub probe_offset: usize,
+    pub produce_unmatched_probe_rows: bool,
 }
 
 impl SpatialJoinBatchIterator {
@@ -739,6 +1001,9 @@ impl SpatialJoinBatchIterator {
             probe_side_ordered: params.probe_side_ordered,
             spatial_predicate: params.spatial_predicate,
             options: params.options,
+            visited_probe_side: params.visited_probe_side,
+            offset_in_partition: params.probe_offset,
+            produce_unmatched_probe_rows: params.produce_unmatched_probe_rows,
             progress: Some(ProbeProgress {
                 current_probe_idx: 0,
                 last_produced_probe_idx: -1,
@@ -1020,13 +1285,22 @@ impl SpatialJoinBatchIterator {
         probe_range: Range<usize>,
     ) -> Result<RecordBatch> {
         // adjust the two side indices based on the join type
-        let (build_indices, probe_indices) = adjust_indices_by_join_type(
-            build_indices,
-            probe_indices,
-            probe_range,
-            self.join_type,
-            self.probe_side_ordered,
-        )?;
+        let (build_indices, probe_indices) = {
+            let mut visited_probe_side_guard = self.visited_probe_side.as_ref().map(|v| v.lock());
+            let visited_info = visited_probe_side_guard
+                .as_mut()
+                .map(|buffer| (&mut **buffer, self.offset_in_partition));
+
+            adjust_indices_with_visited_info(
+                build_indices,
+                probe_indices,
+                probe_range,
+                self.join_type,
+                self.probe_side_ordered,
+                visited_info,
+                self.produce_unmatched_probe_rows,
+            )?
+        };
 
         // Build the final result batch
         build_batch_from_indices(
@@ -1173,7 +1447,7 @@ pub(crate) struct UnmatchedBuildBatchIterator {
 }
 
 impl UnmatchedBuildBatchIterator {
-    pub(crate) fn new(
+    pub(crate) fn try_new(
         spatial_index: Arc<SpatialIndex>,
         empty_right_batch: RecordBatch,
     ) -> Result<Self> {
@@ -1579,12 +1853,14 @@ mod tests {
         let build_indices = UInt64Array::from(vec![0; probe_indices.len()]);
         let probe_indices_array = UInt32Array::from(probe_indices.to_vec());
         let probe_range = 0..num_rows;
-        let (_, result_probe_indices) = adjust_indices_by_join_type(
+        let (_, result_probe_indices) = adjust_indices_with_visited_info(
             build_indices,
             probe_indices_array,
             probe_range,
             join_type,
             false,
+            None,
+            true,
         )
         .unwrap();
         let mut expected_probe_indices = result_probe_indices.values().to_vec();
@@ -1617,12 +1893,14 @@ mod tests {
             let adjust_range = progress.next_probe_range(&probe_indices);
             let build_indices = UInt64Array::from(vec![0; probe_indices.len()]);
             let probe_indices = UInt32Array::from(probe_indices);
-            let (_, result_probe_indices) = adjust_indices_by_join_type(
+            let (_, result_probe_indices) = adjust_indices_with_visited_info(
                 build_indices,
                 probe_indices,
                 adjust_range,
                 join_type,
                 false,
+                None,
+                true,
             )
             .unwrap();
             produced_probe_indices.extend(result_probe_indices.values().as_ref());
@@ -1630,12 +1908,14 @@ mod tests {
         if let Some(last_range) = progress.last_probe_range(num_rows) {
             let build_indices = UInt64Array::from(Vec::<u64>::new());
             let probe_indices = UInt32Array::from(Vec::<u32>::new());
-            let (_, result_probe_indices) = adjust_indices_by_join_type(
+            let (_, result_probe_indices) = adjust_indices_with_visited_info(
                 build_indices,
                 probe_indices,
                 last_range,
                 join_type,
                 false,
+                None,
+                true,
             )
             .unwrap();
             produced_probe_indices.extend(result_probe_indices.values().as_ref());

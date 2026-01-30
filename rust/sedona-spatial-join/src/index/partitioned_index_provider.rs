@@ -237,7 +237,6 @@ impl PartitionedIndexProvider {
         }
     }
 
-    #[cfg(test)]
     pub async fn wait_for_index(&self, partition_id: u32) -> Option<Result<Arc<SpatialIndex>>> {
         let cell = match self.index_cells.get(partition_id as usize) {
             Some(cell) => cell,

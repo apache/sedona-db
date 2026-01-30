@@ -53,6 +53,28 @@ pub(crate) fn need_produce_result_in_final(join_type: JoinType) -> bool {
     )
 }
 
+/// Determines if a bitmap is needed to track matched rows in the probe side's "Multi" partition.
+///
+/// In a spatial partitioned join, the "Multi" partition of the probe side overlaps with multiple
+/// partitions of the build side. Consequently, rows in the probe "Multi" partition are processed
+/// against multiple build partitions.
+///
+/// For `Right`, `RightSemi`, `RightAnti`, and `Full` joins, we must track whether a probe row
+/// has been matched across *any* of these interactions to correctly produce results:
+/// - **Right/Full Outer**: Emit probe rows that never matched any build partition (checked at the last build partition).
+/// - **Right Semi**: Emit a probe row the first time it matches, and suppress subsequent matches (deduplication).
+/// - **Right Anti**: Emit probe rows only if they never match any build partition (checked at the last build partition).
+pub(crate) fn need_probe_multi_partition_bitmap(join_type: JoinType) -> bool {
+    matches!(
+        join_type,
+        JoinType::Right
+            | JoinType::RightAnti
+            | JoinType::RightSemi
+            | JoinType::RightMark
+            | JoinType::Full
+    )
+}
+
 /// In the end of join execution, need to use bit map of the matched
 /// indices to generate the final left and right indices.
 ///
@@ -91,6 +113,161 @@ pub(crate) fn get_final_indices_from_bit_map(
     builder.append_nulls(left_indices.len());
     let right_indices = builder.finish();
     (left_indices, right_indices)
+}
+
+pub(crate) fn adjust_indices_with_visited_info(
+    left_indices: UInt64Array,
+    right_indices: UInt32Array,
+    adjust_range: Range<usize>,
+    join_type: JoinType,
+    preserve_order_for_right: bool,
+    visited_info: Option<(&mut BooleanBufferBuilder, usize)>,
+    produce_unmatched_probe_rows: bool,
+) -> Result<(UInt64Array, UInt32Array)> {
+    let Some((bitmap, offset)) = visited_info else {
+        return adjust_indices_by_join_type(
+            left_indices,
+            right_indices,
+            adjust_range,
+            join_type,
+            preserve_order_for_right,
+        );
+    };
+
+    // Update the bitmap with the current matches first
+    for idx in right_indices.values() {
+        bitmap.set_bit(offset + (*idx as usize), true);
+    }
+
+    match join_type {
+        JoinType::Right | JoinType::Full => {
+            if !produce_unmatched_probe_rows {
+                Ok((left_indices, right_indices))
+            } else {
+                let unmatched_count = adjust_range
+                    .clone()
+                    .filter(|&i| !bitmap.get_bit(i + offset))
+                    .count();
+
+                if unmatched_count == 0 {
+                    return Ok((left_indices, right_indices));
+                }
+
+                let mut unmatched_indices = UInt32Builder::with_capacity(unmatched_count);
+                for i in adjust_range.clone() {
+                    if !bitmap.get_bit(i + offset) {
+                        unmatched_indices.append_value(i as u32);
+                    }
+                }
+                let unmatched_right = unmatched_indices.finish();
+
+                let total_len = left_indices.len() + unmatched_count;
+                let mut new_left_builder =
+                    left_indices.into_builder().unwrap_or_else(|left_indices| {
+                        let mut builder = UInt64Builder::with_capacity(total_len);
+                        builder.append_slice(left_indices.values());
+                        builder
+                    });
+                new_left_builder.append_nulls(unmatched_count);
+
+                let mut new_right_builder =
+                    right_indices
+                        .into_builder()
+                        .unwrap_or_else(|right_indices| {
+                            let mut builder = UInt32Builder::with_capacity(total_len);
+                            builder.append_slice(right_indices.values());
+                            builder
+                        });
+                new_right_builder.append_slice(unmatched_right.values());
+
+                Ok((
+                    UInt64Array::from(new_left_builder.finish()),
+                    UInt32Array::from(new_right_builder.finish()),
+                ))
+            }
+        }
+        JoinType::RightSemi => {
+            if !produce_unmatched_probe_rows {
+                Ok((
+                    UInt64Array::from_iter_values(vec![]),
+                    UInt32Array::from_iter_values(vec![]),
+                ))
+            } else {
+                let matched_count = adjust_range
+                    .clone()
+                    .filter(|&i| bitmap.get_bit(i + offset))
+                    .count();
+
+                let mut final_right = UInt32Builder::with_capacity(matched_count);
+                for i in adjust_range.clone() {
+                    if bitmap.get_bit(i + offset) {
+                        final_right.append_value(i as u32);
+                    }
+                }
+
+                let mut final_left = UInt64Builder::with_capacity(matched_count);
+                final_left.append_nulls(matched_count);
+
+                Ok((final_left.finish(), final_right.finish()))
+            }
+        }
+        JoinType::RightAnti => {
+            if !produce_unmatched_probe_rows {
+                Ok((
+                    UInt64Array::from_iter_values(vec![]),
+                    UInt32Array::from_iter_values(vec![]),
+                ))
+            } else {
+                let unmatched_count = adjust_range
+                    .clone()
+                    .filter(|&i| !bitmap.get_bit(i + offset))
+                    .count();
+
+                let mut unmatched_indices = UInt32Builder::with_capacity(unmatched_count);
+                for i in adjust_range.clone() {
+                    if !bitmap.get_bit(i + offset) {
+                        unmatched_indices.append_value(i as u32);
+                    }
+                }
+
+                let mut final_left = UInt64Builder::with_capacity(unmatched_count);
+                final_left.append_nulls(unmatched_count);
+
+                Ok((final_left.finish(), unmatched_indices.finish()))
+            }
+        }
+        JoinType::RightMark => {
+            if !produce_unmatched_probe_rows {
+                Ok((
+                    UInt64Array::from_iter_values(vec![]),
+                    UInt32Array::from_iter_values(vec![]),
+                ))
+            } else {
+                let range_len = adjust_range.len();
+                let mut mark_bitmap = BooleanBufferBuilder::new(range_len);
+
+                for i in adjust_range.clone() {
+                    mark_bitmap.append(bitmap.get_bit(i + offset));
+                }
+
+                let right_indices = UInt32Array::from_iter_values(adjust_range.map(|i| i as u32));
+
+                let left_indices = PrimitiveArray::new(
+                    vec![0; range_len].into(),
+                    Some(NullBuffer::new(mark_bitmap.finish())),
+                );
+
+                Ok((left_indices, right_indices))
+            }
+        }
+        _ => adjust_indices_by_join_type(
+            left_indices,
+            right_indices,
+            adjust_range,
+            join_type,
+            preserve_order_for_right,
+        ),
+    }
 }
 
 pub(crate) fn apply_join_filter_to_indices(
@@ -515,5 +692,150 @@ pub(crate) fn boundedness_from_children<'a>(
         }
     } else {
         Boundedness::Bounded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{UInt32Array, UInt64Array};
+    use datafusion_expr::JoinType;
+    use rstest::rstest;
+
+    fn setup_and_run(
+        join_type: JoinType,
+        offset: usize,
+    ) -> (UInt64Array, UInt32Array, BooleanBufferBuilder) {
+        // adjust_range: 0..5
+        let adjust_range = 0..5;
+
+        // Logical visited info for the range 0..5: [true, false, false, true, false]
+        // Indices 0 and 3 are already visited.
+        let logical_bitmap = vec![true, false, false, true, false];
+
+        let mut bitmap_builder = BooleanBufferBuilder::new(offset + 5);
+        // Prepend offset
+        bitmap_builder.append_n(offset, false);
+        bitmap_builder.append_slice(&logical_bitmap);
+
+        // Current matches: right_indices: [1, 4]
+        // This means index 1 and 4 are matched in this batch.
+        // Index 2 remains unmatched.
+        let right_indices = UInt32Array::from(vec![1, 4]);
+        let left_indices = UInt64Array::from(vec![10, 11]); // Corresponding left indices
+
+        // Case: Last partition (produce_unmatched_probe_rows = true)
+        let (l, r) = adjust_indices_with_visited_info(
+            left_indices.clone(),
+            right_indices.clone(),
+            adjust_range.clone(),
+            join_type,
+            false,
+            Some((&mut bitmap_builder, offset)),
+            true,
+        )
+        .unwrap();
+
+        (l, r, bitmap_builder)
+    }
+
+    fn verify_bitmap(bitmap_builder: &BooleanBufferBuilder, offset: usize) {
+        // Verify Bitmap updates
+        // Offset + 1 should be set to true (was false)
+        // Offset + 4 should be set to true (was false)
+        assert!(bitmap_builder.get_bit(offset + 1));
+        assert!(bitmap_builder.get_bit(offset + 4));
+        // Offset + 0 was true, stays true
+        assert!(bitmap_builder.get_bit(offset));
+        // Offset + 3 was true, stays true
+        assert!(bitmap_builder.get_bit(offset + 3));
+        // Offset + 2 was false, stays false (unmatched)
+        assert!(!bitmap_builder.get_bit(offset + 2));
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(10)]
+    fn test_adjust_indices_with_visited_info_right_outer(#[case] offset: usize) {
+        let (l, r, bitmap_builder) = setup_and_run(JoinType::Right, offset);
+        verify_bitmap(&bitmap_builder, offset);
+
+        // Expected result:
+        // Original: (10, 1), (11, 4)
+        // Unmatched: (null, 2) (since 0 and 3 were visited before, 1 and 4 are visited now)
+        // Total: 3 rows.
+        assert_eq!(l.len(), 3);
+        assert_eq!(r.len(), 3);
+
+        // Check values
+        // Original parts
+        assert_eq!(l.value(0), 10);
+        assert_eq!(r.value(0), 1);
+        assert_eq!(l.value(1), 11);
+        assert_eq!(r.value(1), 4);
+
+        // Unmatched part
+        assert!(l.is_null(2));
+        assert_eq!(r.value(2), 2);
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(10)]
+    fn test_adjust_indices_with_visited_info_right_semi(#[case] offset: usize) {
+        let (l, r, bitmap_builder) = setup_and_run(JoinType::RightSemi, offset);
+        verify_bitmap(&bitmap_builder, offset);
+
+        // Expected: 0, 1, 3, 4 (all visited)
+        // 0 (pre-visited), 1 (matched now), 3 (pre-visited), 4 (matched now)
+        assert_eq!(r.len(), 4);
+        let r_values: Vec<u32> = r.values().iter().copied().collect();
+        assert!(r_values.contains(&0));
+        assert!(r_values.contains(&1));
+        assert!(r_values.contains(&3));
+        assert!(r_values.contains(&4));
+
+        // Left side should be all nulls
+        assert_eq!(l.null_count(), 4);
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(10)]
+    fn test_adjust_indices_with_visited_info_right_anti(#[case] offset: usize) {
+        let (l, r, bitmap_builder) = setup_and_run(JoinType::RightAnti, offset);
+        verify_bitmap(&bitmap_builder, offset);
+
+        // Expected: 2 (unvisited)
+        assert_eq!(r.len(), 1);
+        assert_eq!(r.value(0), 2);
+        assert_eq!(l.null_count(), 1);
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(10)]
+    fn test_adjust_indices_with_visited_info_right_mark(#[case] offset: usize) {
+        let (l, r, bitmap_builder) = setup_and_run(JoinType::RightMark, offset);
+        verify_bitmap(&bitmap_builder, offset);
+
+        // Expected left: validity [true, true, false, true, true]
+        // 0: visited (T)
+        // 1: matched now (T)
+        // 2: unvisited (F)
+        // 3: visited (T)
+        // 4: matched now (T)
+        assert_eq!(l.len(), 5);
+        assert!(l.is_valid(0));
+        assert!(l.is_valid(1));
+        assert!(l.is_null(2));
+        assert!(l.is_valid(3));
+        assert!(l.is_valid(4));
+
+        // Expected right: [0, 1, 2, 3, 4]
+        assert_eq!(r.len(), 5);
+        for i in 0..5 {
+            assert_eq!(r.value(i), i as u32);
+        }
     }
 }
