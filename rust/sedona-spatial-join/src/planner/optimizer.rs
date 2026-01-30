@@ -16,28 +16,128 @@
 // under the License.
 use std::sync::Arc;
 
+use crate::planner::logical_plan_node::SpatialJoinPlanNode;
+use crate::planner::spatial_expr_utils::collect_spatial_predicate_names;
 use crate::planner::spatial_expr_utils::is_spatial_predicate;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 use datafusion_common::tree_node::Transformed;
+use datafusion_common::NullEquality;
 use datafusion_common::Result;
+use datafusion_expr::logical_plan::Extension;
+use datafusion_expr::{BinaryExpr, Expr, Operator};
 use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
 use sedona_common::option::SedonaOptions;
+
+/// Register only the logical spatial join optimizer rule.
+///
+/// This enables building `Join(filter=...)` from patterns like `Filter(CrossJoin)`.
+/// It intentionally does not register any physical plan rewrite rules.
+pub fn register_spatial_join_logical_optimizer(
+    session_state_builder: SessionStateBuilder,
+) -> SessionStateBuilder {
+    session_state_builder
+        .with_optimizer_rule(Arc::new(MergeSpatialProjectionIntoJoin::new()))
+        .with_optimizer_rule(Arc::new(SpatialJoinLogicalRewrite))
+}
+
+#[derive(Default, Debug)]
+struct SpatialJoinLogicalRewrite;
+
+impl OptimizerRule for SpatialJoinLogicalRewrite {
+    fn name(&self) -> &str {
+        "spatial_join_logical_rewrite"
+    }
+
+    fn apply_order(&self) -> Option<ApplyOrder> {
+        Some(ApplyOrder::BottomUp)
+    }
+
+    fn supports_rewrite(&self) -> bool {
+        true
+    }
+
+    fn rewrite(
+        &self,
+        plan: LogicalPlan,
+        config: &dyn OptimizerConfig,
+    ) -> Result<Transformed<LogicalPlan>> {
+        let options = config.options();
+        let Some(ext) = options.extensions.get::<SedonaOptions>() else {
+            return Ok(Transformed::no(plan));
+        };
+        if !ext.spatial_join.enable {
+            return Ok(Transformed::no(plan));
+        }
+
+        let LogicalPlan::Join(join) = &plan else {
+            return Ok(Transformed::no(plan));
+        };
+
+        // v1: only rewrite joins that already have a spatial predicate in `filter`.
+        let Some(filter) = join.filter.as_ref() else {
+            return Ok(Transformed::no(plan));
+        };
+
+        let spatial_predicate_names = collect_spatial_predicate_names(filter);
+        if spatial_predicate_names.is_empty() {
+            return Ok(Transformed::no(plan));
+        }
+
+        // Join with with equi-join condition and spatial join condition. Only handle it
+        // when the join condition contains ST_KNN. KNN join is not a regular join and
+        // ST_KNN is also not a regular predicate. It must be handled by our spatial join exec.
+        if !join.on.is_empty() && !spatial_predicate_names.contains("st_knn") {
+            return Ok(Transformed::no(plan));
+        }
+
+        // Build new filter expression including equi-join conditions
+        let filter = filter.clone();
+        let eq_op = if join.null_equality == NullEquality::NullEqualsNothing {
+            Operator::Eq
+        } else {
+            Operator::IsNotDistinctFrom
+        };
+        let filter = join.on.iter().fold(filter, |acc, (l, r)| {
+            let eq_expr = Expr::BinaryExpr(BinaryExpr::new(
+                Box::new(l.clone()),
+                eq_op,
+                Box::new(r.clone()),
+            ));
+            Expr::and(acc, eq_expr)
+        });
+
+        let schema = Arc::clone(&join.schema);
+        let node = SpatialJoinPlanNode {
+            left: join.left.as_ref().clone(),
+            right: join.right.as_ref().clone(),
+            join_type: join.join_type,
+            filter,
+            schema,
+            join_constraint: join.join_constraint,
+            null_equality: join.null_equality,
+        };
+
+        Ok(Transformed::yes(LogicalPlan::Extension(Extension {
+            node: Arc::new(node),
+        })))
+    }
+}
 
 /// Physical planner extension for spatial joins
 ///
 /// This extension recognizes nested loop join operations with spatial predicates
 /// and converts them to SpatialJoinExec, which is specially optimized for spatial joins.
 #[derive(Debug, Default)]
-pub struct SpatialJoinOptimizer;
+pub struct MergeSpatialProjectionIntoJoin;
 
-impl SpatialJoinOptimizer {
+impl MergeSpatialProjectionIntoJoin {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl OptimizerRule for SpatialJoinOptimizer {
+impl OptimizerRule for MergeSpatialProjectionIntoJoin {
     fn name(&self) -> &str {
         "spatial_join_optimizer"
     }
@@ -70,8 +170,8 @@ impl OptimizerRule for SpatialJoinOptimizer {
     ///         TableScan: r projection=[id, geom]
     /// ```
     ///
-    /// This is for enabling this logical join operator to be converted to a NestedLoopJoin physical
-    /// node with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
+    /// This is for enabling this logical join operator to be converted to a [SpatialJoinPlanNode]
+    /// by [SedonaSpatialQueryPlanner] with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
     /// physical node. Please refer to the `PhysicalOptimizerRule` implementation of this struct
     /// and [SpatialJoinOptimizer::try_optimize_join] for details.
     fn rewrite(
@@ -133,14 +233,4 @@ impl OptimizerRule for SpatialJoinOptimizer {
 
         Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
     }
-}
-
-/// Register only the logical spatial join optimizer rule.
-///
-/// This enables building `Join(filter=...)` from patterns like `Filter(CrossJoin)`.
-/// It intentionally does not register any physical plan rewrite rules.
-pub fn register_spatial_join_logical_optimizer(
-    session_state_builder: SessionStateBuilder,
-) -> SessionStateBuilder {
-    session_state_builder.with_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
 }

@@ -17,6 +17,7 @@
 
 use datafusion::execution::SessionStateBuilder;
 
+mod logical_plan_node;
 mod optimizer;
 mod physical_planner;
 mod spatial_expr_utils;
