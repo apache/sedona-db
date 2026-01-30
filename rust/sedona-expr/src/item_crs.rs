@@ -549,8 +549,11 @@ pub fn make_item_crs(
 }
 
 /// Given an input type, separate it into an item and crs type (if the input
-/// is an item_crs type). Otherwise, just return the item type as is.
-fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Option<SedonaType>)> {
+/// is an item_crs type). Otherwise, just return the item type as is and return a
+/// CRS type of None.
+pub fn parse_item_crs_arg_type(
+    sedona_type: &SedonaType,
+) -> Result<(SedonaType, Option<SedonaType>)> {
     if let SedonaType::Arrow(DataType::Struct(fields)) = sedona_type {
         let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
         if field_names != ["item", "crs"] {
@@ -569,7 +572,7 @@ fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Opti
 /// is an item_crs type). Otherwise, just return the item type as is. This
 /// version strips the CRS, which we need to do here before passing it to the
 /// underlying kernel (which expects all input CRSes to match).
-fn parse_item_crs_arg_type_strip_crs(
+pub fn parse_item_crs_arg_type_strip_crs(
     sedona_type: &SedonaType,
 ) -> Result<(SedonaType, Option<SedonaType>)> {
     match sedona_type {
@@ -588,7 +591,7 @@ fn parse_item_crs_arg_type_strip_crs(
 
 /// Separate an argument into the item and its crs (if applicable). This
 /// operates on the result of parse_item_crs_arg_type().
-fn parse_item_crs_arg(
+pub fn parse_item_crs_arg(
     item_type: &SedonaType,
     crs_type: &Option<SedonaType>,
     arg: &ColumnarValue,
