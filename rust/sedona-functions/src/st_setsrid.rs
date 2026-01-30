@@ -747,9 +747,9 @@ mod test {
         to: ScalarValue,
     ) -> Result<(SedonaType, ColumnarValue)> {
         let SedonaType::Arrow(datatype) = &arg_type[1] else {
-            return Err(DataFusionError::Internal(
-                "Expected SedonaType::Arrow, but found a different variant".to_string(),
-            ));
+            return sedona_internal_err!(
+                "Expected SedonaType::Arrow, but found a different variant"
+            );
         };
         let arg_fields = vec![
             Arc::new(arg_type[0].to_storage_field("", true)?),

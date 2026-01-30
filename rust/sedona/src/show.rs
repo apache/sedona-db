@@ -21,7 +21,8 @@ use comfy_table::{Cell, CellAlignment, ColumnConstraint, ContentArrangement, Row
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
-use datafusion_common::{config::ConfigOptions, DataFusionError, ScalarValue};
+use datafusion_common::{config::ConfigOptions, ScalarValue};
+use sedona_common::sedona_internal_datafusion_err;
 use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -45,9 +46,7 @@ pub fn show_batches<'a, W: std::io::Write>(
     let format_fn = ctx
         .functions
         .scalar_udf("sd_format")
-        .ok_or(DataFusionError::Internal(
-            "sd_format UDF does not exist".to_string(),
-        ))?
+        .ok_or(sedona_internal_datafusion_err!("sd_format UDF does not exist"))?
         .clone();
 
     let session_config = ctx.ctx.copied_config();

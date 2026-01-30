@@ -21,11 +21,11 @@ use arrow::array::Float64Array;
 use arrow_array::{Array, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
 use datafusion::config::SpillCompression;
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::SpillMetrics;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -191,15 +191,13 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         .as_any()
         .downcast_ref::<StructArray>()
         .ok_or_else(|| {
-            DataFusionError::Internal("Expected data column to be a StructArray".to_string())
+            sedona_internal_datafusion_err!("Expected data column to be a StructArray")
         })?;
 
     let data_schema = Arc::new(Schema::new(match data_array.data_type() {
         DataType::Struct(fields) => fields.clone(),
         _ => {
-            return Err(DataFusionError::Internal(
-                "Expected data column to have Struct data type".to_string(),
-            ))
+            return sedona_internal_err!("Expected data column to have Struct data type")
         }
     }));
 
@@ -223,7 +221,7 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         .as_any()
         .downcast_ref::<Float64Array>()
         .ok_or_else(|| {
-            DataFusionError::Internal("Expected dist column to be Float64Array".to_string())
+            sedona_internal_datafusion_err!("Expected dist column to be Float64Array")
         })?;
 
     let distance = if !dist_array.is_empty() {
@@ -282,7 +280,7 @@ mod tests {
     use crate::utils::arrow_utils::get_record_batch_memory_size;
     use arrow_array::{ArrayRef, BinaryArray, Int32Array, StringArray};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion_common::Result;
+    use datafusion_common::{DataFusionError, Result};
     use datafusion_execution::runtime_env::RuntimeEnv;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use sedona_schema::datatypes::WKB_GEOMETRY;

@@ -19,12 +19,12 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::error::Result;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::GeometryTrait;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -196,24 +196,24 @@ fn invoke_scalar(
     let interval: Interval = match dim {
         "x" => {
             let xy_bounds = geo_traits_bounds_xy(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
+                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
             Interval::try_from(*xy_bounds.x()).map_err(|e| {
-                DataFusionError::Internal(format!("Error converting to interval: {e}"))
+                sedona_internal_datafusion_err!("Error converting to interval: {e}")
             })?
         }
         "y" => {
             let xy_bounds = geo_traits_bounds_xy(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
+                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
             *xy_bounds.y()
         }
         "z" => {
             let z_bounds = geo_traits_bounds_z(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
+                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
             z_bounds
         }
         "m" => {
             let m_bounds = geo_traits_bounds_m(item)
-                .map_err(|e| DataFusionError::Internal(format!("Error updating bounds: {e}")))?;
+                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
             m_bounds
         }
         _ => sedona_internal_err!("unexpected dim index")?,

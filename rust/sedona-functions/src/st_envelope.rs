@@ -19,6 +19,7 @@ use std::{sync::Arc, vec};
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::{DataFusionError, Result};
+use sedona_common::sedona_internal_err;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -126,9 +127,7 @@ fn invoke_scalar(wkb: &Wkb, writer: &mut impl std::io::Write) -> Result<()> {
                 write_wkb_geometrycollection_header(writer, wkb.dim(), 0)
             }
             _ => {
-                return Err(DataFusionError::Internal(
-                    "Unsupported geometry type".to_string(),
-                ))
+                return sedona_internal_err!("Unsupported geometry type")
             }
         };
 

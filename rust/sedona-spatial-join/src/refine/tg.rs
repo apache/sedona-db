@@ -22,7 +22,7 @@ use std::{
     },
 };
 
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::Result;
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions, TgIndexType};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_tg::tg::{self, BinaryPredicate};
@@ -322,14 +322,10 @@ impl<Op: BinaryPredicate + Send + Sync> TgPredicateEvaluator for TgPredicateEval
 fn create_evaluator(predicate: &SpatialPredicate) -> Result<Box<dyn TgPredicateEvaluator>> {
     let evaluator: Box<dyn TgPredicateEvaluator> = match predicate {
         SpatialPredicate::Distance(_) => {
-            return Err(DataFusionError::Internal(
-                "Distance predicate is not supported for TG".to_string(),
-            ))
+            return sedona_internal_err!("Distance predicate is not supported for TG")
         }
         SpatialPredicate::KNearestNeighbors(_) => {
-            return Err(DataFusionError::Internal(
-                "KNN predicate is not supported for TG".to_string(),
-            ))
+            return sedona_internal_err!("KNN predicate is not supported for TG")
         }
         SpatialPredicate::Relation(predicate) => match predicate.relation_type {
             SpatialRelationType::Intersects => {
@@ -348,9 +344,7 @@ fn create_evaluator(predicate: &SpatialPredicate) -> Result<Box<dyn TgPredicateE
             }
             SpatialRelationType::Equals => Box::new(TgPredicateEvaluatorImpl::<tg::Equals>::new()),
             _ => {
-                return Err(DataFusionError::Internal(
-                    "Unsupported spatial relation type for TG".to_string(),
-                ))
+                return sedona_internal_err!("Unsupported spatial relation type for TG")
             }
         },
     };

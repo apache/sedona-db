@@ -17,7 +17,7 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{project_schema, DataFusionError, JoinSide, Result};
+use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{JoinType, Operator};
 use datafusion_physical_expr::{
@@ -33,7 +33,7 @@ use datafusion_physical_plan::{
     PlanProperties,
 };
 use parking_lot::Mutex;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
@@ -93,9 +93,9 @@ fn determine_knn_build_probe_plans<'a>(
     match knn_pred.probe_side {
         JoinSide::Left => Ok((right_plan, left_plan)),
         JoinSide::Right => Ok((left_plan, right_plan)),
-        JoinSide::None => Err(DataFusionError::Internal(
-            "KNN join requires explicit probe_side designation".to_string(),
-        )),
+        JoinSide::None => sedona_internal_err!(
+            "KNN join requires explicit probe_side designation"
+        ),
     }
 }
 

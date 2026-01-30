@@ -25,8 +25,9 @@ use arrow::csv::writer::WriterBuilder;
 use arrow::datatypes::SchemaRef;
 use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use arrow::record_batch::RecordBatch;
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
 use sedona::context::SedonaContext;
+use sedona_common::sedona_internal_datafusion_err;
 use sedona::show::{show_batches, DisplayMode, DisplayTableOptions};
 
 /// Allow records to be printed in different formats
@@ -144,7 +145,7 @@ fn format_batches_with_maxrows<W: std::io::Write>(
                 options,
             )?;
             let mut formatted_str = String::from_utf8(formatted)
-                .map_err(|e| DataFusionError::Internal(format!("invalid utf-8 in table: {e}")))?;
+                .map_err(|e| sedona_internal_datafusion_err!("invalid utf-8 in table: {e}"))?;
 
             if over_limit {
                 formatted_str = keep_only_maxrows(&formatted_str, maxrows);
