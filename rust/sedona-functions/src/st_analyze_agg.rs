@@ -28,9 +28,9 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     ScalarValue,
 };
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use datafusion_expr::{Accumulator, ColumnarValue};
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
@@ -440,9 +440,7 @@ impl Accumulator for AnalyzeAccumulator {
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
         // Check input length (expecting 1 state field)
         if states.is_empty() {
-            return sedona_internal_err!(
-                "No input arrays provided to accumulator in merge_batch"
-            );
+            return sedona_internal_err!("No input arrays provided to accumulator in merge_batch");
         }
 
         let array = &states[0];
@@ -454,9 +452,8 @@ impl Accumulator for AnalyzeAccumulator {
             }
 
             let serialized = binary_array.value(i);
-            let other_stats: GeoStatistics = serde_json::from_slice(serialized).map_err(|e| {
-                sedona_internal_datafusion_err!("Failed to deserialize stats: {e}")
-            })?;
+            let other_stats: GeoStatistics = serde_json::from_slice(serialized)
+                .map_err(|e| sedona_internal_datafusion_err!("Failed to deserialize stats: {e}"))?;
 
             // Use the merge method to combine statistics
             self.stats.merge(&other_stats);

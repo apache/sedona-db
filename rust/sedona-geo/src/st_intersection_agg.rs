@@ -18,9 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
-use datafusion_common::{
-    ScalarValue, error::Result, exec_err
-};
+use datafusion_common::{error::Result, exec_err, ScalarValue};
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::{BooleanOps, Intersects};
 use geo_traits::to_geo::ToGeoGeometry;
@@ -104,9 +102,7 @@ impl IntersectionAccumulator {
                     geo::Geometry::Polygon(poly) => geo::MultiPolygon(vec![poly]),
                     geo::Geometry::MultiPolygon(multi) => multi.clone(),
                     _ => {
-                        return exec_err!(
-                            "Unsupported geometry type for intersection operation"
-                        );
+                        return exec_err!("Unsupported geometry type for intersection operation");
                     }
                 };
 
@@ -170,9 +166,7 @@ impl IntersectionAccumulator {
 impl Accumulator for IntersectionAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
-            return sedona_internal_err!(
-                "No input arrays provided to accumulator in update_batch"
-            );
+            return sedona_internal_err!("No input arrays provided to accumulator in update_batch");
         }
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
@@ -213,9 +207,7 @@ impl Accumulator for IntersectionAccumulator {
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
         // Check input length (expecting 1 state field)
         if states.is_empty() {
-            return sedona_internal_err!(
-                "No input arrays provided to accumulator in merge_batch"
-            );
+            return sedona_internal_err!("No input arrays provided to accumulator in merge_batch");
         }
         let array = &states[0];
         let args = [ColumnarValue::Array(array.clone())];

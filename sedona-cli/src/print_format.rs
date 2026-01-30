@@ -27,8 +27,8 @@ use arrow::json::{ArrayWriter, LineDelimitedWriter};
 use arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use sedona::context::SedonaContext;
-use sedona_common::sedona_internal_datafusion_err;
 use sedona::show::{show_batches, DisplayMode, DisplayTableOptions};
+use sedona_common::sedona_internal_datafusion_err;
 
 /// Allow records to be printed in different formats
 #[derive(Debug, PartialEq, Eq, clap::ValueEnum, Clone, Copy)]

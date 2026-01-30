@@ -343,9 +343,7 @@ fn create_evaluator(predicate: &SpatialPredicate) -> Result<Box<dyn TgPredicateE
                 Box::new(TgPredicateEvaluatorImpl::<tg::Touches>::new())
             }
             SpatialRelationType::Equals => Box::new(TgPredicateEvaluatorImpl::<tg::Equals>::new()),
-            _ => {
-                return sedona_internal_err!("Unsupported spatial relation type for TG")
-            }
+            _ => return sedona_internal_err!("Unsupported spatial relation type for TG"),
         },
     };
     Ok(evaluator)

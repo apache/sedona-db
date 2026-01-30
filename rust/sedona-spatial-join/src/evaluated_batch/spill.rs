@@ -196,9 +196,7 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
 
     let data_schema = Arc::new(Schema::new(match data_array.data_type() {
         DataType::Struct(fields) => fields.clone(),
-        _ => {
-            return sedona_internal_err!("Expected data column to have Struct data type")
-        }
+        _ => return sedona_internal_err!("Expected data column to have Struct data type"),
     }));
 
     let data_columns = (0..data_array.num_columns())

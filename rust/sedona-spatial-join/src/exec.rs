@@ -93,9 +93,7 @@ fn determine_knn_build_probe_plans<'a>(
     match knn_pred.probe_side {
         JoinSide::Left => Ok((right_plan, left_plan)),
         JoinSide::Right => Ok((left_plan, right_plan)),
-        JoinSide::None => sedona_internal_err!(
-            "KNN join requires explicit probe_side designation"
-        ),
+        JoinSide::None => sedona_internal_err!("KNN join requires explicit probe_side designation"),
     }
 }
 

@@ -19,9 +19,7 @@ use std::{mem::transmute, sync::Arc};
 
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
-use datafusion_common::{
-    utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue,
-};
+use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
 use float_next_after::NextAfter;
@@ -267,9 +265,7 @@ impl DistanceOperandEvaluator {
                         }
                     }
                 } else {
-                    return sedona_internal_err!(
-                        "Distance columnar value is not a Float64Array"
-                    );
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
                 }
             }
             _ => {

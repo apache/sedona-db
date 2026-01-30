@@ -197,9 +197,8 @@ fn invoke_scalar(
         "x" => {
             let xy_bounds = geo_traits_bounds_xy(item)
                 .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
-            Interval::try_from(*xy_bounds.x()).map_err(|e| {
-                sedona_internal_datafusion_err!("Error converting to interval: {e}")
-            })?
+            Interval::try_from(*xy_bounds.x())
+                .map_err(|e| sedona_internal_datafusion_err!("Error converting to interval: {e}"))?
         }
         "y" => {
             let xy_bounds = geo_traits_bounds_xy(item)

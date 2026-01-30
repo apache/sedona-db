@@ -416,9 +416,7 @@ pub(crate) fn with_global_proj_engine(
 
         engine_cell
             .set(CachingCrsEngine::new(proj_engine))
-            .map_err(|_| {
-                sedona_internal_datafusion_err!("Failed to set cached PROJ transform")
-            })?;
+            .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
         func(engine_cell.get().unwrap())?;
         Ok(())
     })
