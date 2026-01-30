@@ -498,14 +498,14 @@ fn parquet_geo_stats_to_sedona_geo_stats(
         let bbox = BoundingBox::xyzm(x_range, y_range, z_range, m_range);
 
         // Sanity check the bbox statistics. If the sanity check fails, don't set
-        // a bounding box for pruning.
+        // a bounding box for pruning. Note that the x width can be < 0 (wraparound).
         let mut bbox_is_valid =
-            bbox.x().width().is_finite() && bbox.y().width().is_finite() && bbox.y().width() > 0.0;
+            bbox.x().width().is_finite() && bbox.y().width().is_finite() && bbox.y().width() >= 0.0;
         if let Some(z) = bbox.z() {
-            bbox_is_valid = bbox_is_valid && z.width().is_finite() && z.width() > 0.0;
+            bbox_is_valid = bbox_is_valid && z.width().is_finite() && z.width() >= 0.0;
         }
         if let Some(m) = bbox.m() {
-            bbox_is_valid = bbox_is_valid && m.width().is_finite() && m.width() > 0.0;
+            bbox_is_valid = bbox_is_valid && m.width().is_finite() && m.width() >= 0.0;
         }
 
         if bbox_is_valid {
@@ -953,7 +953,245 @@ mod test {
         ));
     }
 
+    #[test]
+    fn parquet_geo_stats_empty() {
+        let parquet_stats = GeospatialStatistics::new(None, None);
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert_eq!(result, GeoStatistics::unspecified());
+    }
 
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xy() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified()
+                .with_bbox(Some(BoundingBox::xy((-180.0, 180.0), (-90.0, 90.0))))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xyz() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_zrange(0.0, 1000.0)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        let expected_bbox = BoundingBox::xyzm(
+            (-180.0, 180.0),
+            (-90.0, 90.0),
+            Some(Interval::new(0.0, 1000.0)),
+            None,
+        );
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified().with_bbox(Some(expected_bbox))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xyzm() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_zrange(0.0, 1000.0).with_mrange(0.0, 100.0)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        let expected_bbox = BoundingBox::xyzm(
+            (-180.0, 180.0),
+            (-90.0, 90.0),
+            Some(Interval::new(0.0, 1000.0)),
+            Some(Interval::new(0.0, 100.0)),
+        );
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified().with_bbox(Some(expected_bbox))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_x() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NEG_INFINITY, f64::INFINITY, -90.0, 90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because x width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_y() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, f64::NEG_INFINITY, f64::INFINITY,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because y width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_y_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, 1.0, -1.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because y width is less than zero
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_z() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_zrange(f64::NEG_INFINITY, f64::INFINITY)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because z width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_z_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_zrange(100.0, -100.0)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because z width is less than 0
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_m() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_mrange(f64::NEG_INFINITY, f64::INFINITY)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because m width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_m_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            ).with_mrange(50.0, -50.0)),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because m width is less than 0
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            None,
+            Some(vec![1, 2, 3]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert!(result.geometry_types().is_some());
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_geometry_types_negative() {
+        let parquet_stats = GeospatialStatistics::new(
+            None,
+            Some(vec![1, -1, 3]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified geometry types because of negative value
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_geometry_types_unknown_wkb_id() {
+        let parquet_stats = GeospatialStatistics::new(
+            None,
+            Some(vec![1, 999999]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified geometry types because of unknown WKB id
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_empty_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            None,
+            Some(vec![]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Empty geometry types should result in None
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_combined_valid() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            Some(vec![1, 2]), // Point, LineString
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert!(result.bbox().is_some());
+        assert!(result.geometry_types().is_some());
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_invalid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            Some(vec![-1]), // Invalid negative
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Bbox should be valid, geometry types should be None
+        assert!(result.bbox().is_some());
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_valid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NAN, 180.0, -90.0, 90.0,
+            )),
+            Some(vec![1, 2]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Bbox should be None, geometry types should be valid
+        assert_eq!(result.bbox(), None);
+        assert!(result.geometry_types().is_some());
+    }
 
     fn file_schema_with_covering() -> SchemaRef {
         Arc::new(Schema::new(vec![
