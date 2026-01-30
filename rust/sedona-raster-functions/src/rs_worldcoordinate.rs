@@ -232,11 +232,9 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 mod tests {
     use super::*;
     use arrow_array::Array;
-    use arrow_array::StructArray;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
@@ -376,15 +374,11 @@ mod tests {
             ],
         );
 
-        // Use raster 0 as scalar; it has scale/skew of 0, so all pixels map to upper left.
-        let rasters = generate_test_rasters(1, None).unwrap();
-        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
-        let scalar_raster = ScalarValue::try_from_array(raster_struct, 0).unwrap();
+        let rasters = generate_test_rasters(2, None).unwrap();
+        let scalar_raster = ScalarValue::try_from_array(&rasters, 1).unwrap();
 
-        let raster_ref = RasterStructArray::new(raster_struct).get(0).unwrap();
-
-        let x_vals = vec![0_i32, 1_i32, 2_i32];
-        let y_vals = vec![0_i32, 1_i32, 2_i32];
+        let x_vals = vec![0_i32, 1_i32];
+        let y_vals = vec![0_i32, 1_i32];
         let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(x_vals.clone()));
         let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(y_vals.clone()));
 
@@ -401,17 +395,10 @@ mod tests {
             ColumnarValue::Scalar(_) => panic!("Expected array result"),
         };
 
-        let expected_values: Vec<Option<f64>> = x_vals
-            .iter()
-            .zip(y_vals.iter())
-            .map(|(x, y)| {
-                let (wx, wy) = to_world_coordinate(&raster_ref, *x as i64, *y as i64);
-                Some(match coord {
-                    Coord::X => wx,
-                    Coord::Y => wy,
-                })
-            })
-            .collect();
+        let expected_values = match coord {
+            Coord::X => vec![Some(2.0), Some(2.13)],
+            Coord::Y => vec![Some(3.0), Some(2.84)],
+        };
         let expected: Arc<dyn arrow_array::Array> =
             Arc::new(arrow_array::Float64Array::from(expected_values));
         assert_array_equal(&array, &expected);
@@ -429,14 +416,11 @@ mod tests {
             ],
         );
 
-        let rasters = generate_test_rasters(1, None).unwrap();
-        let raster_struct = rasters.as_any().downcast_ref::<StructArray>().unwrap();
-        let scalar_raster = ScalarValue::try_from_array(raster_struct, 0).unwrap();
+        let rasters = generate_test_rasters(2, None).unwrap();
+        let scalar_raster = ScalarValue::try_from_array(&rasters, 1).unwrap();
 
-        let raster_ref = RasterStructArray::new(raster_struct).get(0).unwrap();
-
-        let x_vals = vec![0_i32, 1_i32, 2_i32];
-        let y_vals = vec![0_i32, 1_i32, 2_i32];
+        let x_vals = vec![0_i32, 1_i32];
+        let y_vals = vec![0_i32, 1_i32];
         let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(x_vals.clone()));
         let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(y_vals.clone()));
 
@@ -453,16 +437,10 @@ mod tests {
             ColumnarValue::Scalar(_) => panic!("Expected array result"),
         };
 
-        let expected_wkt: Vec<Option<String>> = x_vals
-            .iter()
-            .zip(y_vals.iter())
-            .map(|(x, y)| {
-                let (wx, wy) = to_world_coordinate(&raster_ref, *x as i64, *y as i64);
-                Some(format!("POINT ({} {})", wx, wy))
-            })
-            .collect();
-        let expected_refs: Vec<Option<&str>> = expected_wkt.iter().map(|v| v.as_deref()).collect();
-        let expected = create_array(&expected_refs, &WKB_GEOMETRY);
+        let expected = create_array(
+            &[Some("POINT (2 3)"), Some("POINT (2.13 2.84)")],
+            &WKB_GEOMETRY,
+        );
         assert_array_equal(&array, &expected);
     }
 }
