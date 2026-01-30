@@ -19,11 +19,13 @@ use std::{str::FromStr, sync::Arc, vec};
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
-use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::error::Result;
+use datafusion_common::exec_datafusion_err;
 use datafusion_common::scalar::ScalarValue;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
@@ -136,8 +138,8 @@ impl SedonaScalarKernel for STGeoFromWKT {
 }
 
 fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
-    let geometry: Wkt<f64> = Wkt::from_str(wkt_bytes)
-        .map_err(|err| DataFusionError::Internal(format!("WKT parse error: {err}")))?;
+    let geometry: Wkt<f64> =
+        Wkt::from_str(wkt_bytes).map_err(|err| exec_datafusion_err!("WKT parse error: {err}"))?;
 
     write_geometry(
         builder,
@@ -146,7 +148,7 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
             endianness: Endianness::LittleEndian,
         },
     )
-    .map_err(|err| DataFusionError::Internal(format!("WKB write error: {err}")))
+    .map_err(|err| sedona_internal_datafusion_err!("WKB write error: {err}"))
 }
 
 /// ST_GeomFromEWKT() UDF implementation

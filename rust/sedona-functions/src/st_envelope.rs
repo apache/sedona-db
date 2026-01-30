@@ -23,6 +23,7 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::GeometryTrait;
+use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -125,11 +126,7 @@ fn invoke_scalar(wkb: &Wkb, writer: &mut impl std::io::Write) -> Result<()> {
             geo_traits::GeometryType::GeometryCollection(_) => {
                 write_wkb_geometrycollection_header(writer, wkb.dim(), 0)
             }
-            _ => {
-                return Err(DataFusionError::Internal(
-                    "Unsupported geometry type".to_string(),
-                ))
-            }
+            _ => return sedona_internal_err!("Unsupported geometry type"),
         };
 
         if let Err(e) = result {

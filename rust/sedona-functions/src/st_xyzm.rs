@@ -27,7 +27,7 @@ use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -173,7 +173,7 @@ fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<f64>> {
                 1 => {
                     let coord_dim = multipoint.dim();
                     let point = MultiPointTrait::point(multipoint, 0)
-                        .ok_or(DataFusionError::Internal("Missing point".to_string()))?;
+                        .ok_or(sedona_internal_datafusion_err!("Missing point"))?;
                     let coord = PointTrait::coord(&point);
                     return get_coord(coord_dim, coord, dim_index);
                 }

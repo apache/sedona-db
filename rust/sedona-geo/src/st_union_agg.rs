@@ -18,10 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
-use datafusion_common::{
-    error::{DataFusionError, Result},
-    ScalarValue,
-};
+use datafusion_common::{error::Result, exec_err, ScalarValue};
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::BooleanOps;
 use geo_traits::to_geo::ToGeoGeometry;
@@ -100,9 +97,7 @@ impl UnionAccumulator {
                     geo::Geometry::Polygon(poly) => geo::MultiPolygon(vec![poly]),
                     geo::Geometry::MultiPolygon(multi) => multi.clone(),
                     _ => {
-                        return Err(DataFusionError::Internal(
-                            "Unsupported geometry type for union operation".to_string(),
-                        ));
+                        return exec_err!("Unsupported geometry type for union operation");
                     }
                 };
 
@@ -206,9 +201,7 @@ impl Accumulator for UnionAccumulator {
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
         // Check input length (expecting 1 state field)
         if states.is_empty() {
-            return Err(DataFusionError::Internal(
-                "No input arrays provided to accumulator in merge_batch".to_string(),
-            ));
+            return sedona_internal_err!("No input arrays provided to accumulator in merge_batch");
         }
         let array = &states[0];
         let args = [ColumnarValue::Array(array.clone())];

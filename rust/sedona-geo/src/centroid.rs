@@ -16,7 +16,7 @@
 // under the License.
 //! Centroid extraction functionality for WKB geometries
 
-use datafusion_common::{error::DataFusionError, Result};
+use datafusion_common::{exec_err, Result};
 use geo_traits::CoordTrait;
 use geo_traits::GeometryTrait;
 use geo_traits::PointTrait;
@@ -56,9 +56,7 @@ pub fn extract_centroid_2d(geo: impl GeometryTrait<T = f64>) -> Result<(f64, f64
                 // Return POINT EMPTY as (NaN, NaN)
                 Ok((f64::NAN, f64::NAN))
             } else {
-                Err(DataFusionError::Internal(
-                    "Centroid computation failed.".to_string(),
-                ))
+                exec_err!("Centroid computation failed.")
             }
         }
     }

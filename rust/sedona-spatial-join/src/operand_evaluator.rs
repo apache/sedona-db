@@ -19,9 +19,7 @@ use std::{mem::transmute, sync::Arc};
 
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
-use datafusion_common::{
-    utils::proxy::VecAllocExt, DataFusionError, JoinSide, Result, ScalarValue,
-};
+use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
 use float_next_after::NextAfter;
@@ -33,6 +31,7 @@ use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
 use sedona_common::option::SpatialJoinOptions;
+use sedona_common::sedona_internal_err;
 
 use crate::{
     spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
@@ -266,15 +265,11 @@ impl DistanceOperandEvaluator {
                         }
                     }
                 } else {
-                    return Err(DataFusionError::Internal(
-                        "Distance columnar value is not a Float64Array".to_string(),
-                    ));
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
                 }
             }
             _ => {
-                return Err(DataFusionError::Internal(
-                    "Distance columnar value is not a Float64".to_string(),
-                ));
+                return sedona_internal_err!("Distance columnar value is not a Float64");
             }
         }
 
@@ -297,14 +292,10 @@ pub(crate) fn distance_value_at(
                     Ok(Some(array.value(i)))
                 }
             } else {
-                Err(DataFusionError::Internal(
-                    "Distance columnar value is not a Float64Array".to_string(),
-                ))
+                sedona_internal_err!("Distance columnar value is not a Float64Array")
             }
         }
-        _ => Err(DataFusionError::Internal(
-            "Distance columnar value is not a Float64".to_string(),
-        )),
+        _ => sedona_internal_err!("Distance columnar value is not a Float64"),
     }
 }
 

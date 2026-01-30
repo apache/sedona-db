@@ -30,6 +30,7 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use geo_traits::Dimensions;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
@@ -166,9 +167,7 @@ impl SedonaScalarKernel for STGeoFromPointZm {
                 .iter()
                 .map(|v| match v {
                     ColumnarValue::Scalar(ScalarValue::Float64(val)) => Ok(*val),
-                    _ => Err(datafusion_common::DataFusionError::Internal(
-                        "Expected Float64 scalar".to_string(),
-                    )),
+                    _ => sedona_internal_err!("Expected Float64 scalar"),
                 })
                 .collect();
             let scalar_coords = scalar_coords?;
@@ -216,9 +215,7 @@ impl SedonaScalarKernel for STGeoFromPointZm {
             let values = arrays.iter().map(|v| v.value(i)).collect::<Vec<_>>();
             if !any_null {
                 write_wkb_pointzm(&mut builder, &values, self.dim).map_err(|_| {
-                    datafusion_common::DataFusionError::Internal(
-                        "Failed to write WKB point header".to_string(),
-                    )
+                    sedona_internal_datafusion_err!("Failed to write WKB point header")
                 })?;
                 builder.append_value([]);
             } else {
