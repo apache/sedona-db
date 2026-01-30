@@ -28,6 +28,50 @@ pub enum SpatialPredicate {
     KNearestNeighbors(KNNPredicate),
 }
 
+impl SpatialPredicate {
+    /// Returns a semantically equivalent predicate for the case where the join children are swapped.
+    ///
+    /// This is used by `SpatialJoinExec::swap_inputs`.
+    pub fn swap_for_swapped_children(&self) -> Self {
+        match self {
+            SpatialPredicate::Relation(RelationPredicate {
+                left,
+                right,
+                relation_type,
+            }) => SpatialPredicate::Relation(RelationPredicate {
+                left: Arc::clone(right),
+                right: Arc::clone(left),
+                relation_type: relation_type.invert(),
+            }),
+            SpatialPredicate::Distance(DistancePredicate {
+                left,
+                right,
+                distance,
+                distance_side,
+            }) => SpatialPredicate::Distance(DistancePredicate {
+                left: Arc::clone(right),
+                right: Arc::clone(left),
+                distance: Arc::clone(distance),
+                distance_side: distance_side.negate(),
+            }),
+            SpatialPredicate::KNearestNeighbors(KNNPredicate {
+                left,
+                right,
+                k,
+                use_spheroid,
+                probe_side,
+            }) => SpatialPredicate::KNearestNeighbors(KNNPredicate {
+                // Keep probe/build expressions stable; only flip which child is considered probe.
+                left: Arc::clone(left),
+                right: Arc::clone(right),
+                k: *k,
+                use_spheroid: *use_spheroid,
+                probe_side: probe_side.negate(),
+            }),
+        }
+    }
+}
+
 impl std::fmt::Display for SpatialPredicate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
