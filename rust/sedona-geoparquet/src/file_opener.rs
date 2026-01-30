@@ -979,9 +979,10 @@ mod test {
     #[test]
     fn parquet_geo_stats_valid_bbox_xyz() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_zrange(0.0, 1000.0)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(0.0, 1000.0),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1000,9 +1001,11 @@ mod test {
     #[test]
     fn parquet_geo_stats_valid_bbox_xyzm() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_zrange(0.0, 1000.0).with_mrange(0.0, 100.0)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(0.0, 1000.0)
+                    .with_mrange(0.0, 100.0),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1022,7 +1025,10 @@ mod test {
     fn parquet_geo_stats_invalid_bbox_infinite_x() {
         let parquet_stats = GeospatialStatistics::new(
             Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                f64::NEG_INFINITY, f64::INFINITY, -90.0, 90.0,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                -90.0,
+                90.0,
             )),
             None,
         );
@@ -1035,7 +1041,10 @@ mod test {
     fn parquet_geo_stats_invalid_bbox_infinite_y() {
         let parquet_stats = GeospatialStatistics::new(
             Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, f64::NEG_INFINITY, f64::INFINITY,
+                -180.0,
+                180.0,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
             )),
             None,
         );
@@ -1060,9 +1069,10 @@ mod test {
     #[test]
     fn parquet_geo_stats_invalid_bbox_infinite_z() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_zrange(f64::NEG_INFINITY, f64::INFINITY)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(f64::NEG_INFINITY, f64::INFINITY),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1073,9 +1083,10 @@ mod test {
     #[test]
     fn parquet_geo_stats_invalid_bbox_negative_z_width() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_zrange(100.0, -100.0)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(100.0, -100.0),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1086,9 +1097,10 @@ mod test {
     #[test]
     fn parquet_geo_stats_invalid_bbox_infinite_m() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_mrange(f64::NEG_INFINITY, f64::INFINITY)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_mrange(f64::NEG_INFINITY, f64::INFINITY),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1099,9 +1111,10 @@ mod test {
     #[test]
     fn parquet_geo_stats_invalid_bbox_negative_m_width() {
         let parquet_stats = GeospatialStatistics::new(
-            Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                -180.0, 180.0, -90.0, 90.0,
-            ).with_mrange(50.0, -50.0)),
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_mrange(50.0, -50.0),
+            ),
             None,
         );
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
@@ -1111,20 +1124,14 @@ mod test {
 
     #[test]
     fn parquet_geo_stats_valid_geometry_types() {
-        let parquet_stats = GeospatialStatistics::new(
-            None,
-            Some(vec![1, 2, 3]),
-        );
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, 2, 3]));
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
         assert!(result.geometry_types().is_some());
     }
 
     #[test]
     fn parquet_geo_stats_invalid_geometry_types_negative() {
-        let parquet_stats = GeospatialStatistics::new(
-            None,
-            Some(vec![1, -1, 3]),
-        );
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, -1, 3]));
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
         // Should return unspecified geometry types because of negative value
         assert_eq!(result.geometry_types(), None);
@@ -1132,10 +1139,7 @@ mod test {
 
     #[test]
     fn parquet_geo_stats_invalid_geometry_types_unknown_wkb_id() {
-        let parquet_stats = GeospatialStatistics::new(
-            None,
-            Some(vec![1, 999999]),
-        );
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, 999999]));
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
         // Should return unspecified geometry types because of unknown WKB id
         assert_eq!(result.geometry_types(), None);
@@ -1143,10 +1147,7 @@ mod test {
 
     #[test]
     fn parquet_geo_stats_empty_geometry_types() {
-        let parquet_stats = GeospatialStatistics::new(
-            None,
-            Some(vec![]),
-        );
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![]));
         let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
         // Empty geometry types should result in None
         assert_eq!(result.geometry_types(), None);
@@ -1183,7 +1184,10 @@ mod test {
     fn parquet_geo_stats_invalid_bbox_valid_geometry_types() {
         let parquet_stats = GeospatialStatistics::new(
             Some(parquet::geospatial::bounding_box::BoundingBox::new(
-                f64::NAN, 180.0, -90.0, 90.0,
+                f64::NAN,
+                180.0,
+                -90.0,
+                90.0,
             )),
             Some(vec![1, 2]),
         );
