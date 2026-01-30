@@ -21,7 +21,7 @@ use datafusion::datasource::{
     listing::PartitionedFile,
     physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
 };
-use datafusion_common::{plan_datafusion_err, Result};
+use datafusion_common::Result;
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
@@ -32,6 +32,7 @@ use parquet::{
         metadata::{ParquetMetaData, RowGroupMetaData},
         statistics::Statistics,
     },
+    geospatial::statistics::GeospatialStatistics,
 };
 use sedona_expr::{
     spatial_filter::{SpatialFilter, TableGeoStatistics},
@@ -295,7 +296,7 @@ fn filter_access_plan_using_native_geostats(
     for i in row_group_indices_to_scan {
         // Generate row group statistics based on the covering statistics
         let row_group_column_geo_stats =
-            row_group_native_geo_stats(parquet_metadata.row_group(i), &top_level_indices)?;
+            row_group_native_geo_stats(parquet_metadata.row_group(i), &top_level_indices);
         let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
             &row_group_column_geo_stats,
             file_schema,
@@ -461,54 +462,81 @@ fn parse_column_coverings(
 fn row_group_native_geo_stats(
     row_group_metadata: &RowGroupMetaData,
     column_indices: &[usize],
-) -> Result<Vec<GeoStatistics>> {
+) -> Vec<GeoStatistics> {
     column_indices
         .iter()
         .map(|column_index| {
             let native_geo_stats_opt = row_group_metadata.column(*column_index).geo_statistics();
             native_geo_stats_opt
-                .map(|native_geo_stats| {
-                    let mut out = GeoStatistics::unspecified();
-
-                    if let Some(native_bbox) = native_geo_stats.bounding_box() {
-                        let x_range = (native_bbox.get_xmin(), native_bbox.get_xmax());
-                        let y_range = (native_bbox.get_ymin(), native_bbox.get_ymax());
-                        let z_range = match (native_bbox.get_zmin(), native_bbox.get_zmax()) {
-                            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
-                            _ => None,
-                        };
-                        let m_range = match (native_bbox.get_mmin(), native_bbox.get_mmax()) {
-                            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
-                            _ => None,
-                        };
-
-                        out = out
-                            .with_bbox(Some(BoundingBox::xyzm(x_range, y_range, z_range, m_range)));
-                    }
-
-                    if let Some(native_geometry_types) = native_geo_stats.geospatial_types() {
-                        let mut geometry_types = GeometryTypeAndDimensionsSet::new();
-                        for wkb_id in native_geometry_types {
-                            let type_and_dim =
-                                GeometryTypeAndDimensions::try_from_wkb_id(*wkb_id as u32)
-                                    .map_err(|_| {
-                                        plan_datafusion_err!(
-                                    "Invalid geometry type ID in Parquet statistics: {wkb_id}"
-                                )
-                                    })?;
-                            geometry_types.insert_or_ignore(&type_and_dim);
-                        }
-
-                        if !geometry_types.is_empty() {
-                            out = out.with_geometry_types(Some(geometry_types))
-                        }
-                    }
-
-                    Ok(out)
-                })
-                .unwrap_or(Ok(GeoStatistics::unspecified()))
+                .map(parquet_geo_stats_to_sedona_geo_stats)
+                .unwrap_or(GeoStatistics::unspecified())
         })
         .collect()
+}
+
+/// Convert Parquet [GeospatialStatistics] into Sedona [GeoStatistics]
+///
+/// This also sanity checks the Parquet statistics for non-finite or non-sensical
+/// ranges, treating the information as unknown if it fails the sanity check.
+fn parquet_geo_stats_to_sedona_geo_stats(
+    parquet_geo_stats: &GeospatialStatistics,
+) -> GeoStatistics {
+    let mut out = GeoStatistics::unspecified();
+
+    if let Some(native_bbox) = parquet_geo_stats.bounding_box() {
+        let x_range = (native_bbox.get_xmin(), native_bbox.get_xmax());
+        let y_range = (native_bbox.get_ymin(), native_bbox.get_ymax());
+        let z_range = match (native_bbox.get_zmin(), native_bbox.get_zmax()) {
+            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+            _ => None,
+        };
+        let m_range = match (native_bbox.get_mmin(), native_bbox.get_mmax()) {
+            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+            _ => None,
+        };
+
+        let bbox = BoundingBox::xyzm(x_range, y_range, z_range, m_range);
+
+        // Sanity check the bbox statistics. If the sanity check fails, don't set
+        // a bounding box for pruning.
+        let mut bbox_is_valid =
+            bbox.x().width().is_finite() && bbox.y().width().is_finite() && bbox.y().width() > 0.0;
+        if let Some(z) = bbox.z() {
+            bbox_is_valid = bbox_is_valid && z.width().is_finite() && z.width() > 0.0;
+        }
+        if let Some(m) = bbox.m() {
+            bbox_is_valid = bbox_is_valid && m.width().is_finite() && m.width() > 0.0;
+        }
+
+        if bbox_is_valid {
+            out = out.with_bbox(Some(bbox));
+        }
+    }
+
+    if let Some(native_geometry_types) = parquet_geo_stats.geospatial_types() {
+        let mut geometry_types = GeometryTypeAndDimensionsSet::new();
+        let mut geometry_types_valid = true;
+        for wkb_id in native_geometry_types {
+            if *wkb_id < 0 {
+                geometry_types_valid = false;
+                break;
+            }
+
+            match GeometryTypeAndDimensions::try_from_wkb_id(*wkb_id as u32) {
+                Ok(type_and_dim) => geometry_types.insert_or_ignore(&type_and_dim),
+                Err(_) => {
+                    geometry_types_valid = false;
+                    break;
+                }
+            }
+        }
+
+        if !geometry_types.is_empty() && geometry_types_valid {
+            out = out.with_geometry_types(Some(geometry_types))
+        }
+    }
+
+    out
 }
 
 /// Calculates column indices for top-level columns of file_schema
@@ -924,6 +952,8 @@ mod test {
             &Schema::new(vec![geography_field.clone()]).into()
         ));
     }
+
+
 
     fn file_schema_with_covering() -> SchemaRef {
         Arc::new(Schema::new(vec![
