@@ -298,7 +298,7 @@ impl KNNPredicate {
     /// * `right` - Expression for the right side (object) geometry
     /// * `k` - Number of nearest neighbors to find (literal value)
     /// * `use_spheroid` - Whether to use spheroid distance (literal value, currently must be false)
-    /// * `probe_side` - Which execution plan side the probe expression belongs to
+    /// * `probe_side` - Which execution plan side the probe expression belongs to, cannot be None
     pub fn new(
         left: Arc<dyn PhysicalExpr>,
         right: Arc<dyn PhysicalExpr>,
@@ -306,6 +306,7 @@ impl KNNPredicate {
         use_spheroid: bool,
         probe_side: JoinSide,
     ) -> Self {
+        assert!(matches!(probe_side, JoinSide::Left | JoinSide::Right));
         Self {
             left,
             right,

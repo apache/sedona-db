@@ -234,12 +234,10 @@ impl SpatialJoinExec {
             &[],
         )?;
 
-        let (build, probe, probe_side) = if let SpatialPredicate::KNearestNeighbors(knn) = on {
-            // knn.probe_side
-            let (build, probe) = determine_knn_build_probe_plans(knn, left, right)?;
-            (build, probe, knn.probe_side)
+        let probe_side = if let SpatialPredicate::KNearestNeighbors(knn) = on {
+            knn.probe_side
         } else {
-            (left, right, JoinSide::Right)
+            JoinSide::Right
         };
         let mut output_partitioning =
             asymmetric_join_output_partitioning(left, right, &join_type, probe_side)?;
@@ -252,7 +250,7 @@ impl SpatialJoinExec {
             eq_properties = eq_properties.project(&projection_mapping, out_schema);
         }
 
-        let emission_type = compute_join_emission_type(build, probe, join_type, probe_side);
+        let emission_type = compute_join_emission_type(left, right, join_type, probe_side);
 
         Ok(PlanProperties::new(
             eq_properties,
