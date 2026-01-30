@@ -543,7 +543,6 @@ fn parquet_geo_stats_to_sedona_geo_stats(
 ///
 /// We need to build a list of top-level indices, where the indices refer to the
 /// flattened list of columns (e.g., `.column(i)` in row group metadata).
-/// anyway.
 fn top_level_column_indices(parquet_metadata: &ParquetMetaData) -> Vec<usize> {
     let mut top_level_indices = Vec::new();
     let schema_descr = parquet_metadata.file_metadata().schema_descr();
