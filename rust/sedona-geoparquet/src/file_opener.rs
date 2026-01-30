@@ -26,9 +26,12 @@ use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
 use object_store::ObjectStore;
-use parquet::file::{
-    metadata::{ParquetMetaData, RowGroupMetaData},
-    statistics::Statistics,
+use parquet::{
+    basic::LogicalType,
+    file::{
+        metadata::{ParquetMetaData, RowGroupMetaData},
+        statistics::Statistics,
+    },
 };
 use sedona_expr::{
     spatial_filter::{SpatialFilter, TableGeoStatistics},
@@ -222,6 +225,13 @@ fn filter_access_plan_using_geoparquet_covering(
     // but we need flattened integer references to retrieve min/max statistics for each of these.
     let covering_specs = parse_column_coverings(file_schema, parquet_metadata, metadata)?;
 
+    // If there are no covering specs, don't iterate through the row groups
+    // This has the side-effect of ensuring the row_groups_spatial_matched metric is not double
+    // counted except in the rare case where we prune based on both.
+    if covering_specs.iter().all(|spec| spec.is_none()) {
+        return Ok(());
+    }
+
     // Iterate through the row groups
     for i in row_group_indices_to_scan {
         // Generate row group statistics based on the covering statistics
@@ -266,6 +276,20 @@ fn filter_access_plan_using_native_geostats(
     // For schemas with no nested columns, this will be a sequential
     // range of 0..n.
     let top_level_indices = top_level_column_indices(parquet_metadata);
+
+    // If there are no native geometry or geography logical types at the
+    // top level indices, don't iterate through the row groups. This has the side-effect
+    // of ensuring the row_groups_spatial_matched metric is not double counted except
+    // in the rare case where we prune based on both.
+    let parquet_schema = parquet_metadata.file_metadata().schema_descr();
+    if top_level_indices.iter().all(|i| {
+        !matches!(
+            parquet_schema.column(*i).logical_type_ref(),
+            Some(LogicalType::Geometry { .. }) | Some(LogicalType::Geography { .. })
+        )
+    }) {
+        return Ok(());
+    }
 
     // Iterate through the row groups
     for i in row_group_indices_to_scan {
