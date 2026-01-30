@@ -20,7 +20,7 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
   set(SHADER_POINT_TYPES "SHADER_POINT_FLOAT_2D;SHADER_POINT_DOUBLE_2D")
 
   set(SHADERS_DEPS "${PROJECT_SOURCE_DIR}/include/gpuspatial/geom"
-                   "${PROJECT_SOURCE_DIR}/include/gpuspatial/index/detail")
+                   "${PROJECT_SOURCE_DIR}/include/gpuspatial/rt")
 
   set(OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders_ptx")
   set(OPTIX_MODULE_EXTENSION ".ptx")
