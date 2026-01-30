@@ -18,16 +18,16 @@ use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow_array::ffi::FFI_ArrowSchema;
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
-use arrow_array::RecordBatchReader;
-use arrow_schema::Schema;
+use arrow_array::{RecordBatch, RecordBatchReader};
+use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
-use datafusion_common::Column;
+use datafusion_common::{Column, DataFusionError};
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
+use futures::TryStreamExt;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
@@ -38,7 +38,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
-use crate::import_from::check_pycapsule;
+use crate::import_from::import_arrow_schema;
 use crate::reader::PySedonaStreamReader;
 use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
@@ -100,14 +100,17 @@ impl InternalDataFrame {
     }
 
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
-        let mut c = 0;
-        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
-        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
-        for batch in reader {
-            c += batch?.num_rows();
-        }
+        let df = self.inner.clone();
+        let count = wait_for_future(py, &self.runtime, async move {
+            let mut stream = df.execute_stream().await?;
+            let mut c = 0usize;
+            while let Some(batch) = stream.try_next().await? {
+                c += batch.num_rows();
+            }
+            Ok::<_, DataFusionError>(c)
+        })??;
 
-        Ok(c)
+        Ok(count)
     }
 
     fn count<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
@@ -147,6 +150,28 @@ impl InternalDataFrame {
             ctx.inner.ctx.read_table(Arc::new(provider))?,
             self.runtime.clone(),
         ))
+    }
+
+    fn to_batches<'py>(
+        &self,
+        py: Python<'py>,
+        requested_schema: Option<Bound<'py, PyAny>>,
+    ) -> Result<Batches, PySedonaError> {
+        check_py_requested_schema(requested_schema, self.inner.schema().as_arrow())?;
+
+        let df = self.inner.clone();
+        let batches = wait_for_future(py, &self.runtime, async move {
+            let mut stream = df.execute_stream().await?;
+            let schema = stream.schema();
+            let mut batches = Vec::new();
+            while let Some(batch) = stream.try_next().await? {
+                batches.push(batch);
+            }
+
+            Ok::<_, DataFusionError>(Batches { schema, batches })
+        })??;
+
+        Ok(batches)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -265,20 +290,9 @@ impl InternalDataFrame {
     fn __arrow_c_stream__<'py>(
         &self,
         py: Python<'py>,
-        #[allow(unused_variables)] requested_schema: Option<Bound<'py, PyCapsule>>,
+        requested_schema: Option<Bound<'py, PyAny>>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        if let Some(requested_capsule) = requested_schema {
-            let contents = check_pycapsule(&requested_capsule, "arrow_schema")?;
-            let ffi_schema = unsafe { FFI_ArrowSchema::from_raw(contents as _) };
-            let requested_schema = Schema::try_from(&ffi_schema)?;
-            let actual_schema = self.inner.schema().as_arrow();
-            if &requested_schema != actual_schema {
-                // Eventually we can support this by inserting a cast
-                return Err(PySedonaError::SedonaPython(
-                    "Requested schema != DataFrame schema not yet supported".to_string(),
-                ));
-            }
-        }
+        check_py_requested_schema(requested_schema, self.inner.schema().as_arrow())?;
 
         let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
         let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
@@ -288,4 +302,47 @@ impl InternalDataFrame {
         let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
         Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
     }
+}
+
+#[pyclass]
+pub struct Batches {
+    schema: SchemaRef,
+    batches: Vec<RecordBatch>,
+}
+
+#[pymethods]
+impl Batches {
+    #[pyo3(signature = (requested_schema=None))]
+    fn __arrow_c_stream__<'py>(
+        &self,
+        py: Python<'py>,
+        requested_schema: Option<Bound<'py, PyAny>>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        check_py_requested_schema(requested_schema, &self.schema)?;
+
+        let reader = arrow_array::RecordBatchIterator::new(
+            self.batches.clone().into_iter().map(Ok),
+            self.schema.clone(),
+        );
+        let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+
+        let ffi_stream = FFI_ArrowArrayStream::new(reader);
+        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
+        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+    }
+}
+
+fn check_py_requested_schema<'py>(
+    requested_schema: Option<Bound<'py, PyAny>>,
+    actual_schema: &Schema,
+) -> Result<(), PySedonaError> {
+    if let Some(requested_obj) = requested_schema {
+        let requested = import_arrow_schema(&requested_obj)?;
+        if &requested != actual_schema {
+            return Err(PySedonaError::SedonaPython(
+                "Requested schema != actual schema not yet supported".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }

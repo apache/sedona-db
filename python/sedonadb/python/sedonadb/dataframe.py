@@ -253,10 +253,9 @@ class DataFrame:
         import pyarrow as pa
         import geoarrow.pyarrow  # noqa: F401
 
-        if schema is None:
-            return pa.table(self)
-        else:
-            return pa.table(self, schema=pa.schema(schema))
+        # Collects all batches into an object that exposes __arrow_c_stream__()
+        batches = self._impl.to_batches(schema)
+        return pa.table(batches)
 
     def to_pandas(
         self, geometry: Optional[str] = None
