@@ -316,29 +316,32 @@ impl<'a> DisplayTable<'a> {
     /// number of characters in other columns (based on user options).
     fn minimum_width(&self) -> Result<u16> {
         // Leftmost border
-        let mut total_size = 1;
-        let mut hidden_count = 0;
+        let mut total_size: u16 = 1;
+        let mut hidden_count: u16 = 0;
 
         for col in &self.columns {
             // Padding on both sides plus separator
-            total_size += 3;
+            total_size = total_size.saturating_add(3);
             match col.constraint(&self.options)? {
-                ColumnConstraint::Hidden => hidden_count += 1,
-                ColumnConstraint::Absolute(Width::Fixed(width)) => total_size += width,
-                ColumnConstraint::LowerBoundary(Width::Fixed(width)) => total_size += width,
-                _ => {
-                    total_size += 0;
+                ColumnConstraint::Hidden => hidden_count = hidden_count.saturating_add(1),
+                ColumnConstraint::Absolute(Width::Fixed(width)) => {
+                    total_size = total_size.saturating_add(width)
                 }
+                ColumnConstraint::LowerBoundary(Width::Fixed(width)) => {
+                    total_size = total_size.saturating_add(width)
+                }
+                _ => {}
             }
         }
 
         if hidden_count > 0 {
             // Exactly one padding + separator + truncation indicator
-            total_size += 3 + self
-                .truncation_indicator()
-                .len()
-                .try_into()
-                .unwrap_or(u16::MAX);
+            total_size = total_size.saturating_add(3).saturating_add(
+                self.truncation_indicator()
+                    .len()
+                    .try_into()
+                    .unwrap_or(u16::MAX),
+            );
         }
 
         Ok(total_size)
