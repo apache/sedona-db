@@ -14,144 +14,78 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
 use arrow_schema::Schema;
-use datafusion::execution::session_state::SessionStateBuilder;
-use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
     JoinSide,
 };
 use datafusion_common::{HashMap, Result};
-use datafusion_expr::{Expr, Filter, Join, JoinType, LogicalPlan, Operator};
+use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
 use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::utils::JoinFilter;
-use sedona_common::{option::SedonaOptions, sedona_internal_err};
+use sedona_common::sedona_internal_err;
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
-/// Physical planner extension for spatial joins
-///
-/// This extension recognizes nested loop join operations with spatial predicates
-/// and converts them to SpatialJoinExec, which is specially optimized for spatial joins.
-#[derive(Debug, Default)]
-pub struct SpatialJoinOptimizer;
-
-impl SpatialJoinOptimizer {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl OptimizerRule for SpatialJoinOptimizer {
-    fn name(&self) -> &str {
-        "spatial_join_optimizer"
-    }
-
-    fn apply_order(&self) -> Option<ApplyOrder> {
-        Some(ApplyOrder::BottomUp)
-    }
-
-    /// Try to rewrite the plan containing a spatial Filter on top of a cross join without on or filter
-    /// to a theta-join with filter. For instance, the following query plan:
-    ///
-    /// ```text
-    /// Filter: st_intersects(l.geom, _scalar_sq_1.geom)
-    ///   Left Join (no on, no filter):
-    ///     TableScan: l projection=[id, geom]
-    ///     SubqueryAlias: __scalar_sq_1
-    ///       Projection: r.geom
-    ///         Filter: r.id = Int32(1)
-    ///           TableScan: r projection=[id, geom]
-    /// ```
-    ///
-    /// will be rewritten to
-    ///
-    /// ```text
-    /// Inner Join: Filter: st_intersects(l.geom, _scalar_sq_1.geom)
-    ///   TableScan: l projection=[id, geom]
-    ///   SubqueryAlias: __scalar_sq_1
-    ///     Projection: r.geom
-    ///       Filter: r.id = Int32(1)
-    ///         TableScan: r projection=[id, geom]
-    /// ```
-    ///
-    /// This is for enabling this logical join operator to be converted to a NestedLoopJoin physical
-    /// node with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
-    /// physical node. Please refer to the `PhysicalOptimizerRule` implementation of this struct
-    /// and [SpatialJoinOptimizer::try_optimize_join] for details.
-    fn rewrite(
-        &self,
-        plan: LogicalPlan,
-        config: &dyn OptimizerConfig,
-    ) -> Result<Transformed<LogicalPlan>> {
-        let options = config.options();
-        let Some(extension) = options.extensions.get::<SedonaOptions>() else {
-            return Ok(Transformed::no(plan));
-        };
-        if !extension.spatial_join.enable {
-            return Ok(Transformed::no(plan));
-        }
-
-        let LogicalPlan::Filter(Filter {
-            predicate, input, ..
-        }) = &plan
-        else {
-            return Ok(Transformed::no(plan));
-        };
-        if !is_spatial_predicate(predicate) {
-            return Ok(Transformed::no(plan));
-        }
-
-        let LogicalPlan::Join(Join {
-            ref left,
-            ref right,
-            ref on,
-            ref filter,
-            join_type,
-            ref join_constraint,
-            ref null_equality,
-            ..
-        }) = input.as_ref()
-        else {
-            return Ok(Transformed::no(plan));
-        };
-
-        // Check if this is a suitable join for rewriting
-        if !matches!(
-            join_type,
-            JoinType::Inner | JoinType::Left | JoinType::Right
-        ) || !on.is_empty()
-            || filter.is_some()
-        {
-            return Ok(Transformed::no(plan));
-        }
-
-        let rewritten_plan = Join::try_new(
-            Arc::clone(left),
-            Arc::clone(right),
-            on.clone(),
-            Some(predicate.clone()),
-            JoinType::Inner,
-            *join_constraint,
-            *null_equality,
-        )?;
-
-        Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
-    }
-}
-
-/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
+/// Collect the names of spatial predicates appeared in expr. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
-fn is_spatial_predicate(expr: &Expr) -> bool {
+pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
+    fn collect(expr: &Expr, acc: &mut HashSet<String>) {
+        match expr {
+            Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+                left, right, op, ..
+            }) => match op {
+                Operator::And => {
+                    collect(left, acc);
+                    collect(right, acc);
+                }
+                Operator::Lt | Operator::LtEq => {
+                    if is_distance_expr(left) {
+                        acc.insert("st_dwithin".to_string());
+                    }
+                }
+                Operator::Gt | Operator::GtEq => {
+                    if is_distance_expr(right) {
+                        acc.insert("st_dwithin".to_string());
+                    }
+                }
+                _ => (),
+            },
+            Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
+                let func_name = func.name().to_lowercase();
+                if matches!(
+                    func_name.as_str(),
+                    "st_intersects"
+                        | "st_contains"
+                        | "st_within"
+                        | "st_covers"
+                        | "st_covered_by"
+                        | "st_coveredby"
+                        | "st_touches"
+                        | "st_crosses"
+                        | "st_overlaps"
+                        | "st_equals"
+                        | "st_dwithin"
+                        | "st_knn"
+                ) {
+                    acc.insert(func_name);
+                }
+            }
+            _ => (),
+        }
+    }
+
     fn is_distance_expr(expr: &Expr) -> bool {
         let Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) = expr else {
             return false;
@@ -159,45 +93,16 @@ fn is_spatial_predicate(expr: &Expr) -> bool {
         func.name().to_lowercase() == "st_distance"
     }
 
-    match expr {
-        Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
-            left, right, op, ..
-        }) => match op {
-            Operator::And => is_spatial_predicate(left) || is_spatial_predicate(right),
-            Operator::Lt | Operator::LtEq => is_distance_expr(left),
-            Operator::Gt | Operator::GtEq => is_distance_expr(right),
-            _ => false,
-        },
-        Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
-            let func_name = func.name().to_lowercase();
-            matches!(
-                func_name.as_str(),
-                "st_intersects"
-                    | "st_contains"
-                    | "st_within"
-                    | "st_covers"
-                    | "st_covered_by"
-                    | "st_coveredby"
-                    | "st_touches"
-                    | "st_crosses"
-                    | "st_overlaps"
-                    | "st_equals"
-                    | "st_dwithin"
-                    | "st_knn"
-            )
-        }
-        _ => false,
-    }
+    let mut acc = HashSet::new();
+    collect(expr, &mut acc);
+    acc
 }
 
-/// Register only the logical spatial join optimizer rule.
-///
-/// This enables building `Join(filter=...)` from patterns like `Filter(CrossJoin)`.
-/// It intentionally does not register any physical plan rewrite rules.
-pub fn register_spatial_join_logical_optimizer(
-    session_state_builder: SessionStateBuilder,
-) -> SessionStateBuilder {
-    session_state_builder.with_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
+/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
+/// `expr` evaluates to a boolean value and originates from a filter logical node.
+pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
+    let pred_names = collect_spatial_predicate_names(expr);
+    !pred_names.is_empty()
 }
 
 /// Transform the join filter to a spatial predicate and a remainder.
@@ -2274,7 +2179,7 @@ mod tests {
             SpatialRelationType::Intersects,
         );
         let spatial_pred = SpatialPredicate::Relation(rel_pred);
-        assert!(super::is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
+        assert!(is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
 
         // Geography field (should NOT be supported)
         let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
@@ -2286,12 +2191,10 @@ mod tests {
             SpatialRelationType::Intersects,
         );
         let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
-        assert!(!super::is_spatial_predicate_supported(
-            &spatial_pred_geog,
-            &geog_schema,
-            &geog_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&spatial_pred_geog, &geog_schema, &geog_schema)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -2313,9 +2216,7 @@ mod tests {
             false,
             JoinSide::Left,
         ));
-        assert!(
-            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
-        );
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
 
         // ST_KNN(right, left)
         let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
@@ -2325,31 +2226,23 @@ mod tests {
             false,
             JoinSide::Right,
         ));
-        assert!(
-            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
-        );
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
 
         // ST_KNN with geography (should NOT be supported)
         let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
             .to_storage_field("geog", false)
             .unwrap()]));
-        assert!(!super::is_spatial_predicate_supported(
-            &knn_pred,
-            &left_geog_schema,
-            &right_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_geog_schema, &right_schema).unwrap()
+        );
 
         let right_geog_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
         ]));
-        assert!(!super::is_spatial_predicate_supported(
-            &knn_pred,
-            &left_schema,
-            &right_geog_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_schema, &right_geog_schema).unwrap()
+        );
     }
 
     #[test]
@@ -2360,7 +2253,7 @@ mod tests {
             func: st_intersects_udf,
             args: vec![col("geom1"), col("geom2")],
         });
-        assert!(super::is_spatial_predicate(&st_intersects_expr));
+        assert!(is_spatial_predicate(&st_intersects_expr));
 
         // ST_Distance(geom1, geom2) < 100 should return true
         let st_distance_udf = create_dummy_st_distance_udf();
@@ -2373,7 +2266,7 @@ mod tests {
             op: Operator::Lt,
             right: Box::new(lit(100.0)),
         });
-        assert!(super::is_spatial_predicate(&distance_lt_expr));
+        assert!(is_spatial_predicate(&distance_lt_expr));
 
         // ST_Distance(geom1, geom2) > 100 should return false
         let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2381,7 +2274,7 @@ mod tests {
             op: Operator::Gt,
             right: Box::new(lit(100.0)),
         });
-        assert!(!super::is_spatial_predicate(&distance_gt_expr));
+        assert!(!is_spatial_predicate(&distance_gt_expr));
 
         // AND expressions with spatial predicates should return true
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2389,13 +2282,13 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("id").eq(lit(1))),
         });
-        assert!(super::is_spatial_predicate(&and_expr));
+        assert!(is_spatial_predicate(&and_expr));
 
         // Non-spatial expressions should return false
 
         // Simple column comparison
         let non_spatial_expr = col("id").eq(lit(1));
-        assert!(!super::is_spatial_predicate(&non_spatial_expr));
+        assert!(!is_spatial_predicate(&non_spatial_expr));
 
         // Not a spatial relationship function
         let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
@@ -2408,7 +2301,7 @@ mod tests {
             ))),
             args: vec![col("id")],
         });
-        assert!(!super::is_spatial_predicate(&non_st_func));
+        assert!(!is_spatial_predicate(&non_st_func));
 
         // AND expression with no spatial predicates
         let non_spatial_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2416,6 +2309,6 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("name").eq(lit("test"))),
         });
-        assert!(!super::is_spatial_predicate(&non_spatial_and));
+        assert!(!is_spatial_predicate(&non_spatial_and));
     }
 }

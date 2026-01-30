@@ -654,8 +654,7 @@ mod tests {
         if let Some(options) = options {
             // Logical rewrite (Filter(CrossJoin)->Join(filter)) + extension-based planning
             // (Join(filter)->SpatialJoinExec). Intentionally avoid physical plan rewrites.
-            state_builder = crate::register_spatial_join_logical_optimizer(state_builder);
-            state_builder = crate::register_spatial_join_planner(state_builder);
+            state_builder = crate::register_planner(state_builder);
             let opts = session_config
                 .options_mut()
                 .extensions

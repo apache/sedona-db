@@ -95,12 +95,7 @@ impl SedonaContext {
         // Register the spatial join planner extension
         #[cfg(feature = "spatial-join")]
         {
-            // Enable the logical rewrite that turns Filter(CrossJoin) into Join(filter=...)
-            state_builder =
-                sedona_spatial_join::register_spatial_join_logical_optimizer(state_builder);
-
-            // Enable planning SpatialJoinExec via an extension node during logical->physical planning.
-            state_builder = sedona_spatial_join::register_spatial_join_planner(state_builder);
+            state_builder = sedona_spatial_join::register_planner(state_builder);
         }
 
         let mut state = state_builder.build();
