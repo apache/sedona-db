@@ -4047,6 +4047,26 @@ that have (e.g.) differing integer handling.</p>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.testing.DBEngine.val_or_null" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">val_or_null</span>
+
+
+<a href="#sedonadb.testing.DBEngine.val_or_null" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">val_or_null</span><span class="p">(</span><span class="n">arg</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Format SQL expression for a value or NULL</p>
+
+
+    </div>
+
+</div>
+
 
 
   </div>
@@ -4464,6 +4484,10 @@ avoid accidentally skipping tests on CI.</p>
     <div class="doc doc-contents ">
 
         <p>Format SQL expression for a value or NULL</p>
+<p>Use an engine-specific method when formatting bytes as there is no
+engine-agnostic way to to represent bytes as a SQL literal.</p>
+<p>This is not secure (i.e., does not prevent SQL injection of any kind)
+and should only be used for testing.</p>
 
 
     </div>
