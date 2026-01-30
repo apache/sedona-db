@@ -188,7 +188,7 @@ impl SpatialJoinExec {
     /// (See [`ExecutionPlan::maintains_input_order`]).
     ///
     /// This is a separate method because it is also called when computing properties, before
-    /// a [`NestedLoopJoinExec`] is created. It also takes [`JoinType`] as an argument, as
+    /// a [`SpatialJoinExec`] is created. It also takes [`JoinType`] as an argument, as
     /// opposed to `Self`, for the same reason.
     fn maintains_input_order(join_type: JoinType) -> Vec<bool> {
         vec![
@@ -207,14 +207,6 @@ impl SpatialJoinExec {
 
     /// This function creates the cache object that stores the plan properties such as schema,
     /// equivalence properties, ordering, partitioning, etc.
-    ///
-    /// NOTICE: The implementation of this function should be identical to the one in
-    /// [`datafusion_physical_plan::physical_plan::join::NestedLoopJoinExec::compute_properties`].
-    /// This is because SpatialJoinExec is transformed from NestedLoopJoinExec in physical plan
-    /// optimization phase. If the properties are not the same, the plan will be incorrect.
-    ///
-    /// When converted from HashJoin, we preserve HashJoin's equivalence properties by extracting
-    /// equality conditions from the filter.
     fn compute_properties(
         left: &Arc<dyn ExecutionPlan>,
         right: &Arc<dyn ExecutionPlan>,
@@ -324,6 +316,14 @@ impl ExecutionPlan for SpatialJoinExec {
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.left, &self.right]
+    }
+
+    fn try_swapping_with_projection(
+        &self,
+        _projection: &datafusion_physical_plan::projection::ProjectionExec,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        // TODO: implement this
+        Ok(None)
     }
 
     fn with_new_children(
