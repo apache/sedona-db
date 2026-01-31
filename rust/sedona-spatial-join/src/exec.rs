@@ -323,14 +323,15 @@ impl SpatialJoinExec {
     }
 
     pub fn with_projection(&self, projection: Option<Vec<usize>>) -> Result<Self> {
+        // check if the projection is valid
         can_project(&self.schema(), projection.as_ref())?;
-
-        let projection = match (&self.projection, projection) {
-            (Some(existing), Some(new)) => Some(new.into_iter().map(|i| existing[i]).collect()),
-            (Some(_), None) => self.projection.clone(),
-            (None, other) => other,
+        let projection = match projection {
+            Some(projection) => match &self.projection {
+                Some(p) => Some(projection.iter().map(|i| p[*i]).collect()),
+                None => Some(projection),
+            },
+            None => None,
         };
-
         SpatialJoinExec::try_new_internal(
             Arc::clone(&self.left),
             Arc::clone(&self.right),
@@ -462,20 +463,20 @@ impl ExecutionPlan for SpatialJoinExec {
         &self,
         projection: &ProjectionExec,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        // TODO: currently if there is projection in SpatialJoinExec, we can't push down projection to
+        // left or right input. Maybe we can pushdown the mixed projection later.
+        // This restriction is inherited from NestedLoopJoinExec and HashJoinExec in DataFusion.
         if self.contains_projection() {
             return Ok(None);
         }
 
-        // For join types where the output is not a concatenation of left + right columns
-        // (e.g. semi/anti/mark), the generic join projection pushdown logic does not apply.
-        // Fall back to embedding.
+        // TODO: mark joins make `new_join_children` below fail since the projection contains
+        // a mark column, which is not a direct column from left or right child. `new_join_children`
+        // is not designed to handle this case. We need to improve it later.
         match self.join_type {
-            JoinType::LeftAnti
-            | JoinType::LeftSemi
-            | JoinType::RightAnti
-            | JoinType::RightSemi
-            | JoinType::LeftMark
-            | JoinType::RightMark => return try_embed_projection(projection, self),
+            JoinType::LeftMark | JoinType::RightMark => {
+                return try_embed_projection(projection, self)
+            }
             _ => {}
         }
 
@@ -895,6 +896,7 @@ mod tests {
         options: Option<SpatialJoinOptions>,
         batch_size: usize,
     ) -> Result<SessionContext> {
+        env_logger::init();
         let mut session_config = SessionConfig::from_env()?
             .with_information_schema(true)
             .with_batch_size(batch_size);
@@ -1627,8 +1629,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_knn_join_correctness() -> Result<()> {
-        env_logger::init();
-
         // Generate slightly larger data
         let ((left_schema, left_partitions), (right_schema, right_partitions)) =
             create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;

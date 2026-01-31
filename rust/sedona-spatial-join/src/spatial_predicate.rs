@@ -61,7 +61,7 @@ impl SpatialPredicate {
                 use_spheroid,
                 probe_side,
             }) => SpatialPredicate::KNearestNeighbors(KNNPredicate {
-                // Keep probe/build expressions stable; only flip which child is considered probe.
+                // Keep query/object expressions stable; only flip which child is considered probe.
                 left: Arc::clone(left),
                 right: Arc::clone(right),
                 k: *k,
