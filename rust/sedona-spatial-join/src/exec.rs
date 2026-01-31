@@ -619,8 +619,7 @@ mod tests {
     use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
     use datafusion_expr::ColumnarValue;
     use datafusion_physical_plan::joins::NestedLoopJoinExec;
-    use geo::Distance;
-    use geo::Euclidean;
+    use geo::{Distance, Euclidean};
     use geo_types::{Coord, Rect};
     use rstest::rstest;
     use sedona_common::SedonaOptions;
@@ -772,10 +771,7 @@ mod tests {
 
         let test_data_vec = vec![vec![vec![]], vec![vec![], vec![]]];
 
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         let ctx = setup_context(Some(options.clone()), 10)?;
         for test_data in test_data_vec {
             let left_partitions = test_data.clone();
@@ -959,10 +955,7 @@ mod tests {
             create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
 
         for max_batch_size in [10, 30, 100] {
-            let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
-                ..Default::default()
-            };
+            let options = SpatialJoinOptions::default();
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
                 "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id").await?;
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
@@ -980,10 +973,7 @@ mod tests {
             create_test_data_with_empty_partitions()?;
 
         for max_batch_size in [10, 30, 1000] {
-            let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
-                ..Default::default()
-            };
+            let options = SpatialJoinOptions::default();
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
                 "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id").await?;
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
@@ -995,10 +985,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_inner_join() -> Result<()> {
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         test_with_join_types(JoinType::Inner, options, 30).await?;
         Ok(())
     }
@@ -1008,10 +995,7 @@ mod tests {
     async fn test_left_joins(
         #[values(JoinType::Left, JoinType::LeftSemi, JoinType::LeftAnti)] join_type: JoinType,
     ) -> Result<()> {
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         test_with_join_types(join_type, options, 30).await?;
         Ok(())
     }
@@ -1021,20 +1005,14 @@ mod tests {
     async fn test_right_joins(
         #[values(JoinType::Right, JoinType::RightSemi, JoinType::RightAnti)] join_type: JoinType,
     ) -> Result<()> {
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         test_with_join_types(join_type, options, 30).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_full_outer_join() -> Result<()> {
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         test_with_join_types(JoinType::Full, options, 30).await?;
         Ok(())
     }
@@ -1087,7 +1065,6 @@ mod tests {
 
         for max_batch_size in [10, 30, 100] {
             let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
                 parallel_refinement_chunk_size: 10,
                 ..Default::default()
             };
