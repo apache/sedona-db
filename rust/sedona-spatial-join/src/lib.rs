@@ -22,6 +22,7 @@ pub mod operand_evaluator;
 pub mod optimizer;
 pub mod partitioning;
 mod prepare;
+mod probe;
 pub mod refine;
 pub mod spatial_predicate;
 mod stream;
