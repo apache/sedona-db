@@ -112,6 +112,11 @@ pub(crate) struct SpatialJoinStream {
 
 impl SpatialJoinStream {
     #[allow(clippy::too_many_arguments)]
+    /// Create a new [`SpatialJoinStream`] for a single probe-side input partition.
+    ///
+    /// This wraps the incoming probe stream with expression evaluation (geometry extraction,
+    /// envelopes, etc.) and initializes the stream state machine to wait for shared
+    /// `SpatialJoinComponents` (index provider + probe stream provider).
     pub(crate) fn new(
         probe_partition_id: usize,
         schema: Arc<Schema>,
@@ -176,9 +181,11 @@ impl SpatialJoinStream {
 /// Metrics for the probe phase of the spatial join.
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialJoinProbeMetrics {
+    /// Metrics produced while scanning/partitioning the probe stream.
     pub(crate) probe_stream_metrics: ProbeStreamMetrics,
     /// Total time for joining probe-side batches to the build-side batches
     pub(crate) join_time: metrics::Time,
+    /// Number of output batches produced by this stream.
     pub(crate) output_batches: metrics::Count,
     /// Number of rows produced by this operator
     pub(crate) output_rows: metrics::Count,
@@ -193,6 +200,7 @@ pub(crate) struct SpatialJoinProbeMetrics {
 }
 
 impl SpatialJoinProbeMetrics {
+    /// Create a new set of probe metrics for the given output partition.
     pub fn new(partition: usize, metrics: &ExecutionPlanMetricsSet) -> Self {
         Self {
             probe_stream_metrics: ProbeStreamMetrics::new(partition, metrics),
@@ -826,7 +834,11 @@ struct PartialBuildBatch {
     interleave_indices_map: HashMap<(i32, i32), usize>,
 }
 
-/// Iterator that produces spatial join results for one probe batch
+/// Iterator that produces spatial join results for a single probe batch.
+///
+/// This iterator incrementally probes a [`SpatialIndex`] with rows from an evaluated probe batch,
+/// accumulates matched build/probe indices, applies an optional join filter, and finally builds
+/// joined [`RecordBatch`]es of up to `max_batch_size` rows.
 pub(crate) struct SpatialJoinBatchIterator {
     /// Schema of the output record batches
     schema: SchemaRef,
@@ -967,26 +979,42 @@ impl ProbeProgress {
     }
 }
 
-/// Parameters for creating a SpatialJoinBatchIterator
+/// Parameters for creating a [`SpatialJoinBatchIterator`].
 pub(crate) struct SpatialJoinBatchIteratorParams {
+    /// Output schema of the joined record batches.
     pub schema: SchemaRef,
+    /// Optional post-join filter to apply.
     pub filter: Option<JoinFilter>,
+    /// Join type (inner/outer/semi/anti/mark).
     pub join_type: JoinType,
+    /// Column placement mapping for assembling output rows.
     pub column_indices: Vec<ColumnIndex>,
+    /// Which input side is treated as the build side.
     pub build_side: JoinSide,
+    /// Spatial index for the build side.
     pub spatial_index: Arc<SpatialIndex>,
+    /// Probe-side batch with any required pre-evaluated columns.
     pub probe_evaluated_batch: Arc<EvaluatedBatch>,
+    /// Metrics instance used to report probe work.
     pub join_metrics: SpatialJoinProbeMetrics,
+    /// Maximum output batch size produced per iterator step.
     pub max_batch_size: usize,
+    /// Whether to preserve probe-side row ordering when producing output.
     pub probe_side_ordered: bool,
+    /// Spatial predicate used to query the index.
     pub spatial_predicate: SpatialPredicate,
+    /// Spatial join options affecting behavior (KNN tie-breakers, execution mode, etc.).
     pub options: SpatialJoinOptions,
+    /// Optional visited bitmap for multi-partition probe side outer join bookkeeping.
     pub visited_probe_side: Option<Arc<Mutex<BooleanBufferBuilder>>>,
+    /// Offset of this probe batch within its partition.
     pub probe_offset: usize,
+    /// Whether to emit unmatched probe rows (used for right outer joins).
     pub produce_unmatched_probe_rows: bool,
 }
 
 impl SpatialJoinBatchIterator {
+    /// Create a new iterator for a single probe-side evaluated batch.
     pub(crate) fn new(params: SpatialJoinBatchIteratorParams) -> Result<Self> {
         Ok(Self {
             schema: params.schema,
@@ -1014,6 +1042,7 @@ impl SpatialJoinBatchIterator {
         })
     }
 
+    /// Produce the next joined output batch, or `Ok(None)` when this probe batch is fully processed.
     pub async fn next_batch(&mut self) -> Result<Option<RecordBatch>> {
         let progress_opt = std::mem::take(&mut self.progress);
         let mut progress = progress_opt.expect("Progress should be available");
@@ -1432,7 +1461,10 @@ impl std::fmt::Debug for SpatialJoinBatchIterator {
     }
 }
 
-/// Iterator that processes unmatched build-side batches for outer joins
+/// Iterator that produces unmatched build-side rows for outer joins.
+///
+/// This consumes the build-side visited bitmap(s) attached to the [`SpatialIndex`] and emits
+/// rows that were never matched by any probe row.
 pub(crate) struct UnmatchedBuildBatchIterator {
     /// The spatial index reference
     spatial_index: Arc<SpatialIndex>,
@@ -1447,6 +1479,9 @@ pub(crate) struct UnmatchedBuildBatchIterator {
 }
 
 impl UnmatchedBuildBatchIterator {
+    /// Create an iterator for emitting unmatched build-side rows.
+    ///
+    /// Fails if the spatial index has not been configured to track visited build-side rows.
     pub(crate) fn try_new(
         spatial_index: Arc<SpatialIndex>,
         empty_right_batch: RecordBatch,
@@ -1470,6 +1505,9 @@ impl UnmatchedBuildBatchIterator {
         })
     }
 
+    /// Produce the next batch of unmatched build-side rows.
+    ///
+    /// Returns `Ok(None)` when all build-side batches have been scanned.
     pub fn next_batch(
         &mut self,
         schema: &Schema,

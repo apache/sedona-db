@@ -609,8 +609,7 @@ impl SpatialJoinExec {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::Array;
-    use arrow_array::RecordBatch;
+    use arrow_array::{Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::{
         catalog::{MemTable, TableProvider},

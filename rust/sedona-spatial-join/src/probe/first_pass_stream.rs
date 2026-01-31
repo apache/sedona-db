@@ -40,6 +40,23 @@ use crate::{
     },
 };
 
+/// A stream that handles the first pass of partitioned spatial join probing.
+/// It splits incoming evaluated batches into produced batches and spilled batches,
+/// updating probe stream metrics accordingly. Once the source stream is exhausted,
+/// it finalizes the repartitioner and invokes a callback with the spilled partitions.
+///
+/// The stream produces only the rows assigned to Regular(0) or None partitions.
+/// The rows assigned to other partitions are spilled and will be handled by the
+/// subsequent passes for those partitions.
+pub(crate) struct FirstPassStream<C: FirstPassStreamCallback> {
+    source: SendableEvaluatedBatchStream,
+    repartitioner: Option<StreamRepartitioner>,
+    partitioner: Arc<dyn SpatialPartitioner>,
+    pending_output: VecDeque<Result<EvaluatedBatch>>,
+    metrics: ProbeStreamMetrics,
+    callback: Option<C>,
+}
+
 pub(crate) trait FirstPassStreamCallback {
     fn call(self, result: Result<SpilledPartitions>) -> Result<()>;
 }
@@ -48,15 +65,6 @@ impl<F: FnOnce(Result<SpilledPartitions>) -> Result<()>> FirstPassStreamCallback
     fn call(self, result: Result<SpilledPartitions>) -> Result<()> {
         self(result)
     }
-}
-
-pub(crate) struct FirstPassStream<C: FirstPassStreamCallback> {
-    source: SendableEvaluatedBatchStream,
-    repartitioner: Option<StreamRepartitioner>,
-    partitioner: Arc<dyn SpatialPartitioner>,
-    pending_output: VecDeque<Result<EvaluatedBatch>>,
-    metrics: ProbeStreamMetrics,
-    callback: Option<C>,
 }
 
 impl<C: FirstPassStreamCallback> FirstPassStream<C> {
@@ -93,9 +101,12 @@ impl<C: FirstPassStreamCallback> FirstPassStream<C> {
         let err_arc = Arc::new(err);
         let callback_opt = self.callback.take();
         if let Some(callback) = callback_opt {
-            callback
-                .call(Err(DataFusionError::Shared(err_arc.clone())))
-                .ok();
+            if let Err(e) = callback.call(Err(DataFusionError::Shared(err_arc.clone()))) {
+                log::warn!(
+                    "Failed to invoke first pass stream callback on error: {}",
+                    e
+                );
+            }
         }
         DataFusionError::Shared(err_arc)
     }

@@ -29,6 +29,9 @@ use crate::evaluated_batch::{
 };
 use crate::probe::ProbeStreamMetrics;
 
+/// A non-partitioned evaluated batch stream that simply forwards batches from an inner stream,
+/// while updating probe stream metrics. This is for running non-partitioned fully in-memory
+/// spatial joins.
 pub(crate) struct NonPartitionedStream {
     inner: SendableEvaluatedBatchStream,
     metrics: ProbeStreamMetrics,

@@ -23,6 +23,7 @@ use datafusion::config::SpillCompression;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::runtime_env::RuntimeEnv;
 use parking_lot::Mutex;
+use sedona_common::sedona_internal_err;
 
 use crate::probe::first_pass_stream::FirstPassStream;
 use crate::probe::non_partitioned_stream::NonPartitionedStream;
@@ -38,14 +39,34 @@ use crate::{
 };
 
 #[derive(Clone)]
+/// Configuration options for creating a probe-side stream provider.
+///
+/// When a `partitioner` is provided, the provider performs an initial first pass that
+/// repartitions and spills the probe-side input into per-partition spill files. Subsequent
+/// calls can then open a stream for a specific [`SpatialPartition`].
 pub(crate) struct ProbeStreamOptions {
+    /// Optional spatial partitioner.
+    ///
+    /// - `None` means the probe side is treated as a single, non-partitioned stream and only
+    ///   [`SpatialPartition::Regular(0)`] is supported.
+    /// - `Some(_)` enables partitioned streaming with a warm-up (first) pass.
     pub partitioner: Option<Arc<dyn SpatialPartitioner>>,
+    /// Target number of rows per output batch produced by the partitioning stream.
     pub target_batch_rows: usize,
+    /// Spill compression to use when writing partition spill files.
     pub spill_compression: SpillCompression,
+    /// Threshold (in bytes) before buffered repartitioned data is spilled.
     pub buffer_bytes_threshold: usize,
+    /// Optional upper bound for the size of spilled batches. Large spilled batches will be split
+    /// into smaller ones to avoid excessive memory usage during re-reading.
     pub spilled_batch_in_memory_size_threshold: Option<usize>,
 }
 
+/// Provides probe-side streams for a given [`SpatialPartition`].
+///
+/// For partitioned joins this provider is a small state machine:
+/// it first runs the first pass to materialize per-partition spill files, then serves
+/// per-partition streams from those spill files.
 pub(crate) struct PartitionedProbeStreamProvider {
     state: Arc<Mutex<ProbeStreamState>>,
     runtime_env: Arc<RuntimeEnv>,
@@ -55,18 +76,27 @@ pub(crate) struct PartitionedProbeStreamProvider {
 }
 
 enum ProbeStreamState {
+    /// Initial state: we still own the original source stream and have not started consuming it.
     Pending {
         source: SendableEvaluatedBatchStream,
     },
+    /// First pass is currently running.
+    ///
+    /// The provider is consuming the source stream and repartitioning/spilling it into
+    /// per-partition spill files.
     FirstPass,
-    SubsequentPass {
-        manifest: ProbePartitionManifest,
-    },
+    /// First pass completed successfully and per-partition spill files are available.
+    SubsequentPass { manifest: ProbePartitionManifest },
+    /// Non-partitioned mode: the single probe stream has been consumed and cannot be replayed.
     NonPartitionedConsumed,
+    /// Terminal failure state.
+    ///
+    /// Any later interaction with the provider will surface this error.
     Failed(Arc<DataFusionError>),
 }
 
 impl PartitionedProbeStreamProvider {
+    /// Create a new provider from a probe-side evaluated batch stream.
     pub fn new(
         runtime_env: Arc<RuntimeEnv>,
         options: ProbeStreamOptions,
@@ -83,17 +113,21 @@ impl PartitionedProbeStreamProvider {
         }
     }
 
+    /// Return a probe-side stream for the requested [`SpatialPartition`].
+    ///
+    /// - In non-partitioned mode (`options.partitioner == None`), only
+    ///   [`SpatialPartition::Regular(0)`] is supported.
+    /// - In partitioned mode, `Regular(0)` triggers the warm-up (first) pass; all other partitions
+    ///   are served from the spill manifest created by the first pass.
     pub fn stream_for(&self, partition: SpatialPartition) -> Result<SendableEvaluatedBatchStream> {
         match partition {
-            SpatialPartition::None => Err(DataFusionError::Execution(
-                "SpatialPartition::None should be handled via outer join logic".into(),
-            )),
+            SpatialPartition::None => sedona_internal_err!(
+                "SpatialPartition::None should be handled via outer join logic"
+            ),
             SpatialPartition::Regular(0) => self.first_pass_stream(),
             SpatialPartition::Regular(_) | SpatialPartition::Multi => {
                 if self.options.partitioner.is_none() {
-                    Err(DataFusionError::Execution(
-                        "Non-partitioned probe stream only supports Regular(0)".into(),
-                    ))
+                    sedona_internal_err!("Non-partitioned probe stream only supports Regular(0)")
                 } else {
                     self.subsequent_pass_stream(partition)
                 }
@@ -144,10 +178,10 @@ impl PartitionedProbeStreamProvider {
                             let mut check_empty = |partition: SpatialPartition| -> Result<()> {
                                 let spilled = spills.take_spilled_partition(partition)?;
                                 if !spilled.into_spill_files().is_empty() {
-                                    return Err(DataFusionError::Execution(format!(
+                                    return sedona_internal_err!(
                                         "{:?} partition should not have spilled data",
                                         partition
-                                    )));
+                                    );
                                 }
                                 Ok(())
                             };
@@ -178,15 +212,15 @@ impl PartitionedProbeStreamProvider {
                 );
                 Ok(Box::pin(first_pass))
             }
-            ProbeStreamState::FirstPass => Err(DataFusionError::Execution(
-                "First pass already running for partitioned probe stream".into(),
-            )),
-            ProbeStreamState::SubsequentPass { .. } => Err(DataFusionError::Execution(
-                "First pass already completed".into(),
-            )),
-            ProbeStreamState::NonPartitionedConsumed => Err(DataFusionError::Execution(
-                "Non-partitioned probe stream already consumed".into(),
-            )),
+            ProbeStreamState::FirstPass => {
+                sedona_internal_err!("First pass already running for partitioned probe stream")
+            }
+            ProbeStreamState::SubsequentPass { .. } => {
+                sedona_internal_err!("First pass already completed")
+            }
+            ProbeStreamState::NonPartitionedConsumed => {
+                sedona_internal_err!("Non-partitioned probe stream already consumed")
+            }
             ProbeStreamState::Failed(err) => Err(DataFusionError::Shared(err)),
         }
     }
@@ -198,13 +232,11 @@ impl PartitionedProbeStreamProvider {
                 source,
                 self.metrics.clone(),
             ))),
-            ProbeStreamState::NonPartitionedConsumed => Err(DataFusionError::Execution(
-                "Non-partitioned probe stream already consumed".into(),
-            )),
+            ProbeStreamState::NonPartitionedConsumed => {
+                sedona_internal_err!("Non-partitioned probe stream already consumed")
+            }
             ProbeStreamState::Failed(err) => Err(DataFusionError::Shared(err)),
-            _ => Err(DataFusionError::Execution(
-                "Non-partitioned probe stream is not available".into(),
-            )),
+            _ => sedona_internal_err!("Non-partitioned probe stream is not available"),
         }
     }
 
@@ -213,19 +245,15 @@ impl PartitionedProbeStreamProvider {
         partition: SpatialPartition,
     ) -> Result<SendableEvaluatedBatchStream> {
         if self.options.partitioner.is_none() {
-            return Err(DataFusionError::Execution(
-                "Non-partitioned probe stream cannot serve additional partitions".into(),
-            ));
+            return sedona_internal_err!(
+                "Non-partitioned probe stream cannot serve additional partitions"
+            );
         }
         let mut locked = self.state.lock();
         let manifest = match locked.deref_mut() {
             ProbeStreamState::SubsequentPass { manifest } => manifest,
             ProbeStreamState::Failed(err) => return Err(DataFusionError::Shared(Arc::clone(err))),
-            _ => {
-                return Err(DataFusionError::Execution(
-                    "Partitioned probe stream warm-up not finished".into(),
-                ))
-            }
+            _ => return sedona_internal_err!("Partitioned probe stream first pass not finished"),
         };
 
         {
@@ -234,22 +262,25 @@ impl PartitionedProbeStreamProvider {
         }
     }
 
+    /// Return the number of rows available for `partition`.
+    ///
+    /// This is only available after the first pass has completed.
     pub fn get_partition_row_count(&self, partition: SpatialPartition) -> Result<usize> {
         let mut locked = self.state.lock();
         let manifest = match locked.deref_mut() {
             ProbeStreamState::SubsequentPass { manifest } => manifest,
             ProbeStreamState::Failed(err) => return Err(DataFusionError::Shared(Arc::clone(err))),
-            _ => {
-                return Err(DataFusionError::Execution(
-                    "Partitioned probe stream warm-up not finished".into(),
-                ))
-            }
+            _ => return sedona_internal_err!("Partitioned probe stream first pass not finished"),
         };
         manifest.get_partition_row_count(partition)
     }
 }
 
-pub struct ProbePartitionManifest {
+/// Spill manifest produced by the probe-side first pass.
+///
+/// Stores (and hands out) per-partition spill files that can be replayed as
+/// [`SendableEvaluatedBatchStream`]s.
+struct ProbePartitionManifest {
     schema: SchemaRef,
     slots: SpilledPartitions,
 }
@@ -269,12 +300,12 @@ impl ProbePartitionManifest {
 
     fn stream_for(&mut self, partition: SpatialPartition) -> Result<SendableEvaluatedBatchStream> {
         match partition {
-            SpatialPartition::Regular(0) => Err(DataFusionError::Execution(
-                "Partition 0 is only available during the first pass".into(),
-            )),
-            SpatialPartition::None => Err(DataFusionError::Execution(
-                "SpatialPartition::None should not request a probe stream".into(),
-            )),
+            SpatialPartition::Regular(0) => {
+                sedona_internal_err!("Partition 0 is only available during the first pass")
+            }
+            SpatialPartition::None => {
+                sedona_internal_err!("Should not request a probe stream for SpatialPartition::None")
+            }
             SpatialPartition::Regular(_) => {
                 let spilled = self.slots.take_spilled_partition(partition)?;
                 Ok(Box::pin(
