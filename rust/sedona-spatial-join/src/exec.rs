@@ -17,7 +17,7 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{project_schema, DataFusionError, JoinSide, Result};
+use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{JoinType, Operator};
 use datafusion_physical_expr::{
@@ -33,15 +33,16 @@ use datafusion_physical_plan::{
     PlanProperties,
 };
 use parking_lot::Mutex;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
-    build_index::build_index,
-    index::SpatialIndex,
+    prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
-    utils::join_utils::{asymmetric_join_output_partitioning, boundedness_from_children},
-    utils::once_fut::OnceAsync,
+    utils::{
+        join_utils::{asymmetric_join_output_partitioning, boundedness_from_children},
+        once_fut::OnceAsync,
+    },
     SedonaOptions,
 };
 
@@ -92,9 +93,7 @@ fn determine_knn_build_probe_plans<'a>(
     match knn_pred.probe_side {
         JoinSide::Left => Ok((right_plan, left_plan)),
         JoinSide::Right => Ok((left_plan, right_plan)),
-        JoinSide::None => Err(DataFusionError::Internal(
-            "KNN join requires explicit probe_side designation".to_string(),
-        )),
+        JoinSide::None => sedona_internal_err!("KNN join requires explicit probe_side designation"),
     }
 }
 
@@ -132,9 +131,10 @@ pub struct SpatialJoinExec {
     column_indices: Vec<ColumnIndex>,
     /// Cache holding plan properties like equivalences, output partitioning etc.
     cache: PlanProperties,
-    /// Spatial index built asynchronously on first execute() call and shared across all partitions.
-    /// Uses OnceAsync for lazy initialization coordinated via async runtime.
-    once_async_spatial_index: Arc<Mutex<Option<OnceAsync<SpatialIndex>>>>,
+    /// Once future for creating the partitioned index provider shared by all probe partitions.
+    /// This future runs only once before probing starts, and can be disposed by the last finished
+    /// stream so the provider does not outlive the execution plan unnecessarily.
+    once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
     /// Indicates if this SpatialJoin was converted from a HashJoin
     /// When true, we preserve HashJoin's equivalence properties and partitioning
     converted_from_hash_join: bool,
@@ -203,7 +203,7 @@ impl SpatialJoinExec {
             projection,
             metrics: Default::default(),
             cache,
-            once_async_spatial_index: Arc::new(Mutex::new(None)),
+            once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             converted_from_hash_join,
             seed,
         })
@@ -431,7 +431,7 @@ impl ExecutionPlan for SpatialJoinExec {
             projection: self.projection.clone(),
             metrics: Default::default(),
             cache: self.cache.clone(),
-            once_async_spatial_index: Arc::new(Mutex::new(None)),
+            once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             converted_from_hash_join: self.converted_from_hash_join,
             seed: self.seed,
         }))
@@ -463,8 +463,8 @@ impl ExecutionPlan for SpatialJoinExec {
                 let (build_plan, probe_plan) = (&self.left, &self.right);
 
                 // Build the spatial index using shared OnceAsync
-                let once_fut_spatial_index = {
-                    let mut once_async = self.once_async_spatial_index.lock();
+                let once_fut_spatial_join_components = {
+                    let mut once_async = self.once_async_spatial_join_components.lock();
                     once_async
                         .get_or_insert(OnceAsync::default())
                         .try_once(|| {
@@ -479,16 +479,16 @@ impl ExecutionPlan for SpatialJoinExec {
 
                             let probe_thread_count =
                                 self.right.output_partitioning().partition_count();
-                            Ok(build_index(
+                            let spatial_join_components_builder = SpatialJoinComponentsBuilder::new(
                                 Arc::clone(&context),
                                 build_side.schema(),
-                                build_streams,
                                 self.on.clone(),
                                 self.join_type,
                                 probe_thread_count,
                                 self.metrics.clone(),
                                 self.seed,
-                            ))
+                            );
+                            Ok(spatial_join_components_builder.build(build_streams))
                         })?
                 };
 
@@ -508,6 +508,7 @@ impl ExecutionPlan for SpatialJoinExec {
                     self.maintains_input_order()[1] && self.right.output_ordering().is_some();
 
                 Ok(Box::pin(SpatialJoinStream::new(
+                    partition,
                     self.schema(),
                     &self.on,
                     self.filter.clone(),
@@ -518,8 +519,8 @@ impl ExecutionPlan for SpatialJoinExec {
                     join_metrics,
                     sedona_options.spatial_join,
                     target_output_batch_size,
-                    once_fut_spatial_index,
-                    Arc::clone(&self.once_async_spatial_index),
+                    once_fut_spatial_join_components,
+                    Arc::clone(&self.once_async_spatial_join_components),
                 )))
             }
         }
@@ -556,8 +557,8 @@ impl SpatialJoinExec {
         let actual_probe_plan_is_left = std::ptr::eq(probe_plan.as_ref(), self.left.as_ref());
 
         // Build the spatial index
-        let once_fut_spatial_index = {
-            let mut once_async = self.once_async_spatial_index.lock();
+        let once_fut_spatial_join_components = {
+            let mut once_async = self.once_async_spatial_join_components.lock();
             once_async
                 .get_or_insert(OnceAsync::default())
                 .try_once(|| {
@@ -571,16 +572,16 @@ impl SpatialJoinExec {
                     }
 
                     let probe_thread_count = probe_plan.output_partitioning().partition_count();
-                    Ok(build_index(
+                    let spatial_join_components_builder = SpatialJoinComponentsBuilder::new(
                         Arc::clone(&context),
                         build_side.schema(),
-                        build_streams,
                         self.on.clone(),
                         self.join_type,
                         probe_thread_count,
                         self.metrics.clone(),
                         self.seed,
-                    ))
+                    );
+                    Ok(spatial_join_components_builder.build(build_streams))
                 })?
         };
 
@@ -605,6 +606,7 @@ impl SpatialJoinExec {
         };
 
         Ok(Box::pin(SpatialJoinStream::new(
+            partition,
             self.schema(),
             &self.on,
             self.filter.clone(),
@@ -615,8 +617,8 @@ impl SpatialJoinExec {
             join_metrics,
             sedona_options.spatial_join,
             target_output_batch_size,
-            once_fut_spatial_index,
-            Arc::clone(&self.once_async_spatial_index),
+            once_fut_spatial_join_components,
+            Arc::clone(&self.once_async_spatial_join_components),
         )))
     }
 }

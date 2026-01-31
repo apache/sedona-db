@@ -54,6 +54,7 @@ datafusion = { workspace = true, features = [
     "unicode_expressions",
     "compression",
 ] }
+datafusion-common = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
 mimalloc = { workspace = true, optional = true }
@@ -61,5 +62,6 @@ libmimalloc-sys = { workspace = true, optional = true }
 regex = { workspace = true }
 rustyline = "15.0"
 sedona = { workspace = true, features = ["aws", "gcp", "http", "proj"] }
+sedona-common = { workspace = true }
 sedona-tg = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "parking_lot", "signal"] }

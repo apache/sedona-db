@@ -21,8 +21,9 @@ use comfy_table::{Cell, CellAlignment, ColumnConstraint, ContentArrangement, Row
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
-use datafusion_common::{config::ConfigOptions, DataFusionError, ScalarValue};
+use datafusion_common::{config::ConfigOptions, ScalarValue};
 use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use std::iter::zip;
@@ -45,12 +46,16 @@ pub fn show_batches<'a, W: std::io::Write>(
     let format_fn = ctx
         .functions
         .scalar_udf("sd_format")
-        .ok_or(DataFusionError::Internal(
-            "sd_format UDF does not exist".to_string(),
+        .ok_or(sedona_internal_datafusion_err!(
+            "sd_format UDF does not exist"
         ))?
         .clone();
 
-    let mut table = DisplayTable::try_new(schema, batches, options)?.with_format_fn(format_fn);
+    let session_config = ctx.ctx.copied_config();
+    let session_config_options = session_config.options();
+
+    let mut table = DisplayTable::try_new(schema, batches, options, session_config_options)?
+        .with_format_fn(format_fn);
     table.negotiate_hidden_columns()?;
     table.write(writer)
 }
@@ -141,6 +146,7 @@ impl<'a> DisplayTable<'a> {
         schema: &Schema,
         batches: Vec<RecordBatch>,
         options: DisplayTableOptions<'a>,
+        session_config_options: &Arc<ConfigOptions>,
     ) -> Result<Self> {
         let num_rows = batches.iter().map(|batch| batch.num_rows()).sum();
 
@@ -155,6 +161,7 @@ impl<'a> DisplayTable<'a> {
                         .iter()
                         .map(|batch| batch.column(i).clone())
                         .collect(),
+                    Arc::clone(session_config_options),
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -354,17 +361,23 @@ struct DisplayColumn {
     raw_values: Vec<ArrayRef>,
     format_fn: Option<SedonaScalarUDF>,
     hidden: bool,
+    session_config_options: Arc<ConfigOptions>,
 }
 
 impl DisplayColumn {
     /// Create a new display column
-    pub fn try_new(field: &Field, raw_values: Vec<ArrayRef>) -> Result<Self> {
+    pub fn try_new(
+        field: &Field,
+        raw_values: Vec<ArrayRef>,
+        session_config_options: Arc<ConfigOptions>,
+    ) -> Result<Self> {
         Ok(Self {
             name: field.name().to_string(),
             sedona_type: SedonaType::from_storage_field(field)?,
             raw_values,
             format_fn: None,
             hidden: false,
+            session_config_options,
         })
     }
 
@@ -382,6 +395,7 @@ impl DisplayColumn {
             raw_values: vec![Arc::new(raw_values)],
             format_fn: None,
             hidden: false,
+            session_config_options: Arc::new(ConfigOptions::default()),
         }
     }
 
@@ -495,9 +509,7 @@ impl DisplayColumn {
                 arg_fields,
                 number_rows: array.len(),
                 return_field,
-                // TODO: Pipe actual ConfigOptions from SedonaContext instead of using defaults
-                // See: https://github.com/apache/sedona-db/issues/248
-                config_options: Arc::new(ConfigOptions::default()),
+                config_options: Arc::clone(&self.session_config_options),
             };
 
             let format_proxy_value = format_udf.invoke_with_args(args)?;

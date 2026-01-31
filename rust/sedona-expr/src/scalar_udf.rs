@@ -17,6 +17,7 @@
 use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{not_impl_err, Result, ScalarValue};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
@@ -136,6 +137,7 @@ pub trait SedonaScalarKernel: Debug + Send + Sync {
         args: &[ColumnarValue],
         _return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         self.invoke_batch(arg_types, args)
     }
@@ -323,7 +325,13 @@ impl ScalarUDFImpl for SedonaScalarUDF {
             .collect::<Vec<_>>();
 
         let (kernel, return_type) = self.return_type_impl(&arg_types, &arg_scalars)?;
-        kernel.invoke_batch_from_args(&arg_types, &args.args, &return_type, args.number_rows)
+        kernel.invoke_batch_from_args(
+            &arg_types,
+            &args.args,
+            &return_type,
+            args.number_rows,
+            Some(&*args.config_options),
+        )
     }
 
     fn aliases(&self) -> &[String] {

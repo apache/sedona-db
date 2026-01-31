@@ -68,6 +68,9 @@ pub(crate) struct BuildPartition {
     /// The size of this reservation will be used to determine the maximum size of
     /// each spatial partition, as well as how many spatial partitions to create.
     pub reservation: MemoryReservation,
+
+    /// Metrics collected during the build side collection phase
+    pub metrics: CollectBuildSideMetrics,
 }
 
 /// A collector for evaluating the spatial expression on build side batches and collect
@@ -112,6 +115,10 @@ impl CollectBuildSideMetrics {
             spill_metrics: SpillMetrics::new(metrics, partition),
         }
     }
+
+    pub fn spill_metrics(&self) -> SpillMetrics {
+        self.spill_metrics.clone()
+    }
 }
 
 impl BuildSideBatchesCollector {
@@ -147,7 +154,7 @@ impl BuildSideBatchesCollector {
         mut stream: SendableEvaluatedBatchStream,
         mut reservation: MemoryReservation,
         mut bbox_sampler: BoundingBoxSampler,
-        metrics: &CollectBuildSideMetrics,
+        metrics: CollectBuildSideMetrics,
     ) -> Result<BuildPartition> {
         let mut spill_writer_opt = None;
         let mut in_mem_batches: Vec<EvaluatedBatch> = Vec::new();
@@ -200,7 +207,7 @@ impl BuildSideBatchesCollector {
                             e,
                         );
                         spill_writer_opt =
-                            self.spill_in_mem_batches(&mut in_mem_batches, metrics)?;
+                            self.spill_in_mem_batches(&mut in_mem_batches, &metrics)?;
                     }
                 }
                 Some(spill_writer) => {
@@ -236,7 +243,7 @@ impl BuildSideBatchesCollector {
                 "Force spilling enabled. Spilling {} in-memory batches to disk.",
                 in_mem_batches.len()
             );
-            spill_writer_opt = self.spill_in_mem_batches(&mut in_mem_batches, metrics)?;
+            spill_writer_opt = self.spill_in_mem_batches(&mut in_mem_batches, &metrics)?;
         }
 
         let build_side_batch_stream: SendableEvaluatedBatchStream = match spill_writer_opt {
@@ -266,6 +273,7 @@ impl BuildSideBatchesCollector {
             bbox_samples: bbox_sampler.into_samples(),
             estimated_spatial_index_memory_usage,
             reservation,
+            metrics,
         })
     }
 
@@ -329,7 +337,7 @@ impl BuildSideBatchesCollector {
                 let evaluated_stream =
                     create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
                 let result = collector
-                    .collect(evaluated_stream, reservation, bbox_sampler, &metrics)
+                    .collect(evaluated_stream, reservation, bbox_sampler, metrics)
                     .await;
                 (partition_id, result)
             });
@@ -378,7 +386,7 @@ impl BuildSideBatchesCollector {
             let evaluated_stream =
                 create_evaluated_build_stream(stream, evaluator, metrics.time_taken.clone());
             let result = self
-                .collect(evaluated_stream, reservation, bbox_sampler, &metrics)
+                .collect(evaluated_stream, reservation, bbox_sampler, metrics)
                 .await?;
             results.push(result);
         }
@@ -534,11 +542,12 @@ mod tests {
         let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
 
         let partition = collector
-            .collect(stream, reservation, sampler, &metrics)
+            .collect(stream, reservation, sampler, metrics)
             .await?;
         let stream = partition.build_side_batch_stream;
         let is_external = stream.is_external();
         let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        let metrics = &partition.metrics;
         assert!(!is_external, "Expected in-memory batches");
         assert_eq!(collect_ids(&batches), vec![0, 1, 2]);
         assert_eq!(partition.num_rows, 3);
@@ -564,14 +573,15 @@ mod tests {
         let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
 
         let partition = collector
-            .collect(stream, reservation, sampler, &metrics)
+            .collect(stream, reservation, sampler, metrics)
             .await?;
         let stream = partition.build_side_batch_stream;
         let is_external = stream.is_external();
         let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        let metrics = &partition.metrics;
         assert!(is_external, "Expected batches to spill to disk");
         assert_eq!(collect_ids(&batches), vec![10, 11, 12]);
-        let spill_metrics = metrics.spill_metrics;
+        let spill_metrics = metrics.spill_metrics();
         assert!(spill_metrics.spill_file_count.value() >= 1);
         assert!(spill_metrics.spilled_rows.value() >= 1);
         Ok(())
@@ -587,12 +597,13 @@ mod tests {
         let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
 
         let partition = collector
-            .collect(stream, reservation, sampler, &metrics)
+            .collect(stream, reservation, sampler, metrics)
             .await?;
         assert_eq!(partition.num_rows, 0);
         let stream = partition.build_side_batch_stream;
         let is_external = stream.is_external();
         let batches: Vec<EvaluatedBatch> = stream.try_collect().await?;
+        let metrics = &partition.metrics;
         assert!(!is_external);
         assert!(batches.is_empty());
         assert_eq!(metrics.num_batches.value(), 0);

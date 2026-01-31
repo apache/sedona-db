@@ -19,9 +19,10 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_string_view_array, as_struct_array};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
@@ -99,6 +100,7 @@ impl SedonaScalarKernel for STTransform {
         args: &[ColumnarValue],
         _return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let inputs = zip(arg_types, args)
             .map(|(arg_type, arg)| ArgInput::from_arg(arg_type, arg))
@@ -399,8 +401,8 @@ pub(crate) fn with_global_proj_engine(
         // Otherwise, attempt to get the builder
         let maybe_builder = PROJ_ENGINE_BUILDER.read().map_err(|_| {
             // Highly unlikely (can only occur when a panic occurred during set)
-            DataFusionError::Internal(
-                "Failed to acquire read lock for global PROJ configuration".to_string(),
+            sedona_internal_datafusion_err!(
+                "Failed to acquire read lock for global PROJ configuration"
             )
         })?;
 
@@ -414,9 +416,7 @@ pub(crate) fn with_global_proj_engine(
 
         engine_cell
             .set(CachingCrsEngine::new(proj_engine))
-            .map_err(|_| {
-                DataFusionError::Internal("Failed to set cached PROJ transform".to_string())
-            })?;
+            .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
         func(engine_cell.get().unwrap())?;
         Ok(())
     })

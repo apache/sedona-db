@@ -25,6 +25,7 @@ use arrow_array::{
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
     cast::{as_int64_array, as_string_view_array},
     error::Result,
@@ -35,7 +36,7 @@ use datafusion_expr::{
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
-    item_crs::make_item_crs,
+    item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type_strip_crs},
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
@@ -128,7 +129,7 @@ impl SedonaScalarKernel for STSetSRID {
         scalar_args: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
         if args.len() != 2
-            || !(ArgMatcher::is_numeric().match_type(&args[1])
+            || !(ArgMatcher::is_integer().match_type(&args[1])
                 || ArgMatcher::is_null().match_type(&args[1]))
         {
             return Ok(None);
@@ -142,18 +143,22 @@ impl SedonaScalarKernel for STSetSRID {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
+        let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
+        let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
+
         let item_crs_matcher = ArgMatcher::is_item_crs();
         if item_crs_matcher.match_type(return_type) {
             let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
             make_item_crs(
-                &arg_types[0],
-                args[0].clone(),
+                &item_type,
+                item_arg,
                 &ColumnarValue::Array(normalized_crs_value),
                 crs_input_nulls(&args[1]),
             )
         } else {
-            Ok(args[0].clone())
+            Ok(item_arg)
         }
     }
 
@@ -198,18 +203,22 @@ impl SedonaScalarKernel for STSetCRS {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
+        let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
+        let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
+
         let item_crs_matcher = ArgMatcher::is_item_crs();
         if item_crs_matcher.match_type(return_type) {
             let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
             make_item_crs(
-                &arg_types[0],
-                args[0].clone(),
+                &item_type,
+                item_arg,
                 &ColumnarValue::Array(normalized_crs_value),
                 crs_input_nulls(&args[1]),
             )
         } else {
-            Ok(args[0].clone())
+            Ok(item_arg)
         }
     }
 
@@ -233,7 +242,11 @@ fn determine_return_type(
     scalar_args: &[Option<&ScalarValue>],
     maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
 ) -> Result<Option<SedonaType>> {
-    if !ArgMatcher::is_geometry_or_geography().match_type(&args[0]) {
+    let (item_type, _) = parse_item_crs_arg_type_strip_crs(&args[0])?;
+
+    // If this is not geometry or geography and/or this is not an item_crs of one,
+    // this kernel does not apply.
+    if !ArgMatcher::is_geometry_or_geography().match_type(&item_type) {
         return Ok(None);
     }
 
@@ -241,29 +254,23 @@ fn determine_return_type(
         if let ScalarValue::Utf8(maybe_crs) = scalar_crs.cast_to(&DataType::Utf8)? {
             let new_crs = match maybe_crs {
                 Some(crs) => {
-                    if crs == "0" {
-                        None
-                    } else {
-                        validate_crs(&crs, maybe_engine)?;
-                        deserialize_crs(&crs)?
-                    }
+                    validate_crs(&crs, maybe_engine)?;
+                    deserialize_crs(&crs)?
                 }
                 None => None,
             };
 
-            match args[0] {
-                SedonaType::Wkb(edges, _) => return Ok(Some(SedonaType::Wkb(edges, new_crs))),
-                SedonaType::WkbView(edges, _) => {
-                    return Ok(Some(SedonaType::WkbView(edges, new_crs)))
-                }
-                _ => {}
+            match item_type {
+                SedonaType::Wkb(edges, _) => Ok(Some(SedonaType::Wkb(edges, new_crs))),
+                SedonaType::WkbView(edges, _) => Ok(Some(SedonaType::WkbView(edges, new_crs))),
+                _ => sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1]),
             }
+        } else {
+            sedona_internal_err!("Unexpected return type of cast to string")
         }
     } else {
-        return Ok(Some(SedonaType::new_item_crs(&args[0])?));
+        Ok(Some(SedonaType::new_item_crs(&item_type)?))
     }
-
-    sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1])
 }
 
 /// [SedonaScalarKernel] wrapper that handles the SRID argument for constructors like ST_Point
@@ -520,6 +527,7 @@ mod test {
     use arrow_schema::Field;
     use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
+    use rstest::rstest;
     use sedona_geometry::{error::SedonaGeometryError, transform::CrsTransform};
     use sedona_schema::{
         crs::lnglat,
@@ -637,11 +645,13 @@ mod test {
         assert_eq!(err.message(), "Unknown geometry error")
     }
 
-    #[test]
-    fn udf_item_srid() {
+    #[rstest]
+    fn udf_item_srid_output(
+        #[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(
             st_set_srid_udf().into(),
-            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int32)],
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Int32)],
         );
         tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
@@ -653,7 +663,7 @@ mod test {
                 Some("POINT (6 7)"),
                 Some("POINT (8 9)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let crs_array =
             create_array!(Int32, [Some(4326), Some(3857), Some(3857), Some(0), None]) as ArrayRef;
@@ -683,11 +693,13 @@ mod test {
         );
     }
 
-    #[test]
-    fn udf_item_crs() {
+    #[rstest]
+    fn udf_item_crs_output(
+        #[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(
             st_set_crs_udf().into(),
-            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Utf8)],
         );
         tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
@@ -699,7 +711,7 @@ mod test {
                 Some("POINT (6 7)"),
                 Some("POINT (8 9)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let crs_array = create_array!(
             Utf8,
@@ -744,9 +756,9 @@ mod test {
         to: ScalarValue,
     ) -> Result<(SedonaType, ColumnarValue)> {
         let SedonaType::Arrow(datatype) = &arg_type[1] else {
-            return Err(DataFusionError::Internal(
-                "Expected SedonaType::Arrow, but found a different variant".to_string(),
-            ));
+            return sedona_internal_err!(
+                "Expected SedonaType::Arrow, but found a different variant"
+            );
         };
         let arg_fields = vec![
             Arc::new(arg_type[0].to_storage_field("", true)?),

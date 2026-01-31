@@ -17,6 +17,7 @@
 use std::str::FromStr;
 
 use datafusion_common::{stats::Precision, ColumnStatistics, DataFusionError, Result, ScalarValue};
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::interval::{Interval, IntervalTrait};
 use sedona_geometry::{
     bounding_box::BoundingBox,
@@ -391,7 +392,7 @@ impl GeoStatistics {
     pub fn to_scalar_value(&self) -> Result<ScalarValue> {
         // Serialize to JSON
         let serialized = serde_json::to_vec(self).map_err(|e| {
-            DataFusionError::Internal(format!("Failed to serialize GeoStatistics: {e}"))
+            sedona_internal_datafusion_err!("Failed to serialize GeoStatistics: {e}")
         })?;
 
         Ok(ScalarValue::Binary(Some(serialized)))

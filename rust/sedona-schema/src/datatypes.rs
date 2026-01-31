@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_schema::{DataType, Field};
-use datafusion_common::error::{DataFusionError, Result};
-use sedona_common::sedona_internal_err;
+use datafusion_common::error::Result;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde_json::Value;
 use std::fmt::{Debug, Display};
 use std::sync::LazyLock;
@@ -341,7 +341,7 @@ fn deserialize_edges_and_crs(value: &Option<String>) -> Result<(Edges, Crs)> {
             }
 
             let json_value: Value = serde_json::from_str(val).map_err(|err| {
-                DataFusionError::Internal(format!("Error deserializing GeoArrow metadata: {err}"))
+                sedona_internal_datafusion_err!("Error deserializing GeoArrow metadata: {err}")
             })?;
             if !json_value.is_object() {
                 return sedona_internal_err!(

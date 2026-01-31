@@ -132,9 +132,7 @@ impl BoundsAccumulator2D {
     // Check the input length for update methods.
     fn check_update_input_len(input: &[ArrayRef], expected: usize, context: &str) -> Result<()> {
         if input.is_empty() {
-            return Err(DataFusionError::Internal(format!(
-                "No input arrays provided to accumulator in {context}"
-            )));
+            return sedona_internal_err!("No input arrays provided to accumulator in {context}");
         }
         if input.len() != expected {
             return sedona_internal_err!(

@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![allow(unused)]
 use datafusion_common::{DataFusionError, Result};
 use fastrand::Rng;
 use sedona_geometry::bounding_box::BoundingBox;

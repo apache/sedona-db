@@ -20,6 +20,7 @@ use std::{fmt::Debug, iter::zip, sync::Arc};
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, FieldRef};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
     exec_err, DataFusionError, Result, ScalarValue,
@@ -102,8 +103,16 @@ impl SedonaScalarKernel for ItemCrsKernel {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         num_rows: usize,
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        invoke_handle_item_crs(self.inner.as_ref(), arg_types, args, return_type, num_rows)
+        invoke_handle_item_crs(
+            self.inner.as_ref(),
+            arg_types,
+            args,
+            return_type,
+            num_rows,
+            config_options,
+        )
     }
 
     fn invoke_batch(
@@ -444,6 +453,7 @@ fn invoke_handle_item_crs(
     args: &[ColumnarValue],
     return_type: &SedonaType,
     num_rows: usize,
+    config_options: Option<&ConfigOptions>,
 ) -> Result<ColumnarValue> {
     // Separate the argument types into item and Option<crs>
     // Don't strip the CRSes because we need them to compare with
@@ -485,8 +495,13 @@ fn invoke_handle_item_crs(
         None => return sedona_internal_err!("Expected inner kernel to match types {item_types:?}"),
     };
 
-    let item_result =
-        kernel.invoke_batch_from_args(&item_types, &item_args, return_type, num_rows)?;
+    let item_result = kernel.invoke_batch_from_args(
+        &item_types,
+        &item_args,
+        return_type,
+        num_rows,
+        config_options,
+    )?;
 
     if ArgMatcher::is_geometry_or_geography().match_type(&out_item_type) {
         make_item_crs(&out_item_type, item_result, crs_result, None)
@@ -534,8 +549,11 @@ pub fn make_item_crs(
 }
 
 /// Given an input type, separate it into an item and crs type (if the input
-/// is an item_crs type). Otherwise, just return the item type as is.
-fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Option<SedonaType>)> {
+/// is an item_crs type). Otherwise, just return the item type as is and return a
+/// CRS type of None.
+pub fn parse_item_crs_arg_type(
+    sedona_type: &SedonaType,
+) -> Result<(SedonaType, Option<SedonaType>)> {
     if let SedonaType::Arrow(DataType::Struct(fields)) = sedona_type {
         let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
         if field_names != ["item", "crs"] {
@@ -554,7 +572,7 @@ fn parse_item_crs_arg_type(sedona_type: &SedonaType) -> Result<(SedonaType, Opti
 /// is an item_crs type). Otherwise, just return the item type as is. This
 /// version strips the CRS, which we need to do here before passing it to the
 /// underlying kernel (which expects all input CRSes to match).
-fn parse_item_crs_arg_type_strip_crs(
+pub fn parse_item_crs_arg_type_strip_crs(
     sedona_type: &SedonaType,
 ) -> Result<(SedonaType, Option<SedonaType>)> {
     match sedona_type {
@@ -573,7 +591,7 @@ fn parse_item_crs_arg_type_strip_crs(
 
 /// Separate an argument into the item and its crs (if applicable). This
 /// operates on the result of parse_item_crs_arg_type().
-fn parse_item_crs_arg(
+pub fn parse_item_crs_arg(
     item_type: &SedonaType,
     crs_type: &Option<SedonaType>,
     arg: &ColumnarValue,

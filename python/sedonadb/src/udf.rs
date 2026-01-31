@@ -22,6 +22,7 @@ use arrow_array::{
     ArrayRef,
 };
 use arrow_schema::Field;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
@@ -159,6 +160,7 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let result = Python::with_gil(|py| -> Result<ArrayRef, PySedonaError> {
             let py_values = zip(arg_types, args)

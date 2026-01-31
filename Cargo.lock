@@ -5003,6 +5003,7 @@ dependencies = [
  "async-trait",
  "clap",
  "datafusion",
+ "datafusion-common",
  "env_logger 0.11.8",
  "futures",
  "libmimalloc-sys",
@@ -5010,6 +5011,7 @@ dependencies = [
  "regex",
  "rustyline",
  "sedona",
+ "sedona-common",
  "sedona-tg",
  "tokio",
 ]

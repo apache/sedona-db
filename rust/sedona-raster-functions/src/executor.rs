@@ -17,9 +17,9 @@
 
 use arrow_array::{Array, ArrayRef, StructArray};
 use datafusion_common::error::Result;
-use datafusion_common::{DataFusionError, ScalarValue};
+use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::{RasterRefImpl, RasterStructArray};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::datatypes::RASTER;
@@ -73,9 +73,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         .as_any()
                         .downcast_ref::<StructArray>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "Expected StructArray for raster data".to_string(),
-                            )
+                            sedona_internal_datafusion_err!("Expected StructArray for raster data")
                         })?;
 
                 let raster_array = RasterStructArray::new(raster_struct);
@@ -111,9 +109,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     Ok(())
                 }
-                _ => Err(DataFusionError::Internal(
-                    "Expected Struct scalar for raster".to_string(),
-                )),
+                _ => sedona_internal_err!("Expected Struct scalar for raster"),
             },
         }
     }
