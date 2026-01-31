@@ -21,10 +21,11 @@ from pathlib import Path
 
 import geopandas
 import geopandas.testing
+import pyarrow as pa
 import pytest
+import sedonadb
 import shapely
 from pyarrow import parquet
-import sedonadb
 from sedonadb._lib import SedonaError
 from sedonadb.testing import DuckDB, SedonaDB, geom_or_null, skip_if_not_exists
 
@@ -37,6 +38,25 @@ def test_read_whole_geoparquet(geoarrow_data, name):
     skip_if_not_exists(path)
 
     gdf = geopandas.read_parquet(path).sort_values(by="OBJECTID").reset_index(drop=True)
+
+    eng.create_view_parquet("tab", path)
+    result = eng.execute_and_collect("""SELECT * FROM tab ORDER BY "OBJECTID";""")
+    eng.assert_result(result, gdf)
+
+
+@pytest.mark.parametrize("name", ["water-junc", "water-point"])
+def test_read_whole_parquet_native(geoarrow_data, name):
+    # Checks a read of some non-trivial files and ensures we match a pyarrow read
+    eng = SedonaDB()
+    path = geoarrow_data / "ns-water" / "files" / f"ns-water_{name}.parquet"
+    skip_if_not_exists(path)
+
+    tab = parquet.read_table(path)
+    gdf = (
+        geopandas.GeoDataFrame.from_arrow(tab)
+        .sort_values(by="OBJECTID")
+        .reset_index(drop=True)
+    )
 
     eng.create_view_parquet("tab", path)
     result = eng.execute_and_collect("""SELECT * FROM tab ORDER BY "OBJECTID";""")
@@ -122,6 +142,26 @@ def test_read_geoparquet_prune_points(geoarrow_data, name, predicate):
             write_covering_bbox=True,
             row_group_size=1024,
         )
+        assert "Geometry" not in repr(parquet.ParquetFile(tmp_parquet).schema)
+
+        eng.create_view_parquet("tab", tmp_parquet)
+        result = eng.execute_and_collect(
+            f"""
+            SELECT "OBJECTID", geometry FROM tab
+            WHERE ST_{predicate}(geometry, ST_SetCRS({geom_or_null(wkt_filter)}, '{gdf.crs.to_json()}'))
+            ORDER BY "OBJECTID";
+        """
+        )
+        eng.assert_result(result, gdf)
+
+        # Write a file with Parquet Geometry and ensure a correct result
+        parquet.write_table(
+            pa.table(gdf.to_arrow()),
+            tmp_parquet,
+            row_group_size=1024,
+            store_schema=False,
+        )
+        assert "Geometry" in repr(parquet.ParquetFile(tmp_parquet).schema)
 
         eng.create_view_parquet("tab", tmp_parquet)
         result = eng.execute_and_collect(
