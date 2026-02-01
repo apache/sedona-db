@@ -14,184 +14,78 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
-use arrow_schema::{Schema, SchemaRef};
-use datafusion::optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
-use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
-use datafusion::{
-    config::ConfigOptions, execution::session_state::SessionStateBuilder,
-    physical_optimizer::PhysicalOptimizerRule,
-};
+use arrow_schema::Schema;
 use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
     JoinSide,
 };
 use datafusion_common::{HashMap, Result};
-use datafusion_expr::{Expr, Filter, Join, JoinType, LogicalPlan, Operator};
+use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
-use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::joins::utils::ColumnIndex;
-use datafusion_physical_plan::joins::{HashJoinExec, NestedLoopJoinExec};
-use datafusion_physical_plan::projection::ProjectionExec;
-use datafusion_physical_plan::{joins::utils::JoinFilter, ExecutionPlan};
-use sedona_common::{option::SedonaOptions, sedona_internal_err};
+use datafusion_physical_plan::joins::utils::JoinFilter;
+use sedona_common::sedona_internal_err;
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
-/// Physical planner extension for spatial joins
-///
-/// This extension recognizes nested loop join operations with spatial predicates
-/// and converts them to SpatialJoinExec, which is specially optimized for spatial joins.
-#[derive(Debug, Default)]
-pub struct SpatialJoinOptimizer;
-
-impl SpatialJoinOptimizer {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl PhysicalOptimizerRule for SpatialJoinOptimizer {
-    fn optimize(
-        &self,
-        plan: Arc<dyn ExecutionPlan>,
-        config: &ConfigOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let Some(extension) = config.extensions.get::<SedonaOptions>() else {
-            return Ok(plan);
-        };
-
-        if extension.spatial_join.enable {
-            let transformed = plan.transform_up(|plan| self.try_optimize_join(plan, config))?;
-            Ok(transformed.data)
-        } else {
-            Ok(plan)
-        }
-    }
-
-    /// A human readable name for this optimizer rule
-    fn name(&self) -> &str {
-        "spatial_join_optimizer"
-    }
-
-    /// A flag to indicate whether the physical planner should valid the rule will not
-    /// change the schema of the plan after the rewriting.
-    /// Some of the optimization rules might change the nullable properties of the schema
-    /// and should disable the schema check.
-    fn schema_check(&self) -> bool {
-        true
-    }
-}
-
-impl OptimizerRule for SpatialJoinOptimizer {
-    fn name(&self) -> &str {
-        "spatial_join_optimizer"
-    }
-
-    fn apply_order(&self) -> Option<ApplyOrder> {
-        Some(ApplyOrder::BottomUp)
-    }
-
-    /// Try to rewrite the plan containing a spatial Filter on top of a cross join without on or filter
-    /// to a theta-join with filter. For instance, the following query plan:
-    ///
-    /// ```text
-    /// Filter: st_intersects(l.geom, _scalar_sq_1.geom)
-    ///   Left Join (no on, no filter):
-    ///     TableScan: l projection=[id, geom]
-    ///     SubqueryAlias: __scalar_sq_1
-    ///       Projection: r.geom
-    ///         Filter: r.id = Int32(1)
-    ///           TableScan: r projection=[id, geom]
-    /// ```
-    ///
-    /// will be rewritten to
-    ///
-    /// ```text
-    /// Inner Join: Filter: st_intersects(l.geom, _scalar_sq_1.geom)
-    ///   TableScan: l projection=[id, geom]
-    ///   SubqueryAlias: __scalar_sq_1
-    ///     Projection: r.geom
-    ///       Filter: r.id = Int32(1)
-    ///         TableScan: r projection=[id, geom]
-    /// ```
-    ///
-    /// This is for enabling this logical join operator to be converted to a NestedLoopJoin physical
-    /// node with a spatial predicate, so that it could subsequently be optimized to a SpatialJoin
-    /// physical node. Please refer to the `PhysicalOptimizerRule` implementation of this struct
-    /// and [SpatialJoinOptimizer::try_optimize_join] for details.
-    fn rewrite(
-        &self,
-        plan: LogicalPlan,
-        config: &dyn OptimizerConfig,
-    ) -> Result<Transformed<LogicalPlan>> {
-        let options = config.options();
-        let Some(extension) = options.extensions.get::<SedonaOptions>() else {
-            return Ok(Transformed::no(plan));
-        };
-        if !extension.spatial_join.enable {
-            return Ok(Transformed::no(plan));
-        }
-
-        let LogicalPlan::Filter(Filter {
-            predicate, input, ..
-        }) = &plan
-        else {
-            return Ok(Transformed::no(plan));
-        };
-        if !is_spatial_predicate(predicate) {
-            return Ok(Transformed::no(plan));
-        }
-
-        let LogicalPlan::Join(Join {
-            ref left,
-            ref right,
-            ref on,
-            ref filter,
-            join_type,
-            ref join_constraint,
-            ref null_equality,
-            ..
-        }) = input.as_ref()
-        else {
-            return Ok(Transformed::no(plan));
-        };
-
-        // Check if this is a suitable join for rewriting
-        if !matches!(
-            join_type,
-            JoinType::Inner | JoinType::Left | JoinType::Right
-        ) || !on.is_empty()
-            || filter.is_some()
-        {
-            return Ok(Transformed::no(plan));
-        }
-
-        let rewritten_plan = Join::try_new(
-            Arc::clone(left),
-            Arc::clone(right),
-            on.clone(),
-            Some(predicate.clone()),
-            JoinType::Inner,
-            *join_constraint,
-            *null_equality,
-        )?;
-
-        Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
-    }
-}
-
-/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
+/// Collect the names of spatial predicates appeared in expr. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
-fn is_spatial_predicate(expr: &Expr) -> bool {
+pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
+    fn collect(expr: &Expr, acc: &mut HashSet<String>) {
+        match expr {
+            Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+                left, right, op, ..
+            }) => match op {
+                Operator::And => {
+                    collect(left, acc);
+                    collect(right, acc);
+                }
+                Operator::Lt | Operator::LtEq => {
+                    if is_distance_expr(left) {
+                        acc.insert("st_dwithin".to_string());
+                    }
+                }
+                Operator::Gt | Operator::GtEq => {
+                    if is_distance_expr(right) {
+                        acc.insert("st_dwithin".to_string());
+                    }
+                }
+                _ => (),
+            },
+            Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
+                let func_name = func.name().to_lowercase();
+                if matches!(
+                    func_name.as_str(),
+                    "st_intersects"
+                        | "st_contains"
+                        | "st_within"
+                        | "st_covers"
+                        | "st_covered_by"
+                        | "st_coveredby"
+                        | "st_touches"
+                        | "st_crosses"
+                        | "st_overlaps"
+                        | "st_equals"
+                        | "st_dwithin"
+                        | "st_knn"
+                ) {
+                    acc.insert(func_name);
+                }
+            }
+            _ => (),
+        }
+    }
+
     fn is_distance_expr(expr: &Expr) -> bool {
         let Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) = expr else {
             return false;
@@ -199,381 +93,16 @@ fn is_spatial_predicate(expr: &Expr) -> bool {
         func.name().to_lowercase() == "st_distance"
     }
 
-    match expr {
-        Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
-            left, right, op, ..
-        }) => match op {
-            Operator::And => is_spatial_predicate(left) || is_spatial_predicate(right),
-            Operator::Lt | Operator::LtEq => is_distance_expr(left),
-            Operator::Gt | Operator::GtEq => is_distance_expr(right),
-            _ => false,
-        },
-        Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction { func, .. }) => {
-            let func_name = func.name().to_lowercase();
-            matches!(
-                func_name.as_str(),
-                "st_intersects"
-                    | "st_contains"
-                    | "st_within"
-                    | "st_covers"
-                    | "st_covered_by"
-                    | "st_coveredby"
-                    | "st_touches"
-                    | "st_crosses"
-                    | "st_overlaps"
-                    | "st_equals"
-                    | "st_dwithin"
-                    | "st_knn"
-            )
-        }
-        _ => false,
-    }
+    let mut acc = HashSet::new();
+    collect(expr, &mut acc);
+    acc
 }
 
-impl SpatialJoinOptimizer {
-    /// Rewrite `plan` containing NestedLoopJoinExec or HashJoinExec with spatial predicates to SpatialJoinExec.
-    fn try_optimize_join(
-        &self,
-        plan: Arc<dyn ExecutionPlan>,
-        config: &ConfigOptions,
-    ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
-        // Check if this is a NestedLoopJoinExec that we can convert to spatial join
-        if let Some(nested_loop_join) = plan.as_any().downcast_ref::<NestedLoopJoinExec>() {
-            if let Some(spatial_join) =
-                self.try_convert_to_spatial_join(nested_loop_join, config)?
-            {
-                return Ok(Transformed::yes(spatial_join));
-            }
-        }
-
-        // Check if this is a HashJoinExec with spatial filter that we can convert to spatial join
-        if let Some(hash_join) = plan.as_any().downcast_ref::<HashJoinExec>() {
-            if let Some(spatial_join) = self.try_convert_hash_join_to_spatial(hash_join, config)? {
-                return Ok(Transformed::yes(spatial_join));
-            }
-        }
-
-        // No optimization applied, return the original plan
-        Ok(Transformed::no(plan))
-    }
-
-    /// Try to convert a NestedLoopJoinExec with spatial predicates as join condition to a SpatialJoinExec.
-    /// SpatialJoinExec executes the query using an optimized algorithm, which is more efficient than
-    /// NestedLoopJoinExec.
-    fn try_convert_to_spatial_join(
-        &self,
-        nested_loop_join: &NestedLoopJoinExec,
-        config: &ConfigOptions,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(options) = config.extensions.get::<SedonaOptions>() else {
-            return Ok(None);
-        };
-
-        if let Some(join_filter) = nested_loop_join.filter() {
-            if let Some((spatial_predicate, remainder)) = transform_join_filter(join_filter) {
-                // The left side of the nested loop join is required to have only one partition, while SpatialJoinExec
-                // does not have that requirement. SpatialJoinExec can consume the streams on the build side in parallel
-                // when the build side has multiple partitions.
-                // If the left side is a CoalescePartitionsExec, we can drop the CoalescePartitionsExec and directly use
-                // the input.
-                let left = nested_loop_join.left();
-                let left = if let Some(coalesce_partitions) =
-                    left.as_any().downcast_ref::<CoalescePartitionsExec>()
-                {
-                    // Remove unnecessary CoalescePartitionsExec for spatial joins
-                    coalesce_partitions.input()
-                } else {
-                    left
-                };
-
-                let left = left.clone();
-                let right = nested_loop_join.right().clone();
-                let join_type = nested_loop_join.join_type();
-
-                // Check if the geospatial types involved in spatial_predicate are supported
-                if !is_spatial_predicate_supported(
-                    &spatial_predicate,
-                    &left.schema(),
-                    &right.schema(),
-                )? {
-                    return Ok(None);
-                }
-
-                // Create the spatial join
-                let spatial_join = SpatialJoinExec::try_new(
-                    left,
-                    right,
-                    spatial_predicate,
-                    remainder,
-                    join_type,
-                    nested_loop_join.projection().cloned(),
-                    &options.spatial_join,
-                )?;
-
-                return Ok(Some(Arc::new(spatial_join)));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Try to convert a HashJoinExec with spatial predicates in the filter to a SpatialJoinExec.
-    /// This handles cases where there's an equi-join condition (like c.id = r.id) along with
-    /// the ST_KNN predicate. We flip them so the spatial predicate drives the join
-    /// and the equi-conditions become filters.
-    fn try_convert_hash_join_to_spatial(
-        &self,
-        hash_join: &HashJoinExec,
-        config: &ConfigOptions,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(options) = config.extensions.get::<SedonaOptions>() else {
-            return Ok(None);
-        };
-
-        // Check if the filter contains spatial predicates
-        if let Some(join_filter) = hash_join.filter() {
-            if let Some((spatial_predicate, mut remainder)) = transform_join_filter(join_filter) {
-                // The transform_join_filter now prioritizes ST_KNN predicates
-                // Only proceed if we found an ST_KNN (other spatial predicates are left in hash join)
-                if !matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
-                    return Ok(None);
-                }
-
-                // Check if the geospatial types involved in spatial_predicate are supported (planar geometries only)
-                if !is_spatial_predicate_supported(
-                    &spatial_predicate,
-                    &hash_join.left().schema(),
-                    &hash_join.right().schema(),
-                )? {
-                    return Ok(None);
-                }
-
-                // Extract the equi-join conditions and convert them to a filter
-                let equi_filter = self.create_equi_filter_from_hash_join(hash_join)?;
-
-                // Combine the equi-filter with any existing remainder
-                remainder = self.combine_filters(remainder, equi_filter)?;
-
-                // Create spatial join where:
-                // - Spatial predicate (ST_KNN) drives the join
-                // - Equi-conditions (c.id = r.id) become filters
-
-                // Create SpatialJoinExec without projection first
-                // Use try_new_with_options to mark this as converted from HashJoin
-                let spatial_join = Arc::new(SpatialJoinExec::try_new_with_options(
-                    hash_join.left().clone(),
-                    hash_join.right().clone(),
-                    spatial_predicate,
-                    remainder,
-                    hash_join.join_type(),
-                    None, // No projection in SpatialJoinExec
-                    &options.spatial_join,
-                    true, // converted_from_hash_join = true
-                )?);
-
-                // Now wrap it with ProjectionExec to match HashJoinExec's output schema exactly
-                let expected_schema = hash_join.schema();
-                let spatial_schema = spatial_join.schema();
-
-                // Create a projection that selects the exact columns HashJoinExec would output
-                let projection_exec = self.create_schema_matching_projection(
-                    spatial_join,
-                    &expected_schema,
-                    &spatial_schema,
-                )?;
-
-                return Ok(Some(projection_exec));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Create a filter expression from the hash join's equi-join conditions
-    fn create_equi_filter_from_hash_join(
-        &self,
-        hash_join: &HashJoinExec,
-    ) -> Result<Option<JoinFilter>> {
-        let join_keys = hash_join.on();
-
-        if join_keys.is_empty() {
-            return Ok(None);
-        }
-
-        // Build filter expressions from the equi-join conditions
-        let mut expressions = vec![];
-
-        // Get the left schema size to calculate right column offsets
-        let left_schema_size = hash_join.left().schema().fields().len();
-
-        for (left_key, right_key) in join_keys.iter() {
-            // Create equality expression: left_key = right_key
-            // But we need to adjust the column indices for SpatialJoinExec schema
-            if let (Some(left_col), Some(right_col)) = (
-                left_key.as_any().downcast_ref::<Column>(),
-                right_key.as_any().downcast_ref::<Column>(),
-            ) {
-                // In SpatialJoinExec schema: [left_fields..., right_fields...]
-                // Left columns keep their indices, right columns get offset by left_schema_size
-                let left_idx = left_col.index();
-                let right_idx = left_schema_size + right_col.index();
-
-                let left_expr =
-                    Arc::new(Column::new(left_col.name(), left_idx)) as Arc<dyn PhysicalExpr>;
-                let right_expr =
-                    Arc::new(Column::new(right_col.name(), right_idx)) as Arc<dyn PhysicalExpr>;
-
-                let eq_expr = Arc::new(BinaryExpr::new(left_expr, Operator::Eq, right_expr))
-                    as Arc<dyn PhysicalExpr>;
-
-                expressions.push(eq_expr);
-            }
-        }
-
-        // IMPORTANT: Create column indices for ALL columns in the spatial join schema
-        // not just the filter columns. This is required by build_batch_from_indices.
-        let left_schema = hash_join.left().schema();
-        let right_schema = hash_join.right().schema();
-        let mut column_indices = vec![];
-
-        // Add all left side columns
-        for (i, _field) in left_schema.fields().iter().enumerate() {
-            column_indices.push(ColumnIndex {
-                index: i,
-                side: JoinSide::Left,
-            });
-        }
-
-        // Add all right side columns
-        for (i, _field) in right_schema.fields().iter().enumerate() {
-            column_indices.push(ColumnIndex {
-                index: i,
-                side: JoinSide::Right,
-            });
-        }
-
-        // Combine all conditions with AND
-        let filter_expr = if expressions.len() == 1 {
-            expressions.into_iter().next().unwrap()
-        } else {
-            expressions
-                .into_iter()
-                .reduce(|acc, expr| {
-                    Arc::new(BinaryExpr::new(acc, Operator::And, expr)) as Arc<dyn PhysicalExpr>
-                })
-                .unwrap()
-        };
-
-        // Create JoinFilter
-        // IMPORTANT: The filter expression uses spatial join indices (id@0 = id@3)
-        // So we need to create the filter schema that matches the spatial join schema,
-        // not the hash join schema
-        let left_schema = hash_join.left().schema();
-        let right_schema = hash_join.right().schema();
-        let mut spatial_filter_fields = left_schema.fields().to_vec();
-        spatial_filter_fields.extend_from_slice(right_schema.fields());
-        let spatial_filter_schema = Arc::new(arrow_schema::Schema::new(spatial_filter_fields));
-
-        // Filter expression uses spatial join indices (e.g. id@0 = id@3)
-        // Schema should match the spatial join schema (left + right)
-
-        Ok(Some(JoinFilter::new(
-            filter_expr,
-            column_indices,
-            spatial_filter_schema,
-        )))
-    }
-
-    /// Combine two optional filters with AND
-    fn combine_filters(
-        &self,
-        filter1: Option<JoinFilter>,
-        filter2: Option<JoinFilter>,
-    ) -> Result<Option<JoinFilter>> {
-        match (filter1, filter2) {
-            (None, None) => Ok(None),
-            (Some(f), None) | (None, Some(f)) => Ok(Some(f)),
-            (Some(f1), Some(f2)) => {
-                // Combine f1 AND f2
-                let combined_expr = Arc::new(BinaryExpr::new(
-                    f1.expression().clone(),
-                    Operator::And,
-                    f2.expression().clone(),
-                )) as Arc<dyn PhysicalExpr>;
-
-                // Combine column indices
-                let mut combined_indices = f1.column_indices().to_vec();
-                combined_indices.extend_from_slice(f2.column_indices());
-
-                Ok(Some(JoinFilter::new(
-                    combined_expr,
-                    combined_indices,
-                    f1.schema().clone(),
-                )))
-            }
-        }
-    }
-
-    /// Create a ProjectionExec that makes SpatialJoinExec output match HashJoinExec's schema
-    fn create_schema_matching_projection(
-        &self,
-        spatial_join: Arc<SpatialJoinExec>,
-        expected_schema: &SchemaRef,
-        spatial_schema: &SchemaRef,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        // The challenge is to map from the expected HashJoinExec schema to SpatialJoinExec schema
-        //
-        // Expected schema has fields like: [id, name, name] (with duplicates)
-        // Spatial schema has fields like: [id, location, name, id, location, name] (left + right)
-
-        // Map the expected schema to spatial schema by matching field names and types
-        // For fields with duplicate names (like "name"), we need to be careful about ordering
-        let mut projection_exprs = Vec::new();
-        let mut used_spatial_indices = std::collections::HashSet::new();
-
-        for (expected_idx, expected_field) in expected_schema.fields().iter().enumerate() {
-            let mut found = false;
-
-            // Try to find the corresponding field in spatial schema
-            for (spatial_idx, spatial_field) in spatial_schema.fields().iter().enumerate() {
-                if spatial_field.name() == expected_field.name()
-                    && spatial_field.data_type() == expected_field.data_type()
-                    && !used_spatial_indices.contains(&spatial_idx)
-                {
-                    let col_expr = Arc::new(Column::new(spatial_field.name(), spatial_idx))
-                        as Arc<dyn PhysicalExpr>;
-                    projection_exprs.push((col_expr, expected_field.name().clone()));
-                    used_spatial_indices.insert(spatial_idx);
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                return sedona_internal_err!(
-                    "Cannot find matching field for '{}' ({:?}) at position {} in spatial join output. \
-                     Please check column name mappings and schema compatibility between HashJoinExec and SpatialJoinExec.",
-                    expected_field.name(),
-                    expected_field.data_type(),
-                    expected_idx
-                );
-            }
-        }
-
-        let projection = ProjectionExec::try_new(projection_exprs, spatial_join)?;
-
-        Ok(Arc::new(projection))
-    }
-}
-
-/// Helper function to register the spatial join optimizer with a session state
-pub fn register_spatial_join_optimizer(
-    session_state_builder: SessionStateBuilder,
-) -> SessionStateBuilder {
-    session_state_builder
-        .with_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
-        .with_physical_optimizer_rule(Arc::new(SpatialJoinOptimizer::new()))
-        .with_physical_optimizer_rule(Arc::new(SanityCheckPlan::new()))
+/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
+/// `expr` evaluates to a boolean value and originates from a filter logical node.
+pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
+    let pred_names = collect_spatial_predicate_names(expr);
+    !pred_names.is_empty()
 }
 
 /// Transform the join filter to a spatial predicate and a remainder.
@@ -583,7 +112,7 @@ pub fn register_spatial_join_optimizer(
 ///
 /// The remainder may reference fewer columns than the original join filter. If that's the case,
 /// the columns that are not referenced by the remainder will be pruned.
-fn transform_join_filter(
+pub(crate) fn transform_join_filter(
     join_filter: &JoinFilter,
 ) -> Option<(SpatialPredicate, Option<JoinFilter>)> {
     let (spatial_predicate, remainder) =
@@ -1026,7 +555,7 @@ fn replace_join_filter_expr(expr: &Arc<dyn PhysicalExpr>, join_filter: &JoinFilt
     )
 }
 
-fn is_spatial_predicate_supported(
+pub(crate) fn is_spatial_predicate_supported(
     spatial_predicate: &SpatialPredicate,
     left_schema: &Schema,
     right_schema: &Schema,
@@ -1073,6 +602,7 @@ mod tests {
     use super::*;
     use crate::spatial_predicate::{SpatialPredicate, SpatialRelationType};
     use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::config::ConfigOptions;
     use datafusion_common::{JoinSide, ScalarValue};
     use datafusion_expr::Operator;
     use datafusion_expr::{col, lit, ColumnarValue, Expr, ScalarUDF, SimpleScalarUDF};
@@ -2647,7 +2177,7 @@ mod tests {
             SpatialRelationType::Intersects,
         );
         let spatial_pred = SpatialPredicate::Relation(rel_pred);
-        assert!(super::is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
+        assert!(is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
 
         // Geography field (should NOT be supported)
         let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
@@ -2659,12 +2189,10 @@ mod tests {
             SpatialRelationType::Intersects,
         );
         let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
-        assert!(!super::is_spatial_predicate_supported(
-            &spatial_pred_geog,
-            &geog_schema,
-            &geog_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&spatial_pred_geog, &geog_schema, &geog_schema)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -2686,9 +2214,7 @@ mod tests {
             false,
             JoinSide::Left,
         ));
-        assert!(
-            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
-        );
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
 
         // ST_KNN(right, left)
         let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
@@ -2698,31 +2224,23 @@ mod tests {
             false,
             JoinSide::Right,
         ));
-        assert!(
-            super::is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap()
-        );
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
 
         // ST_KNN with geography (should NOT be supported)
         let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
             .to_storage_field("geog", false)
             .unwrap()]));
-        assert!(!super::is_spatial_predicate_supported(
-            &knn_pred,
-            &left_geog_schema,
-            &right_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_geog_schema, &right_schema).unwrap()
+        );
 
         let right_geog_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
         ]));
-        assert!(!super::is_spatial_predicate_supported(
-            &knn_pred,
-            &left_schema,
-            &right_geog_schema
-        )
-        .unwrap());
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_schema, &right_geog_schema).unwrap()
+        );
     }
 
     #[test]
@@ -2733,7 +2251,7 @@ mod tests {
             func: st_intersects_udf,
             args: vec![col("geom1"), col("geom2")],
         });
-        assert!(super::is_spatial_predicate(&st_intersects_expr));
+        assert!(is_spatial_predicate(&st_intersects_expr));
 
         // ST_Distance(geom1, geom2) < 100 should return true
         let st_distance_udf = create_dummy_st_distance_udf();
@@ -2746,7 +2264,7 @@ mod tests {
             op: Operator::Lt,
             right: Box::new(lit(100.0)),
         });
-        assert!(super::is_spatial_predicate(&distance_lt_expr));
+        assert!(is_spatial_predicate(&distance_lt_expr));
 
         // ST_Distance(geom1, geom2) > 100 should return false
         let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2754,7 +2272,7 @@ mod tests {
             op: Operator::Gt,
             right: Box::new(lit(100.0)),
         });
-        assert!(!super::is_spatial_predicate(&distance_gt_expr));
+        assert!(!is_spatial_predicate(&distance_gt_expr));
 
         // AND expressions with spatial predicates should return true
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2762,13 +2280,13 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("id").eq(lit(1))),
         });
-        assert!(super::is_spatial_predicate(&and_expr));
+        assert!(is_spatial_predicate(&and_expr));
 
         // Non-spatial expressions should return false
 
         // Simple column comparison
         let non_spatial_expr = col("id").eq(lit(1));
-        assert!(!super::is_spatial_predicate(&non_spatial_expr));
+        assert!(!is_spatial_predicate(&non_spatial_expr));
 
         // Not a spatial relationship function
         let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
@@ -2781,7 +2299,7 @@ mod tests {
             ))),
             args: vec![col("id")],
         });
-        assert!(!super::is_spatial_predicate(&non_st_func));
+        assert!(!is_spatial_predicate(&non_st_func));
 
         // AND expression with no spatial predicates
         let non_spatial_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2789,6 +2307,6 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("name").eq(lit("test"))),
         });
-        assert!(!super::is_spatial_predicate(&non_spatial_and));
+        assert!(!is_spatial_predicate(&non_spatial_and));
     }
 }
