@@ -22,6 +22,16 @@ use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::projection::ProjectionExpr;
 use sedona_common::sedona_internal_err;
 
+pub trait SpatialPredicateTrait: Sized {
+    fn swap_for_swapped_children(&self) -> Self;
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>>;
+}
+
 /// Spatial predicate is the join condition of a spatial join. It can be a distance predicate,
 /// a relation predicate, or a KNN predicate.
 #[derive(Debug, Clone)]
@@ -36,42 +46,7 @@ impl SpatialPredicate {
     ///
     /// This is used by `SpatialJoinExec::swap_inputs`.
     pub fn swap_for_swapped_children(&self) -> Self {
-        match self {
-            SpatialPredicate::Relation(RelationPredicate {
-                left,
-                right,
-                relation_type,
-            }) => SpatialPredicate::Relation(RelationPredicate {
-                left: Arc::clone(right),
-                right: Arc::clone(left),
-                relation_type: relation_type.invert(),
-            }),
-            SpatialPredicate::Distance(DistancePredicate {
-                left,
-                right,
-                distance,
-                distance_side,
-            }) => SpatialPredicate::Distance(DistancePredicate {
-                left: Arc::clone(right),
-                right: Arc::clone(left),
-                distance: Arc::clone(distance),
-                distance_side: distance_side.negate(),
-            }),
-            SpatialPredicate::KNearestNeighbors(KNNPredicate {
-                left,
-                right,
-                k,
-                use_spheroid,
-                probe_side,
-            }) => SpatialPredicate::KNearestNeighbors(KNNPredicate {
-                // Keep query/object expressions stable; only flip which child is considered probe.
-                left: Arc::clone(left),
-                right: Arc::clone(right),
-                k: *k,
-                use_spheroid: *use_spheroid,
-                probe_side: probe_side.negate(),
-            }),
-        }
+        SpatialPredicateTrait::swap_for_swapped_children(self)
     }
 
     pub fn update_for_child_projections(
@@ -79,85 +54,165 @@ impl SpatialPredicate {
         projected_left_exprs: &[ProjectionExpr],
         projected_right_exprs: &[ProjectionExpr],
     ) -> Result<Option<Self>> {
-        let updated = match self {
-            SpatialPredicate::Relation(pred) => {
-                let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
-                    return Ok(None);
-                };
-                let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
-                    return Ok(None);
-                };
+        SpatialPredicateTrait::update_for_child_projections(
+            self,
+            projected_left_exprs,
+            projected_right_exprs,
+        )
+    }
+}
 
-                SpatialPredicate::Relation(RelationPredicate {
-                    left,
-                    right,
-                    relation_type: pred.relation_type,
-                })
+impl SpatialPredicateTrait for SpatialPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        match self {
+            SpatialPredicate::Relation(pred) => {
+                SpatialPredicate::Relation(pred.swap_for_swapped_children())
             }
             SpatialPredicate::Distance(pred) => {
-                let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
-                    return Ok(None);
-                };
-                let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
-                    return Ok(None);
-                };
-
-                let distance = match pred.distance_side {
-                    JoinSide::Left => {
-                        let Some(distance) =
-                            update_expr(&pred.distance, projected_left_exprs, false)?
-                        else {
-                            return Ok(None);
-                        };
-                        distance
-                    }
-                    JoinSide::Right => {
-                        let Some(distance) =
-                            update_expr(&pred.distance, projected_right_exprs, false)?
-                        else {
-                            return Ok(None);
-                        };
-                        distance
-                    }
-                    JoinSide::None => Arc::clone(&pred.distance),
-                };
-
-                SpatialPredicate::Distance(DistancePredicate {
-                    left,
-                    right,
-                    distance,
-                    distance_side: pred.distance_side,
-                })
+                SpatialPredicate::Distance(pred.swap_for_swapped_children())
             }
             SpatialPredicate::KNearestNeighbors(pred) => {
-                let (probe_exprs, build_exprs) = match pred.probe_side {
-                    JoinSide::Left => (projected_left_exprs, projected_right_exprs),
-                    JoinSide::Right => (projected_right_exprs, projected_left_exprs),
-                    JoinSide::None => {
-                        return sedona_internal_err!(
-                            "KNN join requires explicit probe_side designation"
-                        )
-                    }
-                };
+                SpatialPredicate::KNearestNeighbors(pred.swap_for_swapped_children())
+            }
+        }
+    }
 
-                let Some(left) = update_expr(&pred.left, probe_exprs, false)? else {
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        match self {
+            SpatialPredicate::Relation(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::Relation)),
+            SpatialPredicate::Distance(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::Distance)),
+            SpatialPredicate::KNearestNeighbors(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::KNearestNeighbors)),
+        }
+    }
+}
+
+impl SpatialPredicateTrait for RelationPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            left: Arc::clone(&self.right),
+            right: Arc::clone(&self.left),
+            relation_type: self.relation_type.invert(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let Some(left) = update_expr(&self.left, projected_left_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, projected_right_exprs, false)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
+            left,
+            right,
+            relation_type: self.relation_type,
+        }))
+    }
+}
+
+impl SpatialPredicateTrait for DistancePredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            left: Arc::clone(&self.right),
+            right: Arc::clone(&self.left),
+            distance: Arc::clone(&self.distance),
+            distance_side: self.distance_side.negate(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let Some(left) = update_expr(&self.left, projected_left_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, projected_right_exprs, false)? else {
+            return Ok(None);
+        };
+
+        let distance = match self.distance_side {
+            JoinSide::Left => {
+                let Some(distance) = update_expr(&self.distance, projected_left_exprs, false)?
+                else {
                     return Ok(None);
                 };
-                let Some(right) = update_expr(&pred.right, build_exprs, false)? else {
+                distance
+            }
+            JoinSide::Right => {
+                let Some(distance) = update_expr(&self.distance, projected_right_exprs, false)?
+                else {
                     return Ok(None);
                 };
+                distance
+            }
+            JoinSide::None => Arc::clone(&self.distance),
+        };
 
-                SpatialPredicate::KNearestNeighbors(KNNPredicate {
-                    left,
-                    right,
-                    k: pred.k,
-                    use_spheroid: pred.use_spheroid,
-                    probe_side: pred.probe_side,
-                })
+        Ok(Some(Self {
+            left,
+            right,
+            distance,
+            distance_side: self.distance_side,
+        }))
+    }
+}
+
+impl SpatialPredicateTrait for KNNPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            // Keep query/object expressions stable; only flip which child is considered probe.
+            left: Arc::clone(&self.left),
+            right: Arc::clone(&self.right),
+            k: self.k,
+            use_spheroid: self.use_spheroid,
+            probe_side: self.probe_side.negate(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let (probe_exprs, build_exprs) = match self.probe_side {
+            JoinSide::Left => (projected_left_exprs, projected_right_exprs),
+            JoinSide::Right => (projected_right_exprs, projected_left_exprs),
+            JoinSide::None => {
+                return sedona_internal_err!("KNN join requires explicit probe_side designation")
             }
         };
 
-        Ok(Some(updated))
+        let Some(left) = update_expr(&self.left, probe_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, build_exprs, false)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
+            left,
+            right,
+            k: self.k,
+            use_spheroid: self.use_spheroid,
+            probe_side: self.probe_side,
+        }))
     }
 }
 
