@@ -82,7 +82,7 @@ impl SedonaScalarKernel for RsEnvelope {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 Some(raster) => {
-                    create_envelope_wkb(&raster, &mut builder)?;
+                    create_envelope_wkb(raster, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
