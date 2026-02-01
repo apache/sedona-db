@@ -38,6 +38,7 @@ use sedona_common::sedona_internal_err;
 use crate::exec::SpatialJoinExec;
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::spatial_expr_utils::{is_spatial_predicate_supported, transform_join_filter};
+use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 
 /// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
@@ -144,6 +145,10 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             return Ok(Some(Arc::new(nlj)));
         }
 
+        let should_swap = !matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_))
+            && join_type.supports_swap()
+            && should_swap_join_order(physical_left.as_ref(), physical_right.as_ref())?;
+
         let exec = SpatialJoinExec::try_new(
             physical_left,
             physical_right,
@@ -154,7 +159,30 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             &ext.spatial_join,
         )?;
 
-        Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
+        if should_swap {
+            exec.swap_inputs().map(Some)
+        } else {
+            Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
+        }
+    }
+}
+
+fn should_swap_join_order(left: &dyn ExecutionPlan, right: &dyn ExecutionPlan) -> Result<bool> {
+    let left_stats = left.partition_statistics(None)?;
+    let right_stats = right.partition_statistics(None)?;
+
+    match (
+        left_stats.total_byte_size.get_value(),
+        right_stats.total_byte_size.get_value(),
+    ) {
+        (Some(l), Some(r)) => Ok(l > r),
+        _ => match (
+            left_stats.num_rows.get_value(),
+            right_stats.num_rows.get_value(),
+        ) {
+            (Some(l), Some(r)) => Ok(l > r),
+            _ => Ok(false),
+        },
     }
 }
 
