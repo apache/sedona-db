@@ -93,7 +93,7 @@ impl SedonaContext {
         let session_config = session_config.with_option_extension(
             LazTableOptions::default()
                 .with_point_encoding(LasPointEncoding::Wkb)
-                .with_extra_bytes(LasExtraBytes::Ignore),
+                .with_extra_bytes(LasExtraBytes::Typed),
         );
 
         let rt_builder = RuntimeEnvBuilder::new();
@@ -121,7 +121,7 @@ impl SedonaContext {
             state.register_table_options_extension(
                 LazTableOptions::default()
                     .with_point_encoding(LasPointEncoding::Wkb)
-                    .with_extra_bytes(LasExtraBytes::Ignore),
+                    .with_extra_bytes(LasExtraBytes::Typed),
             );
         }
 
