@@ -21,7 +21,6 @@ use datafusion_common::{project_schema, JoinSide, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
 use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
-use datafusion_physical_expr::projection::update_expr;
 use datafusion_physical_plan::{
     common::can_project,
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
@@ -30,7 +29,6 @@ use datafusion_physical_plan::{
     projection::{
         join_allows_pushdown, join_table_borders, new_join_children, physical_to_column_exprs,
         try_embed_projection, update_join_filter, EmbeddedProjection, ProjectionExec,
-        ProjectionExpr,
     },
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
@@ -39,7 +37,7 @@ use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
-    spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
+    spatial_predicate::{KNNPredicate, SpatialPredicate},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
     utils::{
         join_utils::{
@@ -53,90 +51,6 @@ use crate::{
 
 /// Type alias for build and probe execution plans
 type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPlan>);
-
-fn update_spatial_predicate_for_child_projections(
-    on: &SpatialPredicate,
-    projected_left_exprs: &[ProjectionExpr],
-    projected_right_exprs: &[ProjectionExpr],
-) -> Result<Option<SpatialPredicate>> {
-    let updated = match on {
-        SpatialPredicate::Relation(pred) => {
-            let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
-                return Ok(None);
-            };
-            let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
-                return Ok(None);
-            };
-
-            SpatialPredicate::Relation(RelationPredicate {
-                left,
-                right,
-                relation_type: pred.relation_type,
-            })
-        }
-        SpatialPredicate::Distance(pred) => {
-            let Some(left) = update_expr(&pred.left, projected_left_exprs, false)? else {
-                return Ok(None);
-            };
-            let Some(right) = update_expr(&pred.right, projected_right_exprs, false)? else {
-                return Ok(None);
-            };
-
-            let distance = match pred.distance_side {
-                JoinSide::Left => {
-                    let Some(distance) = update_expr(&pred.distance, projected_left_exprs, false)?
-                    else {
-                        return Ok(None);
-                    };
-                    distance
-                }
-                JoinSide::Right => {
-                    let Some(distance) = update_expr(&pred.distance, projected_right_exprs, false)?
-                    else {
-                        return Ok(None);
-                    };
-                    distance
-                }
-                JoinSide::None => Arc::clone(&pred.distance),
-            };
-
-            SpatialPredicate::Distance(DistancePredicate {
-                left,
-                right,
-                distance,
-                distance_side: pred.distance_side,
-            })
-        }
-        SpatialPredicate::KNearestNeighbors(pred) => {
-            let (probe_exprs, build_exprs) = match pred.probe_side {
-                JoinSide::Left => (projected_left_exprs, projected_right_exprs),
-                JoinSide::Right => (projected_right_exprs, projected_left_exprs),
-                JoinSide::None => {
-                    return sedona_internal_err!(
-                        "KNN join requires explicit probe_side designation"
-                    )
-                }
-            };
-
-            let Some(left) = update_expr(&pred.left, probe_exprs, false)? else {
-                return Ok(None);
-            };
-            let Some(right) = update_expr(&pred.right, build_exprs, false)? else {
-                return Ok(None);
-            };
-
-            SpatialPredicate::KNearestNeighbors(KNNPredicate {
-                left,
-                right,
-                k: pred.k,
-                use_spheroid: pred.use_spheroid,
-                probe_side: pred.probe_side,
-            })
-        }
-    };
-
-    Ok(Some(updated))
-}
 
 /// Determine the correct build/probe execution plan assignment for KNN joins.
 ///
@@ -523,11 +437,9 @@ impl ExecutionPlan for SpatialJoinExec {
 
         let projected_left_exprs = projected_left_child.expr();
         let projected_right_exprs = projected_right_child.expr();
-        let Some(new_on) = update_spatial_predicate_for_child_projections(
-            &self.on,
-            projected_left_exprs,
-            projected_right_exprs,
-        )?
+        let Some(new_on) = self
+            .on
+            .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
         else {
             return try_embed_projection(projection, self);
         };
@@ -896,7 +808,7 @@ mod tests {
         options: Option<SpatialJoinOptions>,
         batch_size: usize,
     ) -> Result<SessionContext> {
-        env_logger::init();
+        let _ = env_logger::builder().is_test(true).try_init();
         let mut session_config = SessionConfig::from_env()?
             .with_information_schema(true)
             .with_batch_size(batch_size);
@@ -1696,7 +1608,7 @@ mod tests {
     #[test]
     fn test_try_swapping_with_projection_pushes_down_and_rewrites_relation_predicate() -> Result<()>
     {
-        use crate::spatial_predicate::SpatialRelationType;
+        use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
 
         // left: [l0, l1, l2], right: [r0, r1]
         let left_schema = make_schema(&[
