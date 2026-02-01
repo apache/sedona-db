@@ -714,10 +714,7 @@ mod tests {
     };
     use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
     use datafusion_expr::ColumnarValue;
-    use datafusion_physical_expr::expressions::Column;
-    use datafusion_physical_plan::empty::EmptyExec;
     use datafusion_physical_plan::joins::NestedLoopJoinExec;
-    use datafusion_physical_plan::projection::ProjectionExpr;
     use geo::{Distance, Euclidean};
     use geo_types::{Coord, Rect};
     use rstest::rstest;
@@ -733,24 +730,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
-
-    fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
-        Arc::new(Schema::new(
-            fields
-                .iter()
-                .map(|(name, dt)| Field::new(*name, dt.clone(), true))
-                .collect::<Vec<_>>(),
-        ))
-    }
-
-    fn proj_expr(
-        schema: &SchemaRef,
-        index: usize,
-    ) -> (Arc<dyn datafusion_physical_expr::PhysicalExpr>, String) {
-        let name = schema.field(index).name().to_string();
-        (Arc::new(Column::new(&name, index)), name)
-    }
 
     type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
 
@@ -1216,45 +1195,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_mark_join_projection_pushdown_is_graceful() -> Result<()> {
-        let left_schema = make_schema(&[("l", DataType::Int32)]);
-        let right_schema = make_schema(&[("r", DataType::Int32)]);
-        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
-        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
-
-        let on = SpatialPredicate::Relation(RelationPredicate::new(
-            Arc::new(Column::new("l", 0)),
-            Arc::new(Column::new("r", 0)),
-            SpatialRelationType::Intersects,
-        ));
-
-        let join = SpatialJoinExec::try_new(
-            left,
-            right,
-            on,
-            None,
-            &JoinType::LeftMark,
-            None,
-            &SpatialJoinOptions::default(),
-        )?;
-
-        let projection = ProjectionExec::try_new(
-            vec![ProjectionExpr {
-                expr: Arc::new(Column::new("mark", 1)),
-                alias: "mark".to_string(),
-            }],
-            Arc::new(join),
-        )?;
-
-        let swapped = projection
-            .input()
-            .try_swapping_with_projection(&projection)?;
-        assert!(swapped.is_some());
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn test_geography_join_is_not_optimized() -> Result<()> {
         let options = SpatialJoinOptions::default();
@@ -1679,12 +1619,93 @@ mod tests {
 
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod exec_transform_tests {
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion_expr::JoinType;
+    use datafusion_physical_expr::expressions::Column;
+    use datafusion_physical_plan::empty::EmptyExec;
+    use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
+    use datafusion_physical_plan::ExecutionPlan;
+
+    use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+
+    use super::*;
+    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
+
+    fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
+        Arc::new(Schema::new(
+            fields
+                .iter()
+                .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    fn proj_expr(
+        schema: &SchemaRef,
+        index: usize,
+    ) -> (Arc<dyn datafusion_physical_expr::PhysicalExpr>, String) {
+        let name = schema.field(index).name().to_string();
+        (Arc::new(Column::new(&name, index)), name)
+    }
+
+    fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
+        let mut spatial_join_execs = Vec::new();
+        plan.apply(|node| {
+            if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+                spatial_join_execs.push(spatial_join_exec);
+            }
+            Ok(TreeNodeRecursion::Continue)
+        })?;
+        Ok(spatial_join_execs)
+    }
+
+    #[test]
+    fn test_mark_join_projection_pushdown_is_graceful() -> Result<()> {
+        let left_schema = make_schema(&[("l", DataType::Int32)]);
+        let right_schema = make_schema(&[("r", DataType::Int32)]);
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l", 0)),
+            Arc::new(Column::new("r", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let join = SpatialJoinExec::try_new(
+            left,
+            right,
+            on,
+            None,
+            &JoinType::LeftMark,
+            None,
+            &SpatialJoinOptions::default(),
+        )?;
+
+        let projection = ProjectionExec::try_new(
+            vec![ProjectionExpr {
+                expr: Arc::new(Column::new("mark", 1)),
+                alias: "mark".to_string(),
+            }],
+            Arc::new(join),
+        )?;
+
+        let swapped = projection
+            .input()
+            .try_swapping_with_projection(&projection)?;
+        assert!(swapped.is_some());
+
+        Ok(())
+    }
 
     #[test]
     fn test_try_swapping_with_projection_pushes_down_and_rewrites_relation_predicate() -> Result<()>
     {
-        use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
-
         // left: [l0, l1, l2], right: [r0, r1]
         let left_schema = make_schema(&[
             ("l0", DataType::Int32),
