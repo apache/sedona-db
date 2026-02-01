@@ -71,7 +71,7 @@ arrow-json = { version = "57.0.0" }
 arrow-schema = { version = "57.0.0" }
 arrow-buffer = { version = "57.0.0" }
 async-trait = { version = "0.1.87" }
-bytemuck = "1.14"
+bytemuck = "1.25"
 bytes = "1.10"
 byteorder = "1"
 chrono = { version = "0.4.41", default-features = false }
