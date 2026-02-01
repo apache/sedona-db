@@ -290,274 +290,204 @@ fn build_attribute(
             columns.push(Arc::new(data) as ArrayRef)
         }
         DataType::Int8 => {
+            let mut builder = Int8Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(i64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = d[0] as i8;
+            for d in iter {
+                let mut v = i8::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as i64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as i8;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Int8Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::Int16 => {
+            let mut builder = Int16Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(i64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = i16::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = i16::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as i64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as i16;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Int16Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::Int32 => {
+            let mut builder = Int32Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(i64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = i32::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = i32::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as i64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as i32;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Int32Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::Int64 => {
+            let mut builder = Int64Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(i64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = i64::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = i64::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as i64;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Int64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::UInt8 => {
+            let mut builder = UInt8Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(u64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = d[0];
+            for d in iter {
+                let mut v = u8::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as u64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as u8;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = UInt8Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::UInt16 => {
+            let mut builder = UInt16Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(u64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = u16::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = u16::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as u64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as u16;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = UInt16Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::UInt32 => {
+            let mut builder = UInt32Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(u64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = u32::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = u32::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as u64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as u32;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = UInt32Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::UInt64 => {
+            let mut builder = UInt64Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(u64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = u64::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = u64::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as u64;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = UInt64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::Float32 => {
+            let mut builder = Float32Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(f64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = f32::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = f32::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v as f64 {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v as f64 * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = (v as f64 * scale + offset) as f32;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Float32Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v)
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
         DataType::Float64 => {
+            let mut builder = Float64Builder::with_capacity(extra.len());
             let no_data = attribute.no_data.map(f64::from_le_bytes);
 
-            let iter = iter.map(|d| {
-                let v = f64::from_le_bytes(d.try_into().unwrap());
+            for d in iter {
+                let mut v = f64::from_le_bytes(d.try_into().unwrap());
                 if let Some(no_data) = no_data {
                     if no_data == v {
-                        return None;
+                        builder.append_null();
+                        continue;
                     }
                 }
-                Some(v)
-            });
-
-            if attribute.scale.is_some() || attribute.offset.is_some() {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v.map(|v| v * scale + offset));
+                if attribute.scale.is_some() || attribute.offset.is_some() {
+                    v = v * scale + offset;
                 }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
-            } else {
-                let mut builder = Float64Builder::with_capacity(extra.len());
-                for v in iter {
-                    builder.append_option(v);
-                }
-                columns.push(Arc::new(builder.finish()) as ArrayRef)
+                builder.append_value(v);
             }
+
+            columns.push(Arc::new(builder.finish()) as ArrayRef)
         }
 
         dt => {

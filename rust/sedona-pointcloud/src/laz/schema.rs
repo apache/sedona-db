@@ -121,32 +121,27 @@ fn extra_bytes_fields(header: &Header) -> Result<Vec<Field>, ArrowError> {
             let name = name.trim_end_matches(char::from(0));
 
             // data type
-            let data_type = if bytes[2] != 0 && (bytes[3] >> 3 & 1 == 1 || bytes[3] >> 4 & 1 == 1) {
-                // if scaled and/or offset resolve to f64
-                DataType::Float64
-            } else {
-                match bytes[2] {
-                    0 => DataType::FixedSizeBinary(bytes[3] as i32),
-                    1 => DataType::UInt8,
-                    2 => DataType::Int8,
-                    3 => DataType::UInt16,
-                    4 => DataType::Int16,
-                    5 => DataType::UInt32,
-                    6 => DataType::Int32,
-                    7 => DataType::UInt64,
-                    8 => DataType::Int64,
-                    9 => DataType::Float32,
-                    10 => DataType::Float64,
-                    11..=30 => {
-                        return Err(ArrowError::ExternalError(
-                            "deprecated extra bytes data type".into(),
-                        ));
-                    }
-                    31..=255 => {
-                        return Err(ArrowError::ExternalError(
-                            "reserved extra bytes data type".into(),
-                        ));
-                    }
+            let data_type = match bytes[2] {
+                0 => DataType::FixedSizeBinary(bytes[3] as i32),
+                1 => DataType::UInt8,
+                2 => DataType::Int8,
+                3 => DataType::UInt16,
+                4 => DataType::Int16,
+                5 => DataType::UInt32,
+                6 => DataType::Int32,
+                7 => DataType::UInt64,
+                8 => DataType::Int64,
+                9 => DataType::Float32,
+                10 => DataType::Float64,
+                11..=30 => {
+                    return Err(ArrowError::ExternalError(
+                        "deprecated extra bytes data type".into(),
+                    ));
+                }
+                31..=255 => {
+                    return Err(ArrowError::ExternalError(
+                        "reserved extra bytes data type".into(),
+                    ));
                 }
             };
 
