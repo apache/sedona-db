@@ -51,6 +51,83 @@ use crate::{
 /// Type alias for build and probe execution plans
 type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPlan>);
 
+struct JoinPushdownData {
+    projected_left_child: ProjectionExec,
+    projected_right_child: ProjectionExec,
+    join_filter: Option<JoinFilter>,
+    join_on: SpatialPredicate,
+}
+
+fn try_pushdown_through_join(
+    projection: &ProjectionExec,
+    join_left: &Arc<dyn ExecutionPlan>,
+    join_right: &Arc<dyn ExecutionPlan>,
+    join_schema: &SchemaRef,
+    join_type: JoinType,
+    join_filter: Option<&JoinFilter>,
+    join_on: &SpatialPredicate,
+) -> Result<Option<JoinPushdownData>> {
+    let Some(projection_as_columns) = physical_to_column_exprs(projection.expr()) else {
+        return Ok(None);
+    };
+
+    // Mark joins produce a synthetic column that does not belong to either child.
+    if matches!(join_type, JoinType::LeftMark | JoinType::RightMark) {
+        return Ok(None);
+    }
+
+    let (far_right_left_col_ind, far_left_right_col_ind) =
+        join_table_borders(join_left.schema().fields().len(), &projection_as_columns);
+
+    if !join_allows_pushdown(
+        &projection_as_columns,
+        join_schema,
+        far_right_left_col_ind,
+        far_left_right_col_ind,
+    ) {
+        return Ok(None);
+    }
+
+    let (projected_left_child, projected_right_child) = new_join_children(
+        &projection_as_columns,
+        far_right_left_col_ind,
+        far_left_right_col_ind,
+        join_left,
+        join_right,
+    )?;
+
+    let new_filter = if let Some(filter) = join_filter {
+        let left_cols = &projection_as_columns[0..=far_right_left_col_ind as usize];
+        let right_cols = &projection_as_columns[far_left_right_col_ind as usize..];
+        match update_join_filter(
+            left_cols,
+            right_cols,
+            filter,
+            join_left.schema().fields().len(),
+        ) {
+            Some(updated) => Some(updated),
+            None => return Ok(None),
+        }
+    } else {
+        None
+    };
+
+    let projected_left_exprs = projected_left_child.expr();
+    let projected_right_exprs = projected_right_child.expr();
+    let Some(new_on) =
+        join_on.update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(JoinPushdownData {
+        projected_left_child,
+        projected_right_child,
+        join_filter: new_filter,
+        join_on: new_on,
+    }))
+}
+
 /// Determine the correct build/probe execution plan assignment for KNN joins.
 ///
 /// For KNN joins, we need to determine which execution plan should be used as the build side
@@ -383,76 +460,33 @@ impl ExecutionPlan for SpatialJoinExec {
             return Ok(None);
         }
 
-        // TODO: mark joins make `new_join_children` below fail since the projection contains
-        // a mark column, which is not a direct column from left or right child. `new_join_children`
-        // is not designed to handle this case. We need to improve it later.
-        match self.join_type {
-            JoinType::LeftMark | JoinType::RightMark => {
-                return try_embed_projection(projection, self)
-            }
-            _ => {}
-        }
-
-        // Try full pushdown first, and fall back to embedding.
-        let Some(projection_as_columns) = physical_to_column_exprs(projection.expr()) else {
-            return try_embed_projection(projection, self);
-        };
-
-        let (far_right_left_col_ind, far_left_right_col_ind) =
-            join_table_borders(self.left.schema().fields().len(), &projection_as_columns);
-
-        if !join_allows_pushdown(
-            &projection_as_columns,
-            &self.join_schema,
-            far_right_left_col_ind,
-            far_left_right_col_ind,
-        ) {
-            return try_embed_projection(projection, self);
-        }
-
-        let (projected_left_child, projected_right_child) = new_join_children(
-            &projection_as_columns,
-            far_right_left_col_ind,
-            far_left_right_col_ind,
+        if let Some(JoinPushdownData {
+            projected_left_child,
+            projected_right_child,
+            join_filter,
+            join_on,
+        }) = try_pushdown_through_join(
+            projection,
             &self.left,
             &self.right,
-        )?;
-
-        let new_filter = if let Some(filter) = self.filter.as_ref() {
-            let left_cols = &projection_as_columns[0..=far_right_left_col_ind as usize];
-            let right_cols = &projection_as_columns[far_left_right_col_ind as usize..];
-            match update_join_filter(
-                left_cols,
-                right_cols,
-                filter,
-                self.left.schema().fields().len(),
-            ) {
-                Some(updated) => Some(updated),
-                None => return try_embed_projection(projection, self),
-            }
+            &self.join_schema,
+            self.join_type,
+            self.filter.as_ref(),
+            &self.on,
+        )? {
+            let new_exec = SpatialJoinExec::try_new_internal(
+                Arc::new(projected_left_child),
+                Arc::new(projected_right_child),
+                join_on,
+                join_filter,
+                &self.join_type,
+                None,
+                self.seed,
+            )?;
+            Ok(Some(Arc::new(new_exec)))
         } else {
-            None
-        };
-
-        let projected_left_exprs = projected_left_child.expr();
-        let projected_right_exprs = projected_right_child.expr();
-        let Some(new_on) = self
-            .on
-            .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
-        else {
-            return try_embed_projection(projection, self);
-        };
-
-        let new_exec = SpatialJoinExec::try_new_internal(
-            Arc::new(projected_left_child),
-            Arc::new(projected_right_child),
-            new_on,
-            new_filter,
-            &self.join_type,
-            None,
-            self.seed,
-        )?;
-        Ok(Some(Arc::new(new_exec)))
+            try_embed_projection(projection, self)
+        }
     }
 
     fn with_new_children(
@@ -579,6 +613,7 @@ mod tests {
     use datafusion_physical_expr::expressions::Column;
     use datafusion_physical_plan::empty::EmptyExec;
     use datafusion_physical_plan::joins::NestedLoopJoinExec;
+    use datafusion_physical_plan::projection::ProjectionExpr;
     use geo::{Distance, Euclidean};
     use geo_types::{Coord, Rect};
     use rstest::rstest;
@@ -594,6 +629,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
 
     fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
         Arc::new(Schema::new(
