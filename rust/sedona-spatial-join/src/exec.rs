@@ -600,33 +600,16 @@ impl EmbeddedProjection for SpatialJoinExec {
 }
 
 #[cfg(test)]
-mod tests {
-    use arrow_array::{Array, RecordBatch};
+mod exec_transform_tests {
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::{
-        catalog::{MemTable, TableProvider},
-        execution::SessionStateBuilder,
-        prelude::{SessionConfig, SessionContext},
-    };
     use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-    use datafusion_expr::ColumnarValue;
+    use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
     use datafusion_physical_plan::empty::EmptyExec;
-    use datafusion_physical_plan::joins::NestedLoopJoinExec;
-    use datafusion_physical_plan::projection::ProjectionExpr;
-    use geo::{Distance, Euclidean};
-    use geo_types::{Coord, Rect};
-    use rstest::rstest;
-    use sedona_geo::to_geo::GeoTypesExecutor;
-    use sedona_geometry::types::GeometryTypeId;
-    use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
-    use sedona_testing::datagen::RandomPartitionedDataBuilder;
-    use tokio::sync::OnceCell;
+    use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
+    use datafusion_physical_plan::ExecutionPlan;
 
-    use sedona_common::{
-        option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
-        SpatialLibrary,
-    };
+    use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
     use super::*;
     use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
@@ -648,11 +631,59 @@ mod tests {
         (Arc::new(Column::new(&name, index)), name)
     }
 
+    fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
+        let mut spatial_join_execs = Vec::new();
+        plan.apply(|node| {
+            if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+                spatial_join_execs.push(spatial_join_exec);
+            }
+            Ok(TreeNodeRecursion::Continue)
+        })?;
+        Ok(spatial_join_execs)
+    }
+
+    #[test]
+    fn test_mark_join_projection_pushdown_is_graceful() -> Result<()> {
+        let left_schema = make_schema(&[("l", DataType::Int32)]);
+        let right_schema = make_schema(&[("r", DataType::Int32)]);
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l", 0)),
+            Arc::new(Column::new("r", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let join = SpatialJoinExec::try_new(
+            left,
+            right,
+            on,
+            None,
+            &JoinType::LeftMark,
+            None,
+            &SpatialJoinOptions::default(),
+        )?;
+
+        let projection = ProjectionExec::try_new(
+            vec![ProjectionExpr {
+                expr: Arc::new(Column::new("mark", 1)),
+                alias: "mark".to_string(),
+            }],
+            Arc::new(join),
+        )?;
+
+        let swapped = projection
+            .input()
+            .try_swapping_with_projection(&projection)?;
+        assert!(swapped.is_some());
+
+        Ok(())
+    }
+
     #[test]
     fn test_try_swapping_with_projection_pushes_down_and_rewrites_relation_predicate() -> Result<()>
     {
-        use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
-
         // left: [l0, l1, l2], right: [r0, r1]
         let left_schema = make_schema(&[
             ("l0", DataType::Int32),
