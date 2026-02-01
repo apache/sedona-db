@@ -178,45 +178,42 @@ pub(super) fn record_decompressor<'a, R: Read + Seek + Send + Sync + 'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Cursor, sync::Arc};
+    use std::{fs::File, sync::Arc};
 
     use datafusion_datasource::PartitionedFile;
     use las::{point::Format, Builder, Point, Writer};
-    use object_store::{memory::InMemory, path::Path, ObjectStore, PutPayload};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
     use crate::laz::reader::LazFileReaderFactory;
 
-    #[allow(static_mut_refs)]
     #[tokio::test]
     async fn reader_basic_e2e() {
-        // create laz file
-        static mut LAZ: Vec<u8> = Vec::new();
+        let tmpdir = tempfile::tempdir().unwrap();
 
+        let tmp_path = tmpdir.path().join("tmp.laz");
+        let tmp_file = File::create(&tmp_path).unwrap();
+
+        // create laz file
         let mut builder = Builder::from((1, 4));
         builder.point_format = Format::new(1).unwrap();
         builder.point_format.is_compressed = true;
         let header = builder.into_header().unwrap();
-        let write = unsafe { Cursor::new(&mut LAZ) };
-        let mut writer = Writer::new(write, header).unwrap();
-
+        let mut writer = Writer::new(tmp_file, header).unwrap();
         let point = Point {
             gps_time: Some(Default::default()),
             ..Default::default()
         };
         writer.write_point(point).unwrap();
-
         writer.close().unwrap();
 
-        // put to object store
-        let store = InMemory::new();
-        let location = Path::parse("test.laz").unwrap();
-        let payload = unsafe { PutPayload::from_static(&LAZ) };
-        store.put(&location, payload).await.unwrap();
-
         // read batch with `LazFileReader`
+        let store = LocalFileSystem::new();
+        let location = Path::from_filesystem_path(tmp_path).unwrap();
+        let object = store.head(&location).await.unwrap();
+
         let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
             .create_reader(
-                PartitionedFile::new(location, unsafe { LAZ.len() as u64 }),
+                PartitionedFile::new(location, object.size),
                 Default::default(),
             )
             .unwrap();

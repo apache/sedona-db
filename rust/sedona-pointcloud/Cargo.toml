@@ -53,4 +53,5 @@ sedona-expr = { workspace = true }
 sedona-geometry = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true }

@@ -407,41 +407,37 @@ pub(crate) async fn chunk_table(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::fs::File;
 
     use las::{point::Format, Builder, Reader, Writer};
-    use object_store::{memory::InMemory, path::Path, ObjectStore, PutPayload};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
     use crate::laz::metadata::LazMetadataReader;
 
     #[allow(static_mut_refs)]
     #[tokio::test]
     async fn header_basic_e2e() {
-        // create laz file
-        static mut LAZ: Vec<u8> = Vec::new();
+        let tmpdir = tempfile::tempdir().unwrap();
 
+        let tmp_path = tmpdir.path().join("tmp.laz");
+        let tmp_file = File::create(&tmp_path).unwrap();
+
+        // create laz file
         let mut builder = Builder::from((1, 4));
         builder.point_format = Format::new(1).unwrap();
         builder.point_format.is_compressed = true;
         let header = builder.into_header().unwrap();
-        let write = unsafe { Cursor::new(&mut LAZ) };
-        let mut writer = Writer::new(write, header).unwrap();
-
+        let mut writer = Writer::new(tmp_file, header).unwrap();
         writer.close().unwrap();
 
-        // put to object store
-        let store = InMemory::new();
-        let location = Path::parse("test.laz").unwrap();
-        let payload = unsafe { PutPayload::from_static(&LAZ) };
-        store.put(&location, payload).await.unwrap();
-
         // read with `LazMetadataReader`
+        let store = LocalFileSystem::new();
+        let location = Path::from_filesystem_path(&tmp_path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
         let metadata_reader = LazMetadataReader::new(&store, &object_meta);
 
         // read with las `Reader`
-        let read = unsafe { Cursor::new(&mut LAZ) };
-        let reader = Reader::new(read).unwrap();
+        let reader = Reader::from_path(&tmp_path).unwrap();
 
         assert_eq!(
             reader.header(),
