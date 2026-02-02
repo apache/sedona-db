@@ -37,7 +37,7 @@ use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
-    spatial_predicate::{KNNPredicate, SpatialPredicate},
+    spatial_predicate::{KNNPredicate, SpatialPredicate, SpatialPredicateTrait},
     stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
     utils::{
         join_utils::{
@@ -71,7 +71,9 @@ fn try_pushdown_through_join(
         return Ok(None);
     };
 
-    // Mark joins produce a synthetic column that does not belong to either child.
+    // Mark joins produce a synthetic column that does not belong to either child. This synthetic
+    // `mark` column will make `new_join_children` fail, so we skip pushdown for such joins.
+    // This limitation if inherited from DataFusion's builtin `try_pushdown_through_join`.
     if matches!(join_type, JoinType::LeftMark | JoinType::RightMark) {
         return Ok(None);
     }
