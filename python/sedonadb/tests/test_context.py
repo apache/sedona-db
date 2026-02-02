@@ -135,9 +135,10 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     src = tmp_path / "plain.parquet"
     pq.write_table(table, src)
 
-    # Test 0: no geo metadata if `geometry_columns` option is not provided.
-    maybe_metadata = _parse_geo_metadata(src)
-    assert maybe_metadata is None
+    # GeoParquet metadata should not be present.
+    metadata = pq.read_metadata(src).metadata
+    assert metadata is not None
+    assert b"geo" not in metadata
 
     # Test 1: when adding a new geometry column, `encoding` must be provided.
     geometry_columns = json.dumps({"geom": {"crs": "EPSG:4326"}})

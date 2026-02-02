@@ -141,10 +141,7 @@ impl GeoParquetBboxCovering {
         column_metadata: &GeoParquetColumnMetadata,
     ) -> Option<Self> {
         use GeoParquetColumnEncoding::*;
-        let encoding = match column_metadata.encoding {
-            Some(encoding) => encoding,
-            None => return None,
-        };
+        let encoding = column_metadata.encoding?;
         let (x, y) = match encoding {
             WKB => return None,
             Point => {

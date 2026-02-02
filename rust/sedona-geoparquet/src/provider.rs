@@ -216,7 +216,7 @@ impl GeoParquetReadOptions<'_> {
 fn parse_geometry_columns_json(
     geometry_columns_json: &str,
 ) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
-    let mut columns: HashMap<String, GeoParquetColumnMetadata> =
+    let columns: HashMap<String, GeoParquetColumnMetadata> =
         match serde_json::from_str(geometry_columns_json) {
             Ok(columns) => columns,
             Err(e) => return plan_err!("geometry_columns must be valid JSON: {e}"),
