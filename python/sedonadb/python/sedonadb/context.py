@@ -189,9 +189,6 @@ class SedonaContext:
             >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
             >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
-            >>> geometry_columns = '{"geometry": {"encoding": "WKB", "crs": "EPSG:4326", "edges": "planar"}}'
-            >>> sd.read_parquet(url, geometry_columns=geometry_columns)
-
         """
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
