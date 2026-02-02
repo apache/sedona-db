@@ -27,6 +27,7 @@ use arrow::buffer::NullBuffer;
 use arrow::compute::{self, take};
 use arrow::datatypes::{ArrowNativeType, Schema, UInt32Type, UInt64Type};
 use arrow_array::{ArrowPrimitiveType, NativeAdapter, PrimitiveArray, UInt32Array, UInt64Array};
+use arrow_schema::SchemaRef;
 use datafusion_common::cast::as_boolean_array;
 use datafusion_common::{JoinSide, Result};
 use datafusion_expr::JoinType;
@@ -35,7 +36,14 @@ use datafusion_physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion_physical_plan::joins::utils::{
     adjust_right_output_partitioning, ColumnIndex, JoinFilter,
 };
+use datafusion_physical_plan::projection::{
+    join_allows_pushdown, join_table_borders, new_join_children, physical_to_column_exprs,
+    update_join_filter, ProjectionExec,
+};
 use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties};
+
+use crate::spatial_predicate::SpatialPredicateTrait;
+use crate::SpatialPredicate;
 
 /// Some type `join_type` of join need to maintain the matched indices bit map for the left side, and
 /// use the bit map to generate the part of result of the join.
@@ -814,6 +822,89 @@ pub(crate) fn compute_join_emission_type(
     }
 }
 
+/// Data required to push down a projection through a spatial join.
+/// This is mostly taken from https://github.com/apache/datafusion/blob/51.0.0/datafusion/physical-plan/src/projection.rs
+pub(crate) struct JoinPushdownData {
+    pub projected_left_child: ProjectionExec,
+    pub projected_right_child: ProjectionExec,
+    pub join_filter: Option<JoinFilter>,
+    pub join_on: SpatialPredicate,
+}
+
+/// Push down the given `projection` through the spatial join.
+/// This code is adapted from https://github.com/apache/datafusion/blob/51.0.0/datafusion/physical-plan/src/projection.rs
+pub(crate) fn try_pushdown_through_join(
+    projection: &ProjectionExec,
+    join_left: &Arc<dyn ExecutionPlan>,
+    join_right: &Arc<dyn ExecutionPlan>,
+    join_schema: &SchemaRef,
+    join_type: JoinType,
+    join_filter: Option<&JoinFilter>,
+    join_on: &SpatialPredicate,
+) -> Result<Option<JoinPushdownData>> {
+    let Some(projection_as_columns) = physical_to_column_exprs(projection.expr()) else {
+        return Ok(None);
+    };
+
+    // Mark joins produce a synthetic column that does not belong to either child. This synthetic
+    // `mark` column will make `new_join_children` fail, so we skip pushdown for such joins.
+    // This limitation if inherited from DataFusion's builtin `try_pushdown_through_join`.
+    if matches!(join_type, JoinType::LeftMark | JoinType::RightMark) {
+        return Ok(None);
+    }
+
+    let (far_right_left_col_ind, far_left_right_col_ind) =
+        join_table_borders(join_left.schema().fields().len(), &projection_as_columns);
+
+    if !join_allows_pushdown(
+        &projection_as_columns,
+        join_schema,
+        far_right_left_col_ind,
+        far_left_right_col_ind,
+    ) {
+        return Ok(None);
+    }
+
+    let (projected_left_child, projected_right_child) = new_join_children(
+        &projection_as_columns,
+        far_right_left_col_ind,
+        far_left_right_col_ind,
+        join_left,
+        join_right,
+    )?;
+
+    let new_filter = if let Some(filter) = join_filter {
+        let left_cols = &projection_as_columns[0..=far_right_left_col_ind as usize];
+        let right_cols = &projection_as_columns[far_left_right_col_ind as usize..];
+        match update_join_filter(
+            left_cols,
+            right_cols,
+            filter,
+            join_left.schema().fields().len(),
+        ) {
+            Some(updated) => Some(updated),
+            None => return Ok(None),
+        }
+    } else {
+        None
+    };
+
+    let projected_left_exprs = projected_left_child.expr();
+    let projected_right_exprs = projected_right_child.expr();
+    let Some(new_on) =
+        join_on.update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(JoinPushdownData {
+        projected_left_child,
+        projected_right_child,
+        join_filter: new_filter,
+        join_on: new_on,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -822,11 +913,15 @@ mod tests {
     use arrow_schema::DataType;
     use arrow_schema::Field;
     use arrow_schema::SchemaRef;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::JoinType;
-    use datafusion_physical_expr::expressions::Column;
+    use datafusion_expr::Operator;
+    use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::EquivalenceProperties;
     use datafusion_physical_expr::Partitioning;
+    use datafusion_physical_expr::PhysicalExpr;
     use datafusion_physical_plan::empty::EmptyExec;
+    use datafusion_physical_plan::projection::ProjectionExpr;
     use datafusion_physical_plan::repartition::RepartitionExec;
     use datafusion_physical_plan::DisplayAs;
     use datafusion_physical_plan::DisplayFormatType;
@@ -970,6 +1065,8 @@ mod tests {
         }
     }
 
+    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
+
     fn make_schema(prefix: &str, num_fields: usize) -> SchemaRef {
         Arc::new(Schema::new(
             (0..num_fields)
@@ -997,6 +1094,59 @@ mod tests {
             }
             other => panic!("expected Hash partitioning, got {other:?}"),
         }
+    }
+
+    fn make_join_schema(left: &SchemaRef, right: &SchemaRef) -> SchemaRef {
+        let mut fields = Vec::with_capacity(left.fields().len() + right.fields().len());
+        fields.extend(left.fields().iter().cloned());
+        fields.extend(right.fields().iter().cloned());
+        Arc::new(Schema::new(fields))
+    }
+
+    fn make_join_projection(
+        join_schema: &SchemaRef,
+        indices: &[usize],
+        aliases: &[&str],
+    ) -> Result<ProjectionExec> {
+        assert_eq!(indices.len(), aliases.len());
+        let exprs = indices
+            .iter()
+            .zip(aliases.iter())
+            .map(|(index, alias)| {
+                let field = join_schema.field(*index);
+                ProjectionExpr {
+                    expr: Arc::new(Column::new(field.name(), *index)),
+                    alias: (*alias).to_string(),
+                }
+            })
+            .collect::<Vec<_>>();
+        ProjectionExec::try_new(exprs, Arc::new(EmptyExec::new(Arc::clone(join_schema))))
+    }
+
+    fn make_join_filter(
+        left_indices: Vec<usize>,
+        right_indices: Vec<usize>,
+        schema: SchemaRef,
+    ) -> JoinFilter {
+        let expression: Arc<dyn PhysicalExpr> = Arc::new(BinaryExpr::new(
+            Arc::new(Column::new(schema.field(0).name(), 0)),
+            Operator::Eq,
+            Arc::new(Column::new(schema.field(1).name(), 1)),
+        ));
+        JoinFilter::new(
+            expression,
+            JoinFilter::build_column_indices(left_indices, right_indices),
+            schema,
+        )
+    }
+
+    fn assert_is_column_expr(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
+        let col = expr
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column");
+        assert_eq!(col.name(), name);
+        assert_eq!(col.index(), index);
     }
 
     #[derive(Debug, Clone)]
@@ -1353,5 +1503,240 @@ mod tests {
             compute_join_emission_type(&left, &right, JoinType::Full, JoinSide::Right),
             EmissionType::Both
         );
+    }
+
+    #[test]
+    fn try_pushdown_through_join_updates_children_filter_and_predicate() -> Result<()> {
+        let left_schema = make_schema("l", 2);
+        let right_schema = make_schema("r", 2);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let projection = make_join_projection(&join_schema, &[1, 2], &["l1_out", "r0_out"])?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l1", 1)),
+            Arc::new(Column::new("r0", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let filter_schema = Arc::new(Schema::new(vec![
+            Field::new("l1", DataType::Int32, true),
+            Field::new("r0", DataType::Int32, true),
+        ]));
+        let join_filter = make_join_filter(vec![1], vec![0], filter_schema);
+
+        let pushdown = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::Inner,
+            Some(&join_filter),
+            &join_on,
+        )?
+        .expect("expected pushdown");
+
+        assert_eq!(pushdown.projected_left_child.expr().len(), 1);
+        let left_proj = &pushdown.projected_left_child.expr()[0];
+        assert_eq!(left_proj.alias, "l1_out");
+        let left_col = left_proj
+            .expr
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column");
+        assert_eq!(left_col.name(), "l1");
+        assert_eq!(left_col.index(), 1);
+
+        assert_eq!(pushdown.projected_right_child.expr().len(), 1);
+        let right_proj = &pushdown.projected_right_child.expr()[0];
+        assert_eq!(right_proj.alias, "r0_out");
+        let right_col = right_proj
+            .expr
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column");
+        assert_eq!(right_col.name(), "r0");
+        assert_eq!(right_col.index(), 0);
+
+        let updated_filter = pushdown.join_filter.expect("expected updated filter");
+        let indices = updated_filter.column_indices();
+        assert_eq!(indices.len(), 2);
+        assert_eq!(indices[0].side, JoinSide::Left);
+        assert_eq!(indices[0].index, 0);
+        assert_eq!(indices[1].side, JoinSide::Right);
+        assert_eq!(indices[1].index, 0);
+
+        let SpatialPredicate::Relation(updated_on) = pushdown.join_on else {
+            unreachable!("expected relation predicate")
+        };
+        assert_is_column_expr(&updated_on.left, "l1_out", 0);
+        assert_is_column_expr(&updated_on.right, "r0_out", 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn try_pushdown_through_join_skips_mark_join() -> Result<()> {
+        let left_schema = make_schema("l", 1);
+        let right_schema = make_schema("r", 1);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+        let projection = make_join_projection(&join_schema, &[0, 1], &["l0", "r0"])?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l0", 0)),
+            Arc::new(Column::new("r0", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let result = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::LeftMark,
+            None,
+            &join_on,
+        )?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn try_pushdown_through_join_requires_column_projection() -> Result<()> {
+        let left_schema = make_schema("l", 1);
+        let right_schema = make_schema("r", 1);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let projection = ProjectionExec::try_new(
+            vec![ProjectionExpr {
+                expr: Arc::new(Literal::new(ScalarValue::Int32(Some(1)))),
+                alias: "lit".to_string(),
+            }],
+            Arc::new(EmptyExec::new(Arc::clone(&join_schema))),
+        )?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l0", 0)),
+            Arc::new(Column::new("r0", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let result = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::Inner,
+            None,
+            &join_on,
+        )?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn try_pushdown_through_join_requires_projection_narrowing() -> Result<()> {
+        let left_schema = make_schema("l", 2);
+        let right_schema = make_schema("r", 2);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let projection =
+            make_join_projection(&join_schema, &[0, 1, 2, 3], &["l0", "l1", "r0", "r1"])?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l0", 0)),
+            Arc::new(Column::new("r0", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let result = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::Inner,
+            None,
+            &join_on,
+        )?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn try_pushdown_through_join_fails_when_filter_columns_missing() -> Result<()> {
+        let left_schema = make_schema("l", 2);
+        let right_schema = make_schema("r", 2);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let projection = make_join_projection(&join_schema, &[1, 3], &["l1_out", "r1_out"])?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l1", 1)),
+            Arc::new(Column::new("r1", 1)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let filter_schema = Arc::new(Schema::new(vec![
+            Field::new("l1", DataType::Int32, true),
+            Field::new("r0", DataType::Int32, true),
+        ]));
+        let join_filter = make_join_filter(vec![1], vec![0], filter_schema);
+
+        let result = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::Inner,
+            Some(&join_filter),
+            &join_on,
+        )?;
+        assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn try_pushdown_through_join_fails_when_predicate_columns_missing() -> Result<()> {
+        let left_schema = make_schema("l", 2);
+        let right_schema = make_schema("r", 2);
+        let join_schema = make_join_schema(&left_schema, &right_schema);
+        let join_left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let join_right: Arc<dyn ExecutionPlan> =
+            Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let projection = make_join_projection(&join_schema, &[1, 3], &["l1_out", "r1_out"])?;
+
+        let join_on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("l1", 1)),
+            Arc::new(Column::new("r0", 0)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let result = try_pushdown_through_join(
+            &projection,
+            &join_left,
+            &join_right,
+            &join_schema,
+            JoinType::Inner,
+            None,
+            &join_on,
+        )?;
+        assert!(result.is_none());
+        Ok(())
     }
 }

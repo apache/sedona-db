@@ -26,10 +26,7 @@ use datafusion_physical_plan::{
     joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
     joins::utils::{reorder_output_after_swap, swap_join_projection},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    projection::{
-        join_allows_pushdown, join_table_borders, new_join_children, physical_to_column_exprs,
-        try_embed_projection, update_join_filter, EmbeddedProjection, ProjectionExec,
-    },
+    projection::{try_embed_projection, EmbeddedProjection, ProjectionExec},
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use parking_lot::Mutex;
@@ -42,7 +39,7 @@ use crate::{
     utils::{
         join_utils::{
             asymmetric_join_output_partitioning, boundedness_from_children,
-            compute_join_emission_type,
+            compute_join_emission_type, try_pushdown_through_join, JoinPushdownData,
         },
         once_fut::OnceAsync,
     },
@@ -50,85 +47,6 @@ use crate::{
 
 /// Type alias for build and probe execution plans
 type BuildProbePlans<'a> = (&'a Arc<dyn ExecutionPlan>, &'a Arc<dyn ExecutionPlan>);
-
-struct JoinPushdownData {
-    projected_left_child: ProjectionExec,
-    projected_right_child: ProjectionExec,
-    join_filter: Option<JoinFilter>,
-    join_on: SpatialPredicate,
-}
-
-fn try_pushdown_through_join(
-    projection: &ProjectionExec,
-    join_left: &Arc<dyn ExecutionPlan>,
-    join_right: &Arc<dyn ExecutionPlan>,
-    join_schema: &SchemaRef,
-    join_type: JoinType,
-    join_filter: Option<&JoinFilter>,
-    join_on: &SpatialPredicate,
-) -> Result<Option<JoinPushdownData>> {
-    let Some(projection_as_columns) = physical_to_column_exprs(projection.expr()) else {
-        return Ok(None);
-    };
-
-    // Mark joins produce a synthetic column that does not belong to either child. This synthetic
-    // `mark` column will make `new_join_children` fail, so we skip pushdown for such joins.
-    // This limitation if inherited from DataFusion's builtin `try_pushdown_through_join`.
-    if matches!(join_type, JoinType::LeftMark | JoinType::RightMark) {
-        return Ok(None);
-    }
-
-    let (far_right_left_col_ind, far_left_right_col_ind) =
-        join_table_borders(join_left.schema().fields().len(), &projection_as_columns);
-
-    if !join_allows_pushdown(
-        &projection_as_columns,
-        join_schema,
-        far_right_left_col_ind,
-        far_left_right_col_ind,
-    ) {
-        return Ok(None);
-    }
-
-    let (projected_left_child, projected_right_child) = new_join_children(
-        &projection_as_columns,
-        far_right_left_col_ind,
-        far_left_right_col_ind,
-        join_left,
-        join_right,
-    )?;
-
-    let new_filter = if let Some(filter) = join_filter {
-        let left_cols = &projection_as_columns[0..=far_right_left_col_ind as usize];
-        let right_cols = &projection_as_columns[far_left_right_col_ind as usize..];
-        match update_join_filter(
-            left_cols,
-            right_cols,
-            filter,
-            join_left.schema().fields().len(),
-        ) {
-            Some(updated) => Some(updated),
-            None => return Ok(None),
-        }
-    } else {
-        None
-    };
-
-    let projected_left_exprs = projected_left_child.expr();
-    let projected_right_exprs = projected_right_child.expr();
-    let Some(new_on) =
-        join_on.update_for_child_projections(projected_left_exprs, projected_right_exprs)?
-    else {
-        return Ok(None);
-    };
-
-    Ok(Some(JoinPushdownData {
-        projected_left_child,
-        projected_right_child,
-        join_filter: new_filter,
-        join_on: new_on,
-    }))
-}
 
 /// Determine the correct build/probe execution plan assignment for KNN joins.
 ///
