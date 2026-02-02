@@ -126,7 +126,7 @@ class SedonaContext:
         self,
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
-        geometry_columns: Optional[Dict[str, Union[str, Dict[str, Any]]]] = None,
+        geometry_columns: Optional[str] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -135,29 +135,49 @@ class SedonaContext:
                 files.
             options: Optional dictionary of options to pass to the Parquet reader.
                 For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
-            geometry_columns: Optional mapping of column name to GeoParquet column
-                metadata (e.g., {"geom": {"encoding": "WKB"}}). Use this to mark
-                binary WKB columns as geometry columns. Supported keys:
-                - encoding: "WKB" (required)
-                - crs: string (e.g., "EPSG:4326") or integer SRID (e.g., 4326).
-                  If not provided, the default CRS is OGC:CRS84
-                  (https://www.opengis.net/def/crs/OGC/1.3/CRS84), which means
-                  the data in this column must be stored in longitude/latitude
-                  based on the WGS84 datum.
+            geometry_columns: Optional JSON string mapping column name to
+                GeoParquet column metadata (e.g.,
+                '{"geom": {"encoding": "WKB"}}'). Use this to mark binary WKB
+                columns as geometry columns or correct metadata such as the
+                column CRS.
+
+                Supported keys (others in the spec are not implemented):
+                - encoding: "WKB" (required if the column is not already geometry)
+                - crs: (e.g., "EPSG:4326")
                 - edges: "planar" (default) or "spherical"
+                See spec for details: https://geoparquet.org/releases/v1.1.0/
 
                 Useful for:
                 - Legacy Parquet files with Binary columns containing WKB payloads.
                 - Overriding GeoParquet metadata when fields like `crs` are missing.
 
                 Precedence:
-                - If a column appears in both GeoParquet metadata and this option,
-                  the geometry_columns entry takes precedence.
+                - GeoParquet metadata is used to infer geometry columns first.
+                - geometry_columns then overrides the auto-inferred schema:
+                  - If a column is not geometry in metadata but appears in
+                    geometry_columns, it is treated as a geometry column.
+                  - If a column is geometry in metadata and also appears in
+                    geometry_columns, only the provided keys override; other
+                    fields remain as inferred. If a key already exists in metadata
+                    and is provided again with a different value, an error is
+                    returned.
 
                 Example:
                 - For `geo.parquet(geo1: geometry, geo2: geometry, geo3: binary)`,
-                  `read_parquet("geo.parquet", geometry_columns={"geo2": {...}, "geo3": ...})`
-                  will override `geo2` metadata and treat `geo3` as a geometry column.
+                  `read_parquet("geo.parquet", geometry_columns='{"geo2": {"encoding": "WKB"}, "geo3": {"encoding": "WKB"}}')`
+                  overrides `geo2` metadata and treats `geo3` as a geometry column.
+                - If `geo` inferred from metadata has:
+                  - `geo: {"encoding": "wkb", "crs": None, "edges": "spherical"...}`
+                  and geometry_columns provides:
+                  - `geo: {"crs": 4326}`
+                  then the result is (only override provided keys):
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326", "edges": "spherical"...}`
+                - If `geo` inferred from metadata has:
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326"}`
+                  and geometry_columns provides:
+                  - `geo: {"crs": "EPSG:3857"}`
+                  an error is returned for a conflicting key. This option is only
+                  allowed to provide missing optional fields in geometry columns.
 
                 Safety:
                 - Columns specified here are not validated for WKB correctness.
@@ -169,12 +189,8 @@ class SedonaContext:
             >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
             >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
-            >>> sd.read_parquet(
-            ...     url,
-            ...     geometry_columns={
-            ...         "geometry": {"encoding": "WKB", "crs": "EPSG:4326", "edges": "planar"}
-            ...     },
-            ... )
+            >>> geometry_columns = '{"geometry": {"encoding": "WKB", "crs": "EPSG:4326", "edges": "planar"}}'
+            >>> sd.read_parquet(url, geometry_columns=geometry_columns)
 
         """
         if isinstance(table_paths, (str, Path)):

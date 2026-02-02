@@ -15,10 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use datafusion::config::TableParquetOptions;
 use datafusion_common::{plan_err, DataFusionError};
+
+use crate::metadata::GeoParquetColumnMetadata;
 
 /// [TableParquetOptions] wrapper with GeoParquet-specific options
 #[derive(Debug, Default, Clone)]
@@ -30,6 +32,8 @@ pub struct TableGeoParquetOptions {
     /// When writing [GeoParquetVersion::V1_1], use `true` to overwrite existing
     /// bounding box columns.
     pub overwrite_bbox_columns: bool,
+    /// Optional geometry column metadata overrides for schema inference.
+    pub geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl TableGeoParquetOptions {

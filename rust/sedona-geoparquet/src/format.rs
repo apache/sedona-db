@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, sync::Arc};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
@@ -49,7 +53,7 @@ use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
-    metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
+    metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
@@ -146,6 +150,114 @@ impl GeoParquetFormat {
     }
 }
 
+/// See `merge_geometry_columns(..)` for the override rule
+fn apply_option_override<T: PartialEq + Clone>(
+    column_name: &str,
+    field: &str,
+    existing: &mut Option<T>,
+    override_value: &Option<T>,
+) -> Result<()> {
+    let Some(override_value) = override_value.as_ref() else {
+        return Ok(());
+    };
+
+    match existing.as_ref() {
+        Some(existing_value) => {
+            if existing_value != override_value {
+                return plan_err!(
+                    "Geometry column '{column_name}' override conflicts with existing '{field}' value"
+                );
+            }
+        }
+        None => {
+            *existing = Some(override_value.clone());
+        }
+    }
+
+    Ok(())
+}
+
+/// See `merge_geometry_columns(..)` for the override rule
+fn apply_geometry_columns_override(
+    column_name: &str,
+    existing: &mut GeoParquetColumnMetadata,
+    override_meta: &GeoParquetColumnMetadata,
+) -> Result<()> {
+    apply_option_override(
+        column_name,
+        "encoding",
+        &mut existing.encoding,
+        &override_meta.encoding,
+    )?;
+    apply_option_override(column_name, "crs", &mut existing.crs, &override_meta.crs)?;
+    apply_option_override(
+        column_name,
+        "edges",
+        &mut existing.edges,
+        &override_meta.edges,
+    )?;
+    apply_option_override(
+        column_name,
+        "orientation",
+        &mut existing.orientation,
+        &override_meta.orientation,
+    )?;
+    apply_option_override(column_name, "bbox", &mut existing.bbox, &override_meta.bbox)?;
+    apply_option_override(
+        column_name,
+        "epoch",
+        &mut existing.epoch,
+        &override_meta.epoch,
+    )?;
+    apply_option_override(
+        column_name,
+        "covering",
+        &mut existing.covering,
+        &override_meta.covering,
+    )?;
+
+    if !override_meta.geometry_types.is_empty() {
+        if existing.geometry_types.is_empty() {
+            existing.geometry_types = override_meta.geometry_types.clone();
+        } else if existing.geometry_types != override_meta.geometry_types {
+            return plan_err!(
+                "Geometry column '{column_name}' override conflicts with existing 'geometry_types' value"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Merge geometry columns metadata.
+/// `overrides` columns may only provide additional data; for example,
+/// if `crs` is None (missing) in the `base` metadata, the combined
+/// metadata uses the `crs` field from `overrides`.
+///
+/// If conflicting field data is provided, returns a plan error.
+fn merge_geometry_columns(
+    base: &mut HashMap<String, GeoParquetColumnMetadata>,
+    overrides: &HashMap<String, GeoParquetColumnMetadata>,
+) -> Result<()> {
+    for (column_name, override_meta) in overrides {
+        match base.get_mut(column_name) {
+            Some(existing) => {
+                apply_geometry_columns_override(column_name, existing, override_meta)?
+            }
+            None => {
+                if override_meta.encoding.is_none() {
+                    return plan_err!(
+                        "Geometry column '{column_name}' missing required key 'encoding'"
+                    );
+                }
+                base.insert(column_name.clone(), override_meta.clone());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[async_trait]
 impl FileFormat for GeoParquetFormat {
     fn as_any(&self) -> &dyn Any {
@@ -167,6 +279,9 @@ impl FileFormat for GeoParquetFormat {
         self.inner().compression_type()
     }
 
+    /// Infer schema from GeoParquet metadata, then optionally override it using
+    /// user-provided geometry column options (see Python DataFrame API
+    /// `read_parquet(..)` `geometry_columns` for details).
     async fn infer_schema(
         &self,
         state: &dyn Session,
@@ -201,6 +316,8 @@ impl FileFormat for GeoParquetFormat {
             .try_collect()
             .await?;
 
+        // Combine multiple partitioned geoparquet files' metadata into a single one
+        // See comments in `try_update(..)` for the specific behaviors.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
             if let Some(kv) = metadata.file_metadata().key_value_metadata() {
@@ -222,38 +339,66 @@ impl FileFormat for GeoParquetFormat {
             }
         }
 
-        if let Some(geo_metadata) = geoparquet_metadata {
-            let new_fields: Result<Vec<_>> = inner_schema_without_metadata
-                .fields()
-                .iter()
-                .map(|field| {
-                    if let Some(geo_column) = geo_metadata.columns.get(field.name()) {
-                        match geo_column.encoding {
-                            GeoParquetColumnEncoding::WKB => {
-                                let extension = ExtensionType::new(
-                                    "geoarrow.wkb",
-                                    field.data_type().clone(),
-                                    Some(geo_column.to_geoarrow_metadata()?),
-                                );
-                                Ok(Arc::new(
-                                    extension.to_field(field.name(), field.is_nullable()),
-                                ))
-                            }
-                            _ => plan_err!(
-                                "Unsupported GeoParquet encoding: {}",
-                                geo_column.encoding
-                            ),
-                        }
-                    } else {
-                        Ok(field.clone())
-                    }
-                })
-                .collect();
+        // Geometry columns have been inferred from metadata, next combine column
+        // metadata from options with the inferred ones
+        let mut inferred_geo_cols = match geoparquet_metadata {
+            Some(geo_metadata) => geo_metadata.columns,
+            None => HashMap::new(),
+        };
 
-            Ok(Arc::new(Schema::new(new_fields?)))
-        } else {
-            Ok(inner_schema_without_metadata)
+        if let Some(geometry_columns) = &self.options.geometry_columns {
+            merge_geometry_columns(&mut inferred_geo_cols, geometry_columns)?;
         }
+
+        if inferred_geo_cols.is_empty() {
+            return Ok(inner_schema_without_metadata);
+        }
+
+        let mut remaining: HashSet<String> = inferred_geo_cols.keys().cloned().collect();
+        let new_fields: Result<Vec<_>> = inner_schema_without_metadata
+            .fields()
+            .iter()
+            .map(|field| {
+                if let Some(geo_column) = inferred_geo_cols.get(field.name()) {
+                    remaining.remove(field.name());
+                    let encoding = match geo_column.encoding {
+                        Some(encoding) => encoding,
+                        None => {
+                            return plan_err!(
+                                "GeoParquet column '{}' missing required field 'encoding'",
+                                field.name()
+                            )
+                        }
+                    };
+                    match encoding {
+                        GeoParquetColumnEncoding::WKB => {
+                            let extension = ExtensionType::new(
+                                "geoarrow.wkb",
+                                field.data_type().clone(),
+                                Some(geo_column.to_geoarrow_metadata()?),
+                            );
+                            Ok(Arc::new(
+                                extension.to_field(field.name(), field.is_nullable()),
+                            ))
+                        }
+                        _ => plan_err!("Unsupported GeoParquet encoding: {}", encoding),
+                    }
+                } else {
+                    Ok(field.clone())
+                }
+            })
+            .collect();
+
+        if !remaining.is_empty() {
+            let mut missing: Vec<_> = remaining.into_iter().collect();
+            missing.sort();
+            return plan_err!(
+                "Geometry columns not found in schema: {}",
+                missing.join(", ")
+            );
+        }
+
+        Ok(Arc::new(Schema::new(new_fields?)))
     }
 
     async fn infer_stats(

@@ -109,7 +109,7 @@ impl Display for GeoParquetColumnEncoding {
 ///
 /// Note: This technique to use the bounding box to improve spatial queries does not apply to
 /// geometries that cross the antimeridian. Such geometries are unsupported by this method.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GeoParquetBboxCovering {
     /// The path in the Parquet schema of the column that contains the xmin
     pub xmin: Vec<String>,
@@ -141,7 +141,11 @@ impl GeoParquetBboxCovering {
         column_metadata: &GeoParquetColumnMetadata,
     ) -> Option<Self> {
         use GeoParquetColumnEncoding::*;
-        let (x, y) = match column_metadata.encoding {
+        let encoding = match column_metadata.encoding {
+            Some(encoding) => encoding,
+            None => return None,
+        };
+        let (x, y) = match encoding {
             WKB => return None,
             Point => {
                 let x = vec![column_name.to_string(), "x".to_string()];
@@ -257,7 +261,7 @@ impl GeoParquetBboxCovering {
 /// The covering field specifies optional simplified representations of each geometry. The keys of
 /// the "covering" object MUST be a supported encoding. Currently the only supported encoding is
 /// "bbox" which specifies the names of bounding box columns
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GeoParquetCovering {
     /// Bounding-box covering
     pub bbox: GeoParquetBboxCovering,
@@ -304,12 +308,13 @@ impl Default for GeoParquetMetadata {
 }
 
 /// GeoParquet column metadata
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeoParquetColumnMetadata {
     /// Name of the geometry encoding format. As of GeoParquet 1.1, `"WKB"`, `"point"`,
     /// `"linestring"`, `"polygon"`, `"multipoint"`, `"multilinestring"`, and `"multipolygon"` are
     /// supported.
-    pub encoding: GeoParquetColumnEncoding,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<GeoParquetColumnEncoding>,
 
     /// The geometry types of all geometries, or an empty array if they are not known.
     ///
@@ -375,10 +380,40 @@ pub struct GeoParquetColumnMetadata {
     pub covering: Option<GeoParquetCovering>,
 }
 
+impl Default for GeoParquetColumnMetadata {
+    fn default() -> Self {
+        Self {
+            encoding: Some(GeoParquetColumnEncoding::WKB),
+            geometry_types: Default::default(),
+            crs: None,
+            orientation: None,
+            edges: None,
+            bbox: None,
+            epoch: None,
+            covering: None,
+        }
+    }
+}
+
 impl GeoParquetMetadata {
     /// Construct a [`GeoParquetMetadata`] from a JSON string
     pub fn try_new(metadata: &str) -> Result<Self> {
-        serde_json::from_str(metadata).map_err(|e| DataFusionError::Plan(e.to_string()))
+        let metadata: GeoParquetMetadata =
+            serde_json::from_str(metadata).map_err(|e| DataFusionError::Plan(e.to_string()))?;
+        metadata.assert_encoding_present()?;
+        Ok(metadata)
+    }
+
+    /// GeoParquet specification requires `encoding` column to be present
+    fn assert_encoding_present(&self) -> Result<()> {
+        for (column_name, column_meta) in &self.columns {
+            if column_meta.encoding.is_none() {
+                return Err(DataFusionError::Plan(format!(
+                    "GeoParquet column '{column_name}' missing required field 'encoding'"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Construct a [`GeoParquetMetadata`] from a [`ParquetMetaData`]
@@ -453,10 +488,19 @@ impl GeoParquetMetadata {
                 "Other GeoParquet metadata missing column {key}"
             )))?;
 
-            if left.encoding != right.encoding {
-                return Err(DataFusionError::Plan(format!(
-                    "Different GeoParquet encodings for column {key}"
-                )));
+            match (left.encoding, right.encoding) {
+                (Some(left_encoding), Some(right_encoding)) => {
+                    if left_encoding != right_encoding {
+                        return Err(DataFusionError::Plan(format!(
+                            "Different GeoParquet encodings for column {key}"
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(DataFusionError::Plan(format!(
+                        "GeoParquet column {key} missing required field 'encoding'"
+                    )));
+                }
             }
 
             match (left.crs.as_ref(), right.crs.as_ref()) {
@@ -568,7 +612,7 @@ mod test {
             "other_key": true
         }"#;
         let meta: GeoParquetColumnMetadata = serde_json::from_str(s).unwrap();
-        assert_eq!(meta.encoding, GeoParquetColumnEncoding::WKB);
+        assert_eq!(meta.encoding, Some(GeoParquetColumnEncoding::WKB));
         assert_eq!(
             meta.geometry_types.iter().next().unwrap(),
             GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy)

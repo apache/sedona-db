@@ -14,12 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
-use arrow_schema::{DataType, Schema, SchemaRef};
+use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::{
     config::TableOptions,
@@ -30,13 +27,10 @@ use datafusion::{
     execution::{options::ReadOptions, SessionState},
     prelude::{ParquetReadOptions, SessionConfig, SessionContext},
 };
-use datafusion_common::{exec_err, Result};
-
-use sedona_schema::extension_type::ExtensionType;
+use datafusion_common::{exec_err, plan_err, Result};
 
 use crate::{
-    format::GeoParquetFormat,
-    metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata},
+    format::GeoParquetFormat, metadata::GeoParquetColumnMetadata, options::TableGeoParquetOptions,
 };
 
 /// Create a [ListingTable] of GeoParquet (or normal Parquet) files
@@ -203,13 +197,14 @@ impl GeoParquetReadOptions<'_> {
         self.table_options.as_ref()
     }
 
-    /// Add geometry column metadata to apply during schema resolution
-    pub fn with_geometry_columns(
-        mut self,
-        geometry_columns: HashMap<String, GeoParquetColumnMetadata>,
-    ) -> Self {
+    /// Add geometry column metadata (JSON string) to apply during schema resolution
+    /// See python `read_parquet(..)` comments for details.
+    ///
+    /// Errors if invalid json configuration string is provided.
+    pub fn with_geometry_columns_json(mut self, geometry_columns_json: &str) -> Result<Self> {
+        let geometry_columns = parse_geometry_columns_json(geometry_columns_json)?;
         self.geometry_columns = Some(geometry_columns);
-        self
+        Ok(self)
     }
 
     /// Get the geometry columns metadata
@@ -218,65 +213,16 @@ impl GeoParquetReadOptions<'_> {
     }
 }
 
-fn apply_geometry_columns(
-    schema: SchemaRef,
-    geometry_columns: &HashMap<String, GeoParquetColumnMetadata>,
-) -> Result<SchemaRef> {
-    if geometry_columns.is_empty() {
-        return Ok(schema);
-    }
+fn parse_geometry_columns_json(
+    geometry_columns_json: &str,
+) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
+    let mut columns: HashMap<String, GeoParquetColumnMetadata> =
+        match serde_json::from_str(geometry_columns_json) {
+            Ok(columns) => columns,
+            Err(e) => return plan_err!("geometry_columns must be valid JSON: {e}"),
+        };
 
-    let mut remaining: HashSet<String> = geometry_columns.keys().cloned().collect();
-    let mut fields = Vec::with_capacity(schema.fields().len());
-
-    for field in schema.fields() {
-        if let Some(column_metadata) = geometry_columns.get(field.name()) {
-            remaining.remove(field.name());
-            match column_metadata.encoding {
-                GeoParquetColumnEncoding::WKB => {
-                    match field.data_type() {
-                        DataType::Binary | DataType::BinaryView => {}
-                        other => {
-                            return exec_err!(
-                                "Geometry column '{}' must be Binary or BinaryView, got {}",
-                                field.name(),
-                                other
-                            );
-                        }
-                    }
-
-                    let extension = ExtensionType::new(
-                        "geoarrow.wkb",
-                        field.data_type().clone(),
-                        Some(column_metadata.to_geoarrow_metadata()?),
-                    );
-                    fields.push(Arc::new(
-                        extension.to_field(field.name(), field.is_nullable()),
-                    ));
-                }
-                _ => {
-                    return exec_err!(
-                        "Unsupported GeoParquet encoding for column '{}': {}",
-                        field.name(),
-                        column_metadata.encoding
-                    );
-                }
-            }
-        } else {
-            fields.push(field.clone());
-        }
-    }
-
-    if !remaining.is_empty() {
-        let mut missing: Vec<_> = remaining.into_iter().collect();
-        missing.sort();
-        return exec_err!(
-            "Geometry columns not found in schema: {}",
-            missing.join(", ")
-        );
-    }
-
-    Ok(Arc::new(Schema::new(fields)))
+    Ok(columns)
 }
 
 #[async_trait]
@@ -298,7 +244,11 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 
         let mut options = self.inner.to_listing_options(config, table_options);
         if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
-            let geoparquet_options = parquet_format.options().clone().into();
+            let mut geoparquet_options =
+                TableGeoParquetOptions::from(parquet_format.options().clone());
+            if let Some(geometry_columns) = &self.geometry_columns {
+                geoparquet_options.geometry_columns = Some(geometry_columns.clone());
+            }
             options.format = Arc::new(GeoParquetFormat::new(geoparquet_options));
             return options;
         }
@@ -315,18 +265,11 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
         state: SessionState,
         table_path: ListingTableUrl,
     ) -> Result<SchemaRef> {
-        // Step 1: infer schema from GeoParquet metadata
         let schema = self
             .to_listing_options(config, state.default_table_options())
             .infer_schema(&state, &table_path)
             .await?;
-
-        // Step 2: optionally override geometry columns from user-provided options
-        if let Some(geometry_columns) = &self.geometry_columns {
-            apply_geometry_columns(schema, geometry_columns)
-        } else {
-            Ok(schema)
-        }
+        Ok(schema)
     }
 }
 
