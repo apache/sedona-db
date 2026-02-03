@@ -204,7 +204,6 @@ impl GeoParquetReadOptions<'_> {
     /// here will override any definitions provided in the original metadata.
     ///
     /// Errors if an invalid JSON configuration string is provided
-
     pub fn with_geometry_columns_json(mut self, geometry_columns_json: &str) -> Result<Self> {
         let geometry_columns = parse_geometry_columns_json(geometry_columns_json)?;
         self.geometry_columns = Some(geometry_columns);
