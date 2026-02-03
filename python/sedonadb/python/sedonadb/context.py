@@ -140,14 +140,14 @@ class SedonaContext:
                 GeoParquet column metadata (e.g.,
                 {"geom": {"encoding": "WKB"}}). Use this to mark binary WKB
                 columns as geometry columns or correct metadata such as the
-                column CRS. If a dict is provided, it is JSON-serialized before
-                calling the underlying implementation.
+                column CRS.
 
-                Supported keys (others in the spec are not implemented):
+                Supported keys:
                 - encoding: "WKB" (required)
                 - crs: (e.g., "EPSG:4326")
                 - edges: "planar" (default) or "spherical"
-                See spec for details: https://geoparquet.org/releases/v1.1.0/
+                - ...other supported keys
+                See the specification for details: https://geoparquet.org/releases/v1.1.0/
 
                 Useful for:
                 - Legacy Parquet files with Binary columns containing WKB payloads.
@@ -176,8 +176,10 @@ class SedonaContext:
 
 
                 Safety:
-                - Columns specified here are not validated for WKB correctness.
-                  Invalid WKB payloads may cause undefined behavior.
+                - Columns specified here are not validated against the provided options
+                  (e.g., WKB encoding checks); inconsistent data may cause undefined
+                  behavior.
+
 
         Examples:
 
