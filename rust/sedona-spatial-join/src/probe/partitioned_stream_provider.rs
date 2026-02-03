@@ -344,6 +344,7 @@ mod tests {
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use futures::TryStreamExt;
     use sedona_geometry::bounding_box::BoundingBox;
+    use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use std::sync::Arc;
 
@@ -362,13 +363,6 @@ mod tests {
         let geom_array: ArrayRef = Arc::new(BinaryArray::from(geom_values));
         let geom_array = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
         Ok(EvaluatedBatch { batch, geom_array })
-    }
-
-    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-        let mut buf = vec![1u8, 1, 0, 0, 0];
-        buf.extend_from_slice(&x.to_le_bytes());
-        buf.extend_from_slice(&y.to_le_bytes());
-        buf
     }
 
     fn rect_wkb(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<u8> {
@@ -445,10 +439,10 @@ mod tests {
         let batch = sample_batch(
             &[0, 1, 2, 3],
             vec![
-                Some(point_wkb(10.0, 10.0)),
-                Some(point_wkb(60.0, 10.0)),
-                Some(point_wkb(70.0, 20.0)),
-                Some(point_wkb(200.0, 200.0)),
+                Some(wkb_point((10.0, 10.0)).unwrap()),
+                Some(wkb_point((60.0, 10.0)).unwrap()),
+                Some(wkb_point((70.0, 20.0)).unwrap()),
+                Some(wkb_point((200.0, 200.0)).unwrap()),
             ],
         )?;
         let probe_stream = create_probe_stream(vec![batch], Some(Arc::clone(&partitioner)));
@@ -473,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn requesting_regular_partition_before_first_pass_fails() -> Result<()> {
         let partitioner = sample_partitioner()?;
-        let batch = sample_batch(&[0], vec![Some(point_wkb(60.0, 10.0))])?;
+        let batch = sample_batch(&[0], vec![Some(wkb_point((60.0, 10.0)).unwrap())])?;
         let probe_stream = create_probe_stream(vec![batch], Some(Arc::clone(&partitioner)));
         assert!(probe_stream
             .stream_for(SpatialPartition::Regular(1))
@@ -511,7 +505,10 @@ mod tests {
     async fn non_partitioned_stream_exposes_only_partition_zero() -> Result<()> {
         let batch = sample_batch(
             &[0, 1],
-            vec![Some(point_wkb(10.0, 10.0)), Some(point_wkb(12.0, 12.0))],
+            vec![
+                Some(wkb_point((10.0, 10.0)).unwrap()),
+                Some(wkb_point((12.0, 12.0)).unwrap()),
+            ],
         )?;
         let probe_stream = create_probe_stream(vec![batch], None);
 

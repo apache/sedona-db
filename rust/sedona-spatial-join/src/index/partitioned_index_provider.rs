@@ -389,6 +389,7 @@ mod tests {
     use sedona_expr::statistics::GeoStatistics;
     use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
     use sedona_geometry::analyze::analyze_geometry;
+    use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
 
     use crate::evaluated_batch::spill::EvaluatedBatchSpillWriter;
@@ -400,13 +401,6 @@ mod tests {
             Field::new("geom", DataType::Binary, true),
             Field::new("id", DataType::Int32, false),
         ]))
-    }
-
-    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-        let mut buf = vec![1u8, 1, 0, 0, 0];
-        buf.extend_from_slice(&x.to_le_bytes());
-        buf.extend_from_slice(&y.to_le_bytes());
-        buf
     }
 
     fn sample_batch(ids: &[i32], wkbs: Vec<Option<Vec<u8>>>) -> Result<EvaluatedBatch> {
@@ -531,7 +525,10 @@ mod tests {
         let memory_pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
         let batches = vec![sample_batch(
             &[1, 2],
-            vec![Some(point_wkb(10.0, 10.0)), Some(point_wkb(20.0, 20.0))],
+            vec![
+                Some(wkb_point((10.0, 10.0)).unwrap()),
+                Some(wkb_point((20.0, 20.0)).unwrap()),
+            ],
         )?];
         let build_partition = build_partition_from_batches(Arc::clone(&memory_pool), batches)?;
         let metrics = ExecutionPlanMetricsSet::new();
@@ -565,8 +562,14 @@ mod tests {
         let memory_pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(1 << 20));
         let runtime_env = Arc::new(RuntimeEnv::default());
         let partition_batches = vec![
-            vec![sample_batch(&[10], vec![Some(point_wkb(0.0, 0.0))])?],
-            vec![sample_batch(&[20], vec![Some(point_wkb(50.0, 50.0))])?],
+            vec![sample_batch(
+                &[10],
+                vec![Some(wkb_point((0.0, 0.0)).unwrap())],
+            )?],
+            vec![sample_batch(
+                &[20],
+                vec![Some(wkb_point((50.0, 50.0)).unwrap())],
+            )?],
         ];
         let spilled_partitions = make_spilled_partitions(runtime_env, partition_batches)?;
         let metrics = ExecutionPlanMetricsSet::new();

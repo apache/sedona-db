@@ -758,6 +758,7 @@ mod tests {
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use sedona_geometry::bounding_box::BoundingBox;
     use sedona_geometry::interval::IntervalTrait;
+    use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
 
     use crate::{
@@ -789,13 +790,6 @@ mod tests {
             batch,
             geom_array: geom,
         })
-    }
-
-    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-        let mut buf = vec![1u8, 1, 0, 0, 0];
-        buf.extend_from_slice(&x.to_le_bytes());
-        buf.extend_from_slice(&y.to_le_bytes());
-        buf
     }
 
     fn rect_wkb(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<u8> {
@@ -855,9 +849,9 @@ mod tests {
     #[tokio::test]
     async fn repartition_basic() -> Result<()> {
         let wkbs = vec![
-            Some(point_wkb(10.0, 10.0)),
-            Some(point_wkb(60.0, 10.0)),
-            Some(point_wkb(150.0, 10.0)),
+            Some(wkb_point((10.0, 10.0)).unwrap()),
+            Some(wkb_point((60.0, 10.0)).unwrap()),
+            Some(wkb_point((150.0, 10.0)).unwrap()),
         ];
         let batch = sample_batch(&[0, 1, 2], wkbs)?;
         let schema = batch.schema();
@@ -1009,7 +1003,10 @@ mod tests {
 
     #[test]
     fn streaming_repartitioner_finishes_partitions() -> Result<()> {
-        let wkbs = vec![Some(point_wkb(10.0, 10.0)), Some(point_wkb(60.0, 10.0))];
+        let wkbs = vec![
+            Some(wkb_point((10.0, 10.0)).unwrap()),
+            Some(wkb_point((60.0, 10.0)).unwrap()),
+        ];
         let batch = sample_batch(&[0, 1], wkbs)?;
         let partitions = vec![
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
@@ -1057,8 +1054,8 @@ mod tests {
 
     #[test]
     fn streaming_repartitioner_buffers_until_threshold() -> Result<()> {
-        let batch_a = sample_batch(&[0], vec![Some(point_wkb(10.0, 10.0))])?;
-        let batch_b = sample_batch(&[1], vec![Some(point_wkb(20.0, 10.0))])?;
+        let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
+        let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
         let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
@@ -1091,8 +1088,8 @@ mod tests {
 
     #[test]
     fn streaming_repartitioner_respects_target_batch_size() -> Result<()> {
-        let batch_a = sample_batch(&[0], vec![Some(point_wkb(10.0, 10.0))])?;
-        let batch_b = sample_batch(&[1], vec![Some(point_wkb(20.0, 10.0))])?;
+        let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
+        let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
         let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
@@ -1137,8 +1134,11 @@ mod tests {
 
     #[test]
     fn interleave_distance_none() -> Result<()> {
-        let wkbs1 = vec![point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let geom1 = make_geom_array_with_distance(wkbs1, None)?;
         let geom2 = make_geom_array_with_distance(wkbs2, None)?;
@@ -1153,8 +1153,11 @@ mod tests {
 
     #[test]
     fn interleave_distance_uniform_scalar() -> Result<()> {
-        let wkbs1 = vec![point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let scalar = ScalarValue::Float64(Some(5.0));
         let geom1 =
@@ -1177,8 +1180,11 @@ mod tests {
     fn interleave_distance_different_scalars() -> Result<()> {
         use arrow_array::Float64Array;
 
-        let wkbs1 = vec![point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let scalar1 = ScalarValue::Float64(Some(5.0));
         let scalar2 = ScalarValue::Float64(Some(10.0));
@@ -1204,8 +1210,11 @@ mod tests {
     fn interleave_distance_arrays() -> Result<()> {
         use arrow_array::Float64Array;
 
-        let wkbs1 = vec![point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let array1: ArrayRef = Arc::new(Float64Array::from(vec![1.0, 2.0]));
         let array2: ArrayRef = Arc::new(Float64Array::from(vec![3.0]));
@@ -1231,8 +1240,11 @@ mod tests {
     fn interleave_distance_mixed_scalar_and_array() -> Result<()> {
         use arrow_array::Float64Array;
 
-        let wkbs1 = vec![point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let scalar = ScalarValue::Float64(Some(5.0));
         let array: ArrayRef = Arc::new(Float64Array::from(vec![10.0]));
@@ -1256,8 +1268,8 @@ mod tests {
 
     #[test]
     fn interleave_evaluated_batch_empty_assignments() -> Result<()> {
-        let batch_a = sample_batch(&[0], vec![Some(point_wkb(10.0, 10.0))])?;
-        let batch_b = sample_batch(&[1], vec![Some(point_wkb(20.0, 20.0))])?;
+        let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
+        let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 20.0)).unwrap())])?;
         let record_batches = vec![&batch_a.batch, &batch_b.batch];
         let geom_arrays = vec![&batch_a.geom_array, &batch_b.geom_array];
 
@@ -1271,8 +1283,8 @@ mod tests {
 
     #[test]
     fn interleave_distance_inconsistent_metadata() -> Result<()> {
-        let wkbs1 = vec![point_wkb(10.0, 10.0)];
-        let wkbs2 = vec![point_wkb(20.0, 20.0)];
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
 
         let scalar = ScalarValue::Float64(Some(5.0));
         let geom1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar)))?;
@@ -1296,8 +1308,11 @@ mod tests {
         use sedona_schema::datatypes::{Edges, SedonaType};
         let wkb_view_geometry = SedonaType::WkbView(Edges::Planar, Crs::None);
 
-        let wkbs1 = [point_wkb(10.0, 10.0), point_wkb(20.0, 20.0)];
-        let wkbs2 = [point_wkb(30.0, 30.0)];
+        let wkbs1 = [
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = [wkb_point((30.0, 30.0)).unwrap()];
 
         // Create BinaryViewArray
         let array1 = BinaryViewArray::from_iter(wkbs1.iter().map(|w| Some(w.as_slice())));
@@ -1344,9 +1359,9 @@ mod tests {
     fn interleave_distance_mixed_none_and_null() -> Result<()> {
         use arrow_array::Float64Array;
 
-        let wkbs1 = vec![point_wkb(10.0, 10.0)];
-        let wkbs2 = vec![point_wkb(20.0, 20.0)];
-        let wkbs3 = vec![point_wkb(30.0, 30.0)];
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
+        let wkbs3 = vec![wkb_point((30.0, 30.0)).unwrap()];
 
         let null_array = Arc::new(Float64Array::new_null(1));
         let ega1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Array(null_array)))?;
