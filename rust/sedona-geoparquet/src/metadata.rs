@@ -109,7 +109,7 @@ impl Display for GeoParquetColumnEncoding {
 ///
 /// Note: This technique to use the bounding box to improve spatial queries does not apply to
 /// geometries that cross the antimeridian. Such geometries are unsupported by this method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeoParquetBboxCovering {
     /// The path in the Parquet schema of the column that contains the xmin
     pub xmin: Vec<String>,
@@ -141,8 +141,7 @@ impl GeoParquetBboxCovering {
         column_metadata: &GeoParquetColumnMetadata,
     ) -> Option<Self> {
         use GeoParquetColumnEncoding::*;
-        let encoding = column_metadata.encoding;
-        let (x, y) = match encoding {
+        let (x, y) = match column_metadata.encoding {
             WKB => return None,
             Point => {
                 let x = vec![column_name.to_string(), "x".to_string()];
@@ -258,7 +257,7 @@ impl GeoParquetBboxCovering {
 /// The covering field specifies optional simplified representations of each geometry. The keys of
 /// the "covering" object MUST be a supported encoding. Currently the only supported encoding is
 /// "bbox" which specifies the names of bounding box columns
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeoParquetCovering {
     /// Bounding-box covering
     pub bbox: GeoParquetBboxCovering,
@@ -305,7 +304,7 @@ impl Default for GeoParquetMetadata {
 }
 
 /// GeoParquet column metadata
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct GeoParquetColumnMetadata {
     /// Name of the geometry encoding format. As of GeoParquet 1.1, `"WKB"`, `"point"`,
     /// `"linestring"`, `"polygon"`, `"multipoint"`, `"multilinestring"`, and `"multipolygon"` are
@@ -379,9 +378,7 @@ pub struct GeoParquetColumnMetadata {
 impl GeoParquetMetadata {
     /// Construct a [`GeoParquetMetadata`] from a JSON string
     pub fn try_new(metadata: &str) -> Result<Self> {
-        let metadata: GeoParquetMetadata =
-            serde_json::from_str(metadata).map_err(|e| DataFusionError::Plan(e.to_string()))?;
-        Ok(metadata)
+        serde_json::from_str(metadata).map_err(|e| DataFusionError::Plan(e.to_string()))
     }
 
     /// Construct a [`GeoParquetMetadata`] from a [`ParquetMetaData`]
