@@ -429,6 +429,19 @@ impl GeoParquetMetadata {
         }
     }
 
+    /// Replace any inferred metadata for the same column name with overrides
+    pub fn override_columns(
+        &mut self,
+        overrides: &HashMap<String, GeoParquetColumnMetadata>,
+    ) -> Result<()> {
+        for (column_name, override_meta) in overrides {
+            self.columns
+                .insert(column_name.clone(), override_meta.clone());
+        }
+
+        Ok(())
+    }
+
     /// Update a GeoParquetMetadata from another file's metadata
     ///
     /// This will expand the bounding box of each geometry column to include the bounding box

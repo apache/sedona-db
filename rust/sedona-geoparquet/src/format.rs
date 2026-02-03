@@ -53,7 +53,7 @@ use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
-    metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
+    metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
@@ -150,19 +150,6 @@ impl GeoParquetFormat {
     }
 }
 
-/// Merge geometry columns metadata.
-/// `overrides` columns replace any inferred metadata for the same column name.
-fn merge_geometry_columns(
-    base: &mut HashMap<String, GeoParquetColumnMetadata>,
-    overrides: &HashMap<String, GeoParquetColumnMetadata>,
-) -> Result<()> {
-    for (column_name, override_meta) in overrides {
-        base.insert(column_name.clone(), override_meta.clone());
-    }
-
-    Ok(())
-}
-
 #[async_trait]
 impl FileFormat for GeoParquetFormat {
     fn as_any(&self) -> &dyn Any {
@@ -222,10 +209,29 @@ impl FileFormat for GeoParquetFormat {
         // metadata we check definitions for individual fields to ensure consistency
         // but it is OK to have a file without geometry. Exactly how this gets merged
         // and adapted changed in DataFusion 52...the method here is prone to inconsistency
-        // when some files contain geometry and some do not.
+        // when some files contain geometry and some do not. Column overrides can be used
+        // as a workaround in this situation.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
-            let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(metadata)?;
+            let mut this_geoparquet_metadata =
+                GeoParquetMetadata::try_from_parquet_metadata(metadata)?;
+
+            // Apply overrides
+            match (
+                &mut this_geoparquet_metadata,
+                &self.options.geometry_columns,
+            ) {
+                (None, None) | (Some(_), None) => {}
+                (None, Some(geometry_columns)) => {
+                    let mut this_metadata = GeoParquetMetadata::default();
+                    this_metadata.override_columns(geometry_columns)?;
+                    this_geoparquet_metadata = Some(this_metadata);
+                }
+                (Some(this_metadata), Some(geometry_columns)) => {
+                    this_metadata.override_columns(geometry_columns)?;
+                }
+            }
+
             match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
                 (Some(existing_metadata), Some(this_metadata)) => {
                     existing_metadata.try_update(&this_metadata)?;
@@ -240,14 +246,10 @@ impl FileFormat for GeoParquetFormat {
 
         // Geometry columns have been inferred from metadata, next combine column
         // metadata from options with the inferred ones
-        let mut inferred_geo_cols = match geoparquet_metadata {
+        let inferred_geo_cols = match geoparquet_metadata {
             Some(geo_metadata) => geo_metadata.columns,
             None => HashMap::new(),
         };
-
-        if let Some(geometry_columns) = &self.options.geometry_columns {
-            merge_geometry_columns(&mut inferred_geo_cols, geometry_columns)?;
-        }
 
         if inferred_geo_cols.is_empty() {
             return Ok(inner_schema_without_metadata);
