@@ -50,6 +50,7 @@ sedona-geoparquet = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-proj = { workspace = true }
 sedona-tg = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 mimalloc = { workspace = true, optional = true }

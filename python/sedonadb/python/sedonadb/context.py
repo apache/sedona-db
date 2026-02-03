@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import os
 import sys
 from functools import cached_property
@@ -126,6 +127,7 @@ class SedonaContext:
         self,
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
+        geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -134,6 +136,50 @@ class SedonaContext:
                 files.
             options: Optional dictionary of options to pass to the Parquet reader.
                 For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
+            geometry_columns: Optional JSON string or dict mapping column name to
+                GeoParquet column metadata (e.g.,
+                {"geom": {"encoding": "WKB"}}). Use this to mark binary WKB
+                columns as geometry columns or correct metadata such as the
+                column CRS.
+
+                Supported keys:
+                - encoding: "WKB" (required)
+                - crs: (e.g., "EPSG:4326")
+                - edges: "planar" (default) or "spherical"
+                - ...other supported keys
+                See the specification for details: https://geoparquet.org/releases/v1.1.0/
+
+                Useful for:
+                - Legacy Parquet files with Binary columns containing WKB payloads.
+                - Overriding GeoParquet metadata when fields like `crs` are missing.
+
+                Precedence:
+                - GeoParquet metadata is used to infer geometry columns first.
+                - geometry_columns then overrides the auto-inferred schema:
+                  - If a column is not geometry in metadata but appears in
+                    geometry_columns, it is treated as a geometry column.
+                  - If a column is geometry in metadata and also appears in
+                    geometry_columns, the provided metadata replaces the inferred
+                    metadata for that column. Missing optional fields are treated
+                    as absent/defaults.
+
+                Example:
+                - For `geo.parquet(geo1: geometry, geo2: geometry, geo3: binary)`,
+                  `read_parquet("geo.parquet", geometry_columns='{"geo2": {"encoding": "WKB"}, "geo3": {"encoding": "WKB"}}')`
+                  overrides `geo2` metadata and treats `geo3` as a geometry column.
+                - If `geo` inferred from metadata has:
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326", ..}`
+                  and geometry_columns provides:
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:3857"}`
+                  then the result is (full overwrite):
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:3857", ..}` (other fields are defaulted)
+
+
+                Safety:
+                - Columns specified here are not validated against the provided options
+                  (e.g., WKB encoding checks); inconsistent data may cause undefined
+                  behavior.
+
 
         Examples:
 
@@ -141,7 +187,6 @@ class SedonaContext:
             >>> url = "https://github.com/apache/sedona-testing/raw/refs/heads/main/data/parquet/geoparquet-1.1.0.parquet"
             >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
-
         """
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
@@ -149,9 +194,14 @@ class SedonaContext:
         if options is None:
             options = {}
 
+        if geometry_columns is not None and not isinstance(geometry_columns, str):
+            geometry_columns = json.dumps(geometry_columns)
+
         return DataFrame(
             self._impl,
-            self._impl.read_parquet([str(path) for path in table_paths], options),
+            self._impl.read_parquet(
+                [str(path) for path in table_paths], options, geometry_columns
+            ),
             self.options,
         )
 

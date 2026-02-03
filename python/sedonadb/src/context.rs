@@ -80,6 +80,7 @@ impl InternalContext {
         py: Python<'py>,
         table_paths: Vec<String>,
         options: HashMap<String, PyObject>,
+        geometry_columns: Option<String>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         // Convert Python options to strings, filtering out None values
         let rust_options: HashMap<String, String> = options
@@ -97,9 +98,17 @@ impl InternalContext {
             })
             .collect();
 
-        let geo_options =
+        let mut geo_options =
             sedona_geoparquet::provider::GeoParquetReadOptions::from_table_options(rust_options)
                 .map_err(|e| PySedonaError::SedonaPython(format!("Invalid table options: {e}")))?;
+        if let Some(geometry_columns) = geometry_columns {
+            geo_options = geo_options
+                .with_geometry_columns_json(&geometry_columns)
+                .map_err(|e| {
+                    PySedonaError::SedonaPython(format!("Invalid geometry_columns JSON: {e}"))
+                })?;
+        }
+
         let df = wait_for_future(
             py,
             &self.runtime,

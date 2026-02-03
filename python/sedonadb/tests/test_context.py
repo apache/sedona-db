@@ -14,10 +14,37 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import json
+from pathlib import Path
+from typing import Any, Mapping
+
 import geoarrow.pyarrow as ga  # noqa: F401
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import sedonadb
+import shapely
+
+
+def _parse_geo_metadata(geoparquet_path: Path) -> Mapping[str, Any]:
+    """Return the GeoParquet "geo" metadata map, asserting it exists."""
+    metadata = pq.read_metadata(geoparquet_path).metadata
+    assert metadata is not None
+
+    geo = metadata.get(b"geo")
+    assert geo is not None
+
+    return json.loads(geo.decode())
+
+
+def _geom_column_metadata(
+    geoparquet_path: Path, column_name: str = "geom"
+) -> Mapping[str, Any]:
+    geo_metadata = _parse_geo_metadata(geoparquet_path)
+    columns = geo_metadata.get("columns")
+    assert isinstance(columns, dict)
+    assert column_name in columns
+    return columns[column_name]
 
 
 def test_options():
@@ -98,6 +125,144 @@ def test_read_parquet_options_parameter(con, geoarrow_data):
     assert len(tab4) == len(
         tab1
     )  # Should be identical (option ignored but not errored)
+
+
+# Basic test for `geometry_columns` option for `read_parquet(..)`
+def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
+    # Write a regular Parquet table with a Binary WKB column.
+    geom = shapely.from_wkt("POINT (0 1)").wkb
+    table = pa.table({"id": [1], "geom": [geom]})
+    src = tmp_path / "plain.parquet"
+    pq.write_table(table, src)
+
+    # GeoParquet metadata should not be present.
+    metadata = pq.read_metadata(src).metadata
+    assert metadata is not None
+    assert b"geo" not in metadata
+
+    # Test 1: when adding a new geometry column, `encoding` must be provided.
+    geometry_columns = json.dumps({"geom": {"crs": "EPSG:4326"}})
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="missing field `encoding`",
+    ):
+        con.read_parquet(src, geometry_columns=geometry_columns)
+
+    # Test 2: mark 'geom' as geometry and round-trip to GeoParquet.
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB"}})
+    df = con.read_parquet(src, geometry_columns=geometry_columns)
+    out_geo1 = tmp_path / "geo1.parquet"
+    df.to_parquet(out_geo1)
+
+    geom_meta = _geom_column_metadata(out_geo1)
+    assert geom_meta["encoding"] == "WKB"
+
+    # Test 3: overriding an existing geometry column requires `encoding`.
+    geometry_columns = json.dumps({"geom": {"crs": "EPSG:3857"}})
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="missing field `encoding`",
+    ):
+        con.read_parquet(out_geo1, geometry_columns=geometry_columns)
+
+    # Test 4: override existing metadata with a full replacement.
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:3857"}})
+    df = con.read_parquet(out_geo1, geometry_columns=geometry_columns)
+    out_geo2 = tmp_path / "geo2.parquet"
+    df.to_parquet(out_geo2)
+
+    geom_meta = _geom_column_metadata(out_geo2)
+    assert geom_meta["encoding"] == "WKB"
+    assert geom_meta["crs"] == "EPSG:3857"
+
+    # Test 5: overriding with a different CRS replaces the previous value.
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:4326"}})
+    df = con.read_parquet(out_geo2, geometry_columns=geometry_columns)
+    out_geo3 = tmp_path / "geo3.parquet"
+    df.to_parquet(out_geo3)
+
+    geom_meta = _geom_column_metadata(out_geo3)
+    assert geom_meta["encoding"] == "WKB"
+    assert "crs" not in geom_meta
+
+    # Test 6: adding `geometry_types` is allowed and replaces prior metadata.
+    geometry_columns = json.dumps(
+        {"geom": {"encoding": "WKB", "geometry_types": ["Point"]}}
+    )
+    df = con.read_parquet(out_geo3, geometry_columns=geometry_columns)
+    out_geo4 = tmp_path / "geo4.parquet"
+    df.to_parquet(out_geo4)
+    geom_meta = _geom_column_metadata(out_geo4)
+    assert geom_meta["encoding"] == "WKB"
+    assert "crs" not in geom_meta
+
+    # Test 7: specify multiple options on plain Parquet input.
+    geometry_columns = json.dumps(
+        {
+            "geom": {
+                "encoding": "WKB",
+                "crs": "EPSG:3857",
+                "edges": "spherical",
+                "geometry_types": ["Point"],
+            }
+        }
+    )
+    df = con.read_parquet(src, geometry_columns=geometry_columns)
+    out_geo_multi = tmp_path / "geo_multi.parquet"
+    df.to_parquet(out_geo_multi)
+    geom_meta = _geom_column_metadata(out_geo_multi)
+    assert geom_meta["encoding"] == "WKB"
+    assert geom_meta["crs"] == "EPSG:3857"
+    assert geom_meta["edges"] == "spherical"
+
+    # Test 8: specify a non-existent column raises error
+    geometry_columns = json.dumps(
+        {
+            "geom_foo": {
+                "encoding": "WKB",
+            }
+        }
+    )
+    with pytest.raises(
+        sedonadb._lib.SedonaError, match="Geometry columns not found in schema"
+    ):
+        df = con.read_parquet(src, geometry_columns=geometry_columns)
+
+
+def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):
+    # Write a regular Parquet table with two Binary WKB columns.
+    geom1 = shapely.from_wkt("POINT (0 1)").wkb
+    geom2 = shapely.from_wkt("POINT (1 2)").wkb
+    table = pa.table({"id": [1], "geom1": [geom1], "geom2": [geom2]})
+    src = tmp_path / "plain_multi.parquet"
+    pq.write_table(table, src)
+
+    # Mark geom1 as geometry and write GeoParquet.
+    geometry_columns = json.dumps({"geom1": {"encoding": "WKB"}})
+    df = con.read_parquet(src, geometry_columns=geometry_columns)
+    out_geo1 = tmp_path / "geo_multi1.parquet"
+    df.to_parquet(out_geo1)
+
+    geo_metadata = _parse_geo_metadata(out_geo1)
+    assert "geom1" in geo_metadata["columns"]
+    assert "geom2" not in geo_metadata["columns"]
+
+    # Mark geom2 as geometry and override geom1 in one call.
+    geometry_columns = json.dumps(
+        {
+            "geom1": {"encoding": "WKB", "crs": "EPSG:3857"},
+            "geom2": {"encoding": "WKB"},
+        }
+    )
+    df = con.read_parquet(out_geo1, geometry_columns=geometry_columns)
+    out_geo2 = tmp_path / "geo_multi2.parquet"
+    df.to_parquet(out_geo2)
+
+    geom1_meta = _geom_column_metadata(out_geo2, "geom1")
+    geom2_meta = _geom_column_metadata(out_geo2, "geom2")
+    assert geom1_meta["encoding"] == "WKB"
+    assert geom1_meta["crs"] == "EPSG:3857"
+    assert geom2_meta["encoding"] == "WKB"
 
 
 def test_read_geoparquet_s3_anonymous_access():

@@ -27,9 +27,11 @@ use datafusion::{
     execution::{options::ReadOptions, SessionState},
     prelude::{ParquetReadOptions, SessionConfig, SessionContext},
 };
-use datafusion_common::{exec_err, Result};
+use datafusion_common::{exec_err, plan_err, Result};
 
-use crate::format::GeoParquetFormat;
+use crate::{
+    format::GeoParquetFormat, metadata::GeoParquetColumnMetadata, options::TableGeoParquetOptions,
+};
 
 /// Create a [ListingTable] of GeoParquet (or normal Parquet) files
 ///
@@ -81,6 +83,7 @@ pub async fn geoparquet_listing_table(
 pub struct GeoParquetReadOptions<'a> {
     inner: ParquetReadOptions<'a>,
     table_options: Option<HashMap<String, String>>,
+    geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl GeoParquetReadOptions<'_> {
@@ -185,6 +188,7 @@ impl GeoParquetReadOptions<'_> {
         Ok(GeoParquetReadOptions {
             inner: ParquetReadOptions::default(),
             table_options: Some(options),
+            geometry_columns: None,
         })
     }
 
@@ -192,6 +196,36 @@ impl GeoParquetReadOptions<'_> {
     pub fn table_options(&self) -> Option<&HashMap<String, String>> {
         self.table_options.as_ref()
     }
+
+    /// Add geometry column metadata (JSON string) to apply during schema resolution
+    ///
+    /// Reads Parquet files as if GeoParquet metadata with the `"geometry_columns"`
+    /// key were present. If GeoParquet metadata is already present, the values provided
+    /// here will override any definitions provided in the original metadata.
+    ///
+    /// Errors if an invalid JSON configuration string is provided
+    pub fn with_geometry_columns_json(mut self, geometry_columns_json: &str) -> Result<Self> {
+        let geometry_columns = parse_geometry_columns_json(geometry_columns_json)?;
+        self.geometry_columns = Some(geometry_columns);
+        Ok(self)
+    }
+
+    /// Get the geometry columns metadata
+    pub fn geometry_columns(&self) -> Option<&HashMap<String, GeoParquetColumnMetadata>> {
+        self.geometry_columns.as_ref()
+    }
+}
+
+fn parse_geometry_columns_json(
+    geometry_columns_json: &str,
+) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
+    let columns: HashMap<String, GeoParquetColumnMetadata> =
+        match serde_json::from_str(geometry_columns_json) {
+            Ok(columns) => columns,
+            Err(e) => return plan_err!("geometry_columns must be valid JSON: {e}"),
+        };
+
+    Ok(columns)
 }
 
 #[async_trait]
@@ -213,7 +247,11 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 
         let mut options = self.inner.to_listing_options(config, table_options);
         if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
-            let geoparquet_options = parquet_format.options().clone().into();
+            let mut geoparquet_options =
+                TableGeoParquetOptions::from(parquet_format.options().clone());
+            if let Some(geometry_columns) = &self.geometry_columns {
+                geoparquet_options.geometry_columns = Some(geometry_columns.clone());
+            }
             options.format = Arc::new(GeoParquetFormat::new(geoparquet_options));
             return options;
         }
@@ -227,9 +265,11 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
         state: SessionState,
         table_path: ListingTableUrl,
     ) -> Result<SchemaRef> {
-        self.to_listing_options(config, state.default_table_options())
+        let schema = self
+            .to_listing_options(config, state.default_table_options())
             .infer_schema(&state, &table_path)
-            .await
+            .await?;
+        Ok(schema)
     }
 }
 
