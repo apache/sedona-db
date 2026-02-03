@@ -77,24 +77,41 @@ impl SedonaSchema for Schema {
 
     fn primary_geometry_column_index(&self) -> Result<Option<usize>> {
         let indices = self.geometry_column_indices()?;
-        if indices.is_empty() {
-            return Ok(None);
+        let primary_index_opt =
+            primary_geometry_column_from_names(indices.iter().map(|i| self.field(*i).name()));
+        if let Some(primary_index) = primary_index_opt {
+            Ok(Some(indices[primary_index]))
+        } else {
+            Ok(None)
         }
-
-        let names_map = indices
-            .iter()
-            .rev()
-            .map(|i| (self.field(*i).name().to_lowercase(), *i))
-            .collect::<HashMap<_, _>>();
-
-        for special_name in ["geometry", "geography", "geom", "geog"] {
-            if let Some(i) = names_map.get(special_name) {
-                return Ok(Some(*i));
-            }
-        }
-
-        Ok(Some(indices[0]))
     }
+}
+
+/// Compute the primary geometry column given a list of geometry column names
+///
+/// This implementation powers [SedonaSchema::primary_geometry_column_index] and is
+/// useful for applying a consistent heuristic when only a list of names are
+/// available (e.g., GeoParquet metadata).
+pub fn primary_geometry_column_from_names(
+    column_names: impl DoubleEndedIterator<Item = impl AsRef<str>>,
+) -> Option<usize> {
+    let names_map = column_names
+        .rev()
+        .enumerate()
+        .map(|(i, name)| (name.as_ref().to_lowercase(), i))
+        .collect::<HashMap<_, _>>();
+
+    if names_map.is_empty() {
+        return None;
+    }
+
+    for special_name in ["geometry", "geography", "geom", "geog"] {
+        if let Some(i) = names_map.get(special_name) {
+            return Some(names_map.len() - *i - 1);
+        }
+    }
+
+    Some(0)
 }
 
 #[cfg(test)]

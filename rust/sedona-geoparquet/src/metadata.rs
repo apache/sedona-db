@@ -28,6 +28,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::{Interval, IntervalTrait};
 use sedona_geometry::types::GeometryTypeAndDimensionsSet;
+use sedona_schema::schema::primary_geometry_column_from_names;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Write;
@@ -435,7 +436,9 @@ impl GeoParquetMetadata {
             // To keep metadata valid, ensure we set a primary column deterministically
             let mut column_names = columns_from_schema.keys().collect::<Vec<_>>();
             column_names.sort();
-            let primary_column = column_names[0].to_string();
+            let primary_index = primary_geometry_column_from_names(column_names.iter())
+                .expect("non-empty input always returns a value");
+            let primary_column = column_names[primary_index].to_string();
 
             Ok(Some(Self {
                 version: "2.0.0".to_string(),
