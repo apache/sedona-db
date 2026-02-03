@@ -144,7 +144,7 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     geometry_columns = json.dumps({"geom": {"crs": "EPSG:4326"}})
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match="Geometry column 'geom' missing required key 'encoding'",
+        match="missing field `encoding`",
     ):
         con.read_parquet(src, geometry_columns=geometry_columns)
 
@@ -157,8 +157,16 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     geom_meta = _geom_column_metadata(out_geo1)
     assert geom_meta["encoding"] == "WKB"
 
-    # Test 3: `geom` already geometry; add a missing CRS.
+    # Test 3: overriding an existing geometry column requires `encoding`.
     geometry_columns = json.dumps({"geom": {"crs": "EPSG:3857"}})
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="missing field `encoding`",
+    ):
+        con.read_parquet(out_geo1, geometry_columns=geometry_columns)
+
+    # Test 4: override existing metadata with a full replacement.
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:3857"}})
     df = con.read_parquet(out_geo1, geometry_columns=geometry_columns)
     out_geo2 = tmp_path / "geo2.parquet"
     df.to_parquet(out_geo2)
@@ -167,21 +175,28 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     assert geom_meta["encoding"] == "WKB"
     assert geom_meta["crs"] == "EPSG:3857"
 
-    # Test 4: conflicting CRS override should error.
-    geometry_columns = json.dumps({"geom": {"crs": "EPSG:4326"}})
-    with pytest.raises(
-        sedonadb._lib.SedonaError,
-        match="Geometry column 'geom' override conflicts with existing 'crs' value",
-    ):
-        con.read_parquet(out_geo2, geometry_columns=geometry_columns)
-
-    # Test 5: adding `geometry_types` is allowed.
-    geometry_columns = json.dumps({"geom": {"geometry_types": ["Point"]}})
+    # Test 5: overriding with a different CRS replaces the previous value.
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:4326"}})
     df = con.read_parquet(out_geo2, geometry_columns=geometry_columns)
-    tab = df.to_arrow_table()
-    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+    out_geo3 = tmp_path / "geo3.parquet"
+    df.to_parquet(out_geo3)
 
-    # Test 6: specify multiple options on plain Parquet input.
+    geom_meta = _geom_column_metadata(out_geo3)
+    assert geom_meta["encoding"] == "WKB"
+    assert "crs" not in geom_meta
+
+    # Test 6: adding `geometry_types` is allowed and replaces prior metadata.
+    geometry_columns = json.dumps(
+        {"geom": {"encoding": "WKB", "geometry_types": ["Point"]}}
+    )
+    df = con.read_parquet(out_geo3, geometry_columns=geometry_columns)
+    out_geo4 = tmp_path / "geo4.parquet"
+    df.to_parquet(out_geo4)
+    geom_meta = _geom_column_metadata(out_geo4)
+    assert geom_meta["encoding"] == "WKB"
+    assert "crs" not in geom_meta
+
+    # Test 7: specify multiple options on plain Parquet input.
     geometry_columns = json.dumps(
         {
             "geom": {
@@ -219,10 +234,10 @@ def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):
     assert "geom1" in geo_metadata["columns"]
     assert "geom2" not in geo_metadata["columns"]
 
-    # Mark geom2 as geometry and add a missing CRS to geom1 in one call.
+    # Mark geom2 as geometry and override geom1 in one call.
     geometry_columns = json.dumps(
         {
-            "geom1": {"crs": "EPSG:3857"},
+            "geom1": {"encoding": "WKB", "crs": "EPSG:3857"},
             "geom2": {"encoding": "WKB"},
         }
     )

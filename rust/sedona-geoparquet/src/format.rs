@@ -150,109 +150,14 @@ impl GeoParquetFormat {
     }
 }
 
-/// See `merge_geometry_columns(..)` for the override rule
-fn apply_option_override<T: PartialEq + Clone>(
-    column_name: &str,
-    field: &str,
-    existing: &mut Option<T>,
-    override_value: &Option<T>,
-) -> Result<()> {
-    let Some(override_value) = override_value.as_ref() else {
-        return Ok(());
-    };
-
-    match existing.as_ref() {
-        Some(existing_value) => {
-            if existing_value != override_value {
-                return plan_err!(
-                    "Geometry column '{column_name}' override conflicts with existing '{field}' value"
-                );
-            }
-        }
-        None => {
-            *existing = Some(override_value.clone());
-        }
-    }
-
-    Ok(())
-}
-
-/// See `merge_geometry_columns(..)` for the override rule
-fn apply_geometry_columns_override(
-    column_name: &str,
-    existing: &mut GeoParquetColumnMetadata,
-    override_meta: &GeoParquetColumnMetadata,
-) -> Result<()> {
-    apply_option_override(
-        column_name,
-        "encoding",
-        &mut existing.encoding,
-        &override_meta.encoding,
-    )?;
-    apply_option_override(column_name, "crs", &mut existing.crs, &override_meta.crs)?;
-    apply_option_override(
-        column_name,
-        "edges",
-        &mut existing.edges,
-        &override_meta.edges,
-    )?;
-    apply_option_override(
-        column_name,
-        "orientation",
-        &mut existing.orientation,
-        &override_meta.orientation,
-    )?;
-    apply_option_override(column_name, "bbox", &mut existing.bbox, &override_meta.bbox)?;
-    apply_option_override(
-        column_name,
-        "epoch",
-        &mut existing.epoch,
-        &override_meta.epoch,
-    )?;
-    apply_option_override(
-        column_name,
-        "covering",
-        &mut existing.covering,
-        &override_meta.covering,
-    )?;
-
-    if !override_meta.geometry_types.is_empty() {
-        if existing.geometry_types.is_empty() {
-            existing.geometry_types = override_meta.geometry_types.clone();
-        } else if existing.geometry_types != override_meta.geometry_types {
-            return plan_err!(
-                "Geometry column '{column_name}' override conflicts with existing 'geometry_types' value"
-            );
-        }
-    }
-
-    Ok(())
-}
-
 /// Merge geometry columns metadata.
-/// `overrides` columns may only provide additional data; for example,
-/// if `crs` is None (missing) in the `base` metadata, the combined
-/// metadata uses the `crs` field from `overrides`.
-///
-/// If conflicting field data is provided, returns a plan error.
+/// `overrides` columns replace any inferred metadata for the same column name.
 fn merge_geometry_columns(
     base: &mut HashMap<String, GeoParquetColumnMetadata>,
     overrides: &HashMap<String, GeoParquetColumnMetadata>,
 ) -> Result<()> {
     for (column_name, override_meta) in overrides {
-        match base.get_mut(column_name) {
-            Some(existing) => {
-                apply_geometry_columns_override(column_name, existing, override_meta)?
-            }
-            None => {
-                if override_meta.encoding.is_none() {
-                    return plan_err!(
-                        "Geometry column '{column_name}' missing required key 'encoding'"
-                    );
-                }
-                base.insert(column_name.clone(), override_meta.clone());
-            }
-        }
+        base.insert(column_name.clone(), override_meta.clone());
     }
 
     Ok(())
@@ -361,15 +266,7 @@ impl FileFormat for GeoParquetFormat {
             .map(|field| {
                 if let Some(geo_column) = inferred_geo_cols.get(field.name()) {
                     remaining.remove(field.name());
-                    let encoding = match geo_column.encoding {
-                        Some(encoding) => encoding,
-                        None => {
-                            return plan_err!(
-                                "GeoParquet column '{}' missing required field 'encoding'",
-                                field.name()
-                            )
-                        }
-                    };
+                    let encoding = geo_column.encoding;
                     match encoding {
                         GeoParquetColumnEncoding::WKB => {
                             let extension = ExtensionType::new(

@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import os
 import sys
 from functools import cached_property
@@ -126,7 +127,7 @@ class SedonaContext:
         self,
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
-        geometry_columns: Optional[str] = None,
+        geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -135,14 +136,15 @@ class SedonaContext:
                 files.
             options: Optional dictionary of options to pass to the Parquet reader.
                 For S3 access, use {"aws.skip_signature": True, "aws.region": "us-west-2"} for anonymous access to public buckets.
-            geometry_columns: Optional JSON string mapping column name to
+            geometry_columns: Optional JSON string or dict mapping column name to
                 GeoParquet column metadata (e.g.,
-                '{"geom": {"encoding": "WKB"}}'). Use this to mark binary WKB
+                {"geom": {"encoding": "WKB"}}). Use this to mark binary WKB
                 columns as geometry columns or correct metadata such as the
-                column CRS.
+                column CRS. If a dict is provided, it is JSON-serialized before
+                calling the underlying implementation.
 
                 Supported keys (others in the spec are not implemented):
-                - encoding: "WKB" (required if the column is not already geometry)
+                - encoding: "WKB" (required)
                 - crs: (e.g., "EPSG:4326")
                 - edges: "planar" (default) or "spherical"
                 See spec for details: https://geoparquet.org/releases/v1.1.0/
@@ -157,27 +159,21 @@ class SedonaContext:
                   - If a column is not geometry in metadata but appears in
                     geometry_columns, it is treated as a geometry column.
                   - If a column is geometry in metadata and also appears in
-                    geometry_columns, only the provided keys override; other
-                    fields remain as inferred. If a key already exists in metadata
-                    and is provided again with a different value, an error is
-                    returned.
+                    geometry_columns, the provided metadata replaces the inferred
+                    metadata for that column. Missing optional fields are treated
+                    as absent/defaults.
 
                 Example:
                 - For `geo.parquet(geo1: geometry, geo2: geometry, geo3: binary)`,
                   `read_parquet("geo.parquet", geometry_columns='{"geo2": {"encoding": "WKB"}, "geo3": {"encoding": "WKB"}}')`
                   overrides `geo2` metadata and treats `geo3` as a geometry column.
                 - If `geo` inferred from metadata has:
-                  - `geo: {"encoding": "wkb", "crs": None, "edges": "spherical"...}`
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326", ..}`
                   and geometry_columns provides:
-                  - `geo: {"crs": 4326}`
-                  then the result is (only override provided keys):
-                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326", "edges": "spherical"...}`
-                - If `geo` inferred from metadata has:
-                  - `geo: {"encoding": "wkb", "crs": "EPSG:4326"}`
-                  and geometry_columns provides:
-                  - `geo: {"crs": "EPSG:3857"}`
-                  an error is returned for a conflicting key. This option is only
-                  allowed to provide missing optional fields in geometry columns.
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:3857"}`
+                  then the result is (full overwrite):
+                  - `geo: {"encoding": "wkb", "crs": "EPSG:3857", ..}` (other fields are defaulted)
+
 
                 Safety:
                 - Columns specified here are not validated for WKB correctness.
@@ -195,6 +191,9 @@ class SedonaContext:
 
         if options is None:
             options = {}
+
+        if geometry_columns is not None and not isinstance(geometry_columns, str):
+            geometry_columns = json.dumps(geometry_columns)
 
         return DataFrame(
             self._impl,
