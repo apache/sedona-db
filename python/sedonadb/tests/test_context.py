@@ -34,7 +34,7 @@ def _parse_geo_metadata(geoparquet_path: Path) -> Mapping[str, Any]:
     geo = metadata.get(b"geo")
     assert geo is not None
 
-    return json.loads(geo.decode("utf-8"))
+    return json.loads(geo.decode())
 
 
 def _geom_column_metadata(
@@ -214,6 +214,19 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     assert geom_meta["encoding"] == "WKB"
     assert geom_meta["crs"] == "EPSG:3857"
     assert geom_meta["edges"] == "spherical"
+
+    # Test 8: specify a non-existent column raises error
+    geometry_columns = json.dumps(
+        {
+            "geom_foo": {
+                "encoding": "WKB",
+            }
+        }
+    )
+    with pytest.raises(
+        sedonadb._lib.SedonaError, match="Geometry columns not found in schema"
+    ):
+        df = con.read_parquet(src, geometry_columns=geometry_columns)
 
 
 def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):

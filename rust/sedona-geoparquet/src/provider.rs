@@ -198,9 +198,13 @@ impl GeoParquetReadOptions<'_> {
     }
 
     /// Add geometry column metadata (JSON string) to apply during schema resolution
-    /// See python `read_parquet(..)` comments for details.
     ///
-    /// Errors if invalid json configuration string is provided.
+    /// Reads Parquet files as if GeoParquet metadata with the `"geometry_columns"`
+    /// key were present. If GeoParquet metadata is already present, the values provided
+    /// here will override any definitions provided in the original metadata.
+    ///
+    /// Errors if an invalid JSON configuration string is provided
+
     pub fn with_geometry_columns_json(mut self, geometry_columns_json: &str) -> Result<Self> {
         let geometry_columns = parse_geometry_columns_json(geometry_columns_json)?;
         self.geometry_columns = Some(geometry_columns);
@@ -256,9 +260,6 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
         unreachable!("GeoParquetReadOptions with non-ParquetFormat ListingOptions");
     }
 
-    /// Infer schema from GeoParquet metadata, then apply the user option
-    /// `geometry_columns` from `read_parquet()` to override if provided. See the
-    /// Python DataFrame `read_parquet(..)` documentation for details.
     async fn get_resolved_schema(
         &self,
         config: &SessionConfig,

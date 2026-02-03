@@ -184,9 +184,6 @@ impl FileFormat for GeoParquetFormat {
         self.inner().compression_type()
     }
 
-    /// Infer schema from GeoParquet metadata, then optionally override it using
-    /// user-provided geometry column options (see Python DataFrame API
-    /// `read_parquet(..)` `geometry_columns` for details).
     async fn infer_schema(
         &self,
         state: &dyn Session,
