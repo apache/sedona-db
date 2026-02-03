@@ -45,7 +45,7 @@ use sedona_geometry::{
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::metadata::GeoParquetMetadata;
+use crate::metadata::{GeoParquetColumnMetadata, GeoParquetMetadata};
 
 #[derive(Clone)]
 struct GeoParquetFileOpenerMetrics {
@@ -94,6 +94,7 @@ pub struct GeoParquetFileOpener {
     file_schema: SchemaRef,
     enable_pruning: bool,
     metrics: GeoParquetFileOpenerMetrics,
+    overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl GeoParquetFileOpener {
@@ -106,6 +107,7 @@ impl GeoParquetFileOpener {
         file_schema: SchemaRef,
         enable_pruning: bool,
         execution_plan_global_metrics: &ExecutionPlanMetricsSet,
+        overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
     ) -> Self {
         Self {
             inner,
@@ -115,6 +117,7 @@ impl GeoParquetFileOpener {
             file_schema,
             enable_pruning,
             metrics: GeoParquetFileOpenerMetrics::new(execution_plan_global_metrics),
+            overrides,
         }
     }
 }
@@ -135,9 +138,10 @@ impl FileOpener for GeoParquetFileOpener {
             if self_clone.enable_pruning {
                 let spatial_filter = SpatialFilter::try_from_expr(&self_clone.predicate)?;
 
-                if let Some(geoparquet_metadata) =
-                    GeoParquetMetadata::try_from_parquet_metadata(&parquet_metadata)?
-                {
+                if let Some(geoparquet_metadata) = GeoParquetMetadata::try_from_parquet_metadata(
+                    &parquet_metadata,
+                    self_clone.overrides.as_ref(),
+                )? {
                     filter_access_plan_using_geoparquet_file_metadata(
                         &self_clone.file_schema,
                         &mut access_plan,

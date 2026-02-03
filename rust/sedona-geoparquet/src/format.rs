@@ -53,7 +53,7 @@ use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
-    metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
+    metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
@@ -213,24 +213,10 @@ impl FileFormat for GeoParquetFormat {
         // as a workaround in this situation.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
-            let mut this_geoparquet_metadata =
-                GeoParquetMetadata::try_from_parquet_metadata(metadata)?;
-
-            // Apply overrides
-            match (
-                &mut this_geoparquet_metadata,
-                &self.options.geometry_columns,
-            ) {
-                (None, None) | (Some(_), None) => {}
-                (None, Some(geometry_columns)) => {
-                    let mut this_metadata = GeoParquetMetadata::default();
-                    this_metadata.override_columns(geometry_columns)?;
-                    this_geoparquet_metadata = Some(this_metadata);
-                }
-                (Some(this_metadata), Some(geometry_columns)) => {
-                    this_metadata.override_columns(geometry_columns)?;
-                }
-            }
+            let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
+                metadata,
+                self.options.geometry_columns.as_ref(),
+            )?;
 
             match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
                 (Some(existing_metadata), Some(this_metadata)) => {
@@ -375,6 +361,7 @@ pub struct GeoParquetFileSource {
     inner: ParquetSource,
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
+    overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl GeoParquetFileSource {
@@ -384,6 +371,7 @@ impl GeoParquetFileSource {
             inner: ParquetSource::new(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
+            overrides: options.geometry_columns.clone(),
         }
     }
 
@@ -431,6 +419,7 @@ impl GeoParquetFileSource {
                 inner: parquet_source.clone(),
                 metadata_size_hint,
                 predicate: new_predicate,
+                overrides: None,
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -443,6 +432,7 @@ impl GeoParquetFileSource {
             inner: self.inner.with_predicate(predicate.clone()),
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
+            overrides: self.overrides.clone(),
         }
     }
 
@@ -467,6 +457,7 @@ impl GeoParquetFileSource {
             inner: parquet_source,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
+            overrides: self.overrides.clone(),
         }
     }
 
@@ -476,6 +467,7 @@ impl GeoParquetFileSource {
             inner: self.inner.clone().with_metadata_size_hint(hint),
             metadata_size_hint: Some(hint),
             predicate: self.predicate.clone(),
+            overrides: self.overrides.clone(),
         }
     }
 }
@@ -506,6 +498,7 @@ impl FileSource for GeoParquetFileSource {
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
             self.inner.metrics(),
+            self.overrides.clone(),
         ))
     }
 
@@ -517,11 +510,14 @@ impl FileSource for GeoParquetFileSource {
         let inner_result = self.inner.try_pushdown_filters(filters.clone(), config)?;
         match &inner_result.updated_node {
             Some(updated_node) => {
-                let updated_inner = Self::try_from_file_source(
+                let mut updated_inner = Self::try_from_file_source(
                     updated_node.clone(),
                     self.metadata_size_hint,
+                    // TODO should this be None?
                     None,
                 )?;
+                // TODO: part of try_from_file_source()?
+                updated_inner.overrides = self.overrides.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),

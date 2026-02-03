@@ -387,10 +387,28 @@ impl GeoParquetMetadata {
     /// This constructor considers (1) the GeoParquet metadata in the key/value
     /// metadata and (2) Geometry/Geography types present in the Parquet schema.
     /// Specification of a column in the GeoParquet metadata takes precedence.
-    pub fn try_from_parquet_metadata(metadata: &ParquetMetaData) -> Result<Option<Self>> {
+    pub fn try_from_parquet_metadata(
+        metadata: &ParquetMetaData,
+        overrides: Option<&HashMap<String, GeoParquetColumnMetadata>>,
+    ) -> Result<Option<Self>> {
         let schema = metadata.file_metadata().schema_descr().root_schema();
         let kv_metadata = metadata.file_metadata().key_value_metadata();
-        Self::try_from_parquet_metadata_impl(schema, kv_metadata)
+        let mut maybe_metadata = Self::try_from_parquet_metadata_impl(schema, kv_metadata)?;
+
+        // Apply overrides
+        match (&mut maybe_metadata, overrides) {
+            (None, None) | (Some(_), None) => {}
+            (None, Some(geometry_columns)) => {
+                let mut metadata = GeoParquetMetadata::default();
+                metadata.override_columns(geometry_columns)?;
+                maybe_metadata = Some(metadata);
+            }
+            (Some(this_metadata), Some(geometry_columns)) => {
+                this_metadata.override_columns(geometry_columns)?;
+            }
+        }
+
+        Ok(maybe_metadata)
     }
 
     /// For testing, as it is easier to simulate the schema and key/value metadata
