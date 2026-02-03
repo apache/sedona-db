@@ -1016,6 +1016,22 @@ mod test {
     }
 
     #[test]
+    fn parquet_geo_stats_invalid_bbox_nan_x() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NAN,
+                f64::NAN,
+                -90.0,
+                90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because x width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
     fn parquet_geo_stats_invalid_bbox_infinite_y() {
         let parquet_stats = GeospatialStatistics::new(
             Some(parquet::geospatial::bounding_box::BoundingBox::new(
