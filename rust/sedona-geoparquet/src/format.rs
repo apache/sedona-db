@@ -52,7 +52,7 @@ use sedona_common::sedona_internal_err;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
-    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
+    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
     metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
@@ -488,18 +488,18 @@ impl FileSource for GeoParquetFileSource {
             return inner_opener;
         }
 
-        Arc::new(GeoParquetFileOpener::new(
-            inner_opener,
+        Arc::new(GeoParquetFileOpener {
+            inner: inner_opener,
             object_store,
-            self.metadata_size_hint,
-            self.predicate.clone().unwrap(),
-            base_config.file_schema().clone(),
-            self.inner.table_parquet_options().global.pruning,
+            metadata_size_hint: self.metadata_size_hint,
+            predicate: self.predicate.clone().unwrap(),
+            file_schema: base_config.file_schema().clone(),
+            enable_pruning: self.inner.table_parquet_options().global.pruning,
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
-            self.inner.metrics(),
-            self.overrides.clone(),
-        ))
+            metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
+            overrides: self.overrides.clone(),
+        })
     }
 
     fn try_pushdown_filters(

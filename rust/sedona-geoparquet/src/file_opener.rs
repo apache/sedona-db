@@ -48,7 +48,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use crate::metadata::{GeoParquetColumnMetadata, GeoParquetMetadata};
 
 #[derive(Clone)]
-struct GeoParquetFileOpenerMetrics {
+pub(crate) struct GeoParquetFileOpenerMetrics {
     /// How many file ranges are pruned by [`SpatialFilter`]
     ///
     /// Note on "file range": an opener may read only part of a file rather than the
@@ -67,7 +67,7 @@ struct GeoParquetFileOpenerMetrics {
 }
 
 impl GeoParquetFileOpenerMetrics {
-    fn new(execution_plan_global_metrics: &ExecutionPlanMetricsSet) -> Self {
+    pub fn new(execution_plan_global_metrics: &ExecutionPlanMetricsSet) -> Self {
         Self {
             files_ranges_spatial_pruned: MetricBuilder::new(execution_plan_global_metrics)
                 .global_counter("files_ranges_spatial_pruned"),
@@ -86,40 +86,15 @@ impl GeoParquetFileOpenerMetrics {
 /// Pruning happens (for Parquet) in the [FileOpener], so we implement
 /// that here, too.
 #[derive(Clone)]
-pub struct GeoParquetFileOpener {
-    inner: Arc<dyn FileOpener>,
-    object_store: Arc<dyn ObjectStore>,
-    metadata_size_hint: Option<usize>,
-    predicate: Arc<dyn PhysicalExpr>,
-    file_schema: SchemaRef,
-    enable_pruning: bool,
-    metrics: GeoParquetFileOpenerMetrics,
-    overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
-}
-
-impl GeoParquetFileOpener {
-    /// Create a new file opener
-    pub fn new(
-        inner: Arc<dyn FileOpener>,
-        object_store: Arc<dyn ObjectStore>,
-        metadata_size_hint: Option<usize>,
-        predicate: Arc<dyn PhysicalExpr>,
-        file_schema: SchemaRef,
-        enable_pruning: bool,
-        execution_plan_global_metrics: &ExecutionPlanMetricsSet,
-        overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
-    ) -> Self {
-        Self {
-            inner,
-            object_store,
-            metadata_size_hint,
-            predicate,
-            file_schema,
-            enable_pruning,
-            metrics: GeoParquetFileOpenerMetrics::new(execution_plan_global_metrics),
-            overrides,
-        }
-    }
+pub(crate) struct GeoParquetFileOpener {
+    pub inner: Arc<dyn FileOpener>,
+    pub object_store: Arc<dyn ObjectStore>,
+    pub metadata_size_hint: Option<usize>,
+    pub predicate: Arc<dyn PhysicalExpr>,
+    pub file_schema: SchemaRef,
+    pub enable_pruning: bool,
+    pub metrics: GeoParquetFileOpenerMetrics,
+    pub overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl FileOpener for GeoParquetFileOpener {
