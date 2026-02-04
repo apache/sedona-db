@@ -37,8 +37,7 @@ struct GpuSpatialRuntimeConfig {
 };
 
 /** Opaque runtime for GPU spatial operations
- * Each process should only has one instance of GpuSpatialRuntimeexactly
- *
+ * Each process should only has one instance of GpuSpatialRuntime exactly
  */
 struct GpuSpatialRuntime {
   /** Initialize the runtime (OptiX) with the given configuration
@@ -109,13 +108,24 @@ struct SedonaFloatIndex2D {
   void (*get_probe_indices_buffer)(struct SedonaSpatialIndexContext* context,
                                    uint32_t** probe_indices,
                                    uint32_t* probe_indices_length);
+  /** Get the last error message from either the index
+   *
+   * @return A pointer to the error message string
+   */
   const char* (*get_last_error)(struct SedonaFloatIndex2D* self);
+  /** Get the last error message from the context
+   *
+   * @return A pointer to the error message string
+   */
   const char* (*context_get_last_error)(struct SedonaSpatialIndexContext* context);
   /** Release the spatial index and free all resources */
   void (*release)(struct SedonaFloatIndex2D* self);
   void* private_data;
 };
 
+/** Create an instance of GpuSpatialIndex for 2D float rectangles/points
+ *  @return 0 on success, non-zero on failure
+ */
 int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
                                  const struct GpuSpatialIndexConfig* config);
 
@@ -142,26 +152,59 @@ enum SedonaSpatialRelationPredicate {
   SedonaSpatialPredicateCoveredBy
 };
 
+/** An opaque spatial refiner that can refine candidate pairs of geometries */
 struct SedonaSpatialRefiner {
+  /** Clear all built geometries from the refiner */
   int (*clear)(struct SedonaSpatialRefiner* self);
 
+  /** Push geometries for building the spatial refiner
+   *
+   * @param build_schema The Arrow schema of the build geometries
+   * @param build_array The Arrow array of the build geometries
+   * @return 0 on success, non-zero on failure
+   */
   int (*push_build)(struct SedonaSpatialRefiner* self,
                     const struct ArrowSchema* build_schema,
                     const struct ArrowArray* build_array);
-
+  /**
+   * Finish building the spatial refiner after all geometries have been pushed
+   *
+   * @return 0 on success, non-zero on failure
+   */
   int (*finish_building)(struct SedonaSpatialRefiner* self);
 
+  /**
+   * Refine candidate pairs of geometries
+   *
+   * @param probe_schema The Arrow schema of the probe geometries
+   * @param probe_array The Arrow array of the probe geometries
+   * @param predicate The spatial relation predicate to evaluate
+   * @param build_indices The build indices of candidate pairs
+   * @param probe_indices The probe indices of candidate pairs
+   * @param indices_size The number of candidate pairs
+   * @param new_indices_size Output parameter to store the number of refined pairs
+   * @return 0 on success, non-zero on failure
+   */
   int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowSchema* probe_schema,
                 const struct ArrowArray* probe_array,
                 enum SedonaSpatialRelationPredicate predicate, uint32_t* build_indices,
                 uint32_t* probe_indices, uint32_t indices_size,
                 uint32_t* new_indices_size);
 
+  /** Get the last error message
+   *
+   * @return A pointer to the error message string
+   */
   const char* (*get_last_error)(struct SedonaSpatialRefiner* self);
+
+  /** Release the spatial refiner and free all resources */
   void (*release)(struct SedonaSpatialRefiner* self);
   void* private_data;
 };
 
+/** Create an instance of GpuSpatialRefiner
+ * @return 0 on success, non-zero on failure
+ */
 int GpuSpatialRefinerCreate(struct SedonaSpatialRefiner* refiner,
                             const struct GpuSpatialRefinerConfig* config);
 #ifdef __cplusplus
