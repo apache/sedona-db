@@ -52,7 +52,7 @@ use sedona_common::sedona_internal_err;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
-    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener},
+    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
     metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
@@ -150,19 +150,6 @@ impl GeoParquetFormat {
     }
 }
 
-/// Merge geometry columns metadata.
-/// `overrides` columns replace any inferred metadata for the same column name.
-fn merge_geometry_columns(
-    base: &mut HashMap<String, GeoParquetColumnMetadata>,
-    overrides: &HashMap<String, GeoParquetColumnMetadata>,
-) -> Result<()> {
-    for (column_name, override_meta) in overrides {
-        base.insert(column_name.clone(), override_meta.clone());
-    }
-
-    Ok(())
-}
-
 #[async_trait]
 impl FileFormat for GeoParquetFormat {
     fn as_any(&self) -> &dyn Any {
@@ -218,39 +205,37 @@ impl FileFormat for GeoParquetFormat {
             .try_collect()
             .await?;
 
-        // Combine multiple partitioned geoparquet files' metadata into a single one
-        // See comments in `try_update(..)` for the specific behaviors.
+        // "Not seen" and "No geometry metadata" are identical here. When merging new
+        // metadata we check definitions for individual fields to ensure consistency
+        // but it is OK to have a file without geometry. Exactly how this gets merged
+        // and adapted changed in DataFusion 52...the method here is prone to inconsistency
+        // when some files contain geometry and some do not. Column overrides can be used
+        // as a workaround in this situation.
         let mut geoparquet_metadata: Option<GeoParquetMetadata> = None;
         for metadata in &metadatas {
-            if let Some(kv) = metadata.file_metadata().key_value_metadata() {
-                for item in kv {
-                    if item.key != "geo" {
-                        continue;
-                    }
-                    if let Some(value) = &item.value {
-                        let this_geoparquet_metadata = GeoParquetMetadata::try_new(value)?;
+            let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
+                metadata,
+                self.options.geometry_columns.as_ref(),
+            )?;
 
-                        match geoparquet_metadata.as_mut() {
-                            Some(existing) => {
-                                existing.try_update(&this_geoparquet_metadata)?;
-                            }
-                            None => geoparquet_metadata = Some(this_geoparquet_metadata),
-                        }
-                    }
+            match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
+                (Some(existing_metadata), Some(this_metadata)) => {
+                    existing_metadata.try_update(&this_metadata)?;
                 }
+                (None, Some(this_metadata)) => {
+                    geoparquet_metadata.replace(this_metadata);
+                }
+                (None, None) => {}
+                (Some(_), None) => {}
             }
         }
 
         // Geometry columns have been inferred from metadata, next combine column
         // metadata from options with the inferred ones
-        let mut inferred_geo_cols = match geoparquet_metadata {
+        let inferred_geo_cols = match geoparquet_metadata {
             Some(geo_metadata) => geo_metadata.columns,
             None => HashMap::new(),
         };
-
-        if let Some(geometry_columns) = &self.options.geometry_columns {
-            merge_geometry_columns(&mut inferred_geo_cols, geometry_columns)?;
-        }
 
         if inferred_geo_cols.is_empty() {
             return Ok(inner_schema_without_metadata);
@@ -376,6 +361,7 @@ pub struct GeoParquetFileSource {
     inner: ParquetSource,
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
+    overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl GeoParquetFileSource {
@@ -385,6 +371,7 @@ impl GeoParquetFileSource {
             inner: ParquetSource::new(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
+            overrides: options.geometry_columns.clone(),
         }
     }
 
@@ -432,6 +419,7 @@ impl GeoParquetFileSource {
                 inner: parquet_source.clone(),
                 metadata_size_hint,
                 predicate: new_predicate,
+                overrides: None,
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -444,6 +432,7 @@ impl GeoParquetFileSource {
             inner: self.inner.with_predicate(predicate.clone()),
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
+            overrides: self.overrides.clone(),
         }
     }
 
@@ -468,6 +457,7 @@ impl GeoParquetFileSource {
             inner: parquet_source,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
+            overrides: self.overrides.clone(),
         }
     }
 
@@ -477,6 +467,7 @@ impl GeoParquetFileSource {
             inner: self.inner.clone().with_metadata_size_hint(hint),
             metadata_size_hint: Some(hint),
             predicate: self.predicate.clone(),
+            overrides: self.overrides.clone(),
         }
     }
 }
@@ -497,17 +488,18 @@ impl FileSource for GeoParquetFileSource {
             return inner_opener;
         }
 
-        Arc::new(GeoParquetFileOpener::new(
-            inner_opener,
+        Arc::new(GeoParquetFileOpener {
+            inner: inner_opener,
             object_store,
-            self.metadata_size_hint,
-            self.predicate.clone().unwrap(),
-            base_config.file_schema().clone(),
-            self.inner.table_parquet_options().global.pruning,
+            metadata_size_hint: self.metadata_size_hint,
+            predicate: self.predicate.clone().unwrap(),
+            file_schema: base_config.file_schema().clone(),
+            enable_pruning: self.inner.table_parquet_options().global.pruning,
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
-            self.inner.metrics(),
-        ))
+            metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
+            overrides: self.overrides.clone(),
+        })
     }
 
     fn try_pushdown_filters(
@@ -518,11 +510,14 @@ impl FileSource for GeoParquetFileSource {
         let inner_result = self.inner.try_pushdown_filters(filters.clone(), config)?;
         match &inner_result.updated_node {
             Some(updated_node) => {
-                let updated_inner = Self::try_from_file_source(
+                let mut updated_inner = Self::try_from_file_source(
                     updated_node.clone(),
                     self.metadata_size_hint,
+                    // TODO should this be None?
                     None,
                 )?;
+                // TODO: part of try_from_file_source()?
+                updated_inner.overrides = self.overrides.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),

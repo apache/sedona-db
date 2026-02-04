@@ -21,12 +21,14 @@
 /// to remove the dependency on GeoArrow since we mostly don't need that here yet).
 /// This should be synchronized with that crate when possible.
 /// https://github.com/geoarrow/geoarrow-rs/blob/ad2d29ef90050c5cfcfa7dfc0b4a3e5d12e51bbe/rust/geoarrow-geoparquet/src/metadata.rs
-use datafusion_common::Result;
-use parquet::file::metadata::ParquetMetaData;
+use datafusion_common::{plan_err, Result};
+use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
+use parquet::file::metadata::{KeyValue, ParquetMetaData};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::{Interval, IntervalTrait};
 use sedona_geometry::types::GeometryTypeAndDimensionsSet;
+use sedona_schema::schema::primary_geometry_column_from_names;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fmt::Write;
@@ -39,7 +41,7 @@ use serde_json::Value;
 ///
 /// In contrast to the _user-specified API_, which is just "WKB" or "Native", here we need to know
 /// the actual written encoding type so that we can save that in the metadata.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum GeoParquetColumnEncoding {
     /// Serialized Well-known Binary encoding
@@ -109,7 +111,7 @@ impl Display for GeoParquetColumnEncoding {
 ///
 /// Note: This technique to use the bounding box to improve spatial queries does not apply to
 /// geometries that cross the antimeridian. Such geometries are unsupported by this method.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GeoParquetBboxCovering {
     /// The path in the Parquet schema of the column that contains the xmin
     pub xmin: Vec<String>,
@@ -257,7 +259,7 @@ impl GeoParquetBboxCovering {
 /// The covering field specifies optional simplified representations of each geometry. The keys of
 /// the "covering" object MUST be a supported encoding. Currently the only supported encoding is
 /// "bbox" which specifies the names of bounding box columns
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GeoParquetCovering {
     /// Bounding-box covering
     pub bbox: GeoParquetBboxCovering,
@@ -279,7 +281,7 @@ impl GeoParquetCovering {
 }
 
 /// Top-level GeoParquet file metadata
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GeoParquetMetadata {
     /// The version identifier for the GeoParquet specification.
     pub version: String,
@@ -304,7 +306,7 @@ impl Default for GeoParquetMetadata {
 }
 
 /// GeoParquet column metadata
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct GeoParquetColumnMetadata {
     /// Name of the geometry encoding format. As of GeoParquet 1.1, `"WKB"`, `"point"`,
     /// `"linestring"`, `"polygon"`, `"multipoint"`, `"multilinestring"`, and `"multipolygon"` are
@@ -382,20 +384,83 @@ impl GeoParquetMetadata {
     }
 
     /// Construct a [`GeoParquetMetadata`] from a [`ParquetMetaData`]
-    pub fn try_from_parquet_metadata(metadata: &ParquetMetaData) -> Result<Option<Self>> {
-        if let Some(kv) = metadata.file_metadata().key_value_metadata() {
-            for item in kv {
-                if item.key != "geo" {
-                    continue;
-                }
+    ///
+    /// This constructor considers (1) the GeoParquet metadata in the key/value
+    /// metadata and (2) Geometry/Geography types present in the Parquet schema.
+    /// Specification of a column in the GeoParquet metadata takes precedence.
+    pub fn try_from_parquet_metadata(
+        metadata: &ParquetMetaData,
+        overrides: Option<&HashMap<String, GeoParquetColumnMetadata>>,
+    ) -> Result<Option<Self>> {
+        let schema = metadata.file_metadata().schema_descr().root_schema();
+        let kv_metadata = metadata.file_metadata().key_value_metadata();
+        let mut maybe_metadata = Self::try_from_parquet_metadata_impl(schema, kv_metadata)?;
 
-                if let Some(value) = &item.value {
-                    return Ok(Some(Self::try_new(value)?));
-                }
+        // Apply overrides
+        match (&mut maybe_metadata, overrides) {
+            (None, None) | (Some(_), None) => {}
+            (None, Some(geometry_columns)) => {
+                let mut metadata = GeoParquetMetadata::default();
+                metadata.override_columns(geometry_columns)?;
+                maybe_metadata = Some(metadata);
+            }
+            (Some(this_metadata), Some(geometry_columns)) => {
+                this_metadata.override_columns(geometry_columns)?;
             }
         }
 
-        Ok(None)
+        Ok(maybe_metadata)
+    }
+
+    /// For testing, as it is easier to simulate the schema and key/value metadata
+    /// than the whole ParquetMetaData.
+    fn try_from_parquet_metadata_impl(
+        root_schema: &parquet::schema::types::Type,
+        kv_metadata: Option<&Vec<KeyValue>>,
+    ) -> Result<Option<Self>> {
+        let mut columns_from_schema = columns_from_parquet_schema(root_schema, kv_metadata)?;
+
+        if let Some(value) = get_parquet_key_value("geo", kv_metadata) {
+            // Values in the GeoParquet metadata take precedence over those from the
+            // Parquet schema
+            let mut out = Self::try_new(&value)?;
+            for (k, v) in columns_from_schema.drain() {
+                out.columns.entry(k).or_insert(v);
+            }
+
+            return Ok(Some(out));
+        }
+
+        // No geo metadata key, but we have geo columns from the schema
+        if !columns_from_schema.is_empty() {
+            // To keep metadata valid, ensure we set a primary column deterministically
+            let mut column_names = columns_from_schema.keys().collect::<Vec<_>>();
+            column_names.sort();
+            let primary_index = primary_geometry_column_from_names(column_names.iter())
+                .expect("non-empty input always returns a value");
+            let primary_column = column_names[primary_index].to_string();
+
+            Ok(Some(Self {
+                version: "2.0.0".to_string(),
+                columns: columns_from_schema,
+                primary_column,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Replace any inferred metadata for the same column name with overrides
+    pub fn override_columns(
+        &mut self,
+        overrides: &HashMap<String, GeoParquetColumnMetadata>,
+    ) -> Result<()> {
+        for (column_name, override_meta) in overrides {
+            self.columns
+                .insert(column_name.clone(), override_meta.clone());
+        }
+
+        Ok(())
     }
 
     /// Update a GeoParquetMetadata from another file's metadata
@@ -551,9 +616,139 @@ impl GeoParquetColumnMetadata {
     }
 }
 
+/// Collect column metadata from (top-level) Parquet Geometry/Geography columns
+///
+/// Converts embedded schema information into GeoParquet column metadata. Because
+/// GeoParquet metadata does not support nested columns, this does not currently
+/// support them either.
+fn columns_from_parquet_schema(
+    root_schema: &parquet::schema::types::Type,
+    kv_metadata: Option<&Vec<KeyValue>>,
+) -> Result<HashMap<String, GeoParquetColumnMetadata>> {
+    let mut columns = HashMap::new();
+
+    for field in root_schema.get_fields() {
+        let column_metadata_opt =
+            column_from_logical_type(field.get_basic_info().logical_type_ref(), kv_metadata)?;
+        if let Some(column_metadata) = column_metadata_opt {
+            let name = field.name().to_string();
+            columns.insert(name, column_metadata);
+        }
+    }
+
+    Ok(columns)
+}
+
+/// Convert a single LogicalType to GeoParquetColumnMetadata, if possible
+///
+/// Returns None for something that is not Geometry or Geography.
+fn column_from_logical_type(
+    logical_type: Option<&LogicalType>,
+    kv_metadata: Option<&Vec<KeyValue>>,
+) -> Result<Option<GeoParquetColumnMetadata>> {
+    if let Some(logical_type) = logical_type {
+        let mut column_metadata = GeoParquetColumnMetadata::default();
+
+        match logical_type {
+            LogicalType::Geometry { crs } => {
+                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+                Ok(Some(column_metadata))
+            }
+            LogicalType::Geography { crs, algorithm } => {
+                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+
+                let edges = match algorithm {
+                    None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
+                    Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
+                    Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
+                    Some(EdgeInterpolationAlgorithm::THOMAS) => "thomas",
+                    Some(EdgeInterpolationAlgorithm::KARNEY) => "karney",
+                    Some(_) => {
+                        return plan_err!(
+                            "Unsupported edge interpolation algorithm in Parquet schema"
+                        )
+                    }
+                };
+                column_metadata.edges = Some(edges.to_string());
+                Ok(Some(column_metadata))
+            }
+            _ => Ok(None),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+/// Parse a CRS from a Parquet logical type into one that will transfer to GeoParquet
+/// and then to GeoArrow
+///
+/// This is identical to what will happen in the forthcoming Arrow release (packaged
+/// with DataFusion 52), except this version also resolves projjson:xxx CRSes from
+/// the key/value metadata (in Arrow this was hard because the conversion code was
+/// not set up in a way that this was easy to do; here it is easy because we have
+/// the whole ParquetMetadata).
+fn geoparquet_crs_from_logical_type(
+    crs: Option<&String>,
+    kv_metadata: Option<&Vec<KeyValue>>,
+) -> Option<Value> {
+    if let Some(crs_str) = crs {
+        // Treat an empty string the same as lon/lat. There is no concept of a "missing"
+        // CRS in a Parquet LogicalType although this can be expressed with srid:0 in a
+        // pinch.
+        if crs_str.is_empty() {
+            return None;
+        }
+
+        // Resolve projjson:some_key if possible. If this is not possible, the value that
+        // will be passed on to the GeoParquet column metadata is the full string
+        // "projjson:some_key".
+        if let Some(crs_kv_key) = crs_str.strip_prefix("projjson:") {
+            if let Some(crs_from_kv) = get_parquet_key_value(crs_kv_key, kv_metadata) {
+                return Some(Value::String(crs_from_kv.to_string()));
+            }
+        }
+
+        // Resolve srid:<int value> to "<int value>", which is accepted by SedonaDB internals
+        // and is interpreted as an EPSG code. There is no guarantee that other implementations
+        // will do this but it probably better than erroring for an unknown CRS.
+        if let Some(srid_string) = crs_str.strip_prefix("srid:") {
+            return Some(Value::String(srid_string.to_string()));
+        }
+
+        // Try to parse the output as JSON such that the resulting column metadata is closer
+        // to what would have been in the GeoParquet metadata (e.g., where PROJJSON is parsed).
+        if let Ok(value) = crs_str.parse::<Value>() {
+            Some(value)
+        } else {
+            Some(Value::String(crs_str.to_string()))
+        }
+    } else {
+        None
+    }
+}
+
+/// Helper to get a key from the key/value metadata
+fn get_parquet_key_value(key: &str, kv_metadata: Option<&Vec<KeyValue>>) -> Option<String> {
+    if let Some(kv_metadata) = kv_metadata {
+        for kv in kv_metadata {
+            if kv.key == key {
+                if let Some(value) = &kv.value {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use geo_traits::Dimensions;
+    use parquet::basic::{Repetition, Type as PhysicalType};
+    use parquet::schema::types::Type;
     use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeId};
 
     use super::*;
@@ -573,5 +768,259 @@ mod test {
             meta.geometry_types.iter().next().unwrap(),
             GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy)
         );
+    }
+
+    #[test]
+    fn test_from_parquet_metadata_with_parquet_types() {
+        let s = r#"{
+            "version": "2.0.0",
+            "primary_column": "geom_geoparquet",
+            "columns": {
+                "geom_geoparquet": {
+                    "encoding": "WKB",
+                    "crs": "geom_geoparquet_crs"
+                }
+            }
+        }"#;
+
+        let kv_metadata_with_geo_key = make_kv_metadata(&[("geo", s)]);
+
+        let schema_no_parquet_geo = make_parquet_schema(&[("geom_geoparquet", None)]);
+        let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
+            &schema_no_parquet_geo,
+            kv_metadata_with_geo_key.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.version, "2.0.0");
+        assert_eq!(metadata.primary_column, "geom_geoparquet");
+        assert_eq!(metadata.columns.len(), 1);
+        assert!(metadata.columns.contains_key("geom_geoparquet"));
+        assert_eq!(
+            metadata.columns.get("geom_geoparquet").unwrap().crs,
+            Some(Value::String("geom_geoparquet_crs".to_string()))
+        );
+
+        let schema_additional_parquet_geo = make_parquet_schema(&[
+            ("geom_geoparquet", None),
+            ("geom_parquet", Some(LogicalType::Geometry { crs: None })),
+        ]);
+        let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
+            &schema_additional_parquet_geo,
+            kv_metadata_with_geo_key.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.columns.len(), 2);
+        assert!(metadata.columns.contains_key("geom_geoparquet"));
+        assert!(metadata.columns.contains_key("geom_parquet"));
+
+        let schema_overlapping_columns =
+            make_parquet_schema(&[("geom_geoparquet", Some(LogicalType::Geometry { crs: None }))]);
+        let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
+            &schema_overlapping_columns,
+            kv_metadata_with_geo_key.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.columns.len(), 1);
+        assert!(metadata.columns.contains_key("geom_geoparquet"));
+        // Ensure we use the CRS provided by the GeoParquet metadata instead of the CRS
+        // provided by the type as a test that GeoParquet columns take precedence if both
+        // are present.
+        assert_eq!(
+            metadata.columns.get("geom_geoparquet").unwrap().crs,
+            Some(Value::String("geom_geoparquet_crs".to_string()))
+        );
+
+        let schema_only_parquet_geo =
+            make_parquet_schema(&[("geom_parquet", Some(LogicalType::Geometry { crs: None }))]);
+        let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
+            &schema_only_parquet_geo,
+            None, // No key/value metadata
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.columns.len(), 1);
+        assert!(metadata.columns.contains_key("geom_parquet"));
+    }
+
+    #[test]
+    fn test_column_from_logical_type() {
+        let kv_metadata = make_kv_metadata(&[("some_projjson_key", "some_projjson_value")]);
+
+        // A missing logical type annotation is never Geometry or Geography
+        assert_eq!(
+            column_from_logical_type(None, kv_metadata.as_ref()).unwrap(),
+            None
+        );
+
+        // Logical type that is present but not Geometry or Geography should return None
+        assert_eq!(
+            column_from_logical_type(Some(&LogicalType::Uuid), kv_metadata.as_ref()).unwrap(),
+            None
+        );
+
+        // Geometry logical type
+        let metadata = column_from_logical_type(
+            Some(&LogicalType::Geometry { crs: None }),
+            kv_metadata.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata, GeoParquetColumnMetadata::default());
+
+        // Ensure CRS is translated
+        let metadata = column_from_logical_type(
+            Some(&LogicalType::Geometry {
+                crs: Some("projjson:some_projjson_key".to_string()),
+            }),
+            kv_metadata.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            metadata.crs,
+            Some(Value::String("some_projjson_value".to_string()))
+        );
+
+        // Geography logical type
+        let metadata = column_from_logical_type(
+            Some(&LogicalType::Geography {
+                crs: None,
+                algorithm: None,
+            }),
+            kv_metadata.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.edges, Some("spherical".to_string()));
+
+        // Ensure CRS is translated
+        let metadata = column_from_logical_type(
+            Some(&LogicalType::Geography {
+                crs: Some("projjson:some_projjson_key".to_string()),
+                algorithm: None,
+            }),
+            kv_metadata.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            metadata.crs,
+            Some(Value::String("some_projjson_value".to_string()))
+        );
+
+        // Ensure algorithm is translated
+        let metadata = column_from_logical_type(
+            Some(&LogicalType::Geography {
+                crs: None,
+                algorithm: Some(EdgeInterpolationAlgorithm::VINCENTY),
+            }),
+            kv_metadata.as_ref(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(metadata.edges, Some("vincenty".to_string()));
+    }
+
+    #[test]
+    fn test_crs_from_logical_type() {
+        let kv_metadata = make_kv_metadata(&[("some_projjson_key", "some_projjson_value")]);
+
+        // None and "" both map to a GeoParquet default CRS
+        assert_eq!(
+            geoparquet_crs_from_logical_type(None, kv_metadata.as_ref()),
+            None
+        );
+        assert_eq!(
+            geoparquet_crs_from_logical_type(Some(&"".to_string()), kv_metadata.as_ref()),
+            None
+        );
+
+        // projjson: string should resolve from the key/value metadata or be passed on
+        // verbatim if it can't be resolved.
+        assert_eq!(
+            geoparquet_crs_from_logical_type(None, kv_metadata.as_ref()),
+            None
+        );
+        assert_eq!(
+            geoparquet_crs_from_logical_type(
+                Some(&"projjson:some_projjson_key".to_string()),
+                kv_metadata.as_ref()
+            ),
+            Some(Value::String("some_projjson_value".to_string()))
+        );
+        assert_eq!(
+            geoparquet_crs_from_logical_type(
+                Some(&"projjson:not_in_kv_metadata".to_string()),
+                kv_metadata.as_ref()
+            ),
+            Some(Value::String("projjson:not_in_kv_metadata".to_string()))
+        );
+
+        // srid: string should have its prefix stripped
+        assert_eq!(
+            geoparquet_crs_from_logical_type(Some(&"srid:1234".to_string()), kv_metadata.as_ref()),
+            Some(Value::String("1234".to_string()))
+        );
+
+        // strings should get passed through verbatim
+        assert_eq!(
+            geoparquet_crs_from_logical_type(Some(&"EPSG:1234".to_string()), kv_metadata.as_ref()),
+            Some(Value::String("EPSG:1234".to_string()))
+        );
+
+        // Valid JSON should be parsed
+        assert_eq!(
+            geoparquet_crs_from_logical_type(
+                Some(&"\"EPSG:1234\"".to_string()),
+                kv_metadata.as_ref()
+            ),
+            Some(Value::String("EPSG:1234".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_get_kv_metadata() {
+        let kv_metadata = make_kv_metadata(&[("key", "value")]);
+        assert_eq!(
+            get_parquet_key_value("key", kv_metadata.as_ref()),
+            Some("value".to_string())
+        );
+    }
+
+    // Helper to make a Parquet schema. None here means Binary since it's the only primitive
+    // type we need to test
+    fn make_parquet_schema(fields: &[(&str, Option<LogicalType>)]) -> parquet::schema::types::Type {
+        let fields = fields
+            .iter()
+            .map(|(name, logical_type)| {
+                let mut builder = Type::primitive_type_builder(name, PhysicalType::BYTE_ARRAY)
+                    .with_repetition(Repetition::OPTIONAL);
+                if let Some(lt) = logical_type {
+                    builder = builder.with_logical_type(Some(lt.clone()));
+                }
+                Arc::new(builder.build().unwrap())
+            })
+            .collect::<Vec<_>>();
+
+        Type::group_type_builder("schema")
+            .with_fields(fields)
+            .build()
+            .unwrap()
+    }
+
+    // Helper to simulate key/value metadata
+    fn make_kv_metadata(pairs: &[(&str, &str)]) -> Option<Vec<KeyValue>> {
+        Some(
+            pairs
+                .iter()
+                .map(|(key, value)| KeyValue {
+                    key: key.to_string(),
+                    value: Some(value.to_string()),
+                })
+                .collect(),
+        )
     }
 }

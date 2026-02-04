@@ -26,21 +26,29 @@ use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
 use object_store::ObjectStore;
-use parquet::file::{
-    metadata::{ParquetMetaData, RowGroupMetaData},
-    statistics::Statistics,
+use parquet::{
+    basic::LogicalType,
+    file::{
+        metadata::{ParquetMetaData, RowGroupMetaData},
+        statistics::Statistics,
+    },
+    geospatial::statistics::GeospatialStatistics,
 };
 use sedona_expr::{
     spatial_filter::{SpatialFilter, TableGeoStatistics},
     statistics::GeoStatistics,
 };
-use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::{
+    bounding_box::BoundingBox,
+    interval::{Interval, IntervalTrait},
+    types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::metadata::GeoParquetMetadata;
+use crate::metadata::{GeoParquetColumnMetadata, GeoParquetMetadata};
 
 #[derive(Clone)]
-struct GeoParquetFileOpenerMetrics {
+pub(crate) struct GeoParquetFileOpenerMetrics {
     /// How many file ranges are pruned by [`SpatialFilter`]
     ///
     /// Note on "file range": an opener may read only part of a file rather than the
@@ -59,7 +67,7 @@ struct GeoParquetFileOpenerMetrics {
 }
 
 impl GeoParquetFileOpenerMetrics {
-    fn new(execution_plan_global_metrics: &ExecutionPlanMetricsSet) -> Self {
+    pub fn new(execution_plan_global_metrics: &ExecutionPlanMetricsSet) -> Self {
         Self {
             files_ranges_spatial_pruned: MetricBuilder::new(execution_plan_global_metrics)
                 .global_counter("files_ranges_spatial_pruned"),
@@ -78,37 +86,15 @@ impl GeoParquetFileOpenerMetrics {
 /// Pruning happens (for Parquet) in the [FileOpener], so we implement
 /// that here, too.
 #[derive(Clone)]
-pub struct GeoParquetFileOpener {
-    inner: Arc<dyn FileOpener>,
-    object_store: Arc<dyn ObjectStore>,
-    metadata_size_hint: Option<usize>,
-    predicate: Arc<dyn PhysicalExpr>,
-    file_schema: SchemaRef,
-    enable_pruning: bool,
-    metrics: GeoParquetFileOpenerMetrics,
-}
-
-impl GeoParquetFileOpener {
-    /// Create a new file opener
-    pub fn new(
-        inner: Arc<dyn FileOpener>,
-        object_store: Arc<dyn ObjectStore>,
-        metadata_size_hint: Option<usize>,
-        predicate: Arc<dyn PhysicalExpr>,
-        file_schema: SchemaRef,
-        enable_pruning: bool,
-        execution_plan_global_metrics: &ExecutionPlanMetricsSet,
-    ) -> Self {
-        Self {
-            inner,
-            object_store,
-            metadata_size_hint,
-            predicate,
-            file_schema,
-            enable_pruning,
-            metrics: GeoParquetFileOpenerMetrics::new(execution_plan_global_metrics),
-        }
-    }
+pub(crate) struct GeoParquetFileOpener {
+    pub inner: Arc<dyn FileOpener>,
+    pub object_store: Arc<dyn ObjectStore>,
+    pub metadata_size_hint: Option<usize>,
+    pub predicate: Arc<dyn PhysicalExpr>,
+    pub file_schema: SchemaRef,
+    pub enable_pruning: bool,
+    pub metrics: GeoParquetFileOpenerMetrics,
+    pub overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
 }
 
 impl FileOpener for GeoParquetFileOpener {
@@ -127,9 +113,10 @@ impl FileOpener for GeoParquetFileOpener {
             if self_clone.enable_pruning {
                 let spatial_filter = SpatialFilter::try_from_expr(&self_clone.predicate)?;
 
-                if let Some(geoparquet_metadata) =
-                    GeoParquetMetadata::try_from_parquet_metadata(&parquet_metadata)?
-                {
+                if let Some(geoparquet_metadata) = GeoParquetMetadata::try_from_parquet_metadata(
+                    &parquet_metadata,
+                    self_clone.overrides.as_ref(),
+                )? {
                     filter_access_plan_using_geoparquet_file_metadata(
                         &self_clone.file_schema,
                         &mut access_plan,
@@ -143,6 +130,14 @@ impl FileOpener for GeoParquetFileOpener {
                         &mut access_plan,
                         &spatial_filter,
                         &geoparquet_metadata,
+                        &parquet_metadata,
+                        &self_clone.metrics,
+                    )?;
+
+                    filter_access_plan_using_native_geostats(
+                        &self_clone.file_schema,
+                        &mut access_plan,
+                        &spatial_filter,
                         &parquet_metadata,
                         &self_clone.metrics,
                     )?;
@@ -210,11 +205,77 @@ fn filter_access_plan_using_geoparquet_covering(
     // but we need flattened integer references to retrieve min/max statistics for each of these.
     let covering_specs = parse_column_coverings(file_schema, parquet_metadata, metadata)?;
 
+    // If there are no covering specs, don't iterate through the row groups
+    // This has the side-effect of ensuring the row_groups_spatial_matched metric is not double
+    // counted except in the rare case where we prune based on both.
+    if covering_specs.iter().all(|spec| spec.is_none()) {
+        return Ok(());
+    }
+
     // Iterate through the row groups
     for i in row_group_indices_to_scan {
         // Generate row group statistics based on the covering statistics
         let row_group_column_geo_stats =
             row_group_covering_geo_stats(parquet_metadata.row_group(i), &covering_specs);
+        let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
+            &row_group_column_geo_stats,
+            file_schema,
+        )?;
+
+        // Evaluate predicate!
+        if !spatial_filter.evaluate(&row_group_geo_stats)? {
+            metrics.row_groups_spatial_pruned.add(1);
+            access_plan.skip(i);
+        } else {
+            metrics.row_groups_spatial_matched.add(1);
+        }
+    }
+
+    Ok(())
+}
+
+/// Filter an access plan using the Parquet GeoStatistics, if present
+///
+/// Iterates through an existing access plan and skips row groups based on
+/// the Parquet format GeoStatistics (i.e., Geometry/Geography Parquet types).
+fn filter_access_plan_using_native_geostats(
+    file_schema: &SchemaRef,
+    access_plan: &mut ParquetAccessPlan,
+    spatial_filter: &SpatialFilter,
+    parquet_metadata: &ParquetMetaData,
+    metrics: &GeoParquetFileOpenerMetrics,
+) -> Result<()> {
+    let row_group_indices_to_scan = access_plan.row_group_indexes();
+
+    // What we're about to do is a bit of work, so skip it if we can.
+    if row_group_indices_to_scan.is_empty() {
+        return Ok(());
+    }
+
+    // Get the indices we need to index in to the Parquet column()s.
+    // For schemas with no nested columns, this will be a sequential
+    // range of 0..n.
+    let top_level_indices = top_level_column_indices(parquet_metadata);
+
+    // If there are no native geometry or geography logical types at the
+    // top level indices, don't iterate through the row groups. This has the side-effect
+    // of ensuring the row_groups_spatial_matched metric is not double counted except
+    // in the rare case where we prune based on both.
+    let parquet_schema = parquet_metadata.file_metadata().schema_descr();
+    if top_level_indices.iter().all(|i| {
+        !matches!(
+            parquet_schema.column(*i).logical_type_ref(),
+            Some(LogicalType::Geometry { .. }) | Some(LogicalType::Geography { .. })
+        )
+    }) {
+        return Ok(());
+    }
+
+    // Iterate through the row groups
+    for i in row_group_indices_to_scan {
+        // Generate row group statistics based on the covering statistics
+        let row_group_column_geo_stats =
+            row_group_native_geo_stats(parquet_metadata.row_group(i), &top_level_indices);
         let row_group_geo_stats = TableGeoStatistics::try_from_stats_and_schema(
             &row_group_column_geo_stats,
             file_schema,
@@ -369,6 +430,109 @@ fn parse_column_coverings(
             }
         })
         .collect()
+}
+
+/// Calculates a Vec of [GeoStatistics] based on Parquet-native GeoStatistics
+///
+/// Each element is either a [GeoStatistics] populated with a [BoundingBox]
+/// or [GeoStatistics::unspecified], which is a value that will ensure that
+/// any spatial predicate that references those statistics will evaluate to
+/// true.
+fn row_group_native_geo_stats(
+    row_group_metadata: &RowGroupMetaData,
+    column_indices: &[usize],
+) -> Vec<GeoStatistics> {
+    column_indices
+        .iter()
+        .map(|column_index| {
+            let native_geo_stats_opt = row_group_metadata.column(*column_index).geo_statistics();
+            native_geo_stats_opt
+                .map(parquet_geo_stats_to_sedona_geo_stats)
+                .unwrap_or(GeoStatistics::unspecified())
+        })
+        .collect()
+}
+
+/// Convert Parquet [GeospatialStatistics] into Sedona [GeoStatistics]
+///
+/// This also sanity checks the Parquet statistics for non-finite or non-sensical
+/// ranges, treating the information as unknown if it fails the sanity check.
+fn parquet_geo_stats_to_sedona_geo_stats(
+    parquet_geo_stats: &GeospatialStatistics,
+) -> GeoStatistics {
+    let mut out = GeoStatistics::unspecified();
+
+    if let Some(native_bbox) = parquet_geo_stats.bounding_box() {
+        let x_range = (native_bbox.get_xmin(), native_bbox.get_xmax());
+        let y_range = (native_bbox.get_ymin(), native_bbox.get_ymax());
+        let z_range = match (native_bbox.get_zmin(), native_bbox.get_zmax()) {
+            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+            _ => None,
+        };
+        let m_range = match (native_bbox.get_mmin(), native_bbox.get_mmax()) {
+            (Some(lo), Some(hi)) => Some(Interval::new(lo, hi)),
+            _ => None,
+        };
+
+        let bbox = BoundingBox::xyzm(x_range, y_range, z_range, m_range);
+
+        // Sanity check the bbox statistics. If the sanity check fails, don't set
+        // a bounding box for pruning. Note that the x width can be < 0 (wraparound).
+        let mut bbox_is_valid =
+            bbox.x().width().is_finite() && bbox.y().width().is_finite() && bbox.y().width() >= 0.0;
+        if let Some(z) = bbox.z() {
+            bbox_is_valid = bbox_is_valid && z.width().is_finite() && z.width() >= 0.0;
+        }
+        if let Some(m) = bbox.m() {
+            bbox_is_valid = bbox_is_valid && m.width().is_finite() && m.width() >= 0.0;
+        }
+
+        if bbox_is_valid {
+            out = out.with_bbox(Some(bbox));
+        }
+    }
+
+    if let Some(native_geometry_types) = parquet_geo_stats.geospatial_types() {
+        let mut geometry_types = GeometryTypeAndDimensionsSet::new();
+        let mut geometry_types_valid = true;
+        for wkb_id in native_geometry_types {
+            if *wkb_id < 0 {
+                geometry_types_valid = false;
+                break;
+            }
+
+            match GeometryTypeAndDimensions::try_from_wkb_id(*wkb_id as u32) {
+                Ok(type_and_dim) => geometry_types.insert_or_ignore(&type_and_dim),
+                Err(_) => {
+                    geometry_types_valid = false;
+                    break;
+                }
+            }
+        }
+
+        if !geometry_types.is_empty() && geometry_types_valid {
+            out = out.with_geometry_types(Some(geometry_types))
+        }
+    }
+
+    out
+}
+
+/// Calculates column indices for top-level columns of file_schema
+///
+/// We need to build a list of top-level indices, where the indices refer to the
+/// flattened list of columns (e.g., `.column(i)` in row group metadata).
+fn top_level_column_indices(parquet_metadata: &ParquetMetaData) -> Vec<usize> {
+    let mut top_level_indices = Vec::new();
+    let schema_descr = parquet_metadata.file_metadata().schema_descr();
+    for (i, col) in schema_descr.columns().iter().enumerate() {
+        let path_vec = col.path().parts();
+        if path_vec.len() == 1 {
+            top_level_indices.push(i);
+        }
+    }
+
+    top_level_indices
 }
 
 /// Returns true if there are any fields with GeoArrow metadata
@@ -765,6 +929,266 @@ mod test {
         assert!(storage_schema_contains_geo(
             &Schema::new(vec![geography_field.clone()]).into()
         ));
+    }
+
+    #[test]
+    fn parquet_geo_stats_empty() {
+        let parquet_stats = GeospatialStatistics::new(None, None);
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert_eq!(result, GeoStatistics::unspecified());
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xy() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified()
+                .with_bbox(Some(BoundingBox::xy((-180.0, 180.0), (-90.0, 90.0))))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xyz() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(0.0, 1000.0),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        let expected_bbox = BoundingBox::xyzm(
+            (-180.0, 180.0),
+            (-90.0, 90.0),
+            Some(Interval::new(0.0, 1000.0)),
+            None,
+        );
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified().with_bbox(Some(expected_bbox))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_xyzm() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(0.0, 1000.0)
+                    .with_mrange(0.0, 100.0),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        let expected_bbox = BoundingBox::xyzm(
+            (-180.0, 180.0),
+            (-90.0, 90.0),
+            Some(Interval::new(0.0, 1000.0)),
+            Some(Interval::new(0.0, 100.0)),
+        );
+        assert_eq!(
+            result,
+            GeoStatistics::unspecified().with_bbox(Some(expected_bbox))
+        );
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_x() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                -90.0,
+                90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because x width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_nan_x() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NAN,
+                f64::NAN,
+                -90.0,
+                90.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because x width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_y() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0,
+                180.0,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because y width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_y_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, 1.0, -1.0,
+            )),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because y width is less than zero
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_z() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(f64::NEG_INFINITY, f64::INFINITY),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because z width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_z_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_zrange(100.0, -100.0),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because z width is less than 0
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_infinite_m() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_mrange(f64::NEG_INFINITY, f64::INFINITY),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because m width is not finite
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_negative_m_width() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(
+                parquet::geospatial::bounding_box::BoundingBox::new(-180.0, 180.0, -90.0, 90.0)
+                    .with_mrange(50.0, -50.0),
+            ),
+            None,
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified because m width is less than 0
+        assert_eq!(result.bbox(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, 2, 3]));
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert!(result.geometry_types().is_some());
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_geometry_types_negative() {
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, -1, 3]));
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified geometry types because of negative value
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_geometry_types_unknown_wkb_id() {
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![1, 999999]));
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Should return unspecified geometry types because of unknown WKB id
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_empty_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(None, Some(vec![]));
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Empty geometry types should result in None
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_combined_valid() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            Some(vec![1, 2]), // Point, LineString
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        assert!(result.bbox().is_some());
+        assert!(result.geometry_types().is_some());
+    }
+
+    #[test]
+    fn parquet_geo_stats_valid_bbox_invalid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                -180.0, 180.0, -90.0, 90.0,
+            )),
+            Some(vec![-1]), // Invalid negative
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Bbox should be valid, geometry types should be None
+        assert!(result.bbox().is_some());
+        assert_eq!(result.geometry_types(), None);
+    }
+
+    #[test]
+    fn parquet_geo_stats_invalid_bbox_valid_geometry_types() {
+        let parquet_stats = GeospatialStatistics::new(
+            Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                f64::NAN,
+                180.0,
+                -90.0,
+                90.0,
+            )),
+            Some(vec![1, 2]),
+        );
+        let result = parquet_geo_stats_to_sedona_geo_stats(&parquet_stats);
+        // Bbox should be None, geometry types should be valid
+        assert_eq!(result.bbox(), None);
+        assert!(result.geometry_types().is_some());
     }
 
     fn file_schema_with_covering() -> SchemaRef {

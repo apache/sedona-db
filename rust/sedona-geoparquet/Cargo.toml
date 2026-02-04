@@ -46,7 +46,7 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
-datafusion = { workspace = true, features = ["parquet"] }
+datafusion = { workspace = true, features = ["parquet", "sql"] }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-datasource-parquet = { workspace = true }
