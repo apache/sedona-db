@@ -293,7 +293,7 @@ mod tests {
             vec![
                 SedonaType::Arrow(DataType::Float64),
                 SedonaType::Arrow(DataType::Float64),
-                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Utf8),
             ],
         );
 
