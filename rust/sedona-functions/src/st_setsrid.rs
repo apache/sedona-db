@@ -411,7 +411,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                 &item_type,
                 result,
                 &ColumnarValue::Array(normalized_crs_value),
-                crs_input_nulls(&args[1]),
+                crs_input_nulls(&args[orig_args_len]),
             )
         }
     }
