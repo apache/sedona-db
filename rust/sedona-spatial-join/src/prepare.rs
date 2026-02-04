@@ -40,8 +40,10 @@ use crate::{
         SpatialJoinBuildMetrics,
     },
     partitioning::{
+        broadcast::BroadcastPartitioner,
         flat::FlatPartitioner,
         kdb::KDBPartitioner,
+        round_robin::RoundRobinPartitioner,
         stream_repartitioner::{SpilledPartition, SpilledPartitions, StreamRepartitioner},
         PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
@@ -243,14 +245,16 @@ impl SpatialJoinComponentsBuilder {
         build_partitions: &mut Vec<BuildPartition>,
         seed: u64,
     ) -> Result<Arc<dyn SpatialPartitioner>> {
-        if matches!(
+        let build_partitioner: Arc<dyn SpatialPartitioner> = if matches!(
             self.spatial_predicate,
-            SpatialPredicate::KNearestNeighbors(..)
+            SpatialPredicate::KNearestNeighbors(_)
         ) {
-            return sedona_internal_err!("Partitioned KNN join is not supported yet");
-        }
-
-        let build_partitioner: Arc<dyn SpatialPartitioner> = {
+            // Spatial partitioning does not work well for KNN joins, so we simply use round-robin
+            // partitioning to spread the indexed data evenly to make each index fit in memory, and
+            // the probe side will be broadcasted to all partitions by partitioning all of them to
+            // the Multi partition.
+            Arc::new(RoundRobinPartitioner::new(num_partitions))
+        } else {
             // Use spatial partitioners to partition the build side and the probe side, this will
             // reduce the amount of work needed for probing each partitioned index.
             // The KDB partitioner is built using the collected bounding box samples.
@@ -299,7 +303,12 @@ impl SpatialJoinComponentsBuilder {
         num_partitions: usize,
         merged_spilled_partitions: &SpilledPartitions,
     ) -> Result<Arc<dyn SpatialPartitioner>> {
-        let probe_partitioner: Arc<dyn SpatialPartitioner> = {
+        let probe_partitioner: Arc<dyn SpatialPartitioner> = if matches!(
+            self.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(_)
+        ) {
+            Arc::new(BroadcastPartitioner::new(num_partitions))
+        } else {
             // Build a flat partitioner using these partitions
             let mut partition_bounds = Vec::with_capacity(num_partitions);
             for k in 0..num_partitions {

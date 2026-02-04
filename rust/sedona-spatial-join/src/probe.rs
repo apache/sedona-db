@@ -41,5 +41,6 @@ impl ProbeStreamMetrics {
 }
 
 pub(crate) mod first_pass_stream;
+pub(crate) mod knn_results_merger;
 pub(crate) mod non_partitioned_stream;
 pub(crate) mod partitioned_stream_provider;

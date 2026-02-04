@@ -107,3 +107,13 @@ harness = false
 name = "stream_repartitioner"
 path = "bench/partitioning/stream_repartitioner.rs"
 harness = false
+
+[[bench]]
+name = "round_robin"
+path = "bench/partitioning/round_robin.rs"
+harness = false
+
+[[bench]]
+name = "broadcast"
+path = "bench/partitioning/broadcast.rs"
+harness = false
