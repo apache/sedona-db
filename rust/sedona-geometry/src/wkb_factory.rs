@@ -758,8 +758,16 @@ mod test {
         let wkb = wkb_rect(0.0, 0.0, 2.0, 1.0).unwrap();
         check_bytes(&wkb, "POLYGON((0 0,2 0,2 1,0 1,0 0))");
 
-        assert!(wkb_rect(2.0, 0.0, 1.0, 1.0).is_err());
-        assert!(wkb_rect(0.0, 2.0, 1.0, 1.0).is_err());
+        let invalid_cases = [
+            (2.0, 0.0, 1.0, 1.0),
+            (0.0, 2.0, 1.0, 1.0),
+            (2.0, 2.0, 1.0, 1.0),
+            (1.0, 2.0, 0.0, 1.0),
+        ];
+
+        for (min_x, min_y, max_x, max_y) in invalid_cases {
+            assert!(wkb_rect(min_x, min_y, max_x, max_y).is_err());
+        }
     }
 
     #[test]
