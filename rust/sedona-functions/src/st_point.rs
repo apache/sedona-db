@@ -170,6 +170,7 @@ mod tests {
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::create::create_array_item_crs;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
@@ -282,6 +283,64 @@ mod tests {
             .invoke_scalar_scalar_scalar(1.0, 2.0, srid_value)
             .unwrap();
         tester.assert_scalar_result_equals_with_return_type(result, "POINT (1 2)", return_type);
+    }
+
+    #[test]
+    fn udf_invoke_with_array_crs() {
+        let udf = st_point_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(
+            return_type,
+            SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()
+        );
+
+        let x_array: ArrayRef =
+            create_array!(Float64, [Some(0.0), Some(2.0), Some(4.0), Some(6.0), None]);
+        let y_array: ArrayRef =
+            create_array!(Float64, [Some(1.0), Some(3.0), Some(5.0), Some(7.0), None]);
+        let crs_array = create_array!(
+            Utf8,
+            [
+                Some("EPSG:4326"),
+                Some("EPSG:3857"),
+                Some("EPSG:3857"),
+                Some("0"),
+                None
+            ]
+        ) as ArrayRef;
+
+        let result = tester
+            .invoke_arrays(vec![x_array, y_array, crs_array])
+            .unwrap();
+        assert_eq!(
+            &result,
+            &create_array_item_crs(
+                &[
+                    Some("POINT (0 1)"),
+                    Some("POINT (2 3)"),
+                    Some("POINT (4 5)"),
+                    Some("POINT (6 7)"),
+                    None
+                ],
+                [
+                    Some("OGC:CRS84"),
+                    Some("EPSG:3857"),
+                    Some("EPSG:3857"),
+                    None,
+                    None
+                ],
+                &WKB_GEOMETRY
+            )
+        );
     }
 
     #[test]

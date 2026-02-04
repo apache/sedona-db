@@ -40,7 +40,11 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    crs::deserialize_crs,
+    datatypes::{SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 /// ST_SetSRID() scalar UDF implementation
 ///
@@ -317,32 +321,52 @@ impl SedonaScalarKernel for SRIDifiedKernel {
             None => return Ok(None),
         };
 
-        let crs = match scalar_args[orig_args_len] {
-            Some(crs) => crs,
-            None => return Ok(None),
-        };
-        let new_crs = match crs.cast_to(&DataType::Utf8) {
-            Ok(ScalarValue::Utf8(Some(crs))) => {
-                if crs == "0" {
-                    None
-                } else {
-                    validate_crs(&crs, None)?;
-                    deserialize_crs(&crs)?
+        // If we have a scalar CRS, the output type has a type-level CRS
+        if let Some(scalar_crs) = scalar_args[orig_args_len] {
+            let new_crs = match scalar_crs.cast_to(&DataType::Utf8) {
+                Ok(ScalarValue::Utf8(Some(crs))) => {
+                    if crs == "0" {
+                        None
+                    } else {
+                        validate_crs(&crs, None)?;
+                        deserialize_crs(&crs)?
+                    }
+                }
+                Ok(ScalarValue::Utf8(None)) => None,
+                Ok(_) | Err(_) => {
+                    return sedona_internal_err!("Can't cast Crs {scalar_crs:?} to Utf8")
+                }
+            };
+
+            match &mut inner_result {
+                SedonaType::Wkb(_, crs) => *crs = new_crs,
+                SedonaType::WkbView(_, crs) => *crs = new_crs,
+                _ => {
+                    return sedona_internal_err!("Return type must be Wkb or WkbView");
                 }
             }
-            Ok(ScalarValue::Utf8(None)) => None,
-            Ok(_) | Err(_) => return sedona_internal_err!("Can't cast Crs {crs:?} to Utf8"),
-        };
 
-        match &mut inner_result {
-            SedonaType::Wkb(_, crs) => *crs = new_crs,
-            SedonaType::WkbView(_, crs) => *crs = new_crs,
-            _ => {
-                return sedona_internal_err!("Return type must be Wkb or WkbView");
+            Ok(Some(inner_result))
+        } else {
+            // If we have a column CRS, the output has an item level CRS
+
+            // Assert that the output type had a Crs of None. If the inner kernel returned
+            // a specific output CRS it is likely that the SRIDified kernel is not appropriate.
+            match &inner_result {
+                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+                    if crs.is_some() {
+                        return sedona_internal_err!(
+                            "Return type of SRIDifiedKernel inner specified an explicit CRS"
+                        );
+                    }
+                }
+                _ => {
+                    return sedona_internal_err!("Return type must be Wkb or WkbView");
+                }
             }
-        }
 
-        Ok(Some(inner_result))
+            Ok(Some(SedonaType::new_item_crs(&inner_result)?))
+        }
     }
 
     fn invoke_batch(
@@ -358,8 +382,10 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         // Note that, this behavior is different from PostGIS.
         let result = self.inner.invoke_batch(orig_arg_types, orig_args)?;
 
-        // If the specified SRID is NULL, the result is also NULL.
+        // If the CRS input is a scalar, we can return the inner result as-is except
+        // for the NULL case.
         if let ColumnarValue::Scalar(sc) = &args[orig_args_len] {
+            // If the specified SRID is NULL, the result is also NULL.
             if sc.is_null() {
                 // Create the same length of NULLs as the original result.
                 let len = match &result {
@@ -374,9 +400,19 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                 let new_array = builder.finish();
                 return Ok(ColumnarValue::Array(Arc::new(new_array)));
             }
-        }
 
-        Ok(result)
+            Ok(result)
+        } else {
+            // TODO actual item type
+            let item_type = WKB_GEOMETRY;
+            let normalized_crs_value = normalize_crs_array(&args[orig_args_len], None)?;
+            make_item_crs(
+                &item_type,
+                result,
+                &ColumnarValue::Array(normalized_crs_value),
+                crs_input_nulls(&args[1]),
+            )
+        }
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
