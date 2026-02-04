@@ -758,7 +758,7 @@ mod tests {
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use sedona_geometry::bounding_box::BoundingBox;
     use sedona_geometry::interval::IntervalTrait;
-    use sedona_geometry::wkb_factory::wkb_point;
+    use sedona_geometry::wkb_factory::{wkb_point, wkb_rect};
     use sedona_schema::datatypes::WKB_GEOMETRY;
 
     use crate::{
@@ -790,28 +790,6 @@ mod tests {
             batch,
             geom_array: geom,
         })
-    }
-
-    fn rect_wkb(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<u8> {
-        assert!(min_x <= max_x, "min_x must be <= max_x");
-        assert!(min_y <= max_y, "min_y must be <= max_y");
-        let mut buf = Vec::with_capacity(1 + 4 + 4 + 4 + 5 * 16);
-        buf.push(1u8); // little endian
-        buf.extend_from_slice(&3u32.to_le_bytes()); // polygon type
-        buf.extend_from_slice(&1u32.to_le_bytes()); // single ring
-        buf.extend_from_slice(&5u32.to_le_bytes()); // five coordinates (closed ring)
-        let coords = [
-            (min_x, min_y),
-            (max_x, min_y),
-            (max_x, max_y),
-            (min_x, max_y),
-            (min_x, min_y),
-        ];
-        for (x, y) in coords {
-            buf.extend_from_slice(&x.to_le_bytes());
-            buf.extend_from_slice(&y.to_le_bytes());
-        }
-        buf
     }
 
     fn read_ids(file: &RefCountedTempFile) -> Result<Vec<i32>> {
@@ -938,7 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn repartition_multi_and_none() -> Result<()> {
-        let wkbs = vec![Some(rect_wkb(25.0, 0.0, 75.0, 20.0)), None];
+        let wkbs = vec![Some(wkb_rect(25.0, 0.0, 75.0, 20.0).unwrap()), None];
         let batch = sample_batch(&[0, 1], wkbs)?;
         let schema = batch.schema();
         let stream: SendableEvaluatedBatchStream =

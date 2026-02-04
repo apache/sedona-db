@@ -180,6 +180,38 @@ pub fn wkb_polygon<I: ExactSizeIterator<Item = (f64, f64)>>(
     Ok(out_wkb)
 }
 
+/// Create WKB representing a rectangle
+///
+/// Returns WKB for a polygon with a single closed ring describing
+/// the rectangle bounds.
+/// This function always writes little endian coordinates.
+pub fn wkb_rect(
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+) -> Result<Vec<u8>, SedonaGeometryError> {
+    if min_x > max_x {
+        return Err(SedonaGeometryError::Invalid(
+            "min_x must be <= max_x".to_string(),
+        ));
+    }
+    if min_y > max_y {
+        return Err(SedonaGeometryError::Invalid(
+            "min_y must be <= max_y".to_string(),
+        ));
+    }
+
+    let coords = [
+        (min_x, min_y),
+        (max_x, min_y),
+        (max_x, max_y),
+        (min_x, max_y),
+        (min_x, min_y),
+    ];
+    wkb_polygon(coords.into_iter())
+}
+
 /// Write WKB representing a POLYGON into a buffer
 ///
 /// This can be used to build Binary arrays, as the arrow-rs BinaryBuilder
@@ -719,6 +751,23 @@ mod test {
             wkb_polygon([(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)].into_iter()).unwrap(),
             wkb
         );
+    }
+
+    #[test]
+    fn test_wkb_rect() {
+        let wkb = wkb_rect(0.0, 0.0, 2.0, 1.0).unwrap();
+        check_bytes(&wkb, "POLYGON((0 0,2 0,2 1,0 1,0 0))");
+
+        let invalid_cases = [
+            (2.0, 0.0, 1.0, 1.0),
+            (0.0, 2.0, 1.0, 1.0),
+            (2.0, 2.0, 1.0, 1.0),
+            (1.0, 2.0, 0.0, 1.0),
+        ];
+
+        for (min_x, min_y, max_x, max_y) in invalid_cases {
+            assert!(wkb_rect(min_x, min_y, max_x, max_y).is_err());
+        }
     }
 
     #[test]

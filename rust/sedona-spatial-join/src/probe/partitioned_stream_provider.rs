@@ -344,7 +344,7 @@ mod tests {
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use futures::TryStreamExt;
     use sedona_geometry::bounding_box::BoundingBox;
-    use sedona_geometry::wkb_factory::wkb_point;
+    use sedona_geometry::wkb_factory::{wkb_point, wkb_rect};
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use std::sync::Arc;
 
@@ -363,26 +363,6 @@ mod tests {
         let geom_array: ArrayRef = Arc::new(BinaryArray::from(geom_values));
         let geom_array = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
         Ok(EvaluatedBatch { batch, geom_array })
-    }
-
-    fn rect_wkb(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(1 + 4 + 4 + 4 + 5 * 16);
-        buf.push(1u8);
-        buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&1u32.to_le_bytes());
-        buf.extend_from_slice(&5u32.to_le_bytes());
-        let coords = [
-            (min_x, min_y),
-            (max_x, min_y),
-            (max_x, max_y),
-            (min_x, max_y),
-            (min_x, min_y),
-        ];
-        for (x, y) in coords {
-            buf.extend_from_slice(&x.to_le_bytes());
-            buf.extend_from_slice(&y.to_le_bytes());
-        }
-        buf
     }
 
     fn ids_from_batches(batches: &[EvaluatedBatch]) -> Vec<Vec<i32>> {
@@ -485,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn multi_partition_stream_consumed_multiple_times() -> Result<()> {
         let partitioner = sample_partitioner()?;
-        let batch = sample_batch(&[0], vec![Some(rect_wkb(25.0, 0.0, 75.0, 20.0))])?;
+        let batch = sample_batch(&[0], vec![Some(wkb_rect(25.0, 0.0, 75.0, 20.0).unwrap())])?;
         let probe_stream = create_probe_stream(vec![batch], Some(partitioner));
 
         let first_pass = probe_stream.stream_for(SpatialPartition::Regular(0))?;
