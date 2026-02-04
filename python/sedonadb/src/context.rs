@@ -20,7 +20,7 @@ use datafusion_common::ParamValues;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyTuple},
+    types::{PyDict, PyList},
 };
 use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
@@ -145,7 +145,7 @@ impl InternalContext {
         &self,
         py: Python<'py>,
         query: &str,
-        params_positional_py: Option<Bound<'py, PyTuple>>,
+        params_positional_py: Option<Bound<'py, PyList>>,
         params_named_py: Option<Bound<'py, PyDict>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let mut df = wait_for_future(py, &self.runtime, self.inner.sql(query))??;

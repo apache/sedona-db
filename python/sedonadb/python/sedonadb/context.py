@@ -20,7 +20,7 @@ import os
 import sys
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
 from sedonadb._options import Options
@@ -273,7 +273,9 @@ class SedonaContext:
             self.options,
         )
 
-    def sql(self, sql: str) -> DataFrame:
+    def sql(
+        self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
+    ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
 
         Parses a SQL string into a logical plan and returns a DataFrame
@@ -289,7 +291,21 @@ class SedonaContext:
             <sedonadb.dataframe.DataFrame object at ...>
 
         """
-        return DataFrame(self._impl, self._impl.sql(sql), self.options)
+        if params is not None:
+            from sedonadb.expr.literal import lit
+
+            if isinstance(params, (tuple, list)):
+                param_args = [lit(param) for param in params], None
+            elif isinstance(params, dict):
+                param_args = None, {k: lit(param) for k, param in params.items()}
+            else:
+                raise ValueError(
+                    "params must be a list, tuple, or dict of scalar values"
+                )
+        else:
+            param_args = None, None
+
+        return DataFrame(self._impl, self._impl.sql(sql, *param_args), self.options)
 
     def register_udf(self, udf: Any):
         """Register a user-defined function
