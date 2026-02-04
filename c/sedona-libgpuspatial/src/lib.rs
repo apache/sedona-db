@@ -371,7 +371,7 @@ impl GpuSpatial {
         }
     }
 
-    pub fn refine_loaded(
+    pub fn refine(
         &self,
         probe_array: &arrow_array::ArrayRef,
         predicate: GpuSpatialRelationPredicate,
@@ -390,41 +390,11 @@ impl GpuSpatial {
                 .as_ref()
                 .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
 
-            refiner.refine_loaded(
+            refiner.refine(
                 probe_array,
                 GpuSpatialRelationPredicateWrapper::from(predicate),
                 build_indices,
                 probe_indices,
-            )
-        }
-    }
-
-    pub fn refine(
-        &self,
-        array1: &arrow_array::ArrayRef,
-        array2: &arrow_array::ArrayRef,
-        predicate: GpuSpatialRelationPredicate,
-        indices1: &mut Vec<u32>,
-        indices2: &mut Vec<u32>,
-    ) -> Result<()> {
-        #[cfg(not(gpu_available))]
-        {
-            let _ = (array1, array2, predicate, indices1, indices2);
-            Err(GpuSpatialError::GpuNotAvailable)
-        }
-        #[cfg(gpu_available)]
-        {
-            let refiner = self
-                .refiner
-                .as_ref()
-                .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
-
-            refiner.refine(
-                array1,
-                array2,
-                GpuSpatialRelationPredicateWrapper::from(predicate),
-                indices1,
-                indices2,
             )
         }
     }
@@ -443,7 +413,7 @@ mod tests {
     use sedona_testing::testers::ScalarUdfTester;
     use wkt::TryFromWkt;
 
-    pub fn find_intersection_pairs(
+    pub fn compute_expected_intersections(
         vec_a: &[Rect<f32>],
         vec_b: &[Rect<f32>],
     ) -> (Vec<u32>, Vec<u32>) {
@@ -465,6 +435,46 @@ mod tests {
 
         (ids_a, ids_b)
     }
+
+    fn compute_expected_pip_results(
+        polygons: &[Option<&str>],
+        points: &[Option<&str>],
+    ) -> (Vec<u32>, Vec<u32>) {
+        let kernels = scalar_kernels();
+
+        // Iterate through the vector and find the one named "st_intersects"
+        let st_intersects = kernels
+            .into_iter()
+            .find(|(name, _)| *name == "st_intersects")
+            .map(|(_, kernel_ref)| kernel_ref)
+            .unwrap();
+
+        let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
+
+        let mut ans_build_indices: Vec<u32> = Vec::new();
+        let mut ans_probe_indices: Vec<u32> = Vec::new();
+
+        for (poly_index, poly) in polygons.iter().enumerate() {
+            for (point_index, point) in points.iter().enumerate() {
+                let result = tester
+                    .invoke_scalar_scalar(poly.unwrap(), point.unwrap())
+                    .unwrap();
+                if result == true.into() {
+                    ans_build_indices.push(poly_index as u32);
+                    ans_probe_indices.push(point_index as u32);
+                }
+            }
+        }
+
+        ans_build_indices.sort();
+        ans_probe_indices.sort();
+
+        (ans_build_indices, ans_probe_indices)
+    }
+
     #[test]
     fn test_spatial_index() {
         let mut gs = GpuSpatial::new().unwrap();
@@ -518,7 +528,7 @@ mod tests {
         probe_indices.sort();
 
         let (mut ans_build_indices, mut ans_probe_indices) =
-            find_intersection_pairs(&rects, &points);
+            compute_expected_intersections(&rects, &points);
 
         ans_build_indices.sort();
         ans_probe_indices.sort();
@@ -540,7 +550,7 @@ mod tests {
         };
         gs.init(options).expect("Failed to initialize GpuSpatial");
 
-        let polygon_values =  &[
+        let polygon_values = &[
             Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),
             Some("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))"),
             Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 3 2, 3 3, 2 3, 2 2), (6 6, 8 6, 8 8, 6 8, 6 6))"),
@@ -561,6 +571,7 @@ mod tests {
             .expect("Failed to push build data");
         gs.index_finish_building()
             .expect("Failed to finish building");
+
         let point_values = &[
             Some("POINT (30 20)"),
             Some("POINT (20 20)"),
@@ -573,16 +584,18 @@ mod tests {
             .iter()
             .map(|wkt| -> Rect<f32> {
                 let wkt_str = wkt.unwrap();
-
                 let point: Point<f32> = Point::try_from_wkt_str(wkt_str).unwrap();
-
                 point.bounding_rect()
             })
             .collect();
+
+        // 1. Get GPU Results
         let (mut build_indices, mut probe_indices) = gs.probe(&point_rects).unwrap();
 
+        gs.refiner_push_build(&polygons);
+        gs.refiner_finish_building()
+            .expect("Failed to finish building refiner");
         gs.refine(
-            &polygons,
             &points,
             GpuSpatialRelationPredicate::Intersects,
             &mut build_indices,
@@ -593,38 +606,11 @@ mod tests {
         build_indices.sort();
         probe_indices.sort();
 
-        let kernels = scalar_kernels();
+        // 2. Get CPU Expected Results (using the new helper)
+        let (ans_build_indices, ans_probe_indices) =
+            compute_expected_pip_results(polygon_values, point_values);
 
-        // Iterate through the vector and find the one named "st_intersects"
-        let st_intersects = kernels
-            .into_iter()
-            .find(|(name, _)| *name == "st_intersects")
-            .map(|(_, kernel_ref)| kernel_ref)
-            .unwrap();
-
-        let sedona_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let udf = SedonaScalarUDF::from_impl("st_intersects", st_intersects);
-        let tester =
-            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
-
-        let mut ans_build_indices: Vec<u32> = Vec::new();
-        let mut ans_probe_indices: Vec<u32> = Vec::new();
-
-        for (poly_index, poly) in polygon_values.iter().enumerate() {
-            for (point_index, point) in point_values.iter().enumerate() {
-                let result = tester
-                    .invoke_scalar_scalar(poly.unwrap(), point.unwrap())
-                    .unwrap();
-                if result == true.into() {
-                    ans_build_indices.push(poly_index as u32);
-                    ans_probe_indices.push(point_index as u32);
-                }
-            }
-        }
-
-        ans_build_indices.sort();
-        ans_probe_indices.sort();
-
+        // 3. Compare
         assert_eq!(build_indices, ans_build_indices);
         assert_eq!(probe_indices, ans_probe_indices);
     }

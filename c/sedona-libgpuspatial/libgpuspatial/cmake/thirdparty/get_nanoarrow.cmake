@@ -48,9 +48,6 @@ function(find_and_configure_nanoarrow)
                   "NANOARROW_NAMESPACE gpuspatial"
                   ${_exclude_from_all})
   set_target_properties(nanoarrow PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  if(TARGET nanoarrow_ipc) # Tests need this
-    target_compile_options(nanoarrow_ipc PRIVATE -Wno-conversion)
-  endif()
   target_compile_options(nanoarrow PRIVATE -Wno-conversion)
   rapids_export_find_package_root(BUILD
                                   nanoarrow

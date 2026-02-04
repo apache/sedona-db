@@ -22,8 +22,10 @@
 #include <memory>
 
 namespace gpuspatial {
-
+/** Configuration for RTSpatialRefiner for initializing a RTSpatialRefiner instance
+ */
 struct RTSpatialRefinerConfig {
+  // The ray-tracing engine to use
   std::shared_ptr<RTEngine> rt_engine;
   // Prefer fast build the BVH
   bool prefer_fast_build = false;

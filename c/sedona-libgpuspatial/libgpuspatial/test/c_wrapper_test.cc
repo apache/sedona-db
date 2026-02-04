@@ -15,17 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include "array_stream.hpp"
 #include "test_common.hpp"
 
 #include "gpuspatial/gpuspatial_c.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include "nanoarrow/nanoarrow.hpp"
+
 #include <random>
 #include <vector>
-#include "array_stream.hpp"
-#include "geoarrow_geos/geoarrow_geos.hpp"
-#include "nanoarrow/nanoarrow.hpp"
 
 TEST(RuntimeTest, InitializeRuntime) {
   GpuSpatialRuntime runtime;
@@ -136,6 +137,8 @@ class CWrapperTest : public ::testing::Test {
 
     refiner_config.runtime = &runtime_;
     refiner_config.concurrency = 1;
+    refiner_config.compress_bvh = false;
+    refiner_config.pipeline_batches = 1;
 
     ASSERT_EQ(GpuSpatialRefinerCreate(&refiner_, &refiner_config), 0);
   }
@@ -151,104 +154,118 @@ class CWrapperTest : public ::testing::Test {
 };
 
 TEST_F(CWrapperTest, InitializeJoiner) {
-  using fpoint_t = gpuspatial::Point<float, 2>;
+  // Define types matching the CWrapper expectation (float for GPU)
+  using coord_t = float;
+  using fpoint_t = gpuspatial::Point<coord_t, 2>;
   using box_t = gpuspatial::Box<fpoint_t>;
-  // Test if the joiner initializes correctly
 
-  auto poly_path = TestUtils::GetTestDataPath("arrowipc/test_polygons.arrows");
-  auto point_path = TestUtils::GetTestDataPath("arrowipc/test_points.arrows");
-  nanoarrow::UniqueArrayStream poly_stream, point_stream;
+  // 1. Load Data using ReadParquet
+  auto poly_path = TestUtils::GetTestDataPath("synthetic_pip/polygons.parquet");
+  auto point_path = TestUtils::GetTestDataPath("synthetic_pip/points.parquet");
 
-  gpuspatial::ArrayStreamFromIpc(poly_path, "geometry", poly_stream.get());
-  gpuspatial::ArrayStreamFromIpc(point_path, "geometry", point_stream.get());
+  // ReadParquet loads the file into batches (std::vector<std::shared_ptr<arrow::Array>>)
+  // Assuming batch_size=1000 or similar default inside ReadParquet
+  auto poly_arrays = gpuspatial::ReadParquet(poly_path);
+  auto point_arrays = gpuspatial::ReadParquet(point_path);
 
-  nanoarrow::UniqueSchema build_schema, stream_schema;
-  nanoarrow::UniqueArray build_array, stream_array;
-  ArrowError error;
-  ArrowErrorSet(&error, "");
+  // 2. Setup GEOS C++ Objects
+  auto factory = geos::geom::GeometryFactory::create();
+  geos::io::WKBReader wkb_reader(*factory);
 
-  int n_row_groups = 100;
+  // Iterate over batches (replacing the stream loop)
+  size_t num_batches = std::min(poly_arrays.size(), point_arrays.size());
 
-  geoarrow::geos::ArrayReader reader;
+  for (size_t i = 0; i < num_batches; i++) {
+    auto build_arrow_arr = poly_arrays[i];
+    auto probe_arrow_arr = point_arrays[i];
 
-  for (int i = 0; i < n_row_groups; i++) {
-    ASSERT_EQ(ArrowArrayStreamGetNext(poly_stream.get(), build_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(poly_stream.get(), build_schema.get(), &error),
-              NANOARROW_OK);
+    // Export to C-style ArrowArrays for the CWrapper (SUT)
+    nanoarrow::UniqueArray build_array, probe_array;
+    nanoarrow::UniqueSchema build_schema, probe_schema;
 
-    ASSERT_EQ(ArrowArrayStreamGetNext(point_stream.get(), stream_array.get(), &error),
-              NANOARROW_OK);
-    ASSERT_EQ(ArrowArrayStreamGetSchema(point_stream.get(), stream_schema.get(), &error),
-              NANOARROW_OK);
+    ARROW_THROW_NOT_OK(
+        arrow::ExportArray(*build_arrow_arr, build_array.get(), build_schema.get()));
+    ARROW_THROW_NOT_OK(
+        arrow::ExportArray(*probe_arrow_arr, probe_array.get(), probe_schema.get()));
 
-    class GEOSCppHandle {
-     public:
-      GEOSContextHandle_t handle;
+    // --- Build Phase ---
 
-      GEOSCppHandle() { handle = GEOS_init_r(); }
-
-      ~GEOSCppHandle() { GEOS_finish_r(handle); }
-    };
-    GEOSCppHandle handle;
-
-    reader.InitFromEncoding(handle.handle, GEOARROW_GEOS_ENCODING_WKB);
-
-    geoarrow::geos::GeometryVector geom_build(handle.handle);
-
-    geom_build.resize(build_array->length);
-    size_t n_build;
-
-    ASSERT_EQ(reader.Read(build_array.get(), 0, build_array->length,
-                          geom_build.mutable_data(), &n_build),
-              GEOARROW_GEOS_OK);
-    auto* tree = GEOSSTRtree_create_r(handle.handle, 10);
+    // Boxes for the GPU Index (SUT)
     std::vector<box_t> rects;
 
-    for (size_t build_idx = 0; build_idx < build_array->length; build_idx++) {
-      auto* geom = geom_build.borrow(build_idx);
-      auto* box = GEOSEnvelope_r(handle.handle, geom);
+    // View for parsing WKB
+    nanoarrow::UniqueArrayView build_view;
+    ArrowError error;
 
-      double xmin, ymin, xmax, ymax;
-      int result = GEOSGeom_getExtent_r(handle.handle, box, &xmin, &ymin, &xmax, &ymax);
-      ASSERT_EQ(result, 1);
-      box_t bbox(fpoint_t((float)xmin, (float)ymin), fpoint_t((float)xmax, (float)ymax));
+    ASSERT_EQ(ArrowArrayViewInitFromSchema(build_view.get(), build_schema.get(), &error),
+              NANOARROW_OK)
+        << error.message;
+    ASSERT_EQ(ArrowArrayViewSetArray(build_view.get(), build_array.get(), &error),
+              NANOARROW_OK)
+        << error.message;
 
-      rects.push_back(bbox);
+    for (int64_t j = 0; j < build_array->length; j++) {
+      // Parse WKB
+      ArrowStringView wkb = ArrowArrayViewGetStringUnsafe(build_view.get(), j);
+      auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb.data),
+                                  wkb.size_bytes);
 
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom, (void*)build_idx);
-      GEOSSTRtree_insert_r(handle.handle, tree, box, (void*)geom);
-      GEOSGeom_destroy_r(handle.handle, box);
+      // Extract Envelope for GPU
+      const auto* env = geom->getEnvelopeInternal();
+      double xmin = 0, ymin = 0, xmax = -1, ymax = -1;
+      if (!env->isNull()) {
+        xmin = env->getMinX();
+        ymin = env->getMinY();
+        xmax = env->getMaxX();
+        ymax = env->getMaxY();
+      }
+
+      // Add to GPU Build Data
+      rects.emplace_back(fpoint_t((float)xmin, (float)ymin),
+                         fpoint_t((float)xmax, (float)ymax));
     }
 
+    // Initialize SUT (CWrapper Index)
     index_.clear(&index_);
     ASSERT_EQ(index_.push_build(&index_, (float*)rects.data(), rects.size()), 0);
     ASSERT_EQ(index_.finish_building(&index_), 0);
 
-    geoarrow::geos::GeometryVector geom_stream(handle.handle);
-    size_t n_stream;
-    geom_stream.resize(stream_array->length);
-
-    ASSERT_EQ(reader.Read(stream_array.get(), 0, stream_array->length,
-                          geom_stream.mutable_data(), &n_stream),
-              GEOARROW_GEOS_OK);
-
+    // --- Probe Phase ---
     std::vector<box_t> queries;
 
-    for (size_t stream_idx = 0; stream_idx < stream_array->length; stream_idx++) {
-      auto* geom = geom_stream.borrow(stream_idx);
-      double xmin, ymin, xmax, ymax;
-      int result = GEOSGeom_getExtent_r(handle.handle, geom, &xmin, &ymin, &xmax, &ymax);
-      ASSERT_EQ(result, 1);
-      box_t bbox(fpoint_t((float)xmin, (float)ymin), fpoint_t((float)xmax, (float)ymax));
-      queries.push_back(bbox);
+    nanoarrow::UniqueArrayView probe_view;
+
+    ASSERT_EQ(ArrowArrayViewInitFromSchema(probe_view.get(), probe_schema.get(), &error),
+              NANOARROW_OK)
+        << error.message;
+    ASSERT_EQ(ArrowArrayViewSetArray(probe_view.get(), probe_array.get(), &error),
+              NANOARROW_OK)
+        << error.message;
+
+    for (int64_t j = 0; j < probe_array->length; j++) {
+      ArrowStringView wkb = ArrowArrayViewGetStringUnsafe(probe_view.get(), j);
+      auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb.data),
+                                  wkb.size_bytes);
+
+      const auto* env = geom->getEnvelopeInternal();
+      double xmin = 0, ymin = 0, xmax = -1, ymax = -1;
+      if (!env->isNull()) {
+        xmin = env->getMinX();
+        ymin = env->getMinY();
+        xmax = env->getMaxX();
+        ymax = env->getMaxY();
+      }
+
+      queries.emplace_back(fpoint_t((float)xmin, (float)ymin),
+                           fpoint_t((float)xmax, (float)ymax));
     }
 
+    // Run SUT Probe
     SedonaSpatialIndexContext idx_ctx;
     index_.create_context(&idx_ctx);
-
     index_.probe(&index_, &idx_ctx, (float*)queries.data(), queries.size());
 
+    // Retrieve SUT Results
     uint32_t* build_indices_ptr;
     uint32_t* probe_indices_ptr;
     uint32_t build_indices_length;
@@ -257,63 +274,45 @@ TEST_F(CWrapperTest, InitializeJoiner) {
     index_.get_build_indices_buffer(&idx_ctx, &build_indices_ptr, &build_indices_length);
     index_.get_probe_indices_buffer(&idx_ctx, &probe_indices_ptr, &probe_indices_length);
 
+    refiner_.clear(&refiner_);
+    ASSERT_EQ(refiner_.push_build(&refiner_, build_schema.get(), build_array.get()), 0);
+    ASSERT_EQ(refiner_.finish_building(&refiner_), 0);
+
     uint32_t new_len;
-    ASSERT_EQ(
-        refiner_.refine(&refiner_, build_schema.get(), build_array.get(),
-                        stream_schema.get(), stream_array.get(),
-                        SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
-                        (uint32_t*)build_indices_ptr, (uint32_t*)probe_indices_ptr,
-                        build_indices_length, &new_len),
-        0);
+    ASSERT_EQ(refiner_.refine(
+                  &refiner_, probe_schema.get(), probe_array.get(),
+                  SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
+                  build_indices_ptr, probe_indices_ptr, build_indices_length, &new_len),
+              0);
 
-    std::vector<uint32_t> build_indices((uint32_t*)build_indices_ptr,
-                                        (uint32_t*)build_indices_ptr + new_len);
-    std::vector<uint32_t> probe_indices((uint32_t*)probe_indices_ptr,
-                                        (uint32_t*)probe_indices_ptr + new_len);
+    std::vector<uint32_t> sut_build_indices(build_indices_ptr,
+                                            build_indices_ptr + new_len);
+    std::vector<uint32_t> sut_stream_indices(probe_indices_ptr,
+                                             probe_indices_ptr + new_len);
 
-    struct Payload {
-      GEOSContextHandle_t handle;
-      const GEOSGeometry* geom;
-      std::vector<uint32_t> build_indices;
-      std::vector<uint32_t> stream_indices;
-      SedonaSpatialRelationPredicate predicate;
-    };
-
-    Payload payload;
-    payload.predicate = SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains;
-    payload.handle = handle.handle;
-
-    for (size_t offset = 0; offset < n_stream; offset++) {
-      auto* geom = geom_stream.borrow(offset);
-      GEOSGeom_setUserData_r(handle.handle, (GEOSGeometry*)geom, (void*)offset);
-      payload.geom = geom;
-
-      GEOSSTRtree_query_r(
-          handle.handle, tree, geom,
-          [](void* item, void* data) {
-            auto* geom_build = (GEOSGeometry*)item;
-            auto* payload = (Payload*)data;
-            auto* geom_stream = payload->geom;
-
-            if (GEOSContains_r(payload->handle, geom_build, geom_stream) == 1) {
-              auto build_id = (size_t)GEOSGeom_getUserData_r(payload->handle, geom_build);
-              auto stream_id =
-                  (size_t)GEOSGeom_getUserData_r(payload->handle, geom_stream);
-              payload->build_indices.push_back(build_id);
-              payload->stream_indices.push_back(stream_id);
-            }
-          },
-          (void*)&payload);
-    }
-
-    ASSERT_EQ(payload.build_indices.size(), build_indices.size());
-    ASSERT_EQ(payload.stream_indices.size(), probe_indices.size());
-    TestUtils::sort_vectors_by_index(payload.build_indices, payload.stream_indices);
-    TestUtils::sort_vectors_by_index(build_indices, probe_indices);
-    for (size_t j = 0; j < build_indices.size(); j++) {
-      ASSERT_EQ(payload.build_indices[j], build_indices[j]);
-      ASSERT_EQ(payload.stream_indices[j], probe_indices[j]);
-    }
     index_.destroy_context(&idx_ctx);
+
+    std::vector<uint32_t> ref_build_indices;
+    std::vector<uint32_t> ref_stream_indices;
+
+    // Wrap single arrays in vectors to match signature
+    std::vector<ArrowArray*> build_inputs = {build_array.get()};
+    std::vector<ArrowArray*> probe_inputs = {probe_array.get()};
+
+    TestUtils::ComputeGeosJoin(build_schema.get(), build_inputs, probe_schema.get(),
+                               probe_inputs, gpuspatial::Predicate::kContains,
+                               ref_build_indices, ref_stream_indices);
+
+    // Compare Results
+    ASSERT_EQ(ref_build_indices.size(), sut_build_indices.size());
+    ASSERT_EQ(ref_stream_indices.size(), sut_stream_indices.size());
+
+    TestUtils::sort_vectors_by_index(ref_build_indices, ref_stream_indices);
+    TestUtils::sort_vectors_by_index(sut_build_indices, sut_stream_indices);
+
+    for (size_t j = 0; j < sut_build_indices.size(); j++) {
+      ASSERT_EQ(ref_build_indices[j], sut_build_indices[j]);
+      ASSERT_EQ(ref_stream_indices[j], sut_stream_indices[j]);
+    }
   }
 }

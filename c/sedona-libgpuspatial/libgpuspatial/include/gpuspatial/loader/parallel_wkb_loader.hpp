@@ -35,8 +35,6 @@
 #include <thrust/iterator/counting_iterator.h>
 #include <thrust/scan.h>
 
-#include <sys/sysinfo.h>
-
 #include <cstring>
 #include <future>
 #include <numeric>
@@ -569,36 +567,24 @@ class ParallelWkbLoader {
     geoms_.Clear(stream);
   }
 
-  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
-             const ArrowArray* array, int64_t offset, int64_t length) {
+  void Parse(rmm::cuda_stream_view stream, const ArrowArrayView* array, int64_t offset,
+             int64_t length) {
     auto begin = thrust::make_counting_iterator<int64_t>(offset);
     auto end = begin + length;
 
-    Parse(stream, schema, array, begin, end);
+    Parse(stream, array, begin, end);
   }
 
   template <typename OFFSET_IT>
-  void Parse(rmm::cuda_stream_view stream, const ArrowSchema* schema,
-             const ArrowArray* array, OFFSET_IT begin, OFFSET_IT end) {
-    ArrowError arrow_error;
-
-    if (ArrowArrayViewInitFromSchema(array_view_.get(), schema, &arrow_error) !=
-        NANOARROW_OK) {
-      throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
-                               std::string(arrow_error.message));
-    }
+  void Parse(rmm::cuda_stream_view stream, const ArrowArrayView* array_view,
+             OFFSET_IT begin, OFFSET_IT end) {
     using host_geometries_t = detail::HostParsedGeometries<POINT_T, INDEX_T>;
 
     size_t num_offsets = std::distance(begin, end);
     if (num_offsets == 0) return;
 
-    if (ArrowArrayViewSetArray(array_view_.get(), array, &arrow_error) != NANOARROW_OK) {
-      throw std::runtime_error("ArrowArrayViewSetArray error " +
-                               std::string(arrow_error.message));
-    }
-
     auto parallelism = thread_pool_->num_threads();
-    uint64_t est_bytes = estimateTotalBytes(begin, end);
+    uint64_t est_bytes = estimateTotalBytes(array_view, begin, end);
 
     uint64_t free_memory = MemoryManager::get_available_host_memory();
     uint64_t memory_quota = free_memory * config_.memory_quota;
@@ -619,21 +605,21 @@ class ParallelWkbLoader {
 
     sw.start();
     // Assumption: updateGeometryType is updated to accept iterators (begin, end)
-    updateGeometryType(begin, end);
+    updateGeometryType(array_view, begin, end);
     sw.stop();
     t_fetch_type = sw.ms();
 
     // reserve space
     geoms_.vertices.reserve(est_bytes / sizeof(POINT_T), stream);
     if (geometry_type_ != GeometryType::kPoint)
-      geoms_.mbrs.reserve(array->length, stream);
+      geoms_.mbrs.reserve(array_view->length, stream);
 
     // Batch processing to reduce the peak memory usage
     for (size_t chunk = 0; chunk < n_chunks; chunk++) {
       auto chunk_start = chunk * chunk_size;
       auto chunk_end = std::min(num_offsets, (chunk + 1) * chunk_size);
-      auto split_points =
-          assignBalancedWorks(begin + chunk_start, begin + chunk_end, parallelism);
+      auto split_points = assignBalancedWorks(array_view, begin + chunk_start,
+                                              begin + chunk_end, parallelism);
 
       std::vector<std::future<host_geometries_t>> pending_local_geoms;
       // Each thread will parse in parallel and store results sequentially
@@ -646,8 +632,8 @@ class ParallelWkbLoader {
           GeoArrowError error;
           GEOARROW_THROW_NOT_OK(&error, GeoArrowWKBReaderInit(&reader));
 
-          uint64_t chunk_bytes =
-              estimateTotalBytes(begin + thread_work_start, begin + thread_work_end);
+          uint64_t chunk_bytes = estimateTotalBytes(array_view, begin + thread_work_start,
+                                                    begin + thread_work_end);
           local_geoms.vertices.reserve(chunk_bytes / sizeof(POINT_T));
 
           for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
@@ -656,10 +642,10 @@ class ParallelWkbLoader {
             auto arrow_offset = begin[chunk_start + work_offset];
 
             // handle null value
-            if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
+            if (ArrowArrayViewIsNull(array_view, arrow_offset)) {
               local_geoms.AddGeometry(nullptr);
             } else {
-              auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
+              auto item = ArrowArrayViewGetBytesUnsafe(array_view, arrow_offset);
               GeoArrowGeometryView geom;
 
               GEOARROW_THROW_NOT_OK(
@@ -799,13 +785,13 @@ class ParallelWkbLoader {
 
  private:
   Config config_;
-  nanoarrow::UniqueArrayView array_view_;
   GeometryType geometry_type_;
   detail::DeviceParsedGeometries<POINT_T, INDEX_T> geoms_;
   std::shared_ptr<ThreadPool> thread_pool_;
 
   template <typename OFFSET_IT>
-  void updateGeometryType(OFFSET_IT begin, OFFSET_IT end) {
+  void updateGeometryType(const ArrowArrayView* array_view, OFFSET_IT begin,
+                          OFFSET_IT end) {
     if (geometry_type_ == GeometryType::kGeometryCollection) {
       return;
     }
@@ -819,55 +805,62 @@ class ParallelWkbLoader {
     std::vector<std::future<uint32_t>> futures;
     futures.reserve(parallelism);
 
-    // Detect Endianness once (outside the loop)
-    const bool host_is_little = detail::is_little_endian();
+    auto read_geom_type = [array_view](int64_t arrow_offset) -> uint32_t {
+      auto item = ArrowArrayViewGetBytesUnsafe(array_view, arrow_offset);
+      const uint8_t* data = item.data.as_uint8;
+      // Safety check: WKB minimal size is 5 bytes (1 byte order + 4 type)
+      if (item.size_bytes < 5) return 0;
+      // 1. Read Endianness Byte (0 = Big/XDR, 1 = Little/NDR)
+      uint8_t wkb_endian = data[0];
+
+      // 2. Read Type (Bytes 1-4)
+      uint32_t geometry_type;
+      std::memcpy(&geometry_type, data + 1, sizeof(uint32_t));
+      const bool host_is_little = detail::is_little_endian();
+      // 3. Swap if mismatch
+      // If (WKB is Little) != (Host is Little), we must swap
+      if ((wkb_endian == 1) != host_is_little) {
+        geometry_type = __builtin_bswap32(geometry_type);
+      }
+
+      // 4. Validate and Accumulate (Branchless Masking)
+      if (geometry_type > 7) {
+        // It's safer to throw exception outside the tight loop or set an error flag
+        // For now, we skip or you can throw.
+        throw std::runtime_error("Extended WKB types not supported: " +
+                                 std::to_string(geometry_type));
+      }
+      return geometry_type;
+    };
 
     for (int thread_idx = 0; thread_idx < parallelism; thread_idx++) {
       auto run = [=](int tid) -> uint32_t {
         size_t thread_work_start = tid * thread_work_size;
         size_t thread_work_end =
             std::min(num_offsets, thread_work_start + thread_work_size);
-
         uint32_t local_seen_mask = 0;
 
-        for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
-             work_offset++) {
-          auto arrow_offset = begin[work_offset];
+        if (array_view->null_count == 0) {
+          for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
+               work_offset++) {
+            auto arrow_offset = begin[work_offset];
+            auto geometry_type = read_geom_type(arrow_offset);
 
-          if (ArrowArrayViewIsNull(array_view_.get(), arrow_offset)) {
-            continue;
+            local_seen_mask |= (1 << geometry_type);
           }
+        } else {
+          for (uint32_t work_offset = thread_work_start; work_offset < thread_work_end;
+               work_offset++) {
+            auto arrow_offset = begin[work_offset];
 
-          auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), arrow_offset);
+            if (!ArrowArrayViewIsNull(array_view, arrow_offset)) {
+              auto geometry_type = read_geom_type(arrow_offset);
 
-          // Safety check: WKB minimal size is 5 bytes (1 byte order + 4 type)
-          if (item.size_bytes < 5) continue;
-
-          const uint8_t* data = item.data.as_uint8;
-
-          // 1. Read Endianness Byte (0 = Big/XDR, 1 = Little/NDR)
-          uint8_t wkb_endian = data[0];
-
-          // 2. Read Type (Bytes 1-4)
-          uint32_t geometry_type;
-          std::memcpy(&geometry_type, data + 1, sizeof(uint32_t));
-
-          // 3. Swap if mismatch
-          // If (WKB is Little) != (Host is Little), we must swap
-          if ((wkb_endian == 1) != host_is_little) {
-            geometry_type = __builtin_bswap32(geometry_type);
+              local_seen_mask |= (1 << geometry_type);
+            }
           }
-
-          // 4. Validate and Accumulate (Branchless Masking)
-          if (geometry_type > 7) {
-            // It's safer to throw exception outside the tight loop or set an error flag
-            // For now, we skip or you can throw.
-            throw std::runtime_error("Extended WKB types not supported: " +
-                                     std::to_string(geometry_type));
-          }
-
-          local_seen_mask |= (1 << geometry_type);
         }
+
         return local_seen_mask;
       };
 
@@ -916,21 +909,31 @@ class ParallelWkbLoader {
   }
 
   template <typename OFFSET_IT>
-  size_t estimateTotalBytes(OFFSET_IT begin, OFFSET_IT end) const {
+  size_t estimateTotalBytes(const ArrowArrayView* array_view, OFFSET_IT begin,
+                            OFFSET_IT end) const {
     size_t total_bytes = 0;
-    for (auto it = begin; it != end; ++it) {
-      auto offset = *it;
-      if (!ArrowArrayViewIsNull(array_view_.get(), offset)) {
-        auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), offset);
-        total_bytes += item.size_bytes - 1      // byte order
-                       - 2 * sizeof(uint32_t);  // type + size
+    if (array_view->null_count == 0) {
+      for (auto it = begin; it != end; ++it) {
+        auto offset = *it;
+        auto item = ArrowArrayViewGetBytesUnsafe(array_view, offset);
+        total_bytes += item.size_bytes;
+      }
+    } else {
+      for (auto it = begin; it != end; ++it) {
+        auto offset = *it;
+        if (!ArrowArrayViewIsNull(array_view, offset)) {
+          auto item = ArrowArrayViewGetBytesUnsafe(array_view, offset);
+          total_bytes += item.size_bytes;
+        }
       }
     }
+
     return total_bytes;
   }
 
   template <typename OFFSET_IT>
-  std::vector<uint32_t> assignBalancedWorks(OFFSET_IT begin, OFFSET_IT end,
+  std::vector<uint32_t> assignBalancedWorks(const ArrowArrayView* array_view,
+                                            OFFSET_IT begin, OFFSET_IT end,
                                             uint32_t num_threads) const {
     size_t total_bytes = 0;
     std::vector<uint32_t> bytes_per_row;
@@ -939,12 +942,19 @@ class ParallelWkbLoader {
     bytes_per_row.resize(num_rows, 0);
 
     // 1. Calculate bytes per row
-    for (auto it = begin; it != end; ++it) {
-      auto offset = *it;
-      if (!ArrowArrayViewIsNull(array_view_.get(), offset)) {
-        auto item = ArrowArrayViewGetBytesUnsafe(array_view_.get(), offset);
-        // Assuming item.size_bytes fits in uint32_t based on vector definition
+    if (array_view->null_count == 0) {
+      for (auto it = begin; it != end; ++it) {
+        auto offset = *it;
+        auto item = ArrowArrayViewGetBytesUnsafe(array_view, offset);
         bytes_per_row[it - begin] = static_cast<uint32_t>(item.size_bytes);
+      }
+    } else {
+      for (auto it = begin; it != end; ++it) {
+        auto offset = *it;
+        if (!ArrowArrayViewIsNull(array_view, offset)) {
+          auto item = ArrowArrayViewGetBytesUnsafe(array_view, offset);
+          bytes_per_row[it - begin] = static_cast<uint32_t>(item.size_bytes);
+        }
       }
     }
 
@@ -964,20 +974,18 @@ class ParallelWkbLoader {
     split_points.reserve(num_threads + 1);
     split_points.push_back(0);  // The start index for the first thread
 
-    // Avoid division by zero
-    if (num_threads > 0) {
-      double ideal_chunk_size = static_cast<double>(total_bytes) / num_threads;
+    assert(num_threads > 0);
+    double ideal_chunk_size = static_cast<double>(total_bytes) / num_threads;
 
-      for (uint32_t i = 1; i < num_threads; ++i) {
-        auto target_size = static_cast<size_t>(i * ideal_chunk_size);
+    for (uint32_t i = 1; i < num_threads; ++i) {
+      auto target_size = static_cast<size_t>(i * ideal_chunk_size);
 
-        // Find the first index where cumulative bytes >= target_size
-        auto it = std::lower_bound(prefix_sum.begin(), prefix_sum.end(), target_size);
+      // Find the first index where cumulative bytes >= target_size
+      auto it = std::lower_bound(prefix_sum.begin(), prefix_sum.end(), target_size);
 
-        // Convert iterator to index (row number)
-        auto split_index = static_cast<uint32_t>(std::distance(prefix_sum.begin(), it));
-        split_points.push_back(split_index);
-      }
+      // Convert iterator to index (row number)
+      auto split_index = static_cast<uint32_t>(std::distance(prefix_sum.begin(), it));
+      split_points.push_back(split_index);
     }
 
     // Ensure the last point is the total number of rows

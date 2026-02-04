@@ -447,7 +447,6 @@ impl GpuSpatialRefinerWrapper {
             clear: None,
             push_build: None,
             finish_building: None,
-            refine_loaded: None,
             refine: None,
             get_last_error: None,
             release: None,
@@ -556,25 +555,25 @@ impl GpuSpatialRefinerWrapper {
     /// * `probe_indices` - The input/output vector of indices for the second array.
     /// # Returns
     /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
-    pub fn refine_loaded(
+    pub fn refine(
         &self,
-        array: &ArrayRef,
+        probe_array: &ArrayRef,
         predicate: GpuSpatialRelationPredicateWrapper,
         build_indices: &mut Vec<u32>,
         probe_indices: &mut Vec<u32>,
     ) -> Result<(), GpuSpatialError> {
         log::debug!(
             "DEBUG FFI: refine called with array={}, indices={}, predicate={:?}",
-            array.len(),
+            probe_array.len(),
             build_indices.len(),
             predicate
         );
 
-        let (ffi_array, ffi_schema) = arrow_array::ffi::to_ffi(&array.to_data())?;
+        let (ffi_array, ffi_schema) = arrow_array::ffi::to_ffi(&probe_array.to_data())?;
 
         log::debug!("DEBUG FFI: FFI conversion successful");
 
-        if let Some(refine_fn) = self.refiner.refine_loaded {
+        if let Some(refine_fn) = self.refiner.refine {
             unsafe {
                 let ffi_array_ptr: *const ArrowArray =
                     transmute(&ffi_array as *const FFI_ArrowArray);
@@ -608,79 +607,6 @@ impl GpuSpatialRefinerWrapper {
         }
         Ok(())
     }
-    /// # Refines candidate pairs using the GPU spatial refiner
-    /// This function refines candidate pairs of geometries using the GPU spatial refiner.
-    /// It takes two arrays of geometries and a predicate, and outputs the refined pairs of
-    /// indices that satisfy the predicate.
-    /// # Arguments
-    /// * `array1` - The first array of geometries.
-    /// * `array2` - The second array of geometries.
-    /// * `predicate` - The spatial relation predicate to use for refinement.
-    /// * `indices1` - The input/output vector of indices for the first array.
-    /// * `indices2` - The input/output vector of indices for the second array.
-    /// # Returns
-    /// * `Result<(), GpuSpatialError>` - Ok if successful, Err if an error occurred.
-    pub fn refine(
-        &self,
-        array1: &ArrayRef,
-        array2: &ArrayRef,
-        predicate: GpuSpatialRelationPredicateWrapper,
-        indices1: &mut Vec<u32>,
-        indices2: &mut Vec<u32>,
-    ) -> Result<(), GpuSpatialError> {
-        log::debug!(
-            "DEBUG FFI: refine called with array1={}, array2={}, indices={}, predicate={:?}",
-            array1.len(),
-            array2.len(),
-            indices1.len(),
-            predicate
-        );
-
-        let (ffi_array1, ffi_schema1) = arrow_array::ffi::to_ffi(&array1.to_data())?;
-        let (ffi_array2, ffi_schema2) = arrow_array::ffi::to_ffi(&array2.to_data())?;
-
-        log::debug!("DEBUG FFI: FFI conversion successful");
-
-        if let Some(refine_fn) = self.refiner.refine {
-            unsafe {
-                let ffi_array1_ptr: *const ArrowArray =
-                    transmute(&ffi_array1 as *const FFI_ArrowArray);
-                let ffi_schema1_ptr: *const ArrowSchema =
-                    transmute(&ffi_schema1 as *const FFI_ArrowSchema);
-                let ffi_array2_ptr: *const ArrowArray =
-                    transmute(&ffi_array2 as *const FFI_ArrowArray);
-                let ffi_schema2_ptr: *const ArrowSchema =
-                    transmute(&ffi_schema2 as *const FFI_ArrowSchema);
-                log::debug!("DEBUG FFI: Calling C++ refine function");
-                let mut new_len: u32 = 0;
-                if refine_fn(
-                    &self.refiner as *const _ as *mut _,
-                    ffi_schema1_ptr as *mut _,
-                    ffi_array1_ptr as *mut _,
-                    ffi_schema2_ptr as *mut _,
-                    ffi_array2_ptr as *mut _,
-                    predicate as c_uint,
-                    indices1.as_mut_ptr(),
-                    indices2.as_mut_ptr(),
-                    indices1.len() as u32,
-                    &mut new_len as *mut u32,
-                ) != 0
-                {
-                    let error_message =
-                        self.refiner.get_last_error.unwrap()(&self.refiner as *const _ as *mut _);
-                    let c_str = std::ffi::CStr::from_ptr(error_message);
-                    let error_string = c_str.to_string_lossy().into_owned();
-                    log::error!("DEBUG FFI: refine failed: {}", error_string);
-                    return Err(GpuSpatialError::Refine(error_string));
-                }
-                log::debug!("DEBUG FFI: refine C++ call succeeded");
-                // Update the lengths of the output index vectors
-                indices1.truncate(new_len as usize);
-                indices2.truncate(new_len as usize);
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Default for GpuSpatialRefinerWrapper {
@@ -690,7 +616,6 @@ impl Default for GpuSpatialRefinerWrapper {
                 clear: None,
                 push_build: None,
                 finish_building: None,
-                refine_loaded: None,
                 refine: None,
                 get_last_error: None,
                 release: None,

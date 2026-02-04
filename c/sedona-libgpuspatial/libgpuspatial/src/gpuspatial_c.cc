@@ -23,6 +23,8 @@
 #include "gpuspatial/rt/rt_engine.hpp"
 #include "gpuspatial/utils/exception.hpp"
 
+#include "nanoarrow/nanoarrow.hpp"
+
 #include <threads.h>
 #include <algorithm>
 #include <cstring>
@@ -277,7 +279,6 @@ struct GpuSpatialRefinerExporter {
     out->clear = &CClear;
     out->push_build = &CPushBuild;
     out->finish_building = &CFinishBuilding;
-    out->refine_loaded = &CRefineLoaded;
     out->refine = &CRefine;
     out->get_last_error = &CGetLastError;
     out->release = &CRelease;
@@ -291,8 +292,23 @@ struct GpuSpatialRefinerExporter {
 
   static int CPushBuild(SedonaSpatialRefiner* self, const ArrowSchema* build_schema,
                         const ArrowArray* build_array) {
-    return SafeExecute(static_cast<private_data_t*>(self->private_data),
-                       [&] { use_refiner(self).PushBuild(build_schema, build_array); });
+    return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
+      nanoarrow::UniqueArrayView array_view;
+      ArrowError arrow_error;
+
+      if (ArrowArrayViewInitFromSchema(array_view.get(), build_schema, &arrow_error) !=
+          NANOARROW_OK) {
+        throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
+                                 std::string(arrow_error.message));
+      }
+      if (ArrowArrayViewSetArray(array_view.get(), build_array, &arrow_error) !=
+          NANOARROW_OK) {
+        throw std::runtime_error("ArrowArrayViewSetArray error " +
+                                 std::string(arrow_error.message));
+      }
+
+      use_refiner(self).PushBuild(array_view.get());
+    });
   }
 
   static int CFinishBuilding(SedonaSpatialRefiner* self) {
@@ -300,27 +316,29 @@ struct GpuSpatialRefinerExporter {
                        [&] { use_refiner(self).FinishBuilding(); });
   }
 
-  static int CRefineLoaded(SedonaSpatialRefiner* self, const ArrowSchema* probe_schema,
-                           const ArrowArray* probe_array,
-                           SedonaSpatialRelationPredicate predicate,
-                           uint32_t* build_indices, uint32_t* probe_indices,
-                           uint32_t indices_size, uint32_t* new_indices_size) {
-    return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
-      *new_indices_size = use_refiner(self).Refine(
-          probe_schema, probe_array, static_cast<gpuspatial::Predicate>(predicate),
-          build_indices, probe_indices, indices_size);
-    });
-  }
-
-  static int CRefine(SedonaSpatialRefiner* self, const ArrowSchema* schema1,
-                     const ArrowArray* array1, const ArrowSchema* schema2,
-                     const ArrowArray* array2, SedonaSpatialRelationPredicate predicate,
-                     uint32_t* indices1, uint32_t* indices2, uint32_t indices_size,
+  static int CRefine(SedonaSpatialRefiner* self, const ArrowSchema* probe_schema,
+                     const ArrowArray* probe_array,
+                     SedonaSpatialRelationPredicate predicate, uint32_t* build_indices,
+                     uint32_t* probe_indices, uint32_t indices_size,
                      uint32_t* new_indices_size) {
     return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
+      nanoarrow::UniqueArrayView array_view;
+      ArrowError arrow_error;
+
+      if (ArrowArrayViewInitFromSchema(array_view.get(), probe_schema, &arrow_error) !=
+          NANOARROW_OK) {
+        throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
+                                 std::string(arrow_error.message));
+      }
+      if (ArrowArrayViewSetArray(array_view.get(), probe_array, &arrow_error) !=
+          NANOARROW_OK) {
+        throw std::runtime_error("ArrowArrayViewSetArray error " +
+                                 std::string(arrow_error.message));
+      }
+
       *new_indices_size = use_refiner(self).Refine(
-          schema1, array1, schema2, array2, static_cast<gpuspatial::Predicate>(predicate),
-          indices1, indices2, indices_size);
+          array_view.get(), static_cast<gpuspatial::Predicate>(predicate), build_indices,
+          probe_indices, indices_size);
     });
   }
 

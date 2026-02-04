@@ -14,10 +14,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-if(GPUSPATIAL_BUILD_TESTS)
-  add_library(geoarrow_geos geoarrow_geos/geoarrow_geos.c)
-  target_link_libraries(geoarrow_geos PUBLIC GEOS::geos_c geoarrow)
-endif()
 
 if(GPUSPATIAL_BUILD_TESTS)
   enable_testing()
@@ -33,9 +29,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 GTest::gmock_main
                                 gpuspatial
                                 GEOS::geos
-                                GEOS::geos_c
-                                geoarrow_geos
-                                nanoarrow::nanoarrow_ipc)
+                                Arrow::arrow_static
+                                Parquet::parquet_static)
 
   add_executable(loader_test array_stream.cc main.cc loader_test.cu)
   target_link_libraries(loader_test
@@ -44,10 +39,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 GTest::gmock_main
                                 gpuspatial
                                 GEOS::geos
-                                GEOS::geos_c
                                 Arrow::arrow_static
-                                Parquet::parquet_static
-                                nanoarrow::nanoarrow_ipc)
+                                Parquet::parquet_static)
   target_include_directories(loader_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_options(loader_test
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
@@ -59,8 +52,7 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 GTest::gtest_main
                                 GTest::gmock_main
                                 gpuspatial
-                                GEOS::geos
-                                GEOS::geos_c)
+                                GEOS::geos)
   target_compile_options(index_test
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
@@ -71,11 +63,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 GTest::gmock_main
                                 gpuspatial
                                 GEOS::geos
-                                GEOS::geos_c
-                                geoarrow_geos
                                 Arrow::arrow_static
-                                Parquet::parquet_static
-                                nanoarrow::nanoarrow_ipc)
+                                Parquet::parquet_static)
   target_compile_options(refiner_test
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
@@ -88,7 +77,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 gpuspatial
                                 GEOS::geos
                                 nanoarrow::nanoarrow
-                                nanoarrow::nanoarrow_ipc)
+                                Arrow::arrow_static
+                                Parquet::parquet_static)
   target_compile_options(relate_test
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
@@ -99,9 +89,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                                 GTest::gmock_main
                                 gpuspatial_c
                                 GEOS::geos
-                                GEOS::geos_c
-                                geoarrow_geos
-                                nanoarrow::nanoarrow_ipc)
+                                Arrow::arrow_static
+                                Parquet::parquet_static)
 
   include(GoogleTest)
 
@@ -109,4 +98,5 @@ if(GPUSPATIAL_BUILD_TESTS)
   gtest_discover_tests(array_stream_test)
   gtest_discover_tests(loader_test)
   gtest_discover_tests(relate_test)
+  gtest_discover_tests(c_wrapper_test)
 endif()

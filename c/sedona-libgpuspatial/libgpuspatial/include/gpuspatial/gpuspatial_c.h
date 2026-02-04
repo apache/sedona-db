@@ -151,18 +151,12 @@ struct SedonaSpatialRefiner {
 
   int (*finish_building)(struct SedonaSpatialRefiner* self);
 
-  int (*refine_loaded)(struct SedonaSpatialRefiner* self,
-                       const struct ArrowSchema* probe_schema,
-                       const struct ArrowArray* probe_array,
-                       enum SedonaSpatialRelationPredicate predicate,
-                       uint32_t* build_indices, uint32_t* probe_indices,
-                       uint32_t indices_size, uint32_t* new_indices_size);
+  int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowSchema* probe_schema,
+                const struct ArrowArray* probe_array,
+                enum SedonaSpatialRelationPredicate predicate, uint32_t* build_indices,
+                uint32_t* probe_indices, uint32_t indices_size,
+                uint32_t* new_indices_size);
 
-  int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowSchema* schema1,
-                const struct ArrowArray* array1, const struct ArrowSchema* schema2,
-                const struct ArrowArray* array2,
-                enum SedonaSpatialRelationPredicate predicate, uint32_t* indices1,
-                uint32_t* indices2, uint32_t indices_size, uint32_t* new_indices_size);
   const char* (*get_last_error)(struct SedonaSpatialRefiner* self);
   void (*release)(struct SedonaSpatialRefiner* self);
   void* private_data;

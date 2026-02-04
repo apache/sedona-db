@@ -9,7 +9,6 @@ c/sedona-geoarrow-c/src/geoarrow/ryu/*
 c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-s2geography/s2geography/*
 c/sedona-s2geography/s2geometry/*
-c/sedona-libgpuspatial/libgpuspatial/test/geoarrow_geos/*
 c/sedona-libgpuspatial/libgpuspatial/cmake/RAPIDS_VERSION
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/relate.hpp
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.hpp

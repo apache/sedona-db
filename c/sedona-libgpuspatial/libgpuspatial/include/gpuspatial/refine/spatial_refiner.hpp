@@ -20,25 +20,26 @@
 #include "nanoarrow/nanoarrow.h"
 
 namespace gpuspatial {
+/** This class refines candidate pairs of geometries based on a spatial predicate.
+ *
+ * The SpatialRefiner is initialized by pushing build-side geometries via PushBuild(),
+ * followed by a call to FinishBuilding(). After that, the Refine() method can be called
+ * multiple times with probe-side geometries and candidate index pairs to filter out
+ * non-matching pairs based on the specified spatial predicate.
+ */
 class SpatialRefiner {
  public:
   virtual ~SpatialRefiner() = default;
 
   virtual void Clear() = 0;
 
-  virtual void PushBuild(const ArrowSchema* build_schema,
-                         const ArrowArray* build_array) = 0;
+  virtual void PushBuild(const ArrowArrayView* build_array) = 0;
 
   virtual void FinishBuilding() = 0;
 
-  virtual uint32_t Refine(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
-                          Predicate predicate, uint32_t* build_indices,
-                          uint32_t* probe_indices, uint32_t len) = 0;
-
-  virtual uint32_t Refine(const ArrowSchema* build_schema, const ArrowArray* build_array,
-                          const ArrowSchema* probe_schema, const ArrowArray* probe_array,
-                          Predicate predicate, uint32_t* build_indices,
-                          uint32_t* probe_indices, uint32_t len) = 0;
+  virtual uint32_t Refine(const ArrowArrayView* probe_array, Predicate predicate,
+                          uint32_t* build_indices, uint32_t* probe_indices,
+                          uint32_t len) = 0;
 };
 
 }  // namespace gpuspatial

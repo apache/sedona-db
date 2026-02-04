@@ -23,13 +23,15 @@
 #include <thread>
 
 namespace gpuspatial {
-
+/** Configuration for RTSpatialIndex
+ */
 struct RTSpatialIndexConfig {
+  // The ray tracing engine to use
   std::shared_ptr<RTEngine> rt_engine;
   // Prefer fast build the BVH
   bool prefer_fast_build = false;
   // Compress the BVH to save memory
-  bool compact = true;
+  bool compact = false;
   // How many threads are allowed to call PushProbe concurrently
   uint32_t concurrency = 1;
   // number of points to represent an AABB when doing point-point queries

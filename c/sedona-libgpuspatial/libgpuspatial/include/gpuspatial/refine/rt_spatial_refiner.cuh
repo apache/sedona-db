@@ -32,9 +32,6 @@
 #include "rmm/cuda_stream_pool.hpp"
 #include "rmm/cuda_stream_view.hpp"
 
-#include <thread>
-
-#define GPUSPATIAL_PROFILING
 namespace gpuspatial {
 
 class RTSpatialRefiner : public SpatialRefiner {
@@ -92,22 +89,17 @@ class RTSpatialRefiner : public SpatialRefiner {
 
   void Clear() override;
 
-  void PushBuild(const ArrowSchema* build_schema, const ArrowArray* build_array) override;
+  void PushBuild(const ArrowArrayView* build_array) override;
 
   void FinishBuilding() override;
 
-  uint32_t Refine(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
-                  Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
+  uint32_t Refine(const ArrowArrayView* probe_array, Predicate predicate,
+                  uint32_t* build_indices, uint32_t* probe_indices,
                   uint32_t len) override;
 
-  uint32_t Refine(const ArrowSchema* build_schema, const ArrowArray* build_array,
-                  const ArrowSchema* probe_schema, const ArrowArray* probe_array,
-                  Predicate predicate, uint32_t* build_indices, uint32_t* probe_indices,
-                  uint32_t len) override;
-
-  uint32_t RefinePipelined(const ArrowSchema* probe_schema, const ArrowArray* probe_array,
-                           Predicate predicate, uint32_t* build_indices,
-                           uint32_t* probe_indices, uint32_t len);
+  uint32_t RefinePipelined(const ArrowArrayView* probe_array, Predicate predicate,
+                           uint32_t* build_indices, uint32_t* probe_indices,
+                           uint32_t len);
 
  private:
   RTSpatialRefinerConfig config_;
