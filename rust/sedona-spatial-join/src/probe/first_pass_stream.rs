@@ -51,7 +51,7 @@ use crate::{
 pub(crate) struct FirstPassStream<C: FirstPassStreamCallback> {
     source: SendableEvaluatedBatchStream,
     repartitioner: Option<StreamRepartitioner>,
-    partitioner: Arc<dyn SpatialPartitioner>,
+    partitioner: Box<dyn SpatialPartitioner>,
     pending_output: VecDeque<Result<EvaluatedBatch>>,
     metrics: ProbeStreamMetrics,
     callback: Option<C>,
@@ -71,7 +71,7 @@ impl<C: FirstPassStreamCallback> FirstPassStream<C> {
     pub fn new(
         source: SendableEvaluatedBatchStream,
         repartitioner: StreamRepartitioner,
-        partitioner: Arc<dyn SpatialPartitioner>,
+        partitioner: Box<dyn SpatialPartitioner>,
         metrics: ProbeStreamMetrics,
         callback: C,
     ) -> Self {

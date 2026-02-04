@@ -300,7 +300,7 @@ impl SpilledPartitions {
 /// `target_batch_size` rows per partition batch.
 pub struct StreamRepartitioner {
     runtime_env: Arc<RuntimeEnv>,
-    partitioner: Arc<dyn SpatialPartitioner>,
+    partitioner: Box<dyn SpatialPartitioner>,
     partitioned_side: PartitionedSide,
     slots: PartitionSlots,
     /// Spill files for each spatial partition.
@@ -330,7 +330,7 @@ pub struct StreamRepartitioner {
 /// - `spilled_batch_in_memory_size_threshold`: `None`
 pub struct StreamRepartitionerBuilder {
     runtime_env: Arc<RuntimeEnv>,
-    partitioner: Arc<dyn SpatialPartitioner>,
+    partitioner: Box<dyn SpatialPartitioner>,
     partitioned_side: PartitionedSide,
     spill_compression: SpillCompression,
     spill_metrics: SpillMetrics,
@@ -407,7 +407,7 @@ impl StreamRepartitioner {
     /// spill metrics). Optional parameters can then be set on the returned builder.
     pub fn builder(
         runtime_env: Arc<RuntimeEnv>,
-        partitioner: Arc<dyn SpatialPartitioner>,
+        partitioner: Box<dyn SpatialPartitioner>,
         partitioned_side: PartitionedSide,
         spill_metrics: SpillMetrics,
     ) -> StreamRepartitionerBuilder {
@@ -840,7 +840,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
+        let partitioner = Box::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
 
@@ -926,7 +926,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
+        let partitioner = Box::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
 
@@ -990,7 +990,7 @@ mod tests {
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
+        let partitioner = Box::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
         let mut repartitioner = StreamRepartitioner::builder(
@@ -1035,7 +1035,7 @@ mod tests {
         let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
         let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
-        let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
+        let partitioner = Box::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
         let mut repartitioner = StreamRepartitioner::builder(
@@ -1069,7 +1069,7 @@ mod tests {
         let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
         let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
-        let partitioner = Arc::new(FlatPartitioner::try_new(partitions)?);
+        let partitioner = Box::new(FlatPartitioner::try_new(partitions)?);
         let runtime_env = Arc::new(RuntimeEnv::default());
         let spill_metrics = SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0);
         let mut repartitioner = StreamRepartitioner::builder(

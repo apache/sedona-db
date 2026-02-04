@@ -40,6 +40,7 @@ use sedona_geometry::interval::IntervalTrait;
 use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 
 /// Spatial partitioner that linearly scans partition boundaries.
+#[derive(Clone)]
 pub struct FlatPartitioner {
     boundaries: Vec<BoundingBox>,
 }
@@ -105,6 +106,10 @@ impl SpatialPartitioner for FlatPartitioner {
             Some(id) => SpatialPartition::Regular(id),
             None => SpatialPartition::None,
         })
+    }
+
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner> {
+        Box::new(self.clone())
     }
 }
 

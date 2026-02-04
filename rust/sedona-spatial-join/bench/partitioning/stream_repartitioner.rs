@@ -68,10 +68,9 @@ fn bench_stream_partitioner(c: &mut Criterion) {
         let seed_counter = Arc::clone(&seed_counter);
         let schema = Arc::clone(&schema);
         let runtime_env = Arc::clone(&runtime_env);
-        let partitioner = Arc::clone(&partitioner);
         let spill_metrics = spill_metrics.clone();
         let extent = Arc::clone(&extent);
-
+        let partitioner = partitioner.box_clone();
         b.iter_batched(
             move || {
                 let seed = seed_counter.fetch_add(1, Ordering::Relaxed);
@@ -81,7 +80,7 @@ fn bench_stream_partitioner(c: &mut Criterion) {
                 block_on(async {
                     StreamRepartitioner::builder(
                         runtime_env.clone(),
-                        partitioner.clone(),
+                        partitioner.box_clone(),
                         PartitionedSide::BuildSide,
                         spill_metrics.clone(),
                     )
@@ -187,7 +186,7 @@ fn build_schema() -> Schema {
     ])
 }
 
-fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send + Sync> {
+fn build_partitioner(extent: &BoundingBox) -> Box<dyn SpatialPartitioner> {
     let mut rng = StdRng::seed_from_u64(RNG_SEED ^ 0x00FF_FFFF);
     let samples = (0..SAMPLE_FOR_PARTITIONER)
         .map(|_| random_bbox(extent, &mut rng))
@@ -201,7 +200,7 @@ fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send 
     )
     .expect("kdb builder should succeed");
 
-    Arc::new(partitioner)
+    Box::new(partitioner)
 }
 
 fn random_bbox(extent: &BoundingBox, rng: &mut impl RngExt) -> BoundingBox {

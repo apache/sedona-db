@@ -38,7 +38,6 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
 /// Configuration options for creating a probe-side stream provider.
 ///
 /// When a `partitioner` is provided, the provider performs an initial first pass that
@@ -50,7 +49,10 @@ pub(crate) struct ProbeStreamOptions {
     /// - `None` means the probe side is treated as a single, non-partitioned stream and only
     ///   [`SpatialPartition::Regular(0)`] is supported.
     /// - `Some(_)` enables partitioned streaming with a warm-up (first) pass.
-    pub partitioner: Option<Arc<dyn SpatialPartitioner>>,
+    ///
+    /// We wrap the partitioner in a `Mutex` to make [`ProbeStreamOptions`] Send + Sync,
+    /// which makes it easier to integrate into `SpatialJoinExec`.
+    pub partitioner: Option<Mutex<Box<dyn SpatialPartitioner>>>,
     /// Target number of rows per output batch produced by the partitioning stream.
     pub target_batch_rows: usize,
     /// Spill compression to use when writing partition spill files.
@@ -60,6 +62,41 @@ pub(crate) struct ProbeStreamOptions {
     /// Optional upper bound for the size of spilled batches. Large spilled batches will be split
     /// into smaller ones to avoid excessive memory usage during re-reading.
     pub spilled_batch_in_memory_size_threshold: Option<usize>,
+}
+
+impl ProbeStreamOptions {
+    pub fn new(
+        partitioner: Option<Box<dyn SpatialPartitioner>>,
+        target_batch_rows: usize,
+        spill_compression: SpillCompression,
+        buffer_bytes_threshold: usize,
+        spilled_batch_in_memory_size_threshold: Option<usize>,
+    ) -> Self {
+        let partitioner = partitioner.map(Mutex::new);
+        Self {
+            partitioner,
+            target_batch_rows,
+            spill_compression,
+            buffer_bytes_threshold,
+            spilled_batch_in_memory_size_threshold,
+        }
+    }
+}
+
+impl Clone for ProbeStreamOptions {
+    fn clone(&self) -> Self {
+        let cloned_partitioner = self
+            .partitioner
+            .as_ref()
+            .map(|p| Mutex::new(p.lock().box_clone()));
+        Self {
+            partitioner: cloned_partitioner,
+            target_batch_rows: self.target_batch_rows,
+            spill_compression: self.spill_compression,
+            buffer_bytes_threshold: self.buffer_bytes_threshold,
+            spilled_batch_in_memory_size_threshold: self.spilled_batch_in_memory_size_threshold,
+        }
+    }
 }
 
 /// Provides probe-side streams for a given [`SpatialPartition`].
@@ -144,15 +181,16 @@ impl PartitionedProbeStreamProvider {
         let mut state_guard = self.state.lock();
         match std::mem::replace(&mut *state_guard, ProbeStreamState::FirstPass) {
             ProbeStreamState::Pending { source } => {
-                let partitioner = Arc::clone(
-                    self.options
-                        .partitioner
-                        .as_ref()
-                        .expect("Partitioned first pass requires a partitioner"),
-                );
+                let partitioner = self
+                    .options
+                    .partitioner
+                    .as_ref()
+                    .expect("Partitioned first pass requires a partitioner")
+                    .lock()
+                    .box_clone();
                 let repartitioner = StreamRepartitioner::builder(
                     Arc::clone(&self.runtime_env),
-                    Arc::clone(&partitioner),
+                    partitioner.box_clone(),
                     PartitionedSide::ProbeSide,
                     self.metrics.spill_metrics.clone(),
                 )
@@ -384,7 +422,7 @@ mod tests {
 
     fn create_probe_stream(
         batches: Vec<EvaluatedBatch>,
-        partitioner: Option<Arc<dyn SpatialPartitioner>>,
+        partitioner: Option<Box<dyn SpatialPartitioner>>,
     ) -> PartitionedProbeStreamProvider {
         let runtime_env = Arc::new(RuntimeEnv::default());
         assert!(!batches.is_empty(), "test batches should not be empty");
@@ -393,24 +431,18 @@ mod tests {
             Box::pin(InMemoryEvaluatedBatchStream::new(schema, batches));
         PartitionedProbeStreamProvider::new(
             runtime_env,
-            ProbeStreamOptions {
-                partitioner,
-                target_batch_rows: 1024,
-                spill_compression: SpillCompression::Uncompressed,
-                buffer_bytes_threshold: 0,
-                spilled_batch_in_memory_size_threshold: None,
-            },
+            ProbeStreamOptions::new(partitioner, 1024, SpillCompression::Uncompressed, 0, None),
             stream,
             ProbeStreamMetrics::new(0, &ExecutionPlanMetricsSet::new()),
         )
     }
 
-    fn sample_partitioner() -> Result<Arc<dyn SpatialPartitioner>> {
+    fn sample_partitioner() -> Result<Box<dyn SpatialPartitioner>> {
         let partitions = vec![
             BoundingBox::xy((0.0, 50.0), (0.0, 50.0)),
             BoundingBox::xy((50.0, 100.0), (0.0, 50.0)),
         ];
-        Ok(Arc::new(FlatPartitioner::try_new(partitions)?))
+        Ok(Box::new(FlatPartitioner::try_new(partitions)?))
     }
 
     #[tokio::test]
@@ -425,7 +457,7 @@ mod tests {
                 Some(wkb_point((200.0, 200.0)).unwrap()),
             ],
         )?;
-        let probe_stream = create_probe_stream(vec![batch], Some(Arc::clone(&partitioner)));
+        let probe_stream = create_probe_stream(vec![batch], Some(partitioner));
 
         let first_pass = probe_stream.stream_for(SpatialPartition::Regular(0))?;
         let batches = first_pass.try_collect::<Vec<_>>().await?;
@@ -448,7 +480,7 @@ mod tests {
     async fn requesting_regular_partition_before_first_pass_fails() -> Result<()> {
         let partitioner = sample_partitioner()?;
         let batch = sample_batch(&[0], vec![Some(wkb_point((60.0, 10.0)).unwrap())])?;
-        let probe_stream = create_probe_stream(vec![batch], Some(Arc::clone(&partitioner)));
+        let probe_stream = create_probe_stream(vec![batch], Some(partitioner));
         assert!(probe_stream
             .stream_for(SpatialPartition::Regular(1))
             .is_err());
