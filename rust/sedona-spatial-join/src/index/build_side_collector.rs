@@ -451,6 +451,7 @@ mod tests {
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use futures::TryStreamExt;
     use sedona_common::SpatialJoinOptions;
+    use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
 
     fn test_schema() -> Arc<Schema> {
@@ -471,13 +472,6 @@ mod tests {
             batch,
             geom_array: geom,
         })
-    }
-
-    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-        let mut buf = vec![1u8, 1, 0, 0, 0];
-        buf.extend_from_slice(&x.to_le_bytes());
-        buf.extend_from_slice(&y.to_le_bytes());
-        buf
     }
 
     fn build_collector() -> BuildSideBatchesCollector {
@@ -534,9 +528,12 @@ mod tests {
         let sampler = BoundingBoxSampler::try_new(1, 4, 1.0, 7)?;
         let batch_a = sample_batch(
             &[0, 1],
-            vec![Some(point_wkb(0.0, 0.0)), Some(point_wkb(1.0, 1.0))],
+            vec![
+                Some(wkb_point((0.0, 0.0)).unwrap()),
+                Some(wkb_point((1.0, 1.0)).unwrap()),
+            ],
         )?;
-        let batch_b = sample_batch(&[2], vec![Some(point_wkb(2.0, 2.0))])?;
+        let batch_b = sample_batch(&[2], vec![Some(wkb_point((2.0, 2.0)).unwrap())])?;
         let stream = build_stream(vec![batch_a, batch_b]);
         let metrics_set = ExecutionPlanMetricsSet::new();
         let metrics = CollectBuildSideMetrics::new(0, &metrics_set);
@@ -565,9 +562,12 @@ mod tests {
         let (reservation, _pool) = memory_reservation(bbox_mem + 1);
         let batch_a = sample_batch(
             &[10, 11],
-            vec![Some(point_wkb(5.0, 5.0)), Some(point_wkb(6.0, 6.0))],
+            vec![
+                Some(wkb_point((5.0, 5.0)).unwrap()),
+                Some(wkb_point((6.0, 6.0)).unwrap()),
+            ],
         )?;
-        let batch_b = sample_batch(&[12], vec![Some(point_wkb(7.0, 7.0))])?;
+        let batch_b = sample_batch(&[12], vec![Some(wkb_point((7.0, 7.0)).unwrap())])?;
         let stream = build_stream(vec![batch_a, batch_b]);
         let metrics_set = ExecutionPlanMetricsSet::new();
         let metrics = CollectBuildSideMetrics::new(0, &metrics_set);

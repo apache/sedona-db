@@ -32,7 +32,7 @@ use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use futures::executor::block_on;
 use rand::{rngs::StdRng, Rng, SeedableRng};
-use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
+use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait, wkb_factory::wkb_point};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use sedona_spatial_join::evaluated_batch::{
     evaluated_batch_stream::{in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream},
@@ -156,7 +156,7 @@ fn random_geometry_array(rows: usize, extent: &BoundingBox, rng: &mut StdRng) ->
         .map(|_| {
             let x = rng.random_range(extent.x().lo()..=extent.x().hi());
             let y = rng.random_range(extent.y().lo()..=extent.y().hi());
-            point_wkb(x, y)
+            wkb_point((x, y)).unwrap()
         })
         .collect();
 
@@ -216,13 +216,6 @@ fn random_bbox(extent: &BoundingBox, rng: &mut StdRng) -> BoundingBox {
 
 fn default_extent() -> BoundingBox {
     BoundingBox::xy((0.0, 10_000.0), (0.0, 10_000.0))
-}
-
-fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-    let mut buf = vec![1u8, 1, 0, 0, 0];
-    buf.extend_from_slice(&x.to_le_bytes());
-    buf.extend_from_slice(&y.to_le_bytes());
-    buf
 }
 
 criterion_group! {

@@ -21,8 +21,9 @@ use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
-    disk_manager::RefCountedTempFile, memory_pool::MemoryConsumer, SendableRecordBatchStream,
-    TaskContext,
+    disk_manager::RefCountedTempFile,
+    memory_pool::{MemoryConsumer, MemoryReservation},
+    SendableRecordBatchStream, TaskContext,
 };
 use datafusion_expr::JoinType;
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
@@ -39,16 +40,19 @@ use crate::{
         SpatialJoinBuildMetrics,
     },
     partitioning::{
+        flat::FlatPartitioner,
         kdb::KDBPartitioner,
         stream_repartitioner::{SpilledPartition, SpilledPartitions, StreamRepartitioner},
         PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
+    probe::partitioned_stream_provider::ProbeStreamOptions,
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::BoundingBoxSamples,
 };
 
 pub(crate) struct SpatialJoinComponents {
     pub partitioned_index_provider: Arc<PartitionedIndexProvider>,
+    pub probe_stream_options: ProbeStreamOptions,
 }
 
 /// Builder for constructing `SpatialJoinComponents` from build-side streams.
@@ -110,17 +114,7 @@ impl SpatialJoinComponentsBuilder {
         let num_partitions = build_streams.len();
         if num_partitions == 0 {
             log::debug!("Build side has no data. Creating empty spatial index.");
-            let partitioned_index_provider = PartitionedIndexProvider::new_empty(
-                self.build_schema,
-                self.spatial_predicate,
-                self.sedona_options.spatial_join,
-                self.join_type,
-                self.probe_threads_count,
-                SpatialJoinBuildMetrics::new(0, &self.metrics),
-            );
-            return Ok(SpatialJoinComponents {
-                partitioned_index_provider: Arc::new(partitioned_index_provider),
-            });
+            return self.create_spatial_join_components_for_empty_build_side();
         }
 
         let mut rng = Rng::with_seed(self.seed);
@@ -133,33 +127,11 @@ impl SpatialJoinComponentsBuilder {
         let memory_plan =
             compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
         log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
-        let num_partitions = match self
-            .sedona_options
-            .spatial_join
-            .debug
-            .num_spatial_partitions
-        {
-            NumSpatialPartitionsConfig::Auto => memory_plan.num_partitions,
-            NumSpatialPartitionsConfig::Fixed(n) => {
-                log::debug!("Override number of spatial partitions to {}", n);
-                n
-            }
-        };
+        let num_partitions = self.num_spatial_partitions(&memory_plan);
 
         if num_partitions == 1 {
             log::debug!("Running single-partitioned in-memory spatial join");
-            let partitioned_index_provider = PartitionedIndexProvider::new_single_partition(
-                self.build_schema,
-                self.spatial_predicate,
-                self.sedona_options.spatial_join,
-                self.join_type,
-                self.probe_threads_count,
-                build_partitions,
-                SpatialJoinBuildMetrics::new(0, &self.metrics),
-            );
-            Ok(SpatialJoinComponents {
-                partitioned_index_provider: Arc::new(partitioned_index_provider),
-            })
+            self.create_single_partitioned_spatial_join_components(build_partitions)
         } else {
             // Collect all memory reservations grown during build side collection
             let mut reservations = Vec::with_capacity(build_partitions.len());
@@ -167,13 +139,19 @@ impl SpatialJoinComponentsBuilder {
                 reservations.push(partition.reservation.take());
             }
 
-            // Partition the build side into multiple spatial partitions, each partition can be fully
-            // loaded into an in-memory spatial index
-            let build_partitioner = self.build_spatial_partitioner(
+            // Create the spatial partitioner for partitioning the build side. The actual number of
+            // spatial partitions may be different from the requested number of partitions due to the
+            // characteristics of the spatial partitioner (e.g., KDB).
+            let build_partitioner = self.create_spatial_partitioner_for_build_side(
                 num_partitions,
                 &mut build_partitions,
                 rng.u64(0..0xFFFF),
             )?;
+            let num_partitions = build_partitioner.num_regular_partitions();
+            log::debug!("Actual number of spatial partitions: {}", num_partitions);
+
+            // Partition the build side into multiple spatial partitions, each partition can be fully
+            // loaded into an in-memory spatial index
             let partitioned_spill_files_vec = self
                 .repartition_build_side(build_partitions, build_partitioner, &memory_plan)
                 .await?;
@@ -196,20 +174,18 @@ impl SpatialJoinComponentsBuilder {
                 }
             }
 
-            let partitioned_index_provider = PartitionedIndexProvider::new_multi_partition(
-                self.build_schema,
-                self.spatial_predicate,
-                self.sedona_options.spatial_join,
-                self.join_type,
-                self.probe_threads_count,
-                merged_spilled_partitions,
-                SpatialJoinBuildMetrics::new(0, &self.metrics),
-                reservations,
-            );
+            // Create the probe side partitioner matching the build side partitioner
+            let probe_partitioner = self.create_spatial_partitioner_for_probe_side(
+                num_partitions,
+                &merged_spilled_partitions,
+            )?;
 
-            Ok(SpatialJoinComponents {
-                partitioned_index_provider: Arc::new(partitioned_index_provider),
-            })
+            self.create_multi_partitioned_spatial_join_components(
+                merged_spilled_partitions,
+                probe_partitioner,
+                reservations,
+                &memory_plan,
+            )
         }
     }
 
@@ -261,7 +237,7 @@ impl SpatialJoinComponentsBuilder {
     /// Construct a `SpatialPartitioner` (e.g. KDB) from collected samples so
     /// the build and probe sides can be partitioned spatially across
     /// `num_partitions`.
-    fn build_spatial_partitioner(
+    fn create_spatial_partitioner_for_build_side(
         &self,
         num_partitions: usize,
         build_partitions: &mut Vec<BuildPartition>,
@@ -316,6 +292,30 @@ impl SpatialJoinComponentsBuilder {
         Ok(build_partitioner)
     }
 
+    /// Construct a `SpatialPartitioner` (e.g. Flat) from the statistics of partitioned build
+    /// side for partitioning the probe side.
+    fn create_spatial_partitioner_for_probe_side(
+        &self,
+        num_partitions: usize,
+        merged_spilled_partitions: &SpilledPartitions,
+    ) -> Result<Arc<dyn SpatialPartitioner>> {
+        let probe_partitioner: Arc<dyn SpatialPartitioner> = {
+            // Build a flat partitioner using these partitions
+            let mut partition_bounds = Vec::with_capacity(num_partitions);
+            for k in 0..num_partitions {
+                let partition = SpatialPartition::Regular(k as u32);
+                let partition_bound = merged_spilled_partitions
+                    .spilled_partition(partition)?
+                    .bounding_box()
+                    .cloned()
+                    .unwrap_or(BoundingBox::empty());
+                partition_bounds.push(partition_bound);
+            }
+            Arc::new(FlatPartitioner::try_new(partition_bounds)?)
+        };
+        Ok(probe_partitioner)
+    }
+
     /// Repartition the collected build-side partitions using the provided
     /// `SpatialPartitioner`. Returns the spilled partitions for each spatial partition.
     async fn repartition_build_side(
@@ -330,33 +330,8 @@ impl SpatialJoinComponentsBuilder {
         let session_config = self.context.session_config();
         let target_batch_size = session_config.batch_size();
         let spill_compression = session_config.spill_compression();
-        let spilled_batch_in_memory_size_threshold = if self
-            .sedona_options
-            .spatial_join
-            .spilled_batch_in_memory_size_threshold
-            == 0
-        {
-            None
-        } else {
-            Some(
-                self.sedona_options
-                    .spatial_join
-                    .spilled_batch_in_memory_size_threshold,
-            )
-        };
-
-        let memory_for_intermittent_usage = match self
-            .sedona_options
-            .spatial_join
-            .debug
-            .memory_for_intermittent_usage
-        {
-            Some(value) => {
-                log::debug!("Override memory for intermittent usage to {}", value);
-                value
-            }
-            None => memory_plan.memory_for_intermittent_usage,
-        };
+        let spilled_batch_in_memory_size_threshold = self.spilled_batch_in_memory_size_threshold();
+        let memory_for_intermittent_usage = self.memory_for_intermittent_usage(memory_plan);
 
         let mut join_set = JoinSet::new();
         let buffer_bytes_threshold = memory_for_intermittent_usage / build_partitions.len();
@@ -387,6 +362,153 @@ impl SpatialJoinComponentsBuilder {
         let results = join_set.join_all().await;
         let partitioned_spill_files_vec = results.into_iter().collect::<Result<Vec<_>>>()?;
         Ok(partitioned_spill_files_vec)
+    }
+
+    fn create_spatial_join_components_for_empty_build_side(self) -> Result<SpatialJoinComponents> {
+        let session_config = self.context.session_config();
+        let target_batch_size = session_config.batch_size();
+        let spilled_batch_in_memory_size_threshold = self.spilled_batch_in_memory_size_threshold();
+
+        let partitioned_index_provider = PartitionedIndexProvider::new_empty(
+            self.build_schema,
+            self.spatial_predicate,
+            self.sedona_options.spatial_join,
+            self.join_type,
+            self.probe_threads_count,
+            SpatialJoinBuildMetrics::new(0, &self.metrics),
+        );
+
+        let probe_stream_options = ProbeStreamOptions {
+            partitioner: None,
+            target_batch_rows: target_batch_size,
+            spill_compression: session_config.spill_compression(),
+            buffer_bytes_threshold: 0,
+            spilled_batch_in_memory_size_threshold,
+        };
+
+        Ok(SpatialJoinComponents {
+            partitioned_index_provider: Arc::new(partitioned_index_provider),
+            probe_stream_options,
+        })
+    }
+
+    fn create_single_partitioned_spatial_join_components(
+        self,
+        build_partitions: Vec<BuildPartition>,
+    ) -> Result<SpatialJoinComponents> {
+        let session_config = self.context.session_config();
+        let target_batch_size = session_config.batch_size();
+        let spilled_batch_in_memory_size_threshold = self.spilled_batch_in_memory_size_threshold();
+        let spill_compression = session_config.spill_compression();
+
+        let partitioned_index_provider = PartitionedIndexProvider::new_single_partition(
+            self.build_schema,
+            self.spatial_predicate,
+            self.sedona_options.spatial_join,
+            self.join_type,
+            self.probe_threads_count,
+            build_partitions,
+            SpatialJoinBuildMetrics::new(0, &self.metrics),
+        );
+
+        let probe_stream_options = ProbeStreamOptions {
+            partitioner: None,
+            target_batch_rows: target_batch_size,
+            spill_compression,
+            buffer_bytes_threshold: 0,
+            spilled_batch_in_memory_size_threshold,
+        };
+
+        Ok(SpatialJoinComponents {
+            partitioned_index_provider: Arc::new(partitioned_index_provider),
+            probe_stream_options,
+        })
+    }
+
+    fn create_multi_partitioned_spatial_join_components(
+        self,
+        merged_spilled_partitions: SpilledPartitions,
+        probe_partitioner: Arc<dyn SpatialPartitioner>,
+        reservations: Vec<MemoryReservation>,
+        memory_plan: &MemoryPlan,
+    ) -> Result<SpatialJoinComponents> {
+        let session_config = self.context.session_config();
+        let target_batch_size = session_config.batch_size();
+        let spilled_batch_in_memory_size_threshold = self.spilled_batch_in_memory_size_threshold();
+        let spill_compression = session_config.spill_compression();
+        let memory_for_intermittent_usage = self.memory_for_intermittent_usage(memory_plan);
+
+        let partitioned_index_provider = PartitionedIndexProvider::new_multi_partition(
+            self.build_schema,
+            self.spatial_predicate,
+            self.sedona_options.spatial_join,
+            self.join_type,
+            self.probe_threads_count,
+            merged_spilled_partitions,
+            SpatialJoinBuildMetrics::new(0, &self.metrics),
+            reservations,
+        );
+
+        let buffer_bytes_threshold = memory_for_intermittent_usage / self.probe_threads_count;
+        let probe_stream_options = ProbeStreamOptions {
+            partitioner: Some(probe_partitioner),
+            target_batch_rows: target_batch_size,
+            spill_compression,
+            buffer_bytes_threshold,
+            spilled_batch_in_memory_size_threshold,
+        };
+
+        Ok(SpatialJoinComponents {
+            partitioned_index_provider: Arc::new(partitioned_index_provider),
+            probe_stream_options,
+        })
+    }
+
+    fn num_spatial_partitions(&self, memory_plan: &MemoryPlan) -> usize {
+        match self
+            .sedona_options
+            .spatial_join
+            .debug
+            .num_spatial_partitions
+        {
+            NumSpatialPartitionsConfig::Auto => memory_plan.num_partitions,
+            NumSpatialPartitionsConfig::Fixed(n) => {
+                log::debug!("Override number of spatial partitions to {}", n);
+                n
+            }
+        }
+    }
+
+    fn spilled_batch_in_memory_size_threshold(&self) -> Option<usize> {
+        if self
+            .sedona_options
+            .spatial_join
+            .spilled_batch_in_memory_size_threshold
+            == 0
+        {
+            None
+        } else {
+            Some(
+                self.sedona_options
+                    .spatial_join
+                    .spilled_batch_in_memory_size_threshold,
+            )
+        }
+    }
+
+    fn memory_for_intermittent_usage(&self, memory_plan: &MemoryPlan) -> usize {
+        match self
+            .sedona_options
+            .spatial_join
+            .debug
+            .memory_for_intermittent_usage
+        {
+            Some(value) => {
+                log::debug!("Override memory for intermittent usage to {}", value);
+                value
+            }
+            None => memory_plan.memory_for_intermittent_usage,
+        }
     }
 }
 

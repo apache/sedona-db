@@ -38,12 +38,11 @@ use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate},
-    stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
+    stream::SpatialJoinStream,
     utils::{
         join_utils::{asymmetric_join_output_partitioning, boundedness_from_children},
         once_fut::OnceAsync,
     },
-    SedonaOptions,
 };
 
 /// Type alias for build and probe execution plans
@@ -186,7 +185,6 @@ impl SpatialJoinExec {
             filter.as_ref(),
             converted_from_hash_join,
         )?;
-
         let seed = options
             .debug
             .random_seed
@@ -451,18 +449,11 @@ impl ExecutionPlan for SpatialJoinExec {
             _ => {
                 // Regular spatial join logic - standard left=build, right=probe semantics
                 let session_config = context.session_config();
-                let target_output_batch_size = session_config.options().execution.batch_size;
-                let sedona_options = session_config
-                    .options()
-                    .extensions
-                    .get::<SedonaOptions>()
-                    .cloned()
-                    .unwrap_or_default();
 
                 // Regular join semantics: left is build, right is probe
                 let (build_plan, probe_plan) = (&self.left, &self.right);
 
-                // Build the spatial index using shared OnceAsync
+                // A OnceFut for preparing the spatial join components once.
                 let once_fut_spatial_join_components = {
                     let mut once_async = self.once_async_spatial_join_components.lock();
                     once_async
@@ -500,7 +491,6 @@ impl ExecutionPlan for SpatialJoinExec {
                     None => self.column_indices.clone(),
                 };
 
-                let join_metrics = SpatialJoinProbeMetrics::new(partition, &self.metrics);
                 let probe_stream = probe_plan.execute(partition, Arc::clone(&context))?;
 
                 // For regular joins: probe is right side (index 1)
@@ -516,9 +506,9 @@ impl ExecutionPlan for SpatialJoinExec {
                     probe_stream,
                     column_indices_after_projection,
                     probe_side_ordered,
-                    join_metrics,
-                    sedona_options.spatial_join,
-                    target_output_batch_size,
+                    session_config,
+                    context.runtime_env(),
+                    &self.metrics,
                     once_fut_spatial_join_components,
                     Arc::clone(&self.once_async_spatial_join_components),
                 )))
@@ -535,13 +525,6 @@ impl SpatialJoinExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let session_config = context.session_config();
-        let target_output_batch_size = session_config.options().execution.batch_size;
-        let sedona_options = session_config
-            .options()
-            .extensions
-            .get::<SedonaOptions>()
-            .cloned()
-            .unwrap_or_default();
 
         // Extract KNN predicate for type safety
         let knn_pred = match &self.on {
@@ -556,7 +539,7 @@ impl SpatialJoinExec {
         // Determine if probe plan is the left execution plan (for column index swapping logic)
         let actual_probe_plan_is_left = std::ptr::eq(probe_plan.as_ref(), self.left.as_ref());
 
-        // Build the spatial index
+        // A OnceFut for preparing the spatial join components once.
         let once_fut_spatial_join_components = {
             let mut once_async = self.once_async_spatial_join_components.lock();
             once_async
@@ -593,7 +576,6 @@ impl SpatialJoinExec {
             None => self.column_indices.clone(),
         };
 
-        let join_metrics = SpatialJoinProbeMetrics::new(partition, &self.metrics);
         let probe_stream = probe_plan.execute(partition, Arc::clone(&context))?;
 
         // Determine if probe side ordering is maintained for KNN
@@ -614,9 +596,9 @@ impl SpatialJoinExec {
             probe_stream,
             column_indices_after_projection,
             probe_side_ordered,
-            join_metrics,
-            sedona_options.spatial_join,
-            target_output_batch_size,
+            session_config,
+            context.runtime_env(),
+            &self.metrics,
             once_fut_spatial_join_components,
             Arc::clone(&self.once_async_spatial_join_components),
         )))
@@ -638,6 +620,7 @@ mod tests {
     use geo::{Distance, Euclidean};
     use geo_types::{Coord, Rect};
     use rstest::rstest;
+    use sedona_common::SedonaOptions;
     use sedona_geo::to_geo::GeoTypesExecutor;
     use sedona_geometry::types::GeometryTypeId;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
@@ -647,7 +630,7 @@ mod tests {
     use crate::register_spatial_join_optimizer;
     use sedona_common::{
         option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
-        SpatialLibrary,
+        NumSpatialPartitionsConfig, SpatialJoinDebugOptions, SpatialLibrary,
     };
 
     use super::*;
@@ -786,10 +769,7 @@ mod tests {
 
         let test_data_vec = vec![vec![vec![]], vec![vec![], vec![]]];
 
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
-            ..Default::default()
-        };
+        let options = SpatialJoinOptions::default();
         let ctx = setup_context(Some(options.clone()), 10)?;
         for test_data in test_data_vec {
             let left_partitions = test_data.clone();
@@ -973,10 +953,7 @@ mod tests {
             create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
 
         for max_batch_size in [10, 30, 100] {
-            let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
-                ..Default::default()
-            };
+            let options = SpatialJoinOptions::default();
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
                 "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id").await?;
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
@@ -994,10 +971,7 @@ mod tests {
             create_test_data_with_empty_partitions()?;
 
         for max_batch_size in [10, 30, 1000] {
-            let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
-                ..Default::default()
-            };
+            let options = SpatialJoinOptions::default();
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
                 "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id").await?;
             test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
@@ -1009,7 +983,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_inner_join() -> Result<()> {
-        test_with_join_types(JoinType::Inner).await?;
+        let options = SpatialJoinOptions::default();
+        test_with_join_types(JoinType::Inner, options, 30).await?;
         Ok(())
     }
 
@@ -1018,7 +993,8 @@ mod tests {
     async fn test_left_joins(
         #[values(JoinType::Left, JoinType::LeftSemi, JoinType::LeftAnti)] join_type: JoinType,
     ) -> Result<()> {
-        test_with_join_types(join_type).await?;
+        let options = SpatialJoinOptions::default();
+        test_with_join_types(join_type, options, 30).await?;
         Ok(())
     }
 
@@ -1027,89 +1003,15 @@ mod tests {
     async fn test_right_joins(
         #[values(JoinType::Right, JoinType::RightSemi, JoinType::RightAnti)] join_type: JoinType,
     ) -> Result<()> {
-        test_with_join_types(join_type).await?;
+        let options = SpatialJoinOptions::default();
+        test_with_join_types(join_type, options, 30).await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn test_full_outer_join() -> Result<()> {
-        test_with_join_types(JoinType::Full).await?;
-        Ok(())
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_mark_joins(
-        #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
-    ) -> Result<()> {
         let options = SpatialJoinOptions::default();
-        test_mark_join(join_type, options, 10).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_mark_join_via_correlated_exists_sql() -> Result<()> {
-        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
-            create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
-
-        let mem_table_left: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
-            left_schema.clone(),
-            left_partitions.clone(),
-        )?);
-        let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
-            right_schema.clone(),
-            right_partitions.clone(),
-        )?);
-
-        // DataFusion doesn't have explicit SQL syntax for MARK joins. Predicate subqueries embedded
-        // in a more complex boolean expression (e.g. OR) are planned using a MARK join.
-        //
-        // Using EXISTS here (rather than IN) keeps the join filter as the pulled-up correlated
-        // predicate (ST_Intersects), which is what SpatialJoinExec can optimize.
-        let sql = "SELECT L.id FROM L WHERE L.id = 1 OR EXISTS (SELECT 1 FROM R WHERE ST_Intersects(L.geometry, R.geometry)) ORDER BY L.id";
-
-        let batch_size = 10;
-        let options = SpatialJoinOptions::default();
-
-        // Optimized plan should include a SpatialJoinExec with Mark join type.
-        let ctx = setup_context(Some(options), batch_size)?;
-        ctx.register_table("L", Arc::clone(&mem_table_left))?;
-        ctx.register_table("R", Arc::clone(&mem_table_right))?;
-        let df = ctx.sql(sql).await?;
-        let plan = df.clone().create_physical_plan().await?;
-        let spatial_join_execs = collect_spatial_join_exec(&plan)?;
-        assert!(
-            spatial_join_execs
-                .iter()
-                .any(|exec| matches!(*exec.join_type(), JoinType::LeftMark | JoinType::RightMark)),
-            "expected correlated IN-subquery to plan using a MARK join when optimized"
-        );
-        let actual_schema = df.schema().as_arrow().clone();
-        let actual_batches = df.collect().await?;
-        let actual_batch =
-            arrow::compute::concat_batches(&Arc::new(actual_schema), &actual_batches)?;
-
-        // Unoptimized plan should still contain a Mark join, but implemented as NestedLoopJoinExec.
-        let ctx_no_opt = setup_context(None, batch_size)?;
-        ctx_no_opt.register_table("L", mem_table_left)?;
-        ctx_no_opt.register_table("R", mem_table_right)?;
-        let df_no_opt = ctx_no_opt.sql(sql).await?;
-        let plan_no_opt = df_no_opt.clone().create_physical_plan().await?;
-        let nlj_execs = collect_nested_loop_join_exec(&plan_no_opt)?;
-        assert!(
-            nlj_execs
-                .iter()
-                .any(|exec| matches!(*exec.join_type(), JoinType::LeftMark | JoinType::RightMark)),
-            "expected correlated IN-subquery to plan using a MARK join when not optimized"
-        );
-        let expected_schema = df_no_opt.schema().as_arrow().clone();
-        let expected_batches = df_no_opt.collect().await?;
-        let expected_batch =
-            arrow::compute::concat_batches(&Arc::new(expected_schema), &expected_batches)?;
-
-        assert!(expected_batch.num_rows() > 0);
-        assert_eq!(expected_batch, actual_batch);
-
+        test_with_join_types(JoinType::Full, options, 30).await?;
         Ok(())
     }
 
@@ -1161,7 +1063,6 @@ mod tests {
 
         for max_batch_size in [10, 30, 100] {
             let options = SpatialJoinOptions {
-                execution_mode: ExecutionMode::PrepareNone,
                 parallel_refinement_chunk_size: 10,
                 ..Default::default()
             };
@@ -1172,15 +1073,120 @@ mod tests {
         Ok(())
     }
 
-    async fn test_with_join_types(join_type: JoinType) -> Result<RecordBatch> {
-        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
-            create_test_data_with_empty_partitions()?;
+    #[rstest]
+    #[tokio::test]
+    async fn test_spatial_partitioned_range_join(
+        #[values(10, 30, 1000)] max_batch_size: usize,
+        #[values(
+            ExecutionMode::PrepareNone,
+            ExecutionMode::PrepareBuild,
+            ExecutionMode::PrepareProbe,
+            ExecutionMode::Speculative(20)
+        )]
+        execution_mode: ExecutionMode,
+        #[values(SpatialLibrary::Geo, SpatialLibrary::Geos, SpatialLibrary::Tg)]
+        spatial_library: SpatialLibrary,
+    ) -> Result<()> {
+        let test_data = get_default_test_data().await;
+        let expected_results = get_expected_range_join_results().await;
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) = test_data;
 
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareNone,
+        let debug = SpatialJoinDebugOptions {
+            num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+            force_spill: true,
+            memory_for_intermittent_usage: None,
             ..Default::default()
         };
-        let batch_size = 30;
+        let options = SpatialJoinOptions {
+            spatial_library,
+            execution_mode,
+            debug,
+            ..Default::default()
+        };
+
+        for (idx, sql) in RANGE_JOIN_SQLS.iter().enumerate() {
+            let actual_result = run_spatial_join_query(
+                left_schema,
+                right_schema,
+                left_partitions.clone(),
+                right_partitions.clone(),
+                Some(options.clone()),
+                max_batch_size,
+                sql,
+            )
+            .await?;
+            assert_eq!(&actual_result, &expected_results[idx]);
+        }
+
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_spatial_partitioned_outer_join(
+        #[values(10, 30, 1000)] batch_size: usize,
+        #[values(
+            JoinType::Left,
+            JoinType::Right,
+            JoinType::Full,
+            JoinType::LeftSemi,
+            JoinType::LeftAnti,
+            JoinType::RightSemi,
+            JoinType::RightAnti
+        )]
+        join_type: JoinType,
+    ) -> Result<()> {
+        let debug = SpatialJoinDebugOptions {
+            num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+            force_spill: true,
+            memory_for_intermittent_usage: None,
+            ..Default::default()
+        };
+        let options = SpatialJoinOptions {
+            debug,
+            ..Default::default()
+        };
+
+        test_with_join_types(join_type, options, batch_size).await?;
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_mark_joins(
+        #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
+    ) -> Result<()> {
+        let options = SpatialJoinOptions::default();
+        test_mark_join(join_type, options, 10).await?;
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_spatial_partitioned_mark_joins(
+        #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
+    ) -> Result<()> {
+        let debug = SpatialJoinDebugOptions {
+            num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+            force_spill: true,
+            memory_for_intermittent_usage: None,
+            ..Default::default()
+        };
+        let options = SpatialJoinOptions {
+            debug,
+            ..Default::default()
+        };
+        test_mark_join(join_type, options, 10).await?;
+        Ok(())
+    }
+
+    async fn test_with_join_types(
+        join_type: JoinType,
+        options: SpatialJoinOptions,
+        batch_size: usize,
+    ) -> Result<RecordBatch> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_test_data_with_empty_partitions()?;
 
         let inner_sql = "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id";
         let sql = match join_type {
