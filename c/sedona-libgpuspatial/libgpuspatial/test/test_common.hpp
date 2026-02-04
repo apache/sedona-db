@@ -33,6 +33,9 @@
 #include <geos/index/strtree/STRtree.h>
 #include <geos/io/WKBReader.h>
 
+#include "nanoarrow/nanoarrow.h"
+#include "nanoarrow/nanoarrow.hpp"
+
 #include "arrow/api.h"
 #include "arrow/c/bridge.h"
 #include "arrow/filesystem/api.h"

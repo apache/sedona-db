@@ -61,12 +61,13 @@ void ParseWKTPoint(const char* wkt, POINT_T& point) {
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
+
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
@@ -91,14 +92,14 @@ void ParseWKTMultiPoint(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
-    << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
   loader_t loader;
@@ -129,14 +130,14 @@ void ParseWKTLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
-    << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
   loader_t loader;
@@ -166,14 +167,14 @@ void ParseWKTMultiLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
-    << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
   loader_t loader;
@@ -208,14 +209,14 @@ void ParseWKTPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
-    << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
 
@@ -249,14 +250,14 @@ void ParseWKTMultiPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
   nanoarrow::UniqueSchema schema;
   nanoarrow::UniqueArrayView array_view;
   ArrowError error;
-  ArrowErrorSet(&error, "");
 
   ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
       << error.message;
   ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
-  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error), NANOARROW_OK)
-    << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
   ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
       << error.message;
   loader_t loader;
