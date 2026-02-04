@@ -36,15 +36,14 @@ use datafusion_expr::{
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
-    item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type_strip_crs},
+    item_crs::{
+        make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type,
+        parse_item_crs_arg_type_strip_crs,
+    },
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::{
-    crs::deserialize_crs,
-    datatypes::{SedonaType, WKB_GEOMETRY},
-    matchers::ArgMatcher,
-};
+use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_SetSRID() scalar UDF implementation
 ///
@@ -369,10 +368,13 @@ impl SedonaScalarKernel for SRIDifiedKernel {
         }
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let orig_args_len = arg_types.len() - 1;
         let orig_arg_types = &arg_types[..orig_args_len];
@@ -403,8 +405,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 
             Ok(result)
         } else {
-            // TODO actual item type
-            let item_type = WKB_GEOMETRY;
+            let (item_type, _) = parse_item_crs_arg_type(return_type)?;
             let normalized_crs_value = normalize_crs_array(&args[orig_args_len], None)?;
             make_item_crs(
                 &item_type,
@@ -413,6 +414,14 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                 crs_input_nulls(&args[1]),
             )
         }
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
