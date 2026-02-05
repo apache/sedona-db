@@ -1492,8 +1492,10 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_knn_join_correctness(
-        // TODO: enable point_only = false after https://github.com/georust/geo-index/pull/151
-        // is released
+        // TODO: Currently the underlying geo-index KNN implementation has bugs working with non-point
+        // geometries, so this test is restricted to point_only = true. Once
+        // https://github.com/georust/geo-index/pull/151 (fixing non-point KNN support) is
+        // released, add #[values(true, false)] here to also exercise non-point data.
         #[values(true)] point_only: bool,
         #[values(1, 2, 3, 4)] num_partitions: usize,
         #[values(10, 30, 1000)] max_batch_size: usize,

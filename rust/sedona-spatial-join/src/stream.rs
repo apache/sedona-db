@@ -938,15 +938,19 @@ struct ProbeProgress {
     build_batch_positions: Vec<(i32, i32)>,
     /// Current accumulated probe indices. Should have the same length as `build_batch_positions`
     probe_indices: Vec<u32>,
-    /// Accumulated comparable (e.g. squared) distances of the KNN results. Only used for KNN join.
-    /// Should have the same length as `build_batch_positions` if present.
-    distances: Option<Vec<f64>>,
     /// Cursor of the position in the `build_batch_positions` and `probe_indices` vectors
     /// for tracking the progress of producing joined batches
     pos: usize,
+    /// KNN-specific progress. Only used for KNN join.
+    knn: Option<KNNProbeProgress>,
+}
 
-    /// KNN results merger. Only used for KNN join.
-    knn_results_merger: Option<Box<KNNResultsMerger>>,
+struct KNNProbeProgress {
+    /// Accumulated comparable (e.g. squared) distances of the KNN results.
+    /// Should have the same length as `build_batch_positions`.
+    distances: Vec<f64>,
+    /// KNN results merger.
+    knn_results_merger: Box<KNNResultsMerger>,
 }
 
 /// Type alias for a tuple of build and probe indices slices
@@ -994,7 +998,10 @@ impl ProbeProgress {
         let slice_end = (self.pos + max_batch_size).min(end);
         let build_indices = &self.build_batch_positions[self.pos..slice_end];
         let probe_indices = &self.probe_indices[self.pos..slice_end];
-        let distances = self.distances.as_ref().map(|d| &d[self.pos..slice_end]);
+        let distances = self
+            .knn
+            .as_ref()
+            .map(|knn| &knn.distances[self.pos..slice_end]);
         self.pos = slice_end;
 
         Some((build_indices, probe_indices, distances))
@@ -1091,9 +1098,11 @@ impl SpatialJoinBatchIterator {
                 last_produced_probe_idx: -1,
                 build_batch_positions: Vec::new(),
                 probe_indices: Vec::new(),
-                distances: params.knn_results_merger.as_ref().map(|_| Vec::new()),
                 pos: 0,
-                knn_results_merger: params.knn_results_merger,
+                knn: params.knn_results_merger.map(|merger| KNNProbeProgress {
+                    distances: Vec::new(),
+                    knn_results_merger: merger,
+                }),
             }),
         })
     }
@@ -1210,7 +1219,7 @@ impl SpatialJoinBatchIterator {
                     use_spheroid,
                     include_tie_breakers,
                     &mut progress.build_batch_positions,
-                    progress.distances.as_mut(),
+                    progress.knn.as_mut().map(|knn| &mut knn.distances),
                 )?;
 
                 progress.probe_indices.extend(std::iter::repeat_n(
@@ -1232,9 +1241,9 @@ impl SpatialJoinBatchIterator {
                 progress.probe_indices.len() == progress.build_batch_positions.len(),
                 "Probe indices and build batch positions length should match"
             );
-            if let Some(dist) = &progress.distances {
+            if let Some(knn) = &progress.knn {
                 assert!(
-                    dist.len() == progress.probe_indices.len(),
+                    knn.distances.len() == progress.probe_indices.len(),
                     "Probe indices and distances length should match"
                 );
             }
@@ -1250,7 +1259,7 @@ impl SpatialJoinBatchIterator {
     }
 
     fn produce_result_batch(&self, progress: &mut ProbeProgress) -> Result<Option<RecordBatch>> {
-        let need_merge_knn_results = progress.knn_results_merger.is_some();
+        let need_merge_knn_results = progress.knn.is_some();
 
         let Some((build_indices, probe_indices, distances)) =
             progress.indices_for_next_batch(self.build_side, self.join_type, self.max_batch_size)
@@ -1288,10 +1297,10 @@ impl SpatialJoinBatchIterator {
             return Ok(None);
         };
 
-        let batch_opt = if let Some(merger) = &mut progress.knn_results_merger {
+        let batch_opt = if let Some(knn) = progress.knn.as_mut() {
             let probe_indices_slice = probe_indices_array.values().as_ref();
             let unfiltered_distances = unfiltered_distances.unwrap_or(Vec::new());
-            merger.ingest(
+            knn.knn_results_merger.ingest(
                 batch,
                 probe_indices_slice
                     .iter()
@@ -1329,9 +1338,12 @@ impl SpatialJoinBatchIterator {
 
         // For partitioned KNN joins, flush any pending buffered probe index first.
         // If this produces a batch, return it and let the caller poll again.
-        if let Some(merger) = &mut progress.knn_results_merger {
+        if let Some(knn) = progress.knn.as_mut() {
             let end_offset_in_partition = self.offset_in_partition + num_rows;
-            if let Some(batch) = merger.produce_batch_until(end_offset_in_partition)? {
+            if let Some(batch) = knn
+                .knn_results_merger
+                .produce_batch_until(end_offset_in_partition)?
+            {
                 if batch.num_rows() > 0 {
                     return Ok(Some(batch));
                 }
@@ -1360,8 +1372,8 @@ impl SpatialJoinBatchIterator {
         // Move everything after `pos` to the front
         progress.build_batch_positions.drain(0..progress.pos);
         progress.probe_indices.drain(0..progress.pos);
-        if let Some(dist) = &mut progress.distances {
-            dist.drain(0..progress.pos);
+        if let Some(knn) = &mut progress.knn {
+            knn.distances.drain(0..progress.pos);
         }
         progress.pos = 0;
     }
@@ -1381,7 +1393,7 @@ impl SpatialJoinBatchIterator {
             .progress
             .as_mut()
             .expect("Progress should be available");
-        progress.knn_results_merger.take()
+        progress.knn.take().map(|knn| knn.knn_results_merger)
     }
 
     fn is_complete_inner(&self, progress: &ProbeProgress) -> bool {
@@ -2045,9 +2057,8 @@ mod tests {
             last_produced_probe_idx: -1,
             build_batch_positions,
             probe_indices: probe_indices.to_vec(),
-            distances: None,
             pos: 0,
-            knn_results_merger: None,
+            knn: None,
         };
         let mut produced_probe_indices: Vec<u32> = Vec::new();
         while let Some((_, probe_indices, _)) =

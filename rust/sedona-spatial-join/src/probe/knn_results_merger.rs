@@ -323,6 +323,8 @@ impl<'a> KNNProbeResult<'a> {
     ) -> Self {
         assert_eq!(row_range.len(), distances.len());
         // Please note that we don't have `unfiltered_distances.len() >= distances.len()` here.
+        // We may have ties in `distances`, which may exceed K even after filtering.
+        // `unfiltered_distances` does not include distances that are tied with the K-th distance.
         Self {
             probe_row_index,
             row_range,
@@ -1713,7 +1715,7 @@ mod test {
             let knn_objects = (next_object_id..next_object_id + k)
                 .map(|object_id| FuzzKNNResultObject {
                     object_id,
-                    distance: rng.random_range(1..10) as f64,
+                    distance: rng.random_range(1.0..10.0),
                     is_kept: rng.random_bool(kept_prob),
                 })
                 .collect::<Vec<FuzzKNNResultObject>>();
