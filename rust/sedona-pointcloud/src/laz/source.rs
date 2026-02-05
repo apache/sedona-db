@@ -71,6 +71,7 @@ impl FileSource for LazSource {
 
         Arc::new(LazOpener {
             projection: Arc::from(projection),
+            batch_size: self.batch_size.expect("Must be set"),
             limit: base_config.limit,
             predicate: self.predicate.clone(),
             laz_file_reader_factory,

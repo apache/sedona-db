@@ -5388,6 +5388,7 @@ dependencies = [
  "arrow-schema",
  "async-stream",
  "async-trait",
+ "bytes",
  "datafusion-catalog",
  "datafusion-common",
  "datafusion-datasource",

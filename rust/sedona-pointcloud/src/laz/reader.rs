@@ -17,10 +17,12 @@
 
 use std::{
     io::{Cursor, Read, Seek},
+    ops::Range,
     sync::Arc,
 };
 
 use arrow_array::RecordBatch;
+use bytes::Bytes;
 use datafusion_common::error::DataFusionError;
 use datafusion_datasource::PartitionedFile;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
@@ -32,7 +34,7 @@ use laz::{
     },
     DecompressionSelection, LasZipError, LazItem,
 };
-use object_store::ObjectStore;
+use object_store::{Error, ObjectStore};
 
 use crate::laz::{
     builder::RowBuilder,
@@ -96,16 +98,17 @@ impl LazFileReader {
         .boxed()
     }
 
+    async fn get_bytes(&self, range: Range<u64>) -> Result<Bytes, Error> {
+        let location = &self.partitioned_file.object_meta.location;
+        self.store.get_range(location, range).await
+    }
+
     pub async fn get_batch(&self, chunk_meta: &ChunkMeta) -> Result<RecordBatch, DataFusionError> {
         let metadata = self.get_metadata().await?;
         let header = metadata.header.clone();
 
         // fetch bytes
-        let location = &self.partitioned_file.object_meta.location;
-        let bytes = self
-            .store
-            .get_range(location, chunk_meta.byte_range.clone())
-            .await?;
+        let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
 
         // laz decompressor
         let laz_vlr = header
@@ -145,7 +148,7 @@ impl LazFileReader {
     }
 }
 
-pub(super) fn record_decompressor<'a, R: Read + Seek + Send + Sync + 'a>(
+fn record_decompressor<'a, R: Read + Seek + Send + Sync + 'a>(
     items: &Vec<LazItem>,
     input: R,
 ) -> Result<Box<dyn RecordDecompressor<R> + Send + Sync + 'a>, LasZipError> {

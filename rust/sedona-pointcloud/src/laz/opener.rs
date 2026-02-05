@@ -45,12 +45,15 @@ pub struct LazOpener {
     pub laz_file_reader_factory: Arc<LazFileReaderFactory>,
     /// Table options
     pub options: LazTableOptions,
+    /// Target batch size
+    pub(crate) batch_size: usize,
 }
 
 impl FileOpener for LazOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture, DataFusionError> {
         let projection = self.projection.clone();
         let limit = self.limit;
+        let batch_size = self.batch_size;
 
         let predicate = self.predicate.clone();
 
@@ -121,14 +124,26 @@ impl FileOpener for LazOpener {
 
                     // fetch batch
                     let record_batch = laz_reader.get_batch(&chunk_meta).await?;
-                    row_count += record_batch.num_rows();
+                    let num_rows = record_batch.num_rows();
+                    row_count += num_rows;
 
                     // project
                     let record_batch = record_batch
                         .project(&projection)
                         .map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
 
-                    yield record_batch
+                    // adhere to target batch size
+                    let mut offset = 0;
+
+                    loop {
+                        let length = batch_size.min(num_rows - offset);
+                        yield record_batch.slice(offset, length);
+
+                        offset += batch_size;
+                        if offset >= num_rows {
+                            break;
+                        }
+                    }
                 }
 
             };
