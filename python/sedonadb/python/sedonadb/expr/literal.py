@@ -134,7 +134,7 @@ def _lit_from_sedonadb(obj):
     tab = obj.limit(2).to_arrow_table()
     if len(tab) != 1:
         raise ValueError(
-            "Can't create SeconaDB literal from SedonaDB DataFrame with size != 1 row"
+            "Can't create SedonaDB literal from SedonaDB DataFrame with size != 1 row"
         )
 
     return tab[0].chunk(0)
