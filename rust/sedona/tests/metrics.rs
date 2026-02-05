@@ -56,10 +56,8 @@ async fn geo_parquet_metrics() {
     "#;
 
     let prune_plan = run_and_format(&ctx, prune_query).await;
-    assert!(prune_plan.contains("files_ranges_spatial_pruned=1"));
-    assert!(prune_plan.contains("files_ranges_spatial_matched=0"));
-    assert!(prune_plan.contains("row_groups_spatial_pruned=0"));
-    assert!(prune_plan.contains("row_groups_spatial_matched=0"));
+    assert!(prune_plan.contains("files_ranges_spatial_pruned=1 total \u{2192} 0 matched"));
+    assert!(prune_plan.contains("row_groups_spatial_pruned=0 total \u{2192} 0 matched"));
 
     // Test 2: query with spatial filter that can't skip any file or row group
     // -----------------------------------------------------------------------
@@ -79,10 +77,8 @@ async fn geo_parquet_metrics() {
     "#;
 
     let match_plan = run_and_format(&ctx, match_query).await;
-    assert!(match_plan.contains("files_ranges_spatial_pruned=0"));
-    assert!(match_plan.contains("files_ranges_spatial_matched=1"));
-    assert!(match_plan.contains("row_groups_spatial_pruned=0"));
-    assert!(match_plan.contains("row_groups_spatial_matched=1"));
+    assert!(match_plan.contains("files_ranges_spatial_pruned=1 total \u{2192} 1 matched"));
+    assert!(match_plan.contains("row_groups_spatial_pruned=1 total \u{2192} 1 matched"));
 }
 
 async fn run_and_format(ctx: &SedonaContext, sql: &str) -> String {
