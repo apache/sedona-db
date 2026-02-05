@@ -60,7 +60,13 @@ impl FileMetadata for LazMetadata {
     }
 
     fn memory_size(&self) -> usize {
-        self.chunk_table.capacity() * std::mem::size_of::<ChunkMeta>()
+        std::mem::size_of::<Header>()
+            + self
+                .header
+                .all_vlrs()
+                .map(|vlr| vlr.data.len())
+                .sum::<usize>()
+            + self.chunk_table.capacity() * std::mem::size_of::<ChunkMeta>()
             + self.extra_attributes.capacity() * std::mem::size_of::<ExtraAttribute>()
     }
 
@@ -414,7 +420,6 @@ mod tests {
 
     use crate::laz::metadata::LazMetadataReader;
 
-    #[allow(static_mut_refs)]
     #[tokio::test]
     async fn header_basic_e2e() {
         let tmpdir = tempfile::tempdir().unwrap();
