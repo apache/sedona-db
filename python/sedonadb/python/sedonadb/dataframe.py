@@ -156,6 +156,18 @@ class DataFrame:
         """
         return self._impl.count()
 
+    def with_params(self, *args, **kwargs):
+        from sedonadb.expr.literal import lit
+
+        positional_params = [lit(arg) for arg in args]
+        named_params = {k: lit(param) for k, param in kwargs.items()}
+
+        return DataFrame(
+            self._ctx,
+            self._impl.with_params(positional_params, named_params),
+            self._options,
+        )
+
     def __arrow_c_schema__(self):
         """ArrowSchema PyCapsule interface
 

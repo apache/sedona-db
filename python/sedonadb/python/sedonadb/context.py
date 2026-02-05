@@ -291,21 +291,19 @@ class SedonaContext:
             <sedonadb.dataframe.DataFrame object at ...>
 
         """
-        if params is not None:
-            from sedonadb.expr.literal import lit
+        df = DataFrame(self._impl, self._impl.sql(sql), self.options)
 
+        if params is not None:
             if isinstance(params, (tuple, list)):
-                param_args = [lit(param) for param in params], None
+                return df.with_params(*params)
             elif isinstance(params, dict):
-                param_args = None, {k: lit(param) for k, param in params.items()}
+                return df.with_params(**params)
             else:
                 raise ValueError(
                     "params must be a list, tuple, or dict of scalar values"
                 )
         else:
-            param_args = None, None
-
-        return DataFrame(self._impl, self._impl.sql(sql, *param_args), self.options)
+            return df
 
     def register_udf(self, udf: Any):
         """Register a user-defined function

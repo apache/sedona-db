@@ -16,12 +16,8 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
-use datafusion_common::ParamValues;
 use datafusion_expr::ScalarUDFImpl;
-use pyo3::{
-    prelude::*,
-    types::{PyDict, PyList},
-};
+use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use tokio::runtime::Runtime;
 
@@ -29,7 +25,7 @@ use crate::{
     dataframe::InternalDataFrame,
     datasource::PyExternalFormat,
     error::PySedonaError,
-    import_from::{import_arrow_scalar, import_ffi_scalar_udf, import_table_provider_from_any},
+    import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
     udf::PySedonaScalarUdf,
 };
@@ -145,39 +141,8 @@ impl InternalContext {
         &self,
         py: Python<'py>,
         query: &str,
-        params_positional_py: Option<Bound<'py, PyList>>,
-        params_named_py: Option<Bound<'py, PyDict>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
-        let mut df = wait_for_future(py, &self.runtime, self.inner.sql(query))??;
-
-        // If we have parameters to bind, bind them now
-        match (params_positional_py, params_named_py) {
-            (None, Some(named_params_py)) => {
-                let params = named_params_py
-                    .iter()
-                    .map(|(key, param_py)| {
-                        let key_str: String = key.extract()?;
-                        let value = import_arrow_scalar(&param_py)?;
-                        Ok((key_str, value))
-                    })
-                    .collect::<Result<HashMap<_, _>, PySedonaError>>()?;
-                df = df.with_param_values(ParamValues::Map(params))?;
-            }
-            (Some(positional_params_py), None) => {
-                let params = positional_params_py
-                    .iter()
-                    .map(|param_py| import_arrow_scalar(&param_py))
-                    .collect::<Result<Vec<_>, PySedonaError>>()?;
-                df = df.with_param_values(ParamValues::List(params))?;
-            }
-            (Some(_), Some(_)) => {
-                return Err(PySedonaError::SedonaPython(
-                    "Can't specify both positional and named parameters".to_string(),
-                ))
-            }
-            (None, None) => {}
-        }
-
+        let df = wait_for_future(py, &self.runtime, self.inner.sql(query))??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 

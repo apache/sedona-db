@@ -113,7 +113,7 @@ def _lit_from_shapely(obj):
 def _lit_from_wkb_and_crs(wkb, crs):
     import geoarrow.pyarrow as ga
 
-    return ga.with_crs(ga.as_wkb([wkb]).with_crs(crs))
+    return ga.with_crs(ga.as_wkb([wkb]), crs)
 
 
 def _qualified_type_name(obj):
