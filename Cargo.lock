@@ -3522,9 +3522,9 @@ dependencies = [
 
 [[package]]
 name = "las"
-version = "0.9.8"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f5fc2ade5beaea800d3e615ce9886abb8d325be0c2bf2c94553fa88677d1b30"
+checksum = "501d35a98a0bf1e7d30cd61899741af22f853110021be78175926cc870a39dfd"
 dependencies = [
  "byteorder",
  "chrono",
@@ -3548,9 +3548,9 @@ dependencies = [
 
 [[package]]
 name = "laz"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d5b7251e6d7aee8f4263f35d61e5e40d22bb189ecfc4f9fbd550806fed98cce"
+checksum = "7390b35d7f7e1f22bdbe5ef4e19a4b9f8ba44927cb55d267e42cafc180fca48c"
 dependencies = [
  "byteorder",
  "num-traits",
