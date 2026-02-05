@@ -55,40 +55,32 @@ def _resolve_arrow_lit(obj: Any):
         ) from e
 
 
-def _lit_from_geodataframe(obj):
-    if obj.shape != (1, 1):
-        raise ValueError(
-            "Can't create SedonaDB literal from GeoDataFrame with >1 row or column"
-        )
-
-    return _resolve_arrow_lit(obj.iloc[0])
+def _lit_from_geoarrow_scalar(obj):
+    wkb_value = None if obj.value is None else obj.wkb
+    return _lit_from_wkb_and_crs(wkb_value, obj.type.crs)
 
 
 def _lit_from_dataframe(obj):
     if obj.shape != (1, 1):
         raise ValueError(
-            "Can't create SedonaDB literal from DataFrame with >1 row or column"
+            "Can't create SedonaDB literal from DataFrame with shape != (1, 1)"
         )
 
     return _resolve_arrow_lit(obj.iloc[0])
 
 
-def _lit_from_geoseries(obj):
-    if len(obj) != 1:
-        raise ValueError(
-            "Can't create SedonaDB literal from GeoSeries with length != 1"
-        )
-
-    return obj.to_arrow()
-
-
 def _lit_from_series(obj):
-    import pyarrow as pa
-
     if len(obj) != 1:
         raise ValueError("Can't create SedonaDB literal from Series with length != 1")
 
-    return pa.array(obj)
+    if obj.dtype.name == "geometry":
+        first_value = obj.array[0]
+        first_wkb = None if first_value is None else first_value.wkb
+        return _lit_from_wkb_and_crs(first_wkb, obj.array.crs)
+    else:
+        import pyarrow as pa
+
+        return pa.array(obj)
 
 
 def _lit_from_sedonadb(obj):
@@ -111,9 +103,12 @@ def _lit_from_shapely(obj):
 
 
 def _lit_from_wkb_and_crs(wkb, crs):
+    import pyarrow as pa
     import geoarrow.pyarrow as ga
 
-    return ga.with_crs(ga.as_wkb([wkb]), crs)
+    type = ga.wkb().with_crs(crs)
+    storage = pa.array([wkb], type.storage_type)
+    return type.wrap_array(storage)
 
 
 def _qualified_type_name(obj):
@@ -121,8 +116,8 @@ def _qualified_type_name(obj):
 
 
 SPECIAL_CASED_LITERALS = {
-    "geopandas.geodataframe.GeoDataFrame": _lit_from_geodataframe,
-    "geopandas.geoseries.GeoSeries": _lit_from_geoseries,
+    "geopandas.geodataframe.GeoDataFrame": _lit_from_dataframe,
+    "geopandas.geoseries.GeoSeries": _lit_from_series,
     # pandas < 3.0
     "pandas.core.frame.DataFrame": _lit_from_dataframe,
     # pandas >= 3.0
@@ -136,4 +131,5 @@ SPECIAL_CASED_LITERALS = {
     "shapely.geometry.multilinestring.MultiLineString": _lit_from_shapely,
     "shapely.geometry.multipolygon.MultiPolygon": _lit_from_shapely,
     "shapely.geometry.collection.GeometryCollection": _lit_from_shapely,
+    "geoarrow.pyarrow._scalar.WkbScalar": _lit_from_geoarrow_scalar,
 }

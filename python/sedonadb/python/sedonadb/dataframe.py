@@ -157,6 +157,36 @@ class DataFrame:
         return self._impl.count()
 
     def with_params(self, *args, **kwargs):
+        """Replace unbound parameters in this query
+
+        For DataFrames that represent a logical plan that contains parameters (e.g.,
+        a SQL query of `SELECT $1 + 2`), replace parameters with concrete values.
+
+        Args:
+            args: Values to bind to positional parameters (e.g., `$1`, `$2`, `$3`)
+            kwargs: Values to bind to named parameters (e.g., `$my_param`). Note that
+                positional and named parameters cannot currently be mixed (i.e.,
+                parameters must be all positional or all named).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT $1 + 2 AS c").with_params(100).show()
+            ┌───────┐
+            │   c   │
+            │ int64 │
+            ╞═══════╡
+            │   102 │
+            └───────┘
+            >>> sd.sql("SELECT $my_param + 2 AS c").with_params(my_param=100).show()
+            ┌───────┐
+            │   c   │
+            │ int64 │
+            ╞═══════╡
+            │   102 │
+            └───────┘
+
+        """
         from sedonadb.expr.literal import lit
 
         positional_params = [lit(arg) for arg in args]
