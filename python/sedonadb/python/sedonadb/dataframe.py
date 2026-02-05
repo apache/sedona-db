@@ -16,14 +16,13 @@
 # under the License.
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Union, Optional, Any, Iterable, Literal
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
 from sedonadb.utility import sedona  # noqa: F401
 
-
 if TYPE_CHECKING:
-    import pandas
     import geopandas
+    import pandas
     import pyarrow
 
 
@@ -156,7 +155,7 @@ class DataFrame:
         """
         return self._impl.count()
 
-    def with_params(self, *args, **kwargs):
+    def with_params(self, *args: List[Any], **kwargs: Dict[str, Any]):
         """Replace unbound parameters in this query
 
         For DataFrames that represent a logical plan that contains parameters (e.g.,
@@ -293,8 +292,8 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import pyarrow as pa
         import geoarrow.pyarrow  # noqa: F401
+        import pyarrow as pa
 
         # Collects all batches into an object that exposes __arrow_c_stream__()
         batches = self._impl.to_batches(schema)
