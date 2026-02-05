@@ -288,7 +288,7 @@ class SedonaContext:
                 list or tuple to replace positional parameters or a dictionary
                 to replace named parameters. This is shorthand for
                 `.sql(...).with_params(...)` that is syntax-compatible with
-                DuckDB.
+                DuckDB. See `lit()` for a list of supported Python objects.
 
         Examples:
 

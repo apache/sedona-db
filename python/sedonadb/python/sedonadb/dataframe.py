@@ -161,6 +161,7 @@ class DataFrame:
 
         For DataFrames that represent a logical plan that contains parameters (e.g.,
         a SQL query of `SELECT $1 + 2`), replace parameters with concrete values.
+        See `lit()` for a list of supported Python objects.
 
         Args:
             args: Values to bind to positional parameters (e.g., `$1`, `$2`, `$3`)

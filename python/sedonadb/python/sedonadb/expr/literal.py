@@ -19,7 +19,26 @@ from typing import Any
 
 
 class Literal:
-    def __init__(self, value):
+    """A Literal (constant) expression
+
+    This class represents a literal value in query that does not change
+    based on other information in the query or the environment. This type
+    of expression is also referred to as a constant. These types of
+    expressions are normally created with the `lit()` function or are
+    automatically created when passing an arbitrary Python object to
+    a context (e.g., parameterized SQL queries) where a literal is
+    required.
+
+    Literal expressions are lazily resolved such that specific contexts
+    have access to the underlying Python object and can resolve the
+    object specially (e.g., by forcing a specific Arrow type) if
+    required.
+
+    Args:
+        value: An arbitrary Python object.
+    """
+
+    def __init__(self, value: Any):
         self._value = value
 
     def __arrow_c_array__(self, requested_schema=None):
@@ -31,6 +50,29 @@ class Literal:
 
 
 def lit(value: Any) -> Literal:
+    """Create a literal (constant) expression
+
+    Creates a `Literal` object around value, or returns value if it is
+    already a `Literal`. This is the primary function that should be used
+    to wrap an arbitrary Python object a constant to prepare it as input
+    to any SedonaDB logical expression context (e.g., parameterized SQL).
+
+    Literal values can be created from a variety of Python objects whose
+    representation as a scalar constant is unambiguous. Any object that
+    is accepted by `pyarrow.array([...])` is supported in addition to:
+
+    - Shapely geometries become SedonaDB geometry objects.
+    - GeoSeries objects of length 1 become SedonaDB geometries
+      with CRS preserved.
+    - GeoDataFrame objects with a single column and single row become
+      SedonaDB geometries with CRS preserved.
+    - Pandas DataFrame objects with a single column and single row
+      are converted using `pa.array()`.
+    - SedonaDB DataFrame objects that evaluate to a single column and
+      row become a scalar value according to the single represented
+      value.
+
+    """
     if isinstance(value, Literal):
         return value
     else:
