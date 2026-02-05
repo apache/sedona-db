@@ -283,12 +283,37 @@ class SedonaContext:
 
         Args:
             sql: A single SQL statement.
+            params: An optional specification of parameters to bind if sql
+                contains placeholders (e.g., `$1` or `$my_param`). Use a
+                list or tuple to replace positional parameters or a dictionary
+                to replace named parameters. This is shorthand for
+                `.sql(...).with_params(...)` that is syntax-compatible with
+                DuckDB.
 
         Examples:
 
             >>> sd = sedona.db.connect()
-            >>> sd.sql("SELECT ST_Point(0, 1) as geom")
-            <sedonadb.dataframe.DataFrame object at ...>
+            >>> sd.sql("SELECT ST_Point(0, 1) AS geom").show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
+            >>> sd.sql("SELECT ST_Point($1, $2) AS geom", params=(0, 1)).show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
+            >>> sd.sql("SELECT ST_Point($x, $y) AS geom", params={"x": 0, "y": 1}).show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
 
         """
         df = DataFrame(self._impl, self._impl.sql(sql), self.options)

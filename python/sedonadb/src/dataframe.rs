@@ -302,12 +302,16 @@ impl InternalDataFrame {
                     .collect::<Result<Vec<_>, PySedonaError>>()?;
                 df = df.with_param_values(ParamValues::List(params))?;
             }
+            (true, true) => {
+                // If both are empty, still attempt to bind with empty parameter set.
+                // This ensures consistent errors for unbound parameters.
+                df = df.with_param_values(ParamValues::Map(Default::default()))?;
+            }
             (false, false) => {
                 return Err(PySedonaError::SedonaPython(
                     "Can't specify both positional and named parameters".to_string(),
                 ))
             }
-            (true, true) => {}
         }
 
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
