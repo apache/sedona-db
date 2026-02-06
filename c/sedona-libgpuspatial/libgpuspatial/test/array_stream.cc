@@ -18,9 +18,12 @@
 #include <vector>
 
 #include "array_stream.hpp"
+#include "test_common.hpp"
 
 #include "nanoarrow/nanoarrow.hpp"
-#include "nanoarrow/nanoarrow_ipc.hpp"
+
+#include "arrow/api.h"
+#include "parquet/arrow/reader.h"
 
 namespace gpuspatial {
 
@@ -106,20 +109,64 @@ class ColumnArrayStream {
   }
 };
 
-void ArrayStreamFromIpc(const std::string& filename, std::string geometry_column,
-                        struct ArrowArrayStream* out) {
-  FILE* file = fopen(filename.c_str(), "rb");
-  if (file == nullptr) {
-    throw std::runtime_error("Failed to open " + filename);
+// Function to read a single Parquet file and extract a column.
+arrow::Status ReadParquetFromFile(
+    arrow::fs::FileSystem* fs,     // 1. Filesystem pointer (e.g., LocalFileSystem)
+    const std::string& file_path,  // 2. Single file path instead of a folder
+    int64_t batch_size, const char* column_name,
+    std::vector<std::shared_ptr<arrow::Array>>& out_arrays) {
+  // 1. Get FileInfo for the single path
+  ARROW_ASSIGN_OR_RAISE(auto file_info, fs->GetFileInfo(file_path));
+
+  // Check if the path points to a file
+  if (file_info.type() != arrow::fs::FileType::File) {
+    return arrow::Status::Invalid("Path is not a file: ", file_path);
   }
 
-  nanoarrow::ipc::UniqueInputStream input_stream;
-  NANOARROW_THROW_NOT_OK(ArrowIpcInputStreamInitFile(input_stream.get(), file, true));
+  // 2. Open the input file
+  ARROW_ASSIGN_OR_RAISE(auto input_file, fs->OpenInputFile(file_info));
 
-  nanoarrow::UniqueArrayStream inner;
-  NANOARROW_THROW_NOT_OK(
-      ArrowIpcArrayStreamReaderInit(inner.get(), input_stream.get(), nullptr));
-  ColumnArrayStream(std::move(inner), std::move(geometry_column)).ToArrayStream(out);
+  // 3. Open the Parquet file and create an Arrow reader
+  ARROW_ASSIGN_OR_RAISE(auto arrow_reader, parquet::arrow::OpenFile(
+                                               input_file, arrow::default_memory_pool()));
+
+  // 4. Set the batch size
+  arrow_reader->set_batch_size(batch_size);
+
+  // 5. Get the RecordBatchReader
+  auto rb_reader = arrow_reader->GetRecordBatchReader().ValueOrDie();
+  // 6. Read all record batches and extract the column
+  while (true) {
+    std::shared_ptr<arrow::RecordBatch> batch;
+
+    // Read the next batch
+    ARROW_THROW_NOT_OK(rb_reader->ReadNext(&batch));
+
+    // Check for end of stream
+    if (!batch) {
+      break;
+    }
+
+    // Extract the specified column and add to the output vector
+    std::shared_ptr<arrow::Array> column_array = batch->GetColumnByName(column_name);
+    if (!column_array) {
+      return arrow::Status::Invalid("Column not found: ", column_name);
+    }
+    out_arrays.push_back(column_array);
+  }
+
+  return arrow::Status::OK();
 }
 
+std::vector<std::shared_ptr<arrow::Array>> ReadParquet(const std::string& path,
+                                                       int batch_size) {
+  using namespace TestUtils;
+
+  auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
+
+  std::vector<std::shared_ptr<arrow::Array>> build_arrays;
+  ARROW_THROW_NOT_OK(
+      ReadParquetFromFile(fs.get(), path, batch_size, "geometry", build_arrays));
+  return build_arrays;
+}
 }  // namespace gpuspatial

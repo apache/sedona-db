@@ -31,7 +31,7 @@
             "name": "default",
             "configurePreset": "default-with-tests",
             "environment": {
-                "GPUSPATIAL_TEST_DIR": "${sourceDir}/test_data"
+                "GPUSPATIAL_TEST_DIR": "${sourceDir}/test/data"
             }
         }
     ]

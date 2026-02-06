@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "arrow/filesystem/filesystem.h"
 #include "geoarrow/geoarrow.hpp"
 #include "gpuspatial_testing.hpp"
 #include "nanoarrow/nanoarrow.hpp"
@@ -25,8 +26,6 @@ namespace gpuspatial {
 
 void ArrayStreamFromWKT(const std::vector<std::vector<std::string>>& batches,
                         enum GeoArrowType type, struct ArrowArrayStream* out);
-
-void ArrayStreamFromIpc(const std::string& filename, std::string geometry_column,
-                        struct ArrowArrayStream* out);
-
+std::vector<std::shared_ptr<arrow::Array>> ReadParquet(const std::string& path,
+                                                       int batch_size = 100);
 }  // namespace gpuspatial

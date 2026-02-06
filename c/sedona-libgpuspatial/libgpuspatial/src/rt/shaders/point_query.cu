@@ -14,8 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include "gpuspatial/index/detail/launch_parameters.h"
-#include "shader_config.h"
+#include "gpuspatial/rt/launch_parameters.cuh"
+#include "shader_config.hpp"
 
 #include <cuda_runtime.h>
 #include <optix_device.h>
@@ -29,51 +29,38 @@ extern "C" __constant__
 
 extern "C" __global__ void __intersection__gpuspatial() {
   auto aabb_id = optixGetPrimitiveIndex();
-  auto geom2_id = optixGetPayload_0();
-  const auto& point = params.points2[geom2_id];
-  const auto& mbrs1 = params.mbrs1;
+  auto point_id = optixGetPayload_0();
+  const auto& point = params.points[point_id];
+  const auto& rect = params.rects[aabb_id];
 
-  if (params.grouped) {
-    assert(!params.prefix_sum.empty());
-    auto begin = params.prefix_sum[aabb_id];
-    auto end = params.prefix_sum[aabb_id + 1];
-
-    for (auto offset = begin; offset < end; offset++) {
-      auto geom1_id = params.reordered_indices[offset];
-      if (mbrs1.empty()) {
-        params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
-      } else {
-        const auto& mbr1 = mbrs1[geom1_id];
-
-        if (mbr1.covers(point.as_float())) {
-          params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
-        }
-      }
-    }
-  } else {
-    assert(!mbrs1.empty());
-    auto geom1_id = aabb_id;
-    const auto& mbr1 = mbrs1[geom1_id];
-
-    if (mbr1.covers(point.as_float())) {
-      params.ids.Append(thrust::make_pair(geom1_id, geom2_id));
+  if (rect.covers(point)) {
+    if (params.count == nullptr) {
+      auto tail = params.rect_ids.Append(aabb_id);
+      params.point_ids[tail] = point_id;
+    } else {
+      atomicAdd(params.count, 1);
     }
   }
 }
 
 extern "C" __global__ void __raygen__gpuspatial() {
+  using point_t = gpuspatial::ShaderPointType;
+  constexpr int n_dim = point_t::n_dim;
   float tmin = 0;
   float tmax = FLT_MIN;
 
-  for (uint32_t i = optixGetLaunchIndex().x; i < params.points2.size();
+  for (uint32_t i = optixGetLaunchIndex().x; i < params.points.size();
        i += optixGetLaunchDimensions().x) {
-    const auto& p = params.points2[i];
+    const auto& p = params.points[i];
+    if (p.empty()) {
+      continue;
+    }
 
-    float3 origin;
+    float3 origin{0, 0, 0};
 
-    origin.x = p.get_coordinate(0);
-    origin.y = p.get_coordinate(1);
-    origin.z = 0;
+    for (int dim = 0; dim < n_dim; dim++) {
+      (&origin.x)[dim] = p.get_coordinate(dim);
+    }
     float3 dir = {0, 0, 1};
 
     optixTrace(params.handle, origin, dir, tmin, tmax, 0, OptixVisibilityMask(255),
