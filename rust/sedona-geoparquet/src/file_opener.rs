@@ -131,34 +131,36 @@ impl FileOpener for GeoParquetFileOpener {
                 self_clone.options.geometry_columns.as_ref(),
             )?;
 
-            if self_clone.enable_pruning && self_clone.predicate.is_some() {
-                let spatial_filter = SpatialFilter::try_from_expr(&self_clone.predicate.unwrap())?;
+            if self_clone.enable_pruning {
+                if let Some(predicate) = self_clone.predicate.as_ref() {
+                    let spatial_filter = SpatialFilter::try_from_expr(predicate)?;
 
-                if let Some(geoparquet_metadata) = maybe_geoparquet_metadata.as_ref() {
-                    filter_access_plan_using_geoparquet_file_metadata(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        geoparquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                    if let Some(geoparquet_metadata) = maybe_geoparquet_metadata.as_ref() {
+                        filter_access_plan_using_geoparquet_file_metadata(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            geoparquet_metadata,
+                            &self_clone.metrics,
+                        )?;
 
-                    filter_access_plan_using_geoparquet_covering(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        geoparquet_metadata,
-                        &parquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                        filter_access_plan_using_geoparquet_covering(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            geoparquet_metadata,
+                            &parquet_metadata,
+                            &self_clone.metrics,
+                        )?;
 
-                    filter_access_plan_using_native_geostats(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        &parquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                        filter_access_plan_using_native_geostats(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            &parquet_metadata,
+                            &self_clone.metrics,
+                        )?;
+                    }
                 }
             }
 
