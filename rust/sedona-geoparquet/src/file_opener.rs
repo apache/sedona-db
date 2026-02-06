@@ -139,7 +139,7 @@ impl FileOpener for GeoParquetFileOpener {
                         &self_clone.file_schema,
                         &mut access_plan,
                         &spatial_filter,
-                        &geoparquet_metadata,
+                        geoparquet_metadata,
                         &self_clone.metrics,
                     )?;
 
@@ -147,7 +147,7 @@ impl FileOpener for GeoParquetFileOpener {
                         &self_clone.file_schema,
                         &mut access_plan,
                         &spatial_filter,
-                        &geoparquet_metadata,
+                        geoparquet_metadata,
                         &parquet_metadata,
                         &self_clone.metrics,
                     )?;
