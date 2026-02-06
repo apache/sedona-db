@@ -126,15 +126,10 @@ impl FileOpener for GeoParquetFileOpener {
 
             let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
 
-            let maybe_geoparquet_metadata =
-                if self_clone.enable_pruning || self_clone.options.validate {
-                    GeoParquetMetadata::try_from_parquet_metadata(
-                        &parquet_metadata,
-                        self_clone.options.geometry_columns.as_ref(),
-                    )?
-                } else {
-                    None
-                };
+            let maybe_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
+                &parquet_metadata,
+                self_clone.options.geometry_columns.as_ref(),
+            )?;
 
             if self_clone.enable_pruning && self_clone.predicate.is_some() {
                 let spatial_filter = SpatialFilter::try_from_expr(&self_clone.predicate.unwrap())?;
@@ -1311,32 +1306,6 @@ mod test {
         // Bbox should be None, geometry types should be valid
         assert_eq!(result.bbox(), None);
         assert!(result.geometry_types().is_some());
-    }
-
-    #[test]
-    fn wkb_validation_columns_only_wkb() {
-        let file_schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int64, true),
-            Field::new("geom", DataType::Binary, true),
-            Field::new("native_geom", DataType::Binary, true),
-        ]));
-
-        let metadata = GeoParquetMetadata::try_new(
-            r#"{
-                "columns": {
-                    "geom": {"encoding": "WKB"},
-                    "native_geom": {"encoding": "point"}
-                },
-                "version": "1.1.0",
-                "primary_column": "geom"
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            wkb_validation_columns(&file_schema, &metadata),
-            vec![(1, "geom".to_string())]
-        );
     }
 
     #[test]
