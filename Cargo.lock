@@ -5245,6 +5245,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "wkb",
 ]
 
 [[package]]

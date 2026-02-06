@@ -81,6 +81,7 @@ impl InternalContext {
         table_paths: Vec<String>,
         options: HashMap<String, PyObject>,
         geometry_columns: Option<String>,
+        validate: bool,
     ) -> Result<InternalDataFrame, PySedonaError> {
         // Convert Python options to strings, filtering out None values
         let rust_options: HashMap<String, String> = options
@@ -108,6 +109,7 @@ impl InternalContext {
                     PySedonaError::SedonaPython(format!("Invalid geometry_columns JSON: {e}"))
                 })?;
         }
+        geo_options = geo_options.with_validate(validate);
 
         let df = wait_for_future(
             py,

@@ -313,3 +313,79 @@ def test_read_parquet_invalid_azure_option():
         match="Unknown Azure option.*azure.unknown_option.*Valid options are",
     ):
         con.read_parquet(url, options={"azure.unknown_option": "value"})
+
+
+def test_read_parquet_validate_wkb_single_valid_row(con, tmp_path):
+    valid_wkb = bytes.fromhex("0101000000000000000000F03F0000000000000040")
+
+    table = pa.table({"id": [1], "geom": [valid_wkb]})
+    path = tmp_path / "single_valid_wkb.parquet"
+    pq.write_table(table, path)
+
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB"}})
+
+    tab = con.read_parquet(
+        path, geometry_columns=geometry_columns, validate=False
+    ).to_arrow_table()
+    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 1
+
+    tab = con.read_parquet(
+        path, geometry_columns=geometry_columns, validate=True
+    ).to_arrow_table()
+    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 1
+
+
+def test_read_parquet_validate_wkb_single_invalid_row(con, tmp_path):
+    invalid_wkb = b"\x01"
+
+    table = pa.table({"id": [1], "geom": [invalid_wkb]})
+    path = tmp_path / "single_invalid_wkb.parquet"
+    pq.write_table(table, path)
+
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB"}})
+
+    tab = con.read_parquet(
+        path, geometry_columns=geometry_columns, validate=False
+    ).to_arrow_table()
+    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 1
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match=r"WKB validation failed",
+    ):
+        con.read_parquet(
+            path, geometry_columns=geometry_columns, validate=True
+        ).to_arrow_table()
+
+
+def test_read_parquet_validate_wkb_partial_invalid_rows(con, tmp_path):
+    valid_wkb = bytes.fromhex("0101000000000000000000F03F0000000000000040")
+    invalid_wkb = b"\x01"
+
+    table = pa.table(
+        {
+            "id": [1, 2, 3],
+            "geom": [valid_wkb, invalid_wkb, valid_wkb],
+        }
+    )
+    path = tmp_path / "partial_invalid_wkb.parquet"
+    pq.write_table(table, path)
+
+    geometry_columns = json.dumps({"geom": {"encoding": "WKB"}})
+
+    tab = con.read_parquet(
+        path, geometry_columns=geometry_columns, validate=False
+    ).to_arrow_table()
+    assert tab["geom"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 3
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match=r"WKB validation failed",
+    ):
+        con.read_parquet(
+            path, geometry_columns=geometry_columns, validate=True
+        ).to_arrow_table()

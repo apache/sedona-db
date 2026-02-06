@@ -128,6 +128,7 @@ class SedonaContext:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
         geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
+        validate: bool = False,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -176,9 +177,18 @@ class SedonaContext:
 
 
                 Safety:
-                - Columns specified here are not validated against the provided options
-                  (e.g., WKB encoding checks); inconsistent data may cause undefined
-                  behavior.
+                - Columns specified here can optionally be validated according to the
+                  `validate` option (e.g., WKB encoding checks). If validation is not
+                  enabled, inconsistent data may cause undefined behavior.
+            validate:
+                When set to `True`, geometry column contents are validated against
+                their metadata. Metadata can come from the source Parquet file or
+                the user-provided `geometry_columns` option.
+                Only supported properties are validated; unsupported properties are
+                ignored. If validation fails, execution stops with an error.
+
+                Supported validation properties:
+                - WKB encoding
 
 
         Examples:
@@ -200,7 +210,7 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_parquet(
-                [str(path) for path in table_paths], options, geometry_columns
+                [str(path) for path in table_paths], options, geometry_columns, validate
             ),
             self.options,
         )
