@@ -23,17 +23,17 @@ use std::sync::Arc;
 use datafusion::common::config::{
     ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, TableOptions, Visit,
 };
+#[allow(unused_imports)]
 use datafusion::common::{config_err, exec_datafusion_err, exec_err};
 use datafusion::config::ConfigFileType;
 use datafusion::datasource::listing::ListingTableUrl;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::SessionState;
-
-use async_trait::async_trait;
-
 use datafusion::execution::SessionStateBuilder;
 use dirs::home_dir;
-use object_store::{CredentialProvider, ObjectStore};
+#[cfg(any(feature = "aws", feature = "azure", feature = "gcp", feature = "http"))]
+use object_store::CredentialProvider;
+use object_store::ObjectStore;
 use url::Url;
 
 #[cfg(feature = "aws")]
@@ -250,7 +250,7 @@ struct S3CredentialProvider {
 }
 
 #[cfg(feature = "aws")]
-#[async_trait]
+#[async_trait::async_trait]
 impl CredentialProvider for S3CredentialProvider {
     type Credential = AwsCredential;
 
@@ -269,6 +269,7 @@ impl CredentialProvider for S3CredentialProvider {
     }
 }
 
+#[cfg(feature = "aws")]
 pub fn get_oss_object_store_builder(
     url: &Url,
     aws_options: &AwsOptions,
@@ -276,6 +277,7 @@ pub fn get_oss_object_store_builder(
     get_object_store_builder(url, aws_options, true)
 }
 
+#[cfg(feature = "aws")]
 pub fn get_cos_object_store_builder(
     url: &Url,
     aws_options: &AwsOptions,
@@ -283,6 +285,7 @@ pub fn get_cos_object_store_builder(
     get_object_store_builder(url, aws_options, false)
 }
 
+#[cfg(feature = "aws")]
 fn get_object_store_builder(
     url: &Url,
     aws_options: &AwsOptions,
@@ -310,6 +313,7 @@ fn get_object_store_builder(
     Ok(builder)
 }
 
+#[cfg(feature = "gcp")]
 pub fn get_gcs_object_store_builder(
     url: &Url,
     gs_options: &GcpOptions,
@@ -395,6 +399,7 @@ pub fn get_azure_object_store_builder(
     Ok(builder)
 }
 
+#[allow(unused)]
 fn get_bucket_name(url: &Url) -> Result<&str> {
     url.host_str().ok_or_else(|| {
         DataFusionError::Execution(format!(
@@ -700,6 +705,7 @@ impl ConfigExtension for AzureOptions {
     const PREFIX: &'static str = "azure";
 }
 
+#[allow(unused_variables)]
 pub(crate) async fn get_object_store(
     state: &SessionState,
     scheme: &str,
@@ -768,6 +774,7 @@ pub(crate) async fn get_object_store(
     Ok(store)
 }
 
+#[allow(unused_variables)]
 pub(crate) fn register_table_options_extension_from_scheme(ctx: &SedonaContext, scheme: &str) {
     match scheme {
         #[cfg(feature = "aws")]
