@@ -276,7 +276,7 @@ fn invoke_scalar_with_srid(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::ArrayRef;
+    use arrow_array::{create_array, ArrayRef};
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::{Literal, ScalarUDF};
@@ -404,6 +404,67 @@ mod tests {
             &WKB_GEOMETRY,
         );
         assert_array_equal(&tester.invoke_array(array_in).unwrap(), &expected);
+    }
+
+    #[test]
+    fn udf_invoke_with_array_crs() {
+        let udf = st_geomfromwkt_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(
+            return_type,
+            SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()
+        );
+
+        let wkt_array: ArrayRef = create_array!(
+            Utf8,
+            [
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("POINT (4 5)"),
+                Some("POINT (6 7)"),
+                None
+            ]
+        );
+        let crs_array = create_array!(
+            Utf8,
+            [
+                Some("EPSG:4326"),
+                Some("EPSG:3857"),
+                Some("EPSG:3857"),
+                Some("0"),
+                None
+            ]
+        ) as ArrayRef;
+
+        let result = tester.invoke_arrays(vec![wkt_array, crs_array]).unwrap();
+        assert_eq!(
+            &result,
+            &create_array_item_crs(
+                &[
+                    Some("POINT (0 1)"),
+                    Some("POINT (2 3)"),
+                    Some("POINT (4 5)"),
+                    Some("POINT (6 7)"),
+                    None
+                ],
+                [
+                    Some("OGC:CRS84"),
+                    Some("EPSG:3857"),
+                    Some("EPSG:3857"),
+                    None,
+                    None
+                ],
+                &WKB_GEOMETRY
+            )
+        );
     }
 
     #[test]
