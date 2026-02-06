@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -24,12 +25,12 @@ use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
-use datafusion_common::{Column, DataFusionError};
+use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
-use pyo3::types::PyCapsule;
+use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
@@ -38,7 +39,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
-use crate::import_from::import_arrow_schema;
+use crate::import_from::{import_arrow_scalar, import_arrow_schema};
 use crate::reader::PySedonaStreamReader;
 use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
@@ -273,6 +274,47 @@ impl InternalDataFrame {
             .with_format(format);
         let explain_df = self.inner.clone().explain_with_options(explain_option)?;
         Ok(Self::new(explain_df, self.runtime.clone()))
+    }
+
+    fn with_params<'py>(
+        &self,
+        params_positional_py: Bound<'py, PyList>,
+        params_named_py: Bound<'py, PyDict>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let mut df = self.inner.clone();
+
+        match (params_positional_py.is_empty(), params_named_py.is_empty()) {
+            (true, false) => {
+                let params = params_named_py
+                    .iter()
+                    .map(|(key, param_py)| {
+                        let key_str: String = key.extract()?;
+                        let value = import_arrow_scalar(&param_py)?;
+                        Ok((key_str, value))
+                    })
+                    .collect::<Result<HashMap<_, _>, PySedonaError>>()?;
+                df = df.with_param_values(ParamValues::Map(params))?;
+            }
+            (false, true) => {
+                let params = params_positional_py
+                    .iter()
+                    .map(|param_py| import_arrow_scalar(&param_py))
+                    .collect::<Result<Vec<_>, PySedonaError>>()?;
+                df = df.with_param_values(ParamValues::List(params))?;
+            }
+            (true, true) => {
+                // If both are empty, still attempt to bind with empty parameter set.
+                // This ensures consistent errors for unbound parameters.
+                df = df.with_param_values(ParamValues::Map(Default::default()))?;
+            }
+            (false, false) => {
+                return Err(PySedonaError::SedonaPython(
+                    "Can't specify both positional and named parameters".to_string(),
+                ))
+            }
+        }
+
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
     fn __datafusion_table_provider__<'py>(

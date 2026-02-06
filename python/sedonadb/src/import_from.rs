@@ -26,7 +26,8 @@ use arrow_array::{
 };
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
-use datafusion_expr::ScalarUDF;
+use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue};
+use datafusion_expr::{expr::FieldMetadata, ScalarUDF};
 use datafusion_ffi::{
     table_provider::{FFI_TableProvider, ForeignTableProvider},
     udf::{FFI_ScalarUDF, ForeignScalarUDF},
@@ -118,6 +119,24 @@ pub fn import_arrow_array(obj: &Bound<PyAny>) -> Result<(Field, ArrayRef), PySed
     let result_array_data = unsafe { arrow_array::ffi::from_ffi(ffi_array, &ffi_schema)? };
 
     Ok((result_field, make_array(result_array_data)))
+}
+
+pub fn import_arrow_scalar(obj: &Bound<PyAny>) -> Result<ScalarAndMetadata, PySedonaError> {
+    let (field, array) = import_arrow_array(obj)?;
+    if array.len() != 1 {
+        return Err(PySedonaError::SedonaPython(format!(
+            "Expected Arrow scalar input to be of length 1 but got length {}",
+            array.len()
+        )));
+    }
+
+    let metadata = FieldMetadata::new_from_field(&field);
+    let scalar_value = ScalarValue::try_from_array(&array, 0)?;
+    if metadata.is_empty() {
+        Ok(ScalarAndMetadata::new(scalar_value, None))
+    } else {
+        Ok(ScalarAndMetadata::new(scalar_value, Some(metadata)))
+    }
 }
 
 pub fn import_arg_matcher(

@@ -239,6 +239,53 @@ def test_count(con):
     assert df.count() == 3
 
 
+def test_params(con):
+    # Binding a query that does not contain parameters with no parameters
+    # should work
+    df = con.sql("SELECT 101 AS col").with_params()
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    # Single parameter replaced in a few ways
+    df = con.sql("SELECT $1 + 1 AS col").with_params(100)
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    df = con.sql("SELECT $one + 1 AS col").with_params(one=100)
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    df = con.sql("SELECT $1 + 1 AS col", params=[100])
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    df = con.sql("SELECT $one + 1 AS col", params={"one": 100})
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    # Multiple parameters
+    df = con.sql("SELECT $one + $two AS col", params={"one": 100, "two": 1})
+    pd.testing.assert_frame_equal(df.to_pandas(), pd.DataFrame({"col": [101]}))
+
+    with pytest.raises(
+        ValueError, match="params must be a list, tuple, or dict of scalar values"
+    ):
+        con.sql("SELECT 1", params=df)
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="Can't specify both positional and named parameters",
+    ):
+        con.sql("SELECT 1").with_params(1, two=2)
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match=r"No value found for placeholder with name \$one",
+    ):
+        con.sql("SELECT $one + 1 AS col").with_params()
+
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match=r"Placeholder '\$one' was not provided a value for execution",
+    ):
+        con.sql("SELECT $one + 1 AS col").show()
+
+
 def test_dataframe_to_arrow(con):
     df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
     expected_schema = pa.schema(

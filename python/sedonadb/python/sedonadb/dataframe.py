@@ -16,14 +16,13 @@
 # under the License.
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Union, Optional, Any, Iterable, Literal
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
 from sedonadb.utility import sedona  # noqa: F401
 
-
 if TYPE_CHECKING:
-    import pandas
     import geopandas
+    import pandas
     import pyarrow
 
 
@@ -156,6 +155,49 @@ class DataFrame:
         """
         return self._impl.count()
 
+    def with_params(self, *args: List[Any], **kwargs: Dict[str, Any]):
+        """Replace unbound parameters in this query
+
+        For DataFrames that represent a logical plan that contains parameters (e.g.,
+        a SQL query of `SELECT $1 + 2`), replace parameters with concrete values.
+        See `lit()` for a list of supported Python objects.
+
+        Args:
+            args: Values to bind to positional parameters (e.g., `$1`, `$2`, `$3`)
+            kwargs: Values to bind to named parameters (e.g., `$my_param`). Note that
+                positional and named parameters cannot currently be mixed (i.e.,
+                parameters must be all positional or all named).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT $1 + 2 AS c").with_params(100).show()
+            ┌───────┐
+            │   c   │
+            │ int64 │
+            ╞═══════╡
+            │   102 │
+            └───────┘
+            >>> sd.sql("SELECT $my_param + 2 AS c").with_params(my_param=100).show()
+            ┌───────┐
+            │   c   │
+            │ int64 │
+            ╞═══════╡
+            │   102 │
+            └───────┘
+
+        """
+        from sedonadb.expr.literal import lit
+
+        positional_params = [lit(arg) for arg in args]
+        named_params = {k: lit(param) for k, param in kwargs.items()}
+
+        return DataFrame(
+            self._ctx,
+            self._impl.with_params(positional_params, named_params),
+            self._options,
+        )
+
     def __arrow_c_schema__(self):
         """ArrowSchema PyCapsule interface
 
@@ -250,8 +292,8 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import pyarrow as pa
         import geoarrow.pyarrow  # noqa: F401
+        import pyarrow as pa
 
         # Collects all batches into an object that exposes __arrow_c_stream__()
         batches = self._impl.to_batches(schema)
