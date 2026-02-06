@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: ["clippy", "docs", "test", "build", "fmt"]
+        name: ["clippy", "docs", "test", "check", "build", "fmt"]
 
     name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
@@ -129,6 +129,17 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update && sudo apt-get install -y libgeos-dev
+
+      - name: Check
+        if: matrix.name == 'check'
+        run: |
+          cargo check -p sedona --no-default-features
+          cargo check --workspace --all-targets --no-default-features
+          cargo check --workspace --all-targets
+          # Clean up build artifacts aggressively
+          rm -rf target/debug/deps
+          rm -rf target/debug/incremental
+          rm -rf target/debug/build
 
       - name: Build
         if: matrix.name == 'build'
