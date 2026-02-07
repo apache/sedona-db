@@ -34,6 +34,7 @@ members = [
     "rust/sedona-geo",
     "rust/sedona-geometry",
     "rust/sedona-geoparquet",
+    "rust/sedona-pointcloud",
     "rust/sedona-raster",
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
@@ -41,6 +42,7 @@ members = [
     "rust/sedona-testing",
     "rust/sedona",
     "sedona-cli",
+    "examples/sedonadb-rust-pointcloud",
 ]
 resolver = "2"
 
@@ -81,6 +83,7 @@ datafusion = { version = "51.0.0", default-features = false }
 datafusion-catalog = { version = "51.0.0" }
 datafusion-common = { version = "51.0.0", default-features = false }
 datafusion-common-runtime = { version = "51.0.0", default-features = false }
+datafusion-datasource = { version = "51.0.0", default-features = false }
 datafusion-datasource-parquet = { version = "51.0.0" }
 datafusion-execution = { version = "51.0.0", default-features = false }
 datafusion-expr = { version = "51.0.0" }
@@ -88,6 +91,7 @@ datafusion-ffi = {  version = "51.0.0" }
 datafusion-functions-nested = { version = "51.0.0" }
 datafusion-physical-expr = { version = "51.0.0" }
 datafusion-physical-plan = { version = "51.0.0" }
+datafusion-pruning = { version = "51.0.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
 log = "^0.4"
@@ -143,6 +147,7 @@ sedona-geo-generic-alg = { version = "0.3.0", path = "rust/sedona-geo-generic-al
 sedona-geo-traits-ext = { version = "0.3.0", path = "rust/sedona-geo-traits-ext" }
 sedona-geometry = { version = "0.3.0", path = "rust/sedona-geometry" }
 sedona-geoparquet = { version = "0.3.0", path = "rust/sedona-geoparquet" }
+sedona-pointcloud = { version = "0.3.0", path = "rust/sedona-pointcloud" }
 sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
 sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }

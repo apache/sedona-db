@@ -88,3 +88,6 @@ jobs:
           sed -i "s|git = \"https://github.com/apache/sedona-db.git\"|git = \"https://github.com/${REPO}.git\", rev = \"${REV}\"|" Cargo.toml
           cat Cargo.toml
           cargo run
+
+      - name: Build and run examples/sedonadb-rust-pointcloud
+        run: cargo run -p sedonadb-rust-pointcloud-example
