@@ -1,0 +1,75 @@
+from pathlib import Path
+import laspy
+import numpy as np
+
+
+# Some links for reference
+#
+# * ASPRS: <https://www.asprs.org/>
+# * ASPRS (GitHub): <https://github.com/ASPRSorg/LAS>
+# * OGC LAS Specification Standard: <https://www.ogc.org/standards/las/>
+# * LAZ Specification 1.4: <https://downloads.rapidlasso.de/doc/LAZ_Specification_1.4_R1.pdf>
+
+
+DATA_DIR = Path(__file__).resolve().parent
+
+
+LAS_VERSIONS = [f"1.{p}" for p in range(5)]  # 1.0 - 1.4
+POINT_FORMAT = list(range(11))  # 0 - 10 (>= 6 for LAS 1.4+)
+
+DATA_TYPES = [
+    "uint8",
+    "int8",
+    "uint16",
+    "int16",
+    "uint32",
+    "int32",
+    "uint64",
+    "int64",
+    "float32",
+    "float64",
+]
+
+# Pragmatic choice
+version = LAS_VERSIONS[4]
+point_format = POINT_FORMAT[6]
+
+# Header
+header = laspy.LasHeader(point_format=point_format, version=version)
+header.offsets = np.array([1.0, 1.0, 1.0])
+header.scales = np.array([0.1, 0.1, 0.1])
+
+# Extra attribtues
+for dt in DATA_TYPES:
+    name = f"{dt}_plain"
+    header.add_extra_dim(laspy.point.format.ExtraBytesParams(name, dt, "", None, None))
+
+    name = f"{dt}_scaled"
+    header.add_extra_dim(
+        laspy.point.format.ExtraBytesParams(name, dt, "", [10.0], [0.1])
+    )
+
+    name = f"{dt}_nodata"
+    header.add_extra_dim(
+        laspy.point.format.ExtraBytesParams(name, dt, "", None, None, [42])
+    )
+
+# Write laz with one point
+extra_path = DATA_DIR.joinpath("extra.laz")
+with laspy.open(extra_path, mode="w", header=header, do_compress=True) as writer:
+    point_record = laspy.ScaleAwarePointRecord.zeros(point_count=1, header=header)
+    point_record.x = [0.5]
+    point_record.y = [0.5]
+    point_record.z = [0.5]
+
+    for dt in DATA_TYPES:
+        name = f"{dt}_plain"
+        point_record[name] = [21]
+
+        name = f"{dt}_scaled"
+        point_record[name] = [21]
+
+        name = f"{dt}_nodata"
+        point_record[name] = [42]
+
+    writer.write_points(point_record)

@@ -18,15 +18,13 @@
 // the compiler doesn't know how to guess which impl RecordBatchReader
 // will be returned. When we implement the methods, we can remove this.
 
-use std::error::Error;
-
 use sedona::context::{SedonaContext, SedonaDataFrame};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = SedonaContext::new_local_interactive().await?;
-    let url = "https://basisdata.nl/hwh-ahn/ahn4/01_LAZ/C_69AZ1.LAZ";
-    let df = ctx.sql(&format!("SELECT geometry FROM \"{url}\"")).await?;
+    let url = "rust/sedona-pointcloud/tests/data/extra.laz";
+    let df = ctx.sql(&format!("SELECT geometry FROM \"{url}\" ")).await?;
     let output = df.show_sedona(&ctx, Some(5), Default::default()).await?;
     println!("{output}");
     Ok(())

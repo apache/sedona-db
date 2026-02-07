@@ -40,7 +40,7 @@ impl Display for LasPointEncoding {
         match self {
             LasPointEncoding::Plain => f.write_str("plain"),
             LasPointEncoding::Wkb => f.write_str("wkb"),
-            LasPointEncoding::Native => f.write_str("nativ"),
+            LasPointEncoding::Native => f.write_str("native"),
         }
     }
 }

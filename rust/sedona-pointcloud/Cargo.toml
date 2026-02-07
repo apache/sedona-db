@@ -30,11 +30,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-async-stream = "0.3.6"
-async-trait = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
+async-stream = "0.3.6"
+async-trait = { workspace = true }
 bytes = { workspace = true }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
