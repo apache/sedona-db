@@ -29,10 +29,12 @@ use futures::StreamExt;
 use sedona_expr::spatial_filter::SpatialFilter;
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::laz::{
-    options::LazTableOptions,
-    reader::{LazFileReader, LazFileReaderFactory},
-    schema::try_schema_from_header,
+use crate::{
+    laz::{
+        reader::{LazFileReader, LazFileReaderFactory},
+        schema::try_schema_from_header,
+    },
+    options::PointcloudOptions,
 };
 
 pub struct LazOpener {
@@ -44,7 +46,7 @@ pub struct LazOpener {
     /// Factory for instantiating laz reader
     pub laz_file_reader_factory: Arc<LazFileReaderFactory>,
     /// Table options
-    pub options: LazTableOptions,
+    pub options: PointcloudOptions,
     /// Target batch size
     pub(crate) batch_size: usize,
 }
@@ -65,8 +67,8 @@ impl FileOpener for LazOpener {
             let metadata = laz_reader.get_metadata().await?;
             let schema = Arc::new(try_schema_from_header(
                 &metadata.header,
-                laz_reader.options.point_encoding,
-                laz_reader.options.extra_bytes,
+                laz_reader.options.geometry_encoding,
+                laz_reader.options.las.extra_bytes,
             )?);
 
             let pruning_predicate = predicate.and_then(|physical_expr| {

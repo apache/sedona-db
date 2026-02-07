@@ -33,7 +33,10 @@ use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::laz::{metadata::LazMetadataReader, options::LazTableOptions, source::LazSource};
+use crate::{
+    laz::{metadata::LazMetadataReader, source::LazSource},
+    options::PointcloudOptions,
+};
 
 const DEFAULT_LAZ_EXTENSION: &str = ".laz";
 
@@ -41,7 +44,7 @@ const DEFAULT_LAZ_EXTENSION: &str = ".laz";
 #[derive(Default)]
 pub struct LazFormatFactory {
     // inner options for LAZ
-    pub options: Option<LazTableOptions>,
+    pub options: Option<PointcloudOptions>,
 }
 
 impl LazFormatFactory {
@@ -51,7 +54,7 @@ impl LazFormatFactory {
     }
 
     /// Creates an instance of [LazFormatFactory] with customized default options
-    pub fn new_with(options: LazTableOptions) -> Self {
+    pub fn new_with(options: PointcloudOptions) -> Self {
         Self {
             options: Some(options),
         }
@@ -64,20 +67,20 @@ impl FileFormatFactory for LazFormatFactory {
         state: &dyn Session,
         format_options: &HashMap<String, String>,
     ) -> Result<Arc<dyn FileFormat>, DataFusionError> {
-        let mut laz_options = state
+        let mut options = state
             .config_options()
             .extensions
-            .get::<LazTableOptions>()
-            .or_else(|| state.table_options().extensions.get::<LazTableOptions>())
+            .get::<PointcloudOptions>()
+            .or_else(|| state.table_options().extensions.get::<PointcloudOptions>())
             .cloned()
             .or(self.options.clone())
             .unwrap_or_default();
 
         for (k, v) in format_options {
-            laz_options.set(k, v)?;
+            options.set(k, v)?;
         }
 
-        Ok(Arc::new(LazFormat::default().with_options(laz_options)))
+        Ok(Arc::new(LazFormat::default().with_options(options)))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
@@ -107,11 +110,11 @@ impl fmt::Debug for LazFormatFactory {
 /// The LAZ `FileFormat` implementation
 #[derive(Debug, Default)]
 pub struct LazFormat {
-    pub options: LazTableOptions,
+    pub options: PointcloudOptions,
 }
 
 impl LazFormat {
-    pub fn with_options(mut self, options: LazTableOptions) -> Self {
+    pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
         self
     }

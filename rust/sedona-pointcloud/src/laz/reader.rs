@@ -36,10 +36,12 @@ use laz::{
 };
 use object_store::{Error, ObjectStore};
 
-use crate::laz::{
-    builder::RowBuilder,
-    metadata::{ChunkMeta, LazMetadata, LazMetadataReader},
-    options::LazTableOptions,
+use crate::{
+    laz::{
+        builder::RowBuilder,
+        metadata::{ChunkMeta, LazMetadata, LazMetadataReader},
+    },
+    options::PointcloudOptions,
 };
 
 /// Laz file reader factory
@@ -64,7 +66,7 @@ impl LazFileReaderFactory {
     pub fn create_reader(
         &self,
         partitioned_file: PartitionedFile,
-        options: LazTableOptions,
+        options: PointcloudOptions,
     ) -> Result<Box<LazFileReader>, DataFusionError> {
         Ok(Box::new(LazFileReader {
             partitioned_file,
@@ -80,7 +82,7 @@ pub struct LazFileReader {
     partitioned_file: PartitionedFile,
     store: Arc<dyn ObjectStore>,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    pub options: LazTableOptions,
+    pub options: PointcloudOptions,
 }
 
 impl LazFileReader {
@@ -121,8 +123,11 @@ impl LazFileReader {
         // record batch builder
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
-            .with_point_encoding(self.options.point_encoding)
-            .with_extra_attributes(metadata.extra_attributes.clone(), self.options.extra_bytes);
+            .with_geometry_encoding(self.options.geometry_encoding)
+            .with_extra_attributes(
+                metadata.extra_attributes.clone(),
+                self.options.las.extra_bytes,
+            );
 
         // transform
         let format = header.point_format();

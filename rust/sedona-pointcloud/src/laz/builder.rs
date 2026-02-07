@@ -35,10 +35,9 @@ use geoarrow_array::{
 use geoarrow_schema::Dimension;
 use las::{Header, Point};
 
-use crate::laz::{
-    metadata::ExtraAttribute,
-    options::{LasExtraBytes, LasPointEncoding},
-    schema::try_schema_from_header,
+use crate::{
+    laz::{metadata::ExtraAttribute, options::LasExtraBytes, schema::try_schema_from_header},
+    options::GeometryEncoding,
 };
 
 #[derive(Debug)]
@@ -67,7 +66,7 @@ pub struct RowBuilder {
     nir: UInt16Builder,
     extra: FixedSizeBinaryBuilder,
     header: Arc<Header>,
-    point_encoding: LasPointEncoding,
+    geometry_encoding: GeometryEncoding,
     extra_bytes: LasExtraBytes,
     extra_attributes: Arc<Vec<ExtraAttribute>>,
 }
@@ -103,14 +102,14 @@ impl RowBuilder {
             ),
 
             header,
-            point_encoding: Default::default(),
+            geometry_encoding: Default::default(),
             extra_bytes: Default::default(),
             extra_attributes: Arc::new(Vec::new()),
         }
     }
 
-    pub fn with_point_encoding(mut self, point_encoding: LasPointEncoding) -> Self {
-        self.point_encoding = point_encoding;
+    pub fn with_geometry_encoding(mut self, geometry_encoding: GeometryEncoding) -> Self {
+        self.geometry_encoding = geometry_encoding;
         self
     }
 
@@ -162,15 +161,16 @@ impl RowBuilder {
 
     /// Note: returns StructArray to allow nesting within another array if desired
     pub fn finish(&mut self) -> Result<StructArray, ArrowError> {
-        let schema = try_schema_from_header(&self.header, self.point_encoding, self.extra_bytes)?;
+        let schema =
+            try_schema_from_header(&self.header, self.geometry_encoding, self.extra_bytes)?;
 
-        let mut columns = match self.point_encoding {
-            LasPointEncoding::Plain => vec![
+        let mut columns = match self.geometry_encoding {
+            GeometryEncoding::Plain => vec![
                 Arc::new(self.x.finish()) as ArrayRef,
                 Arc::new(self.y.finish()) as ArrayRef,
                 Arc::new(self.z.finish()) as ArrayRef,
             ],
-            LasPointEncoding::Wkb => {
+            GeometryEncoding::Wkb => {
                 const POINT_SIZE: usize = 29;
 
                 let n: usize = self.x.len();
@@ -199,7 +199,7 @@ impl RowBuilder {
 
                 vec![Arc::new(builder.finish()) as ArrayRef]
             }
-            LasPointEncoding::Native => {
+            GeometryEncoding::Native => {
                 let buffers = [
                     self.x.finish().into_parts().1,
                     self.y.finish().into_parts().1,
@@ -515,9 +515,9 @@ mod tests {
     use las::{point::Format, Builder, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
-    use crate::laz::{
-        options::{LasExtraBytes, LazTableOptions},
-        reader::LazFileReaderFactory,
+    use crate::{
+        laz::{options::LasExtraBytes, reader::LazFileReaderFactory},
+        options::PointcloudOptions,
     };
 
     #[tokio::test]
@@ -544,7 +544,7 @@ mod tests {
             let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
                 .create_reader(
                     PartitionedFile::new(location, object.size),
-                    LazTableOptions::default(),
+                    PointcloudOptions::default(),
                 )
                 .unwrap();
             let metadata = laz_file_reader.get_metadata().await.unwrap();
@@ -578,7 +578,7 @@ mod tests {
         let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
             .create_reader(
                 PartitionedFile::new(location, object.size),
-                LazTableOptions::default().with_extra_bytes(LasExtraBytes::Typed),
+                PointcloudOptions::default().with_las_extra_bytes(LasExtraBytes::Typed),
             )
             .unwrap();
         let metadata = laz_file_reader.get_metadata().await.unwrap();

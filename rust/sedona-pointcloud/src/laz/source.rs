@@ -28,7 +28,10 @@ use datafusion_physical_plan::{
 };
 use object_store::ObjectStore;
 
-use crate::laz::{opener::LazOpener, options::LazTableOptions, reader::LazFileReaderFactory};
+use crate::{
+    laz::{opener::LazOpener, reader::LazFileReaderFactory},
+    options::PointcloudOptions,
+};
 
 #[derive(Clone, Default, Debug)]
 pub struct LazSource {
@@ -43,11 +46,11 @@ pub struct LazSource {
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
-    pub(crate) options: LazTableOptions,
+    pub(crate) options: PointcloudOptions,
 }
 
 impl LazSource {
-    pub fn with_options(mut self, options: LazTableOptions) -> Self {
+    pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
         self
     }

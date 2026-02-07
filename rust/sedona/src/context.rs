@@ -53,9 +53,9 @@ use sedona_geoparquet::{
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
 };
 #[cfg(feature = "pointcloud")]
-use sedona_pointcloud::laz::{
-    format::LazFormatFactory,
-    options::{LasExtraBytes, LasPointEncoding, LazTableOptions},
+use sedona_pointcloud::{
+    laz::{format::LazFormatFactory, options::LasExtraBytes},
+    options::{GeometryEncoding, PointcloudOptions},
 };
 
 /// Sedona SessionContext wrapper
@@ -91,9 +91,9 @@ impl SedonaContext {
         let session_config = add_sedona_option_extension(session_config);
         #[cfg(feature = "pointcloud")]
         let session_config = session_config.with_option_extension(
-            LazTableOptions::default()
-                .with_point_encoding(LasPointEncoding::Wkb)
-                .with_extra_bytes(LasExtraBytes::Typed),
+            PointcloudOptions::default()
+                .with_geometry_encoding(GeometryEncoding::Wkb)
+                .with_las_extra_bytes(LasExtraBytes::Typed),
         );
 
         let rt_builder = RuntimeEnvBuilder::new();
@@ -115,13 +115,11 @@ impl SedonaContext {
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
         #[cfg(feature = "pointcloud")]
         {
-            use sedona_pointcloud::laz::options::LasExtraBytes;
-
             state.register_file_format(Arc::new(LazFormatFactory::new()), false)?;
             state.register_table_options_extension(
-                LazTableOptions::default()
-                    .with_point_encoding(LasPointEncoding::Wkb)
-                    .with_extra_bytes(LasExtraBytes::Typed),
+                PointcloudOptions::default()
+                    .with_geometry_encoding(GeometryEncoding::Wkb)
+                    .with_las_extra_bytes(LasExtraBytes::Typed),
             );
         }
 

@@ -22,12 +22,12 @@ use geoarrow_schema::{CoordType, Crs, Dimension, Metadata, PointType, WkbType};
 use las::Header;
 use las_crs::{get_epsg_from_geotiff_crs, get_epsg_from_wkt_crs_bytes};
 
-use crate::laz::options::{LasExtraBytes, LasPointEncoding};
+use crate::{laz::options::LasExtraBytes, options::GeometryEncoding};
 
 // Arrow schema for LAS points
 pub fn try_schema_from_header(
     header: &Header,
-    point_encoding: LasPointEncoding,
+    geometry_encoding: GeometryEncoding,
     extra_bytes: LasExtraBytes,
 ) -> Result<Schema, ArrowError> {
     let epsg_crs = if header.has_wkt_crs() {
@@ -45,17 +45,17 @@ pub fn try_schema_from_header(
         .map(|epsg_crs| Crs::from_authority_code(format!("EPSG:{}", epsg_crs.get_horizontal())))
         .unwrap_or_default();
 
-    let mut fields = match point_encoding {
-        LasPointEncoding::Plain => vec![
+    let mut fields = match geometry_encoding {
+        GeometryEncoding::Plain => vec![
             Field::new("x", DataType::Float64, false),
             Field::new("y", DataType::Float64, false),
             Field::new("z", DataType::Float64, false),
         ],
-        LasPointEncoding::Wkb => {
+        GeometryEncoding::Wkb => {
             let point_type = WkbType::new(Arc::new(Metadata::new(crs, None)));
             vec![Field::new("geometry", DataType::Binary, false).with_extension_type(point_type)]
         }
-        LasPointEncoding::Native => {
+        GeometryEncoding::Native => {
             let point_type = PointType::new(Dimension::XYZ, Arc::new(Metadata::new(crs, None)))
                 .with_coord_type(CoordType::Separated);
             vec![point_type.to_field("geometry", false)]
