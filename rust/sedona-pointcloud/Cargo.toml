@@ -54,5 +54,6 @@ sedona-expr = { workspace = true }
 sedona-geometry = { workspace = true }
 
 [dev-dependencies]
+datafusion = { workspace = true, features = ["sql"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }

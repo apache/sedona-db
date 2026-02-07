@@ -26,6 +26,6 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-sedona = { workspace = true, default-features = false, features = ["pointcloud"] }
+sedona = { workspace = true, features = ["pointcloud"] }
 sedona-pointcloud = { workspace = true }
-tokio = { version = "1.44", features = ["rt-multi-thread"]}
+tokio = { workspace = true, features = ["rt-multi-thread"]}

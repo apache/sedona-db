@@ -210,3 +210,82 @@ impl FileFormat for LazFormat {
         Arc::new(LazSource::default().with_options(self.options.clone()))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{collections::HashMap, fs::File, sync::Arc};
+
+    use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
+    use datafusion_datasource::file_format::FileFormatFactory;
+    use las::{point::Format, Builder, Writer};
+
+    use crate::laz::format::{LazFormat, LazFormatFactory};
+
+    fn setup_context() -> SessionContext {
+        let file_format = Arc::new(LazFormatFactory::new());
+
+        let mut state = SessionStateBuilder::new().build();
+        state.register_file_format(file_format, true).unwrap();
+
+        SessionContext::new_with_state(state).enable_url_table()
+    }
+
+    #[tokio::test]
+    async fn laz_format_factory() {
+        let ctx = SessionContext::new();
+        let format_factory = Arc::new(LazFormatFactory::new());
+        let dyn_format = format_factory
+            .create(&ctx.state(), &HashMap::new())
+            .unwrap();
+        assert!(dyn_format.as_any().downcast_ref::<LazFormat>().is_some());
+    }
+
+    #[tokio::test]
+    async fn projection() {
+        let ctx = setup_context();
+        let df = ctx
+            .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn multiple_files() {
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        for i in 0..4 {
+            let tmp_path = tmpdir.path().join(format!("tmp{i}.laz"));
+            let tmp_file = File::create(&tmp_path).unwrap();
+
+            // create laz file with one point
+            let mut builder = Builder::from((1, 4));
+            builder.point_format = Format::new(0).unwrap();
+            builder.point_format.is_compressed = true;
+            let header = builder.into_header().unwrap();
+            let mut writer = Writer::new(tmp_file, header).unwrap();
+            writer.write_point(Default::default()).unwrap();
+            writer.close().unwrap();
+        }
+
+        let ctx = setup_context();
+        let table = tmpdir.path().to_str().unwrap();
+        let df = ctx.sql(&format!("SELECT * FROM '{table}'",)).await.unwrap();
+
+        assert_eq!(df.count().await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn file_that_does_not_exist() {
+        let ctx = setup_context();
+        let err = ctx
+            .sql("SELECT * FROM 'nonexisting.laz'")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Error during planning: table 'datafusion.public.nonexisting.laz' not found"
+        );
+    }
+}

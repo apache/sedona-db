@@ -116,11 +116,6 @@ impl SedonaContext {
         #[cfg(feature = "pointcloud")]
         {
             state.register_file_format(Arc::new(LazFormatFactory::new()), false)?;
-            state.register_table_options_extension(
-                PointcloudOptions::default()
-                    .with_geometry_encoding(GeometryEncoding::Wkb)
-                    .with_las_extra_bytes(LasExtraBytes::Typed),
-            );
         }
 
         // Enable dynamic file query (i.e., select * from 'filename')

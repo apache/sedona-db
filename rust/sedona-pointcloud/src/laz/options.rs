@@ -87,3 +87,52 @@ impl LasOptions {
         self
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+
+    use datafusion::{
+        execution::SessionStateBuilder,
+        prelude::{SessionConfig, SessionContext},
+    };
+
+    use crate::{laz::format::LazFormatFactory, options::PointcloudOptions};
+
+    fn setup_context() -> SessionContext {
+        let file_format = Arc::new(LazFormatFactory::new());
+
+        let config = SessionConfig::new().with_option_extension(PointcloudOptions::default());
+        let mut state = SessionStateBuilder::new().with_config(config).build();
+        state.register_file_format(file_format, true).unwrap();
+
+        SessionContext::new_with_state(state).enable_url_table()
+    }
+
+    #[tokio::test]
+    async fn projection() {
+        let ctx = setup_context();
+
+        // default options
+        let df = ctx
+            .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 3);
+
+        // overwrite options
+        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
+            .await
+            .unwrap();
+        ctx.sql("SET pointcloud.las.extra_bytes = 'blob'")
+            .await
+            .unwrap();
+        let df = ctx
+            .sql("SELECT geometry, extra_bytes FROM 'tests/data/extra.laz'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 2);
+    }
+}

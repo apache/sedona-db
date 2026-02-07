@@ -5389,6 +5389,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "bytes",
+ "datafusion",
  "datafusion-catalog",
  "datafusion-common",
  "datafusion-datasource",

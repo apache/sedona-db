@@ -189,7 +189,7 @@ mod tests {
     use std::{fs::File, sync::Arc};
 
     use datafusion_datasource::PartitionedFile;
-    use las::{point::Format, Builder, Point, Writer};
+    use las::{point::Format, Builder, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
     use crate::laz::reader::LazFileReaderFactory;
@@ -198,20 +198,15 @@ mod tests {
     async fn reader_basic_e2e() {
         let tmpdir = tempfile::tempdir().unwrap();
 
-        let tmp_path = tmpdir.path().join("tmp.laz");
+        // create laz file with one point
+        let tmp_path = tmpdir.path().join("one.laz");
         let tmp_file = File::create(&tmp_path).unwrap();
-
-        // create laz file
         let mut builder = Builder::from((1, 4));
-        builder.point_format = Format::new(1).unwrap();
+        builder.point_format = Format::new(0).unwrap();
         builder.point_format.is_compressed = true;
         let header = builder.into_header().unwrap();
         let mut writer = Writer::new(tmp_file, header).unwrap();
-        let point = Point {
-            gps_time: Some(Default::default()),
-            ..Default::default()
-        };
-        writer.write_point(point).unwrap();
+        writer.write_point(Default::default()).unwrap();
         writer.close().unwrap();
 
         // read batch with `LazFileReader`
