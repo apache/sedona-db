@@ -39,7 +39,7 @@ header = laspy.LasHeader(point_format=point_format, version=version)
 header.offsets = np.array([1.0, 1.0, 1.0])
 header.scales = np.array([0.1, 0.1, 0.1])
 
-# Extra attribtues
+# Extra attributes
 for dt in DATA_TYPES:
     name = f"{dt}_plain"
     header.add_extra_dim(laspy.point.format.ExtraBytesParams(name, dt, "", None, None))
