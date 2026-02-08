@@ -187,8 +187,8 @@ class SedonaContext:
                 Only supported properties are validated; unsupported properties are
                 ignored. If validation fails, execution stops with an error.
 
-                Supported validation properties:
-                - WKB encoding
+                Currently the only property that is validated is the WKB of input geometry
+                columns.
 
 
         Examples:
