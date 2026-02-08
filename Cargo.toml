@@ -120,7 +120,7 @@ parquet = { version = "57.0.0", default-features = false, features = [
     "async",
     "object_store",
 ] }
-rand = "0.9"
+rand = "0.10"
 regex = "1.12"
 rstest = "0.26.1"
 serde = { version = "1" }
