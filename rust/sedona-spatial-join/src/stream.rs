@@ -1921,12 +1921,9 @@ mod tests {
             pos: 0,
         };
         let mut produced_probe_indices: Vec<u32> = Vec::new();
-        loop {
-            let Some((_, probe_indices)) =
-                progress.indices_for_next_batch(JoinSide::Left, join_type, max_batch_size)
-            else {
-                break;
-            };
+        while let Some((_, probe_indices)) =
+            progress.indices_for_next_batch(JoinSide::Left, join_type, max_batch_size)
+        {
             let probe_indices = probe_indices.to_vec();
             let adjust_range = progress.next_probe_range(&probe_indices);
             let build_indices = UInt64Array::from(vec![0; probe_indices.len()]);

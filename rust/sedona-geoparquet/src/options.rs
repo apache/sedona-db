@@ -34,6 +34,8 @@ pub struct TableGeoParquetOptions {
     pub overwrite_bbox_columns: bool,
     /// Optional geometry column metadata overrides for schema inference.
     pub geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
+    /// Validate geometry column contents against metadata when reading.
+    pub validate: bool,
 }
 
 impl TableGeoParquetOptions {

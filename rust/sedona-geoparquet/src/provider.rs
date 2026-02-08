@@ -84,6 +84,7 @@ pub struct GeoParquetReadOptions<'a> {
     inner: ParquetReadOptions<'a>,
     table_options: Option<HashMap<String, String>>,
     geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
+    validate: bool,
 }
 
 impl GeoParquetReadOptions<'_> {
@@ -189,6 +190,7 @@ impl GeoParquetReadOptions<'_> {
             inner: ParquetReadOptions::default(),
             table_options: Some(options),
             geometry_columns: None,
+            validate: false,
         })
     }
 
@@ -213,6 +215,17 @@ impl GeoParquetReadOptions<'_> {
     /// Get the geometry columns metadata
     pub fn geometry_columns(&self) -> Option<&HashMap<String, GeoParquetColumnMetadata>> {
         self.geometry_columns.as_ref()
+    }
+
+    /// Enable/disable geometry content validation.
+    pub fn with_validate(mut self, validate: bool) -> Self {
+        self.validate = validate;
+        self
+    }
+
+    /// Get whether geometry content validation is enabled.
+    pub fn validate(&self) -> bool {
+        self.validate
     }
 }
 
@@ -252,6 +265,7 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
             if let Some(geometry_columns) = &self.geometry_columns {
                 geoparquet_options.geometry_columns = Some(geometry_columns.clone());
             }
+            geoparquet_options.validate = self.validate;
             options.format = Arc::new(GeoParquetFormat::new(geoparquet_options));
             return options;
         }

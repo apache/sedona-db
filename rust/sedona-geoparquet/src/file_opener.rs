@@ -16,17 +16,22 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
-use arrow_schema::SchemaRef;
+use arrow_array::{Array, RecordBatch};
+use arrow_schema::{DataType, SchemaRef};
 use datafusion::datasource::{
     listing::PartitionedFile,
     physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
 };
-use datafusion_common::Result;
+use datafusion_common::{
+    cast::{as_binary_array, as_binary_view_array, as_large_binary_array},
+    exec_err, Result,
+};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{
     ExecutionPlanMetricsSet, MetricBuilder, MetricType, MetricValue, PruningMetrics,
 };
+use futures::StreamExt;
 use object_store::ObjectStore;
 use parquet::{
     basic::LogicalType,
@@ -47,7 +52,10 @@ use sedona_geometry::{
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::metadata::{GeoParquetColumnMetadata, GeoParquetMetadata};
+use crate::{
+    metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
+    options::TableGeoParquetOptions,
+};
 
 #[derive(Clone)]
 pub(crate) struct GeoParquetFileOpenerMetrics {
@@ -98,11 +106,11 @@ pub(crate) struct GeoParquetFileOpener {
     pub inner: Arc<dyn FileOpener>,
     pub object_store: Arc<dyn ObjectStore>,
     pub metadata_size_hint: Option<usize>,
-    pub predicate: Arc<dyn PhysicalExpr>,
+    pub predicate: Option<Arc<dyn PhysicalExpr>>,
     pub file_schema: SchemaRef,
     pub enable_pruning: bool,
     pub metrics: GeoParquetFileOpenerMetrics,
-    pub overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
+    pub options: TableGeoParquetOptions,
 }
 
 impl FileOpener for GeoParquetFileOpener {
@@ -118,37 +126,41 @@ impl FileOpener for GeoParquetFileOpener {
 
             let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
 
+            let maybe_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
+                &parquet_metadata,
+                self_clone.options.geometry_columns.as_ref(),
+            )?;
+
             if self_clone.enable_pruning {
-                let spatial_filter = SpatialFilter::try_from_expr(&self_clone.predicate)?;
+                if let Some(predicate) = self_clone.predicate.as_ref() {
+                    let spatial_filter = SpatialFilter::try_from_expr(predicate)?;
 
-                if let Some(geoparquet_metadata) = GeoParquetMetadata::try_from_parquet_metadata(
-                    &parquet_metadata,
-                    self_clone.overrides.as_ref(),
-                )? {
-                    filter_access_plan_using_geoparquet_file_metadata(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        &geoparquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                    if let Some(geoparquet_metadata) = maybe_geoparquet_metadata.as_ref() {
+                        filter_access_plan_using_geoparquet_file_metadata(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            geoparquet_metadata,
+                            &self_clone.metrics,
+                        )?;
 
-                    filter_access_plan_using_geoparquet_covering(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        &geoparquet_metadata,
-                        &parquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                        filter_access_plan_using_geoparquet_covering(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            geoparquet_metadata,
+                            &parquet_metadata,
+                            &self_clone.metrics,
+                        )?;
 
-                    filter_access_plan_using_native_geostats(
-                        &self_clone.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        &parquet_metadata,
-                        &self_clone.metrics,
-                    )?;
+                        filter_access_plan_using_native_geostats(
+                            &self_clone.file_schema,
+                            &mut access_plan,
+                            &spatial_filter,
+                            &parquet_metadata,
+                            &self_clone.metrics,
+                        )?;
+                    }
                 }
             }
 
@@ -158,10 +170,108 @@ impl FileOpener for GeoParquetFileOpener {
             // We could also consider filtering using null_count here in the future (i.e.,
             // skip row groups that are all null)
             let file = file.with_extensions(Arc::new(access_plan));
+            let stream = self_clone.inner.open(file)?.await?;
 
-            self_clone.inner.open(file)?.await
+            // Validate geometry columns when enabled from read option.
+            let validation_columns = if self_clone.options.validate {
+                maybe_geoparquet_metadata
+                    .as_ref()
+                    .map(|metadata| wkb_validation_columns(&self_clone.file_schema, metadata))
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            if !self_clone.options.validate || validation_columns.is_empty() {
+                return Ok(stream);
+            }
+
+            let validated_stream = stream.map(move |batch_result| {
+                let batch = batch_result?;
+                validate_wkb_batch(&batch, &validation_columns)?;
+                Ok(batch)
+            });
+
+            Ok(Box::pin(validated_stream))
         }))
     }
+}
+
+fn wkb_validation_columns(
+    file_schema: &SchemaRef,
+    metadata: &GeoParquetMetadata,
+) -> Vec<(usize, String)> {
+    file_schema
+        .fields()
+        .iter()
+        .enumerate()
+        .filter_map(|(column_index, field)| {
+            metadata
+                .columns
+                .get(field.name())
+                .and_then(|column_metadata| {
+                    if matches!(column_metadata.encoding, GeoParquetColumnEncoding::WKB) {
+                        Some((column_index, field.name().clone()))
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect()
+}
+
+fn validate_wkb_batch(batch: &RecordBatch, validation_columns: &[(usize, String)]) -> Result<()> {
+    for (column_index, column_name) in validation_columns {
+        let column = batch.column(*column_index);
+        validate_wkb_array(column.as_ref(), column_name)?;
+    }
+    Ok(())
+}
+
+fn validate_wkb_array(array: &dyn Array, column_name: &str) -> Result<()> {
+    match array.data_type() {
+        DataType::Binary => {
+            let array = as_binary_array(array)?;
+            validate_wkb_values(array.iter(), column_name)?;
+        }
+        DataType::LargeBinary => {
+            let array = as_large_binary_array(array)?;
+            validate_wkb_values(array.iter(), column_name)?;
+        }
+        DataType::BinaryView => {
+            let array = as_binary_view_array(array)?;
+            validate_wkb_values(array.iter(), column_name)?;
+        }
+        other => {
+            return exec_err!(
+                "Expected Binary/LargeBinary/BinaryView storage for WKB validation in column '{}' but got {}",
+                column_name,
+                other
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_wkb_values<'a>(
+    values: impl IntoIterator<Item = Option<&'a [u8]>>,
+    column_name: &str,
+) -> Result<()> {
+    for (row_index, maybe_wkb) in values.into_iter().enumerate() {
+        if let Some(wkb_bytes) = maybe_wkb {
+            if let Err(e) = wkb::reader::read_wkb(wkb_bytes) {
+                return exec_err!(
+                    "WKB validation failed for column '{}' at row {}: {}",
+                    column_name,
+                    row_index,
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Filter an access plan using the GeoParquet file metadata
@@ -565,6 +675,9 @@ pub fn storage_schema_contains_geo(schema: &SchemaRef) -> bool {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, Int64Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::{
         arrow::ArrowSchemaConverter,
@@ -1197,6 +1310,54 @@ mod test {
         // Bbox should be None, geometry types should be valid
         assert_eq!(result.bbox(), None);
         assert!(result.geometry_types().is_some());
+    }
+
+    #[test]
+    fn validate_wkb_array_binary() {
+        let valid_point_wkb: [u8; 21] = [
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+        ];
+
+        let valid_array: BinaryArray = [Some(valid_point_wkb.as_slice()), None].iter().collect();
+        validate_wkb_array(&valid_array, "geom").unwrap();
+
+        let invalid_array: BinaryArray = [Some(&b"\x01"[..]), None].iter().collect();
+        let err = validate_wkb_array(&invalid_array, "geom").unwrap_err();
+        assert!(err.to_string().contains("WKB validation failed"));
+    }
+
+    #[test]
+    fn validate_wkb_array_binary_view() {
+        let valid_point_wkb: [u8; 21] = [
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+        ];
+
+        let valid_array: BinaryViewArray =
+            [Some(valid_point_wkb.as_slice()), None].iter().collect();
+        validate_wkb_array(&valid_array, "geom").unwrap();
+
+        let invalid_array: BinaryViewArray = [Some(&b"\x01"[..]), None].iter().collect();
+        let err = validate_wkb_array(&invalid_array, "geom").unwrap_err();
+        assert!(err.to_string().contains("WKB validation failed"));
+    }
+
+    #[test]
+    fn validate_wkb_batch_errors_on_invalid_wkb() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("geom", DataType::Binary, true),
+        ]));
+
+        let id_column: ArrayRef = Arc::new(Int64Array::from(vec![Some(1)]));
+        let geom_array: BinaryArray = [Some(&b"\x01"[..])].iter().collect();
+        let geom_column: ArrayRef = Arc::new(geom_array);
+
+        let batch = RecordBatch::try_new(schema, vec![id_column, geom_column]).unwrap();
+        let validation_columns = vec![(1, "geom".to_string())];
+        let err = validate_wkb_batch(&batch, &validation_columns).unwrap_err();
+        assert!(err.to_string().contains("WKB validation failed"));
     }
 
     fn file_schema_with_covering() -> SchemaRef {
