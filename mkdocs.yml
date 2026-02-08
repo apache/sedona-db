@@ -46,7 +46,6 @@ nav:
           - SQL: reference/sql.md
           - Spatial Joins: reference/sql-joins.md
       - Examples:
-          - PostGIS: postgis.md
           - GeoPandas interop: geopandas-interop.md
           - Overture Examples: overture-examples.md
           - CRS Examples: crs-examples.md
