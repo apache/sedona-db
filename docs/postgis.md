@@ -60,11 +60,25 @@ docker compose up --detach
 
 
 ```python
+import psycopg2
+
+conn = psycopg2.connect(
+    host="127.0.0.1",
+    port=5432,
+    dbname="postgres",
+    user="postgres",
+)
+print("CONNECTED OK")
+conn.close()
+````
+
+    CONNECTED OK
+
+```python
 import geopandas as gpd
 from shapely.geometry import Point
 from sqlalchemy import create_engine
 
-# Create example GeoDataFrame
 gdf = gpd.GeoDataFrame(
     {
         "name": ["New York", "Los Angeles", "Chicago"],
@@ -77,21 +91,73 @@ gdf = gpd.GeoDataFrame(
     crs="EPSG:4326",
 )
 
-# Connect to PostGIS (Docker container)
-engine = create_engine(
-    "postgresql://postgres:password@localhost:5432/postgres"
-)
-
-# Write data into PostGIS
-gdf.to_postgis(
-    "my_places",
-    engine,
-    if_exists="replace",
-    index=False,
-)
-
 gdf
-````
+
+```
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>name</th>
+      <th>geometry</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>New York</td>
+      <td>POINT (-74.006 40.7128)</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>Los Angeles</td>
+      <td>POINT (-118.2437 34.0522)</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>Chicago</td>
+      <td>POINT (-87.6298 41.8781)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+Ensure PostGIS is running and accessible before executing these cells
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "postgresql+psycopg2://postgres:password@127.0.0.1:5432/postgres",
+    pool_pre_ping=True,
+)
+```
+
+```python
+from sqlalchemy import text
+
+with engine.connect() as conn:
+    print(conn.execute(text("SELECT current_user")).fetchall())
+
+```
+
+    [('postgres',)]
 
 ## PostGIS → SedonaDB using GeoPandas
 
@@ -104,8 +170,11 @@ import sedona.db
 ```
 
 ```python
-engine = create_engine(
-    "postgresql://<user>:<password>@localhost:5432/<database>"
+gdf.to_postgis(
+    "my_places",
+    engine,
+    if_exists="replace",
+    index=False,
 )
 ```
 
@@ -113,16 +182,36 @@ engine = create_engine(
 gdf = gpd.read_postgis(
     "SELECT * FROM my_places",
     engine,
-    geom_col="geom"
+    geom_col="geometry",
 )
-```
 
-```python
+import sedona.db
+
 sd = sedona.db.connect()
 df = sd.create_data_frame(gdf)
 df.show()
 df.schema
+
 ```
+
+    ┌─────────────┬──────────────────────────┐
+    │     name    ┆         geometry         │
+    │     utf8    ┆         geometry         │
+    ╞═════════════╪══════════════════════════╡
+    │ New York    ┆ POINT(-74.006 40.7128)   │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Los Angeles ┆ POINT(-118.2437 34.0522) │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Chicago     ┆ POINT(-87.6298 41.8781)  │
+    └─────────────┴──────────────────────────┘
+
+
+
+
+
+    SedonaSchema with 2 fields:
+      name: utf8<Utf8>
+      geometry: geometry<Wkb(epsg:4326)>
 
 ## High-performance PostGIS integration using ADBC
 
@@ -140,7 +229,7 @@ import adbc_driver_postgresql.dbapi
 sd = sedona.db.connect()
 
 conn = adbc_driver_postgresql.dbapi.connect(
-    "postgresql://<user>:<password>@localhost:5432/<database>"
+    "postgresql://postgres:password@127.0.0.1:5432/postgres"
 )
 
 ```
@@ -158,12 +247,7 @@ with conn.cursor() as cur:
         FROM ns_water_point
     """)
 
-    cur.adbc_ingest(
-        "ns_water_point_temp",
-        df,
-        temporary=True
-    )
-
+    cur.adbc_ingest("ns_water_point_temp", df, temporary=True)
 ```
 
 ```python
@@ -175,7 +259,6 @@ with conn.cursor() as cur:
             ST_GeomFromWKB(geometry) AS geometry
         FROM ns_water_point_temp
     """)
-
 ```
 
 ### Reading data from PostGIS into SedonaDB using ADBC
@@ -187,20 +270,32 @@ with conn.cursor() as cur:
         FROM ns_water_point
     """)
 
-    sd.create_data_frame(
-        cur.fetch_arrow()
-    ).to_view("postgis_result", overwrite=True)
+    sd.create_data_frame(cur.fetch_arrow()).to_view("postgis_result", overwrite=True)
 
     df = sd.sql("""
         SELECT ST_GeomFromWKB(geom_wkb) AS geometry
         FROM postgis_result
     """).to_memtable()
-
 ```
 
 ```python
 df.head(5).show()
 ```
+
+    ┌──────────────────────────────────────────────────────────────────┐
+    │                             geometry                             │
+    │                             geometry                             │
+    ╞══════════════════════════════════════════════════════════════════╡
+    │ POINT Z(300175.22580000013 4910284.878799999 166.39999999999418) │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ POINT Z(300229.72580000013 4910146.878799999 166.39999999999418) │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ POINT Z(300258.0247999998 4910111.278899999 166.39999999999418)  │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ POINT Z(300267.62480000034 4910089.1789 166.39999999999418)      │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ POINT Z(300321.22580000013 4910120.1778 166.39999999999418)      │
+    └──────────────────────────────────────────────────────────────────┘
 
 ### Choosing an approach
 
