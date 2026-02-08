@@ -23,7 +23,7 @@ use datafusion::datasource::{
     physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
 };
 use datafusion_common::{
-    cast::{as_binary_array, as_binary_view_array},
+    cast::{as_binary_array, as_binary_view_array, as_large_binary_array},
     exec_err, Result,
 };
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
@@ -232,40 +232,42 @@ fn validate_wkb_array(array: &dyn Array, column_name: &str) -> Result<()> {
     match array.data_type() {
         DataType::Binary => {
             let array = as_binary_array(array)?;
-            for (row_index, maybe_wkb) in array.iter().enumerate() {
-                if let Some(wkb_bytes) = maybe_wkb {
-                    if let Err(e) = wkb::reader::read_wkb(wkb_bytes) {
-                        return exec_err!(
-                            "WKB validation failed for column '{}' at row {}: {}",
-                            column_name,
-                            row_index,
-                            e
-                        );
-                    }
-                }
-            }
+            validate_wkb_values(array.iter(), column_name)?;
+        }
+        DataType::LargeBinary => {
+            let array = as_large_binary_array(array)?;
+            validate_wkb_values(array.iter(), column_name)?;
         }
         DataType::BinaryView => {
             let array = as_binary_view_array(array)?;
-            for (row_index, maybe_wkb) in array.iter().enumerate() {
-                if let Some(wkb_bytes) = maybe_wkb {
-                    if let Err(e) = wkb::reader::read_wkb(wkb_bytes) {
-                        return exec_err!(
-                            "WKB validation failed for column '{}' at row {}: {}",
-                            column_name,
-                            row_index,
-                            e
-                        );
-                    }
-                }
-            }
+            validate_wkb_values(array.iter(), column_name)?;
         }
         other => {
             return exec_err!(
-                "Expected Binary/BinaryView storage for WKB validation in column '{}' but got {}",
+                "Expected Binary/LargeBinary/BinaryView storage for WKB validation in column '{}' but got {}",
                 column_name,
                 other
             );
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_wkb_values<'a>(
+    values: impl IntoIterator<Item = Option<&'a [u8]>>,
+    column_name: &str,
+) -> Result<()> {
+    for (row_index, maybe_wkb) in values.into_iter().enumerate() {
+        if let Some(wkb_bytes) = maybe_wkb {
+            if let Err(e) = wkb::reader::read_wkb(wkb_bytes) {
+                return exec_err!(
+                    "WKB validation failed for column '{}' at row {}: {}",
+                    column_name,
+                    row_index,
+                    e
+                );
+            }
         }
     }
 
