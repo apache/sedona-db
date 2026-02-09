@@ -18,42 +18,41 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-    - id: check-yaml
-    - id: end-of-file-fixer
-    - id: trailing-whitespace
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1
     hooks:
-    -   id: codespell
-        # types_or: [markdown, c, c++, rust, python]
+      - id: codespell
         additional_dependencies: [tomli]
-        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-tg/src/tg)/.*|^docs/image/sedonadb-architecture\\.svg$"
+        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-libgpuspatial/libgpuspatial|sedona-tg/src/tg)/.*|^docs/image/.*\\.svg$|^r/sedonadb/tools/savvy-update.sh$"
+        args: ["--ignore-words-list=thirdparty"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.8
     hooks:
       - id: ruff
-        args: [ --fix ]
+        args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
-    - id: fmt
-      name: rustfmt
-      args: ["--all", "--"]
+      - id: fmt
+        name: rustfmt
+        args: ["--all", "--"]
 
   - repo: https://github.com/cheshirekow/cmake-format-precommit
     rev: v0.6.13
     hooks:
-    - id: cmake-format
-      args: [--in-place]
+      - id: cmake-format
+        args: [--in-place]
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v19.1.4
     hooks:
-    - id: clang-format
-      types_or: [c, c++]
-      # Don't run on vendored files
-      exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-tg/src/tg)/.*"
+      - id: clang-format
+        types_or: [c, c++]
+        exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-tg/src/tg)/.*"
