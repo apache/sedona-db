@@ -51,9 +51,10 @@ use crate::utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter};
 /// the 0-based index of the probe row in this probe partition.
 ///
 /// The KNN results are filtered, meaning that the original KNN results obtained by probing
-/// the spatial index may be further filtered based on some predicates. It is also possible that
-/// all the KNN results for a probe row are filtered out. However, we still need to keep track of the
-/// distances of unfiltered results to correctly compute the top-K distances before filtering. This
+/// the spatial index may be further filtered based on some predicates. The predicates here can be
+/// any predicate, such as L.id = R.id when the KNN join contains an equi-condition. It is also possible
+/// that all the KNN results for a probe row are filtered out. However, we still need to keep track of
+/// the distances of unfiltered results to correctly compute the top-K distances before filtering. This
 /// is critical for correctly merging KNN results from multiple partitions.
 ///
 /// Imagine that a KNN query for a probe row yields the following 5 results (K = 5):
