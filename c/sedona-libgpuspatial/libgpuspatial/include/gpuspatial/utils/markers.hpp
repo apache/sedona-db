@@ -17,12 +17,15 @@
 #pragma once
 
 #include <cstdint>
+#ifndef GPUSPATIAL_PROFILING
 #define DISABLE_NVTX_MARKERS
+#endif
 
 #ifndef DISABLE_NVTX_MARKERS
 #include <nvtx3/nvtx3.hpp>
 #endif
-
+// This file provide a simple wrapper around NVTX3 for marking GPU code regions and events
+// for profiling purposes.
 namespace gpuspatial {
 
 struct Category {

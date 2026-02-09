@@ -72,8 +72,8 @@ struct SedonaFloatIndex2D {
   /** Destroy a previously created context */
   void (*destroy_context)(struct SedonaSpatialIndexContext* context);
   /** Push rectangles for building the spatial index, each rectangle is represented by 4
-   * floats: [min_x, min_y, max_x, max_y] Points can also be indexed by providing [x, y,
-   * x, y] but points and rectangles cannot be mixed
+   * floats: [min_x, min_y, max_x, max_y].
+   * Points can also be indexed by providing degenerated rectangles [x, y, x, y].
    *
    * @return 0 on success, non-zero on failure
    */

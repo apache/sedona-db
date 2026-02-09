@@ -31,12 +31,35 @@ class SpatialRefiner {
  public:
   virtual ~SpatialRefiner() = default;
 
+  /** Clear the internal state of the refiner, allowing it to be reused.
+   */
   virtual void Clear() = 0;
 
+  /** Push build-side geometries to the refiner.
+   *
+   * @param build_array An ArrowArrayView containing the build-side geometries.
+   */
   virtual void PushBuild(const ArrowArrayView* build_array) = 0;
 
+  /** Finalize the build-side geometries after all have been pushed. The Refine function
+   * can only be used after this call.
+   */
   virtual void FinishBuilding() = 0;
 
+  /** Refine candidate pairs of geometries based on a spatial predicate.
+   *
+   * @param probe_array An ArrowArrayView containing the probe-side geometries.
+   * @param predicate The spatial predicate to use for refinement.
+   * @param build_indices An array of build-side indices corresponding to candidate pairs.
+   * This is a global index from 0 to N-1, where N is the total number of build geometries
+   * pushed.
+   * @param probe_indices An array of probe-side indices corresponding to candidate pairs.
+   * This is a local index from 0 to M - 1, where M is the number of geometries in the
+   * probe_array.
+   * @param len The length of the build_indices and probe_indices arrays.
+   * @return The number of candidate pairs that satisfy the spatial predicate after
+   * refinement.
+   */
   virtual uint32_t Refine(const ArrowArrayView* probe_array, Predicate predicate,
                           uint32_t* build_indices, uint32_t* probe_indices,
                           uint32_t len) = 0;
