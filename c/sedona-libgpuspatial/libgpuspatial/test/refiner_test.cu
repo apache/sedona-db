@@ -92,8 +92,6 @@ void TestJoiner(ArrowSchema* build_schema, std::vector<ArrowArray*>& build_array
       // Copy the view to a buffer because WKBReader reads from istream or byte array
       // We can cast directly if the underlying type allows
       std::stringstream iss;
-      // WKBReader::readHEX parses hex strings, read parses raw bytes
-      // Arrow WKB is usually raw bytes (binary)
       auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb_view.data),
                                   wkb_view.size_bytes);
 
