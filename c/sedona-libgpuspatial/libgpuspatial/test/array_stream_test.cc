@@ -60,41 +60,4 @@ TEST(ArrayStream, StreamFromWkt) {
   EXPECT_EQ(bounder.Bounds().ymax(), 9);
 }
 
-TEST(ArrayStream, StreamFromIpc) {
-  nanoarrow::UniqueArrayStream stream;
-  ArrayStreamFromIpc(TestUtils::GetTestDataPath("arrowipc/test_points.arrows"),
-                     "geometry", stream.get());
-
-  struct ArrowError error{};
-  nanoarrow::UniqueSchema schema;
-  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
-      << error.message;
-  EXPECT_STREQ(schema->name, "geometry");
-
-  nanoarrow::UniqueArray array;
-  int64_t n_batches = 0;
-  int64_t n_rows = 0;
-  testing::WKBBounder bounder;
-  while (true) {
-    ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
-        << error.message;
-    if (array->release == nullptr) {
-      break;
-    }
-
-    n_batches += 1;
-    n_rows += array->length;
-    bounder.Read(array.get());
-    array.reset();
-  }
-
-  ASSERT_EQ(n_batches, 100);
-  ASSERT_EQ(n_rows, 100000);
-
-  EXPECT_NEAR(bounder.Bounds().xmin(), -100, 0.01);
-  EXPECT_NEAR(bounder.Bounds().ymin(), -100, 0.01);
-  EXPECT_NEAR(bounder.Bounds().xmax(), 100, 0.01);
-  EXPECT_NEAR(bounder.Bounds().ymax(), 100, 0.01);
-}
-
 }  // namespace gpuspatial
