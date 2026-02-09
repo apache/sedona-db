@@ -276,7 +276,7 @@ impl BoundingBoxSamples {
 mod tests {
     use super::*;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use sedona_geometry::interval::IntervalTrait;
     use std::mem::size_of;
 

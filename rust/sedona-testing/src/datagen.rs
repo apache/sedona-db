@@ -32,7 +32,7 @@ use geo_types::{
     Coord, Geometry, GeometryCollection, LineString, MultiLineString, MultiPoint, MultiPolygon,
     Point, Polygon, Rect,
 };
-use rand::{distr::Uniform, rngs::StdRng, Rng, SeedableRng};
+use rand::{distr::Uniform, rngs::StdRng, Rng, RngExt, SeedableRng};
 use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
