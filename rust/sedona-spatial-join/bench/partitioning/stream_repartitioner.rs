@@ -31,7 +31,7 @@ use datafusion::config::SpillCompression;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use futures::executor::block_on;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait, wkb_factory::wkb_point};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use sedona_spatial_join::evaluated_batch::{
@@ -133,7 +133,7 @@ fn random_evaluated_batch(
     EvaluatedBatch { batch, geom_array }
 }
 
-fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut StdRng) -> RecordBatch {
+fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut impl RngExt) -> RecordBatch {
     let ids = Int64Array::from_iter_values((0..rows).map(|_| rng.random_range(0..1_000_000_i64)));
     let words = StringArray::from_iter_values((0..rows).map(|_| random_string(rng)));
     let dates = Date32Array::from_iter_values((0..rows).map(|_| rng.random_range(18_000..20_000)));
@@ -151,7 +151,7 @@ fn random_record_batch(schema: Arc<Schema>, rows: usize, rng: &mut StdRng) -> Re
     RecordBatch::try_new(schema, columns).expect("record batch assembly should succeed")
 }
 
-fn random_geometry_array(rows: usize, extent: &BoundingBox, rng: &mut StdRng) -> ArrayRef {
+fn random_geometry_array(rows: usize, extent: &BoundingBox, rng: &mut impl RngExt) -> ArrayRef {
     let wkbs: Vec<Vec<u8>> = (0..rows)
         .map(|_| {
             let x = rng.random_range(extent.x().lo()..=extent.x().hi());
@@ -164,7 +164,7 @@ fn random_geometry_array(rows: usize, extent: &BoundingBox, rng: &mut StdRng) ->
     Arc::new(binary)
 }
 
-fn random_string(rng: &mut StdRng) -> String {
+fn random_string(rng: &mut impl RngExt) -> String {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let mut buf = [0u8; 8];
     for slot in &mut buf {
@@ -204,7 +204,7 @@ fn build_partitioner(extent: &BoundingBox) -> Arc<dyn SpatialPartitioner + Send 
     Arc::new(partitioner)
 }
 
-fn random_bbox(extent: &BoundingBox, rng: &mut StdRng) -> BoundingBox {
+fn random_bbox(extent: &BoundingBox, rng: &mut impl RngExt) -> BoundingBox {
     let span_x = (extent.x().hi() - extent.x().lo()) / 20.0;
     let span_y = (extent.y().hi() - extent.y().lo()) / 20.0;
     let width = rng.random_range(10.0..=span_x).max(1.0);
