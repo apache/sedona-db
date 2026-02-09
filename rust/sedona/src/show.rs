@@ -92,6 +92,12 @@ pub struct DisplayTableOptions<'a> {
     pub display_mode: DisplayMode,
 }
 
+/// Arithmetic here uses saturating_add to avoid panics for overflow; however,
+/// comfy table doesn't usually use this and if we actually max out any values
+/// we pass to it we may end up causing a panic. We use a conservative value
+/// of 32,000 characters, which should be enough for just about anybody.
+const WIDTH_MAX: u16 = u16::MAX / 2;
+
 impl DisplayTableOptions<'static> {
     /// Create new options for a non-interactive context
     pub fn new() -> Self {
@@ -248,7 +254,7 @@ impl<'a> DisplayTable<'a> {
     pub fn write<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
         let mut table = Table::new();
         table.set_content_arrangement(ContentArrangement::Dynamic);
-        table.set_width(self.options.table_width);
+        table.set_width(self.options.table_width.min(WIDTH_MAX));
 
         match self.options.display_mode {
             DisplayMode::ASCII => {
@@ -317,29 +323,32 @@ impl<'a> DisplayTable<'a> {
     /// number of characters in other columns (based on user options).
     fn minimum_width(&self) -> Result<u16> {
         // Leftmost border
-        let mut total_size = 1;
-        let mut hidden_count = 0;
+        let mut total_size: u16 = 1;
+        let mut hidden_count: u16 = 0;
 
         for col in &self.columns {
             // Padding on both sides plus separator
-            total_size += 3;
+            total_size = total_size.saturating_add(3);
             match col.constraint(&self.options)? {
-                ColumnConstraint::Hidden => hidden_count += 1,
-                ColumnConstraint::Absolute(Width::Fixed(width)) => total_size += width,
-                ColumnConstraint::LowerBoundary(Width::Fixed(width)) => total_size += width,
-                _ => {
-                    total_size += 0;
+                ColumnConstraint::Hidden => hidden_count = hidden_count.saturating_add(1),
+                ColumnConstraint::Absolute(Width::Fixed(width)) => {
+                    total_size = total_size.saturating_add(width)
                 }
+                ColumnConstraint::LowerBoundary(Width::Fixed(width)) => {
+                    total_size = total_size.saturating_add(width)
+                }
+                _ => {}
             }
         }
 
         if hidden_count > 0 {
             // Exactly one padding + separator + truncation indicator
-            total_size += 3 + self
-                .truncation_indicator()
-                .len()
-                .try_into()
-                .unwrap_or(u16::MAX);
+            total_size = total_size.saturating_add(3).saturating_add(
+                self.truncation_indicator()
+                    .len()
+                    .try_into()
+                    .unwrap_or(u16::MAX),
+            );
         }
 
         Ok(total_size)
@@ -432,11 +441,14 @@ impl DisplayColumn {
         let is_numeric = ArgMatcher::is_numeric();
         if is_numeric.match_type(&self.sedona_type) {
             Ok(ColumnConstraint::LowerBoundary(Width::Fixed(
-                content_width + padding_width,
+                content_width.saturating_add(padding_width).min(WIDTH_MAX),
             )))
         } else {
             Ok(ColumnConstraint::LowerBoundary(Width::Fixed(
-                options.min_column_width.min(total_width + padding_width),
+                options
+                    .min_column_width
+                    .min(total_width.saturating_add(padding_width))
+                    .min(WIDTH_MAX),
             )))
         }
     }
@@ -522,7 +534,12 @@ impl DisplayColumn {
     /// Create a cell for this column. This is where alignment for numeric
     /// output is applied.
     fn cell<T: ToString>(&self, content: T) -> Cell {
-        let cell = Cell::new(content).set_delimiter('\0');
+        // Never return content longer than WIDTH_MAX because comfy table may
+        // do arithmetic with it without checking for overflow.
+        let content_str = content.to_string();
+        let content_safe: String = content_str.chars().take(WIDTH_MAX as usize).collect();
+
+        let cell = Cell::new(content_safe).set_delimiter('\0');
         let is_numeric = ArgMatcher::is_numeric();
         if is_numeric.match_type(&self.sedona_type) {
             cell.set_alignment(CellAlignment::Right)
@@ -693,6 +710,45 @@ mod test {
                 "+-------------------------+",
                 "|               123456789 |",
                 "+-------------------------+"
+            ]
+        );
+    }
+
+    #[test]
+    fn render_content_longer_than_u16_max() {
+        let options = DisplayTableOptions::new();
+
+        let short_chars: ArrayRef =
+            arrow_array::create_array!(Utf8, [Some("abcd"), Some("efgh"), None]);
+
+        let really_long_string = "a".repeat(u16::MAX as usize + 1);
+        let long_chars: ArrayRef = arrow_array::create_array!(
+            Utf8,
+            [
+                Some("you see, what happened was"),
+                Some(&really_long_string),
+                None
+            ]
+        );
+
+        let cols = vec![
+            ("shrt", (SedonaType::Arrow(DataType::Utf8), short_chars)),
+            (
+                "exceedingly_long",
+                (SedonaType::Arrow(DataType::Utf8), long_chars),
+            ),
+        ];
+
+        assert_eq!(
+            render_cols(cols, options.clone()),
+            vec![
+                "+------+-------------------------------------------------------------------------------------------+",
+                "| shrt |                                      exceedingly_long                                     |",
+                "+------+-------------------------------------------------------------------------------------------+",
+                "| abcd | you see, what happened was                                                                |",
+                "| efgh | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... |",
+                "|      |                                                                                           |",
+                "+------+-------------------------------------------------------------------------------------------+"
             ]
         );
     }
