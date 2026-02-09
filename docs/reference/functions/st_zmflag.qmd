@@ -34,16 +34,26 @@ Returns a code indicating the coordinate dimension:
 
 ## Examples
 
+2D (XY) returns 0:
+
 ```sql
 SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING(1 2, 3 4)'));
--- Returns: 0
+```
 
-SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRINGM(1 2 3, 3 4 3)'));
--- Returns: 1
+3D with M coordinate (XYM) returns 1:
 
-SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING(1 2 3, 3 4 5)'));
--- Returns: 2
+```sql
+SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING M(1 2 3, 3 4 3)'));
+```
 
-SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING(1 2 3 4, 3 4 5 6)'));
--- Returns: 3
+3D with Z coordinate (XYZ) returns 2:
+
+```sql
+SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING Z(1 2 3, 3 4 5)'));
+```
+
+4D (XYZM) returns 3:
+
+```sql
+SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING ZM(1 2 3 4, 3 4 5 6)'));
 ```
