@@ -34,4 +34,3 @@ kernels:
 ```sql
 SELECT ST_PointZ(-64.36, 45.09, 10.5);
 ```
-

@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_MMax(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
-

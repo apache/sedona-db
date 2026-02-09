@@ -35,4 +35,3 @@ SELECT ST_LineLocatePoint(
     ST_GeogFromText('POINT(0 2)')
 );
 ```
-

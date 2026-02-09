@@ -42,4 +42,3 @@ This is different from ST_Transform which actually transforms coordinates.
 ```sql
 SELECT ST_SetCRS(ST_Point(-122.35, 47.65), 'EPSG:4269');
 ```
-

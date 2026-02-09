@@ -47,4 +47,3 @@ SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING(1 2 3, 3 4 5)'));
 SELECT ST_Zmflag(ST_GeomFromWKT('LINESTRING(1 2 3 4, 3 4 5 6)'));
 -- Returns: 3
 ```
-

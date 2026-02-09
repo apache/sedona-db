@@ -32,4 +32,3 @@ Returns the length of geom. This function only supports LineString, MultiLineStr
 ```sql
 SELECT ST_Length(ST_GeomFromWKT('LINESTRING(0 0, 10 0)'));
 ```
-

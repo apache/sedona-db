@@ -34,4 +34,3 @@ kernels:
 ```sql
 SELECT * FROM table1 a JOIN table2 b ON ST_KNN(a.geom, b.geom, 5, false);
 ```
-

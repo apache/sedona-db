@@ -35,4 +35,3 @@ Sets the SRID (spatial reference system identifier) of the geometry. This is met
 ```sql
 SELECT ST_SetSRID(ST_Point(-122.35, 47.65), 4326);
 ```
-

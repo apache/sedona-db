@@ -32,4 +32,3 @@ Returns the number of Geometries. If geometry is a GEOMETRYCOLLECTION (or MULTI*
 ```sql
 SELECT ST_NumGeometries(ST_GeomFromWKT('LINESTRING (-29 -27, -30 -29.7, -45 -33)'));
 ```
-

@@ -31,4 +31,3 @@ SELECT ST_Contains(
     ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
 ) AS val;
 ```
-

@@ -34,4 +34,3 @@ SELECT ST_Polygonize_Agg(geom) FROM (
     ST_GeomFromText('LINESTRING (10 0, 0 0)')
 ) AS t(geom);
 ```
-

@@ -32,4 +32,3 @@ Returns a single geometry which is the union of all components of the input geom
 ```sql
 SELECT ST_UnaryUnion(ST_GeomFromWKT('MULTIPOLYGON(((0 0, 10 0, 10 10, 0 10, 0 0)), ((10 0, 20 0, 20 10, 10 10, 10 0)))'));
 ```
-

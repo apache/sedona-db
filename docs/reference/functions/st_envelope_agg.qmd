@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_Envelope_Agg(ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
 ```
-

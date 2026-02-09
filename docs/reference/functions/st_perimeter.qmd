@@ -32,4 +32,3 @@ This function calculates the 2D perimeter of a given geometry. It supports Polyg
 ```sql
 SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
 ```
-

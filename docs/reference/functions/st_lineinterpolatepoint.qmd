@@ -35,4 +35,3 @@ Returns a point interpolated along a line. First argument must be a LINESTRING. 
 ```sql
 SELECT ST_LineInterpolatePoint(ST_GeomFromWKT('LINESTRING(25 50, 100 125, 150 190)'), 0.2);
 ```
-

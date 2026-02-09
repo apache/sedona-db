@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_Y(ST_Point(-74.0060, 40.7128));
 ```
-

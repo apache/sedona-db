@@ -40,4 +40,3 @@ SELECT ST_Snap(
     0.2
 );
 ```
-

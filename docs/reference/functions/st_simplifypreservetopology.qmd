@@ -38,4 +38,3 @@ SELECT ST_SimplifyPreserveTopology(
     10
 );
 ```
-

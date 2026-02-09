@@ -30,4 +30,3 @@ kernels:
 ```sql
 SELECT ST_AsText(ST_GeomFromWKT('POINT (30 10)'));
 ```
-

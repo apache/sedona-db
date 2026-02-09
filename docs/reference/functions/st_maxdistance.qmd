@@ -31,4 +31,3 @@ SELECT ST_MaxDistance(
     ST_GeogFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
 ) AS val;
 ```
-

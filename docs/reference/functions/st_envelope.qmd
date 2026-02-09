@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_Envelope(ST_Point(1.0, 2.0));
 ```
-

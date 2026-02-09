@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_CoveredBy(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
-

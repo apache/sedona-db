@@ -34,4 +34,3 @@ SELECT ST_MinimumClearanceLine(
   ST_GeomFromWKT('POLYGON ((65 18, 62 16, 64.5 16, 62 14, 65 14, 65 18))')
 );
 ```
-

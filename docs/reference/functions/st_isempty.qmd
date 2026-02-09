@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'));
 ```
-

@@ -35,4 +35,3 @@ FROM (
     SELECT ST_Point(-122.6765, 45.5231)           -- Portland
 ) as cities;
 ```
-

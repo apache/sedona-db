@@ -32,4 +32,3 @@ If the geometry is simple it returns the geometry itself, if the geometry is col
 ```sql
 SELECT ST_Dump(ST_GeomFromText('MULTIPOINT ((10 40), (40 30), (20 20), (30 10))'));
 ```
-

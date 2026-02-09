@@ -32,4 +32,3 @@ kernels:
 ```sql
 SELECT ST_GeogPoint(10, 10), ST_GeogPoint(0, 0);
 ```
-

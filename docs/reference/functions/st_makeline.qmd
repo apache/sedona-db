@@ -32,4 +32,3 @@ Creates a `LineString` from two or more input `Point`, `MultiPoint`, or `LineStr
 ```sql
 SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom;
 ```
-

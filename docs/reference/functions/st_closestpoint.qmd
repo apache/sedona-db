@@ -33,4 +33,3 @@ SELECT ST_AsText(
   )
 ) As ptwkt;
 ```
-

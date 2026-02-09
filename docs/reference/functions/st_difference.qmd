@@ -31,4 +31,3 @@ SELECT ST_Difference(
     ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
 ) AS val;
 ```
-

@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_SRID(ST_SetSRID(ST_Point(-122.35, 47.65), 4326));
 ```
-

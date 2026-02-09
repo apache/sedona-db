@@ -41,4 +41,3 @@ SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT(0 0), (6 6)'));
 ```sql
 SELECT ST_IsCollection(ST_GeomFromText('POINT(5 5)'));
 ```
-

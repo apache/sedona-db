@@ -32,4 +32,3 @@ Returns a MultiPoint geometry consisting of all the coordinates of the input geo
 ```sql
 SELECT ST_AsText(ST_Points(ST_GeomFromText('LINESTRING (2 4, 3 3, 4 2, 7 3)')));
 ```
-

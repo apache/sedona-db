@@ -37,4 +37,3 @@ Collapsed geometries are either converted to empty (keepCollapsed=false) or a va
 ```sql
 SELECT ST_MakeValid(ST_GeomFromWKT('LINESTRING(1 1, 1 1)'));
 ```
-

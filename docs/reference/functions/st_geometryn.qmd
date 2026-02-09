@@ -31,4 +31,3 @@ kernels:
 ```sql
 SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1);
 ```
-

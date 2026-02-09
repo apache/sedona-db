@@ -44,4 +44,3 @@ When a 3 arguments are provided, a source_crs can be used to specify the source 
 ```sql
 SELECT ST_Transform(ST_SetCRS(ST_Point(-122.35, 47.65), 'EPSG:4326'), 'EPSG:26910');
 ```
-

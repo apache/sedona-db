@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_CRS(ST_Point(0.25, 0.25, 4326)) as crs_info;
 ```
-

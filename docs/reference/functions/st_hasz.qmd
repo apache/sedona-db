@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
-

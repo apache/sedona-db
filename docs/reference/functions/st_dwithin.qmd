@@ -36,4 +36,3 @@ SELECT ST_DWithin(
   0.5
 );
 ```
-
