@@ -29,7 +29,7 @@ use arrow::datatypes::{DataType, Field, Float64Type, Schema, SchemaRef, UInt64Ty
 use arrow_array::ArrayRef;
 use arrow_schema::Fields;
 use datafusion::config::SpillCompression;
-use datafusion_common::{arrow_datafusion_err, DataFusionError, Result};
+use datafusion_common::Result;
 use datafusion_execution::disk_manager::RefCountedTempFile;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::SpillMetrics;
@@ -178,8 +178,7 @@ impl UnprocessedKNNResultBatch {
     /// Merge the current [UnprocessedKNNResultBatch] with another one, producing a new
     /// [UnprocessedKNNResultBatch].
     fn merge(self, other: Self) -> Result<Self> {
-        let concat_array =
-            concat(&[&self.row_array, &other.row_array]).map_err(|e| arrow_datafusion_err!(e))?;
+        let concat_array = concat(&[&self.row_array, &other.row_array])?;
         let mut probe_indices = self.probe_indices;
         probe_indices.extend(other.probe_indices);
         let mut distances = self.distances;
@@ -238,29 +237,6 @@ impl KNNResultArray {
         assert_eq!(unfiltered_probe_indices.len(), unfiltered_distances.len());
         assert!(probe_indices.len() <= unfiltered_probe_indices.len());
 
-        let compute_range_encoding = |mut indices: Vec<usize>| {
-            let mut offsets = Vec::with_capacity(indices.len() + 1);
-            offsets.push(0);
-            if indices.is_empty() {
-                return (offsets, Vec::new());
-            }
-
-            let mut prev = indices[0];
-            let mut pos = 1;
-            for i in 1..indices.len() {
-                if indices[i] != prev {
-                    assert!(indices[i] > prev, "indices must be non-decreasing");
-                    offsets.push(i);
-                    indices[pos] = indices[i];
-                    pos += 1;
-                }
-                prev = indices[i];
-            }
-            offsets.push(indices.len());
-            indices.truncate(pos);
-            (offsets, indices)
-        };
-
         let (offsets, indices) = compute_range_encoding(probe_indices);
         let (unfiltered_offsets, unfiltered_indices) =
             compute_range_encoding(unfiltered_probe_indices);
@@ -291,6 +267,39 @@ impl KNNResultArray {
             unfiltered_offsets,
         }
     }
+}
+
+/// Compute range-encoding offsets and unique indices for a non-decreasing index list.
+///
+/// This collapses repeated indices while producing offsets that mark the contiguous
+/// ranges for each unique index. The returned offsets always have length
+/// `unique_indices.len() + 1`.
+///
+/// Example:
+/// - Input indices: `[0, 0, 2, 2, 2, 5]`
+/// - Output offsets: `[0, 2, 5, 6]`
+/// - Output unique indices: `[0, 2, 5]`
+fn compute_range_encoding(mut indices: Vec<usize>) -> (Vec<usize>, Vec<usize>) {
+    let mut offsets = Vec::with_capacity(indices.len() + 1);
+    offsets.push(0);
+    if indices.is_empty() {
+        return (offsets, Vec::new());
+    }
+
+    let mut prev = indices[0];
+    let mut pos = 1;
+    for i in 1..indices.len() {
+        if indices[i] != prev {
+            assert!(indices[i] > prev, "indices must be non-decreasing");
+            offsets.push(i);
+            indices[pos] = indices[i];
+            pos += 1;
+        }
+        prev = indices[i];
+    }
+    offsets.push(indices.len());
+    indices.truncate(pos);
+    (offsets, indices)
 }
 
 /// KNNProbeResult represents a unified view for the KNN results for a single probe row.
@@ -679,7 +688,7 @@ impl KNNResultsMerger {
             prev_result_opt = Some(result);
         }
 
-        // Assembled this batch. Write to spill file or produce output batch.
+        // Assemble this batch. Write to spill file or produce output batch.
         let result_batch_opt = self.flush_merged_batch(Some(&knn_result_array))?;
 
         // Prepare for ingesting the next batch
@@ -736,8 +745,7 @@ impl KNNResultsMerger {
             (None, None) => Ok(None),
             (Some(tail_batch), Some(spilled_batch)) => {
                 let result_batch =
-                    concat_batches(tail_batch.schema_ref(), [&tail_batch, &spilled_batch])
-                        .map_err(|e| arrow_datafusion_err!(e))?;
+                    concat_batches(tail_batch.schema_ref(), [&tail_batch, &spilled_batch])?;
                 Ok(Some(result_batch))
             }
         }
@@ -1111,26 +1119,11 @@ impl KNNResultBatchBuilder {
 
         // Reset builders for building columns required by spilled batches. Building these columns seems to be wasted work
         // when we only need to produce result batches, but it simplifies the code significantly and the performance impact is minimal.
-        let _ = std::mem::replace(
-            &mut self.index_array_builder,
-            UInt64Array::builder(self.capacity),
-        );
-        let _ = std::mem::replace(
-            &mut self.dist_array_builder,
-            Float64Array::builder(self.capacity),
-        );
-        let _ = std::mem::replace(
-            &mut self.row_array_offsets_builder,
-            OffsetBufferBuilder::<i32>::new(self.capacity),
-        );
-        let _ = std::mem::replace(
-            &mut self.unfiltered_dist_array_builder,
-            Float64Array::builder(self.capacity),
-        );
-        let _ = std::mem::replace(
-            &mut self.unfiltered_dist_offsets_builder,
-            OffsetBufferBuilder::<i32>::new(self.capacity),
-        );
+        self.index_array_builder = UInt64Array::builder(self.capacity);
+        self.dist_array_builder = Float64Array::builder(self.capacity);
+        self.row_array_offsets_builder = OffsetBufferBuilder::<i32>::new(self.capacity);
+        self.unfiltered_dist_array_builder = Float64Array::builder(self.capacity);
+        self.unfiltered_dist_offsets_builder = OffsetBufferBuilder::<i32>::new(self.capacity);
 
         // Build rows StructArray based on rows_selector
         if self.rows_selector.is_empty() {
@@ -1211,7 +1204,7 @@ fn interleave_spill_and_ingested_rows(
     if let Some(ingested_results) = ingested_results {
         results_arrays.push(ingested_results);
     }
-    let rows_array = interleave(&results_arrays, &indices).map_err(|e| arrow_datafusion_err!(e))?;
+    let rows_array = interleave(&results_arrays, &indices)?;
     Ok(rows_array)
 }
 
@@ -2055,8 +2048,7 @@ mod test {
             query_group_size,
             target_batch_size,
         )?;
-        let batch = concat_batches(&test_data_schema, batches.iter())
-            .map_err(|e| arrow_datafusion_err!(e))?;
+        let batch = concat_batches(&test_data_schema, batches.iter())?;
         assert_merged_knn_result_is_correct(&batch, partitioned_test_data, k, include_tie_breaker);
         Ok(())
     }
@@ -2080,15 +2072,15 @@ mod test {
         .unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_empty_query_side() {
-        let mut rng = StdRng::seed_from_u64(42);
+    #[rstest]
+    fn test_knn_results_merger_empty_query_side(#[values(1, 2, 3)] random_seed: u64) {
+        let mut rng = StdRng::seed_from_u64(random_seed);
         fuzz_test_knn_results_merger(&mut rng, 0, 3, 1.0, 10, false, 100, 33).unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_all_filtered() {
-        let mut rng = StdRng::seed_from_u64(42);
+    #[rstest]
+    fn test_knn_results_merger_all_filtered(#[values(1, 2, 3)] random_seed: u64) {
+        let mut rng = StdRng::seed_from_u64(random_seed);
         fuzz_test_knn_results_merger(&mut rng, 100, 3, 0.0, 10, false, 50, 33).unwrap();
     }
 
@@ -2130,14 +2122,14 @@ mod test {
         .unwrap();
     }
 
-    #[test]
-    fn test_knn_result_merger_with_empty_partitions() {
+    #[rstest]
+    fn test_knn_result_merger_with_empty_partitions(#[values(1, 2, 3)] random_seed: u64) {
         let k = 5;
         let include_tie_breaker = false;
         let num_rows = 100;
         let num_partitions = 3;
         let kept_prob = 0.5;
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRng::seed_from_u64(random_seed);
 
         let test_data = create_fuzz_test_data(k, num_rows, kept_prob, &mut rng);
         let partitioned_test_data =

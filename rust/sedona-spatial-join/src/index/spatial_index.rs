@@ -211,30 +211,12 @@ impl SpatialIndex {
     /// * `use_spheroid` - Whether to use spheroid distance calculation
     /// * `include_tie_breakers` - Whether to include additional results with same distance as kth neighbor
     /// * `build_batch_positions` - Output vector for matched positions
+    /// * `distances` - Optional output vector for distances to matched neighbors, aligned with `build_batch_positions`
     ///
     /// # Returns
     ///
     /// * `JoinResultMetrics` containing the number of actual matches and candidates processed
-    #[allow(unused)]
     pub(crate) fn query_knn(
-        &self,
-        probe_wkb: &Wkb,
-        k: u32,
-        use_spheroid: bool,
-        include_tie_breakers: bool,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        self.query_knn_with_distance(
-            probe_wkb,
-            k,
-            use_spheroid,
-            include_tie_breakers,
-            build_batch_positions,
-            None,
-        )
-    }
-
-    pub(crate) fn query_knn_with_distance(
         &self,
         probe_wkb: &Wkb,
         k: u32,
@@ -860,6 +842,7 @@ mod tests {
 
         // Test KNN query with k=3
         let mut build_positions = Vec::new();
+        let mut distances = Vec::new();
         let result = index
             .query_knn(
                 query_wkb,
@@ -867,6 +850,7 @@ mod tests {
                 false, // use_spheroid=false
                 false, // include_tie_breakers=false
                 &mut build_positions,
+                Some(&mut distances),
             )
             .unwrap();
 
@@ -874,6 +858,8 @@ mod tests {
         assert_eq!(build_positions.len(), 3);
         assert_eq!(result.count, 3);
         assert!(result.candidate_count >= 3);
+        assert_eq!(distances.len(), build_positions.len());
+        assert!(distances.iter().all(|dist| dist.is_finite()));
 
         // Create a mapping of positions to verify correct ordering
         // We expect the 3 closest points: (1,0), (1,1), (0,2)
@@ -960,14 +946,24 @@ mod tests {
         // Test different k values
         for k in [1, 3, 5, 7, 10] {
             let mut build_positions = Vec::new();
+            let mut distances = Vec::new();
             let result = index
-                .query_knn(query_wkb, k, false, false, &mut build_positions)
+                .query_knn(
+                    query_wkb,
+                    k,
+                    false,
+                    false,
+                    &mut build_positions,
+                    Some(&mut distances),
+                )
                 .unwrap();
 
             // Verify we got exactly k results (or all available if k > total)
             let expected_results = std::cmp::min(k as usize, 10);
             assert_eq!(build_positions.len(), expected_results);
             assert_eq!(result.count, expected_results);
+            assert_eq!(distances.len(), expected_results);
+            assert!(distances.iter().all(|dist| dist.is_finite()));
 
             // Verify the results are the k closest points
             let mut row_indices: Vec<usize> = build_positions
@@ -1050,6 +1046,7 @@ mod tests {
                 false, // use_spheroid=false (only supported option)
                 false,
                 &mut build_positions,
+                None,
             )
             .unwrap();
 
@@ -1060,12 +1057,14 @@ mod tests {
 
         // Test that spheroid distance now works with Haversine metric
         let mut build_positions_spheroid = Vec::new();
+        let mut spheroid_distances = Vec::new();
         let result_spheroid = index.query_knn(
             query_wkb,
             3,    // k=3
             true, // use_spheroid=true (now supported with Haversine)
             false,
             &mut build_positions_spheroid,
+            Some(&mut spheroid_distances),
         );
 
         // Should succeed and return results
@@ -1074,6 +1073,8 @@ mod tests {
         assert!(!build_positions_spheroid.is_empty());
         assert!(result_spheroid.count >= 1);
         assert!(result_spheroid.candidate_count >= 1);
+        assert_eq!(spheroid_distances.len(), build_positions_spheroid.len());
+        assert!(spheroid_distances.iter().all(|dist| dist.is_finite()));
     }
 
     #[test]
@@ -1143,6 +1144,7 @@ mod tests {
                 false,
                 false,
                 &mut build_positions,
+                None,
             )
             .unwrap();
 
@@ -1152,6 +1154,7 @@ mod tests {
 
         // Test k > available geometries
         let mut build_positions = Vec::new();
+        let mut distances = Vec::new();
         let result = index
             .query_knn(
                 query_wkb,
@@ -1159,12 +1162,15 @@ mod tests {
                 false,
                 false,
                 &mut build_positions,
+                Some(&mut distances),
             )
             .unwrap();
 
         // Should return all available valid geometries (excluding NULL)
         assert_eq!(build_positions.len(), 3);
         assert_eq!(result.count, 3);
+        assert_eq!(distances.len(), build_positions.len());
+        assert!(distances.iter().all(|dist| dist.is_finite()));
     }
 
     #[test]
@@ -1203,14 +1209,23 @@ mod tests {
         let query_wkb = &query_array.wkbs()[0].as_ref().unwrap();
 
         let mut build_positions = Vec::new();
+        let mut distances = Vec::new();
         let result = index
-            .query_knn(query_wkb, 5, false, false, &mut build_positions)
+            .query_knn(
+                query_wkb,
+                5,
+                false,
+                false,
+                &mut build_positions,
+                Some(&mut distances),
+            )
             .unwrap();
 
         // Should return no results for empty index
         assert_eq!(build_positions.len(), 0);
         assert_eq!(result.count, 0);
         assert_eq!(result.candidate_count, 0);
+        assert_eq!(distances.len(), 0);
     }
 
     #[test]
@@ -1286,6 +1301,7 @@ mod tests {
                 false, // use_spheroid
                 false, // include_tie_breakers
                 &mut build_positions,
+                None,
             )
             .unwrap();
 
@@ -1295,6 +1311,7 @@ mod tests {
 
         // Test with tie-breakers: should return k=2 plus all ties
         let mut build_positions_with_ties = Vec::new();
+        let mut tie_distances = Vec::new();
         let result_with_ties = index
             .query_knn(
                 query_wkb,
@@ -1302,6 +1319,7 @@ mod tests {
                 false, // use_spheroid
                 true,  // include_tie_breakers
                 &mut build_positions_with_ties,
+                Some(&mut tie_distances),
             )
             .unwrap();
 
@@ -1324,6 +1342,8 @@ mod tests {
             "With tie-breakers should return all 4 tied points"
         );
         assert_eq!(build_positions_with_ties.len(), 4);
+        assert_eq!(tie_distances.len(), build_positions_with_ties.len());
+        assert!(tie_distances.iter().all(|dist| dist.is_finite()));
     }
 
     #[test]
@@ -1391,6 +1411,7 @@ mod tests {
 
         // Test the geometry-based query_knn method with k=3
         let mut build_positions = Vec::new();
+        let mut distances = Vec::new();
         let result = index
             .query_knn(
                 query_wkb,
@@ -1398,6 +1419,7 @@ mod tests {
                 false, // use_spheroid=false
                 false, // include_tie_breakers=false
                 &mut build_positions,
+                Some(&mut distances),
             )
             .unwrap();
 
@@ -1406,6 +1428,8 @@ mod tests {
         assert!(build_positions.len() <= 3);
         assert!(result.count > 0);
         assert!(result.count <= 3);
+        assert_eq!(distances.len(), build_positions.len());
+        assert!(distances.iter().all(|dist| dist.is_finite()));
     }
 
     #[test]
@@ -1479,6 +1503,7 @@ mod tests {
                 false, // use_spheroid=false
                 false, // include_tie_breakers=false
                 &mut build_positions,
+                None,
             )
             .unwrap();
 
@@ -1560,6 +1585,7 @@ mod tests {
                 false, // use_spheroid
                 false, // include_tie_breakers=false
                 &mut build_positions,
+                None,
             )
             .unwrap();
 
@@ -1569,6 +1595,7 @@ mod tests {
 
         // Test with tie-breakers: should return all tied points
         let mut build_positions_with_ties = Vec::new();
+        let mut tie_distances = Vec::new();
         let result_with_ties = index
             .query_knn(
                 query_wkb,
@@ -1576,11 +1603,14 @@ mod tests {
                 false, // use_spheroid
                 true,  // include_tie_breakers=true
                 &mut build_positions_with_ties,
+                Some(&mut tie_distances),
             )
             .unwrap();
 
         // Should return 4 results because of ties (all 4 points at distance sqrt(2))
         assert!(result_with_ties.count == 4);
+        assert_eq!(tie_distances.len(), build_positions_with_ties.len());
+        assert!(tie_distances.iter().all(|dist| dist.is_finite()));
 
         // Query using a box centered at the origin
         let query_geom = create_array(
@@ -1601,6 +1631,7 @@ mod tests {
                 false, // use_spheroid
                 true,  // include_tie_breakers=true
                 &mut build_positions_with_ties,
+                None,
             )
             .unwrap();
 
@@ -1666,6 +1697,7 @@ mod tests {
 
         // Query with the empty point
         let mut build_positions = Vec::new();
+        let mut distances = Vec::new();
         let result = index
             .query_knn(
                 &wkb::reader::read_wkb(&empty_point_wkb).unwrap(),
@@ -1673,6 +1705,7 @@ mod tests {
                 false, // use_spheroid
                 false, // include_tie_breakers
                 &mut build_positions,
+                Some(&mut distances),
             )
             .unwrap();
 
@@ -1680,6 +1713,7 @@ mod tests {
         assert_eq!(result.count, 0);
         assert_eq!(result.candidate_count, 0);
         assert!(build_positions.is_empty());
+        assert!(distances.is_empty());
     }
 
     async fn setup_index_for_batch_test(

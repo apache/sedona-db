@@ -1213,7 +1213,7 @@ impl SpatialJoinBatchIterator {
                 let use_spheroid = knn_predicate.use_spheroid;
                 let include_tie_breakers = self.options.knn_include_tie_breakers;
 
-                let join_result_metrics = self.spatial_index.query_knn_with_distance(
+                let join_result_metrics = self.spatial_index.query_knn(
                     wkb,
                     k,
                     use_spheroid,

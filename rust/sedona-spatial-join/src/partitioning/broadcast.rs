@@ -24,6 +24,8 @@ use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 /// A partitioner that assigns everything to the Multi partition.
 ///
 /// This partitioner is useful when we want to broadcast the data to all partitions.
+/// Currently it is used for KNN join where regular spatial partitioning is hard because
+/// it is hard to know in advance how far away a given number of neighbours will be to assign it.
 pub struct BroadcastPartitioner {
     num_partitions: usize,
 }
