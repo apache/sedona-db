@@ -20,7 +20,9 @@ title: ST_GeogFromWKB
 description: Construct a Geography from WKB Binary.
 kernels:
   - returns: geography
-    args: [binary]
+    args:
+    - name: wkb
+      type: binary
 ---
 
 ## Examples

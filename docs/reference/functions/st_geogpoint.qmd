@@ -20,7 +20,11 @@ title: ST_GeogPoint
 description: Creates a geography POINT from given longitude and latitude coordinates.
 kernels:
   - returns: geography
-    args: [double, double]
+    args:
+    - name: longitude
+      type: double
+    - name: latitude
+      type: double
 ---
 
 ## Examples

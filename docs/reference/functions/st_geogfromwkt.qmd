@@ -20,9 +20,15 @@ title: ST_GeogFromWKT
 description: Construct a Geography from WKT.
 kernels:
   - returns: geography
-    args: [string]
+    args:
+    - name: wkt
+      type: string
   - returns: geography
-    args: [string, integer]
+    args:
+    - name: wkt
+      type: string
+    - name: srid
+      type: integer
 ---
 
 ## Examples

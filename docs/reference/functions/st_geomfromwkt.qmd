@@ -20,7 +20,9 @@ title: ST_GeomFromWKT
 description: Construct a Geometry from WKT.
 kernels:
   - returns: geometry
-    args: [string]
+    args:
+    - name: wkt
+      type: string
 ---
 
 ## Examples

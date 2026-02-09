@@ -20,7 +20,9 @@ title: ST_GeomFromWKB
 description: Construct a Geometry from WKB.
 kernels:
   - returns: geometry
-    args: [binary]
+    args:
+    - name: wkb
+      type: binary
 ---
 
 ## Examples

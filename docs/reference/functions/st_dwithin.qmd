@@ -20,7 +20,11 @@ title: ST_DWithin
 description: Returns true if two geometries are within a specified distance of each other.
 kernels:
   - returns: boolean
-    args: [geometry, geometry, double]
+    args:
+    - geometry
+    - geometry
+    - name: distance
+      type: double
 ---
 
 ## Examples
