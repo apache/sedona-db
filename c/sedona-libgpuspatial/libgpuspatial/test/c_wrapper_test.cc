@@ -244,8 +244,7 @@ TEST_F(CWrapperTest, InitializeJoiner) {
 
     for (int64_t j = 0; j < probe_array->length; j++) {
       ArrowBufferView wkb = ArrowArrayViewGetBytesUnsafe(probe_view.get(), j);
-      auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb.data),
-                                  wkb.size_bytes);
+      auto geom = wkb_reader.read(wkb.data.as_uint8, wkb.size_bytes);
 
       const auto* env = geom->getEnvelopeInternal();
       double xmin = 0, ymin = 0, xmax = -1, ymax = -1;
