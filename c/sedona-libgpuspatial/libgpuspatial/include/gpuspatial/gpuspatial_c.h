@@ -179,8 +179,12 @@ struct SedonaSpatialRefiner {
    * @param probe_schema The Arrow schema of the probe geometries
    * @param probe_array The Arrow array of the probe geometries
    * @param predicate The spatial relation predicate to evaluate
-   * @param build_indices The build indices of candidate pairs
-   * @param probe_indices The probe indices of candidate pairs
+   * @param build_indices An array of build-side indices corresponding to candidate pairs.
+   * This is a global index from 0 to N-1, where N is the total number of build geometries
+   * pushed.
+   * @param probe_indices An array of probe-side indices corresponding to candidate pairs.
+   * This is a local index from 0 to M - 1, where M is the number of geometries in the
+   * probe_array.
    * @param indices_size The number of candidate pairs
    * @param new_indices_size Output parameter to store the number of refined pairs
    * @return 0 on success, non-zero on failure
