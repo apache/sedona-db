@@ -140,7 +140,7 @@ class JoinVisitor : public geos::index::ItemVisitor {
   void visitItem(void* item) override {
     const auto* build_geom = static_cast<const geos::geom::Geometry*>(item);
 
-    // Use the existing predicate evaluator from your TestUtils
+    // Use the existing predicate evaluator from TestUtils
     if (EvaluateGeosPredicate(ctx->predicate, build_geom, ctx->probe_geom)) {
       size_t build_idx = (size_t)build_geom->getUserData();
 
