@@ -17,7 +17,7 @@
 
 //! Shared helpers for partitioner benchmarks.
 
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 
 pub const GRID_DIM: usize = 4; // 4x4 grid => 16 partitions like typical workloads
