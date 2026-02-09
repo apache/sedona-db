@@ -27,18 +27,20 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-use crate::executor::WkbExecutor;
+use crate::{executor::WkbExecutor, st_setsrid::SRIDifiedKernel};
 
 /// ST_GeomFromWKB() scalar UDF implementation
 ///
 /// An implementation of WKB reading using GeoRust's wkb crate.
 pub fn st_geomfromwkb_udf() -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeomFromWKB {
+        validate: true,
+        out_type: WKB_VIEW_GEOMETRY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
     SedonaScalarUDF::new(
         "st_geomfromwkb",
-        vec![Arc::new(STGeomFromWKB {
-            validate: true,
-            out_type: WKB_VIEW_GEOMETRY,
-        })],
+        vec![sridified_kernel, kernel],
         Volatility::Immutable,
         Some(doc("ST_GeomFromWKB", "Geometry")),
     )
@@ -155,14 +157,13 @@ impl SedonaScalarKernel for STGeomFromWKB {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{create_array, ArrayRef, BinaryArray, BinaryViewArray};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal},
-        create::create_array,
-        create::create_scalar,
+        create::{create_array, create_array_item_crs, create_array_storage, create_scalar},
         testers::ScalarUdfTester,
     };
 
@@ -304,6 +305,68 @@ mod tests {
                 &(Arc::new(expected_array) as ArrayRef),
             );
         }
+    }
+
+    #[test]
+    fn udf_invoke_with_array_crs() {
+        let udf = st_geomfromwkb_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                SedonaType::Arrow(DataType::Binary),
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+
+        let return_type = tester.return_type().unwrap();
+        assert_eq!(
+            return_type,
+            SedonaType::new_item_crs(&WKB_VIEW_GEOMETRY).unwrap()
+        );
+
+        let sedona_type = WKB_GEOMETRY;
+        let wkb_array = create_array_storage(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                Some("POINT (4 5)"),
+                Some("POINT (6 7)"),
+                None,
+            ],
+            &sedona_type,
+        );
+        let crs_array = create_array!(
+            Utf8,
+            [
+                Some("EPSG:4326"),
+                Some("EPSG:3857"),
+                Some("EPSG:3857"),
+                Some("0"),
+                None
+            ]
+        ) as ArrayRef;
+
+        let result = tester.invoke_arrays(vec![wkb_array, crs_array]).unwrap();
+        assert_eq!(
+            &result,
+            &create_array_item_crs(
+                &[
+                    Some("POINT (0 1)"),
+                    Some("POINT (2 3)"),
+                    Some("POINT (4 5)"),
+                    Some("POINT (6 7)"),
+                    None
+                ],
+                [
+                    Some("OGC:CRS84"),
+                    Some("EPSG:3857"),
+                    Some("EPSG:3857"),
+                    None,
+                    None
+                ],
+                &WKB_VIEW_GEOMETRY
+            )
+        );
     }
 
     #[test]
