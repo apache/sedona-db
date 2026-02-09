@@ -16,16 +16,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_Contains
+description: Return true if geomA contains geomB.
 kernels:
-  - returns: utf8
-    args: [geometry]
+  - returns: boolean
+    args: [geometry, geometry]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_Contains(
+    ST_Point(0.25, 0.25),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
 ```
 

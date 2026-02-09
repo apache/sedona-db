@@ -16,8 +16,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_CRS
+description: Returns the Coordinate Reference System (CRS) metadata associated with a geometry or geography object.
 kernels:
   - returns: utf8
     args: [geometry]
@@ -26,6 +26,6 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_CRS(ST_Point(0.25, 0.25, 4326)) as crs_info;
 ```
 

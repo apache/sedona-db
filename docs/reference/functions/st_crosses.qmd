@@ -16,16 +16,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_Crosses
+description: Return true if A crosses B.
 kernels:
-  - returns: utf8
-    args: [geometry]
+  - returns: boolean
+    args: [geometry, geometry]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_Crosses(ST_GeomFromWKT('POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))'),ST_GeomFromWKT('POLYGON((2 2, 5 2, 5 5, 2 5, 2 2))'));
 ```
 

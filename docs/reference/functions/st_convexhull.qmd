@@ -16,16 +16,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_ConvexHull
+description: Return the Convex Hull of polygon A.
 kernels:
-  - returns: utf8
+  - returns: geometry
     args: [geometry]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_ConvexHull(ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))'));
 ```
 
