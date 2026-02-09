@@ -18,111 +18,332 @@
 */
 
 /* ==========================================================================
-   Global Color and Font Variables
+   Variables (from _vars.scss)
    ========================================================================== */
 :root {
   --color-red: #CA463A;
+  --color-red-hover: #EA5547;
   --color-white: #fff;
   --color-dark: #1C1C1C;
-  --font-inter: "Inter",
-  sans-serif;
+  --color-light-blue: #E2ECF3;
+  --color-violet: #7142FF;
+  --font-inter: 'Inter', sans-serif;
 }
 
 /* ==========================================================================
-   Header Styles
+   Container (from _header.scss)
    ========================================================================== */
+.container {
+  max-width: 1170px;
+  width: 100%;
+  padding-left: 24px;
+  padding-right: 24px;
+  margin-left: auto;
+  margin-right: auto;
+}
 
-/* Main header container (the top black bar) */
+/* ==========================================================================
+   Header (from _header.scss)
+   ========================================================================== */
 .md-header {
   box-shadow: none;
   background-color: var(--color-dark);
 }
 
-/* Inner content of the header */
 .md-header .md-header__inner {
   background-color: var(--color-dark);
   min-height: 80px;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-/* Styles for the logo image */
-.md-header .md-header__inner .header-logo img,
-.md-header .md-header__inner .header-logo svg {
+.md-header__inner .left-part {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.md-header__inner .right-part {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 32px;
+}
+
+@media (min-width: 1220px) {
+  .md-header__inner .right-part .md-search__inner {
+    max-width: 510px;
+  }
+}
+
+.md-header__inner .header-logo {
+  padding: 0;
+  margin: 0;
+}
+
+.md-header__inner .header-logo img,
+.md-header__inner .header-logo svg {
+  height: 42px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.md-header__title {
+  font-size: 0;
+}
+
+/* Also target the default .md-logo */
+.md-header .md-logo img,
+.md-header .md-logo svg {
   height: 42px;
   width: auto;
 }
 
-/* --- Definitive Navigation CSS (Final Version) --- */
+/* Header mobile */
+@media (max-width: 1219px) {
+  .md-header .container {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .md-header .md-header__inner {
+    min-height: 60px;
+  }
+  .md-header__inner .header-logo img,
+  .md-header__inner .header-logo svg {
+    height: 23px;
+  }
+  .md-header__inner .right-part {
+    gap: 0;
+  }
+  .md-header__inner .right-part .btn-group {
+    display: none;
+  }
+  .md-header__inner .right-part .btn-search {
+    margin: 0;
+  }
+  .md-header .md-header__button {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-right: 14px;
+  }
+  .md-header .md-header__button.btn-search {
+    display: none;
+  }
+}
 
-/* 1. Set the height of the main navigation bar */
+@media (max-width: 959px) {
+  .md-header .md-header__button.btn-search {
+    display: flex;
+  }
+}
+
+/* ==========================================================================
+   Navigation Tabs (from _header.scss)
+   ========================================================================== */
 .md-tabs {
   background-color: var(--color-red);
-  height: 2.5rem; /* Set an explicit, predictable height for the bar */
 }
 
-/* 2. Control the alignment of the links within the bar */
+.md-tabs .md-grid {
+  max-width: 100%;
+}
+
 .md-tabs .md-tabs__list {
-  height: 100%; /* Make the link container fill the bar's height */
-  justify-content: center; /* Center links horizontally */
-  align-items: center;   /* NEW: Center links vertically */
-  flex-wrap: wrap;       /* Allow wrapping on small screens */
+  display: flex;
+  justify-content: center;
 }
 
-/* 3. Style the individual navigation links */
-.md-tabs__link {
+.md-tabs .md-tabs__list .md-tabs__item a {
+  font-family: var(--font-inter);
+  font-style: normal;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.22;
+  color: var(--color-white);
+}
+
+/* ==========================================================================
+   Mobile Sidebar / Nav (from _header.scss)
+   ========================================================================== */
+@media (max-width: 1219px) {
+  [dir=ltr] .md-sidebar--primary {
+    left: -280px;
+  }
+  [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+    transform: translateX(280px);
+  }
+  .md-sidebar--primary {
+    width: 280px;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title[for=__drawer] {
+    background-color: var(--color-dark);
+    padding: 24px;
+    height: auto;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title[for=__drawer] img {
+    height: 82px;
+    width: auto;
+    display: block;
+    object-fit: contain;
+  }
+  .md-sidebar--primary .md-nav__source {
+    background-color: #000;
+    padding: 16px 24px;
+  }
+  .md-sidebar--primary .md-nav__source .md-source__icon svg {
+    margin-left: 0;
+  }
+  .md-sidebar--primary .md-nav__list,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list {
+    padding-bottom: 75px;
+    background-color: var(--color-dark);
+  }
+  .md-sidebar--primary .md-nav__list .md-nav__item,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .md-nav__item {
+    border-bottom: 1px solid #323232;
+  }
+  .md-sidebar--primary .md-nav__list .md-nav__item .md-nav__link,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .md-nav__item .md-nav__link {
+    font-family: var(--font-inter);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.67;
+    align-items: center;
+    letter-spacing: 0.18px;
+    color: #FFFFFF;
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    min-height: 50px;
+  }
+  .md-sidebar--primary .md-nav__list .btn-group,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .btn-group {
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 32px;
+  }
+  .md-sidebar--primary .md-nav__list .btn-group .btn,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .btn-group .btn {
+    width: 100%;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title {
+    background-color: #000;
+    color: var(--color-white);
+    padding-left: 24px;
+  }
+}
+
+/* Desktop sidebar */
+@media (min-width: 1220px) {
+  .md-sidebar--primary .btn-group {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   Footer (from _footer.scss)
+   ========================================================================== */
+.footer {
+  background-color: var(--color-dark);
+}
+
+.footer .footer__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 32px;
+  padding-top: 64px;
+  gap: 48px;
+  flex-wrap: wrap;
+}
+
+.footer .footer__top .footer-logo {
+  height: 30px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.footer .footer__top .md-social {
+  padding: 0;
+  margin: 0;
+  gap: 18px;
+}
+
+.footer .footer__top .md-social .md-social__link {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+}
+
+.footer .footer__top .md-social .md-social__link svg,
+.footer .footer__top .md-social .md-social__link img {
+  width: 28px;
+  height: 28px;
+  max-height: 28px;
+  display: block;
+  object-fit: contain;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.footer .footer__top .md-social .md-social__link:hover svg,
+.footer .footer__top .md-social .md-social__link:hover img {
+  color: var(--color-white);
+}
+
+.footer .footer-hr {
+  background-color: #323232;
+  height: 1px;
+  width: 100%;
+  display: block;
+  margin: 0;
+  border: 0;
+}
+
+.footer .footer__bot {
+  padding-top: 32px;
+  padding-bottom: 64px;
+}
+
+.footer .footer__bot .md-copyright {
+  font-family: var(--font-inter);
+  font-style: normal;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.85);
-  /* We no longer need vertical padding for spacing */
-  padding: 0 0.9rem;
-  font-size: 0.65rem; /* NEW: Adjust font size */
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
 }
 
-/* ==========================================================================
-   Logo Size Adjustment
-   ========================================================================== */
-
-/*
-  Targets the logo in the header, whether it's an SVG or a standard image file.
-  Adjust the height value as needed to get the perfect size.
-*/
-.md-header .md-logo img,
-.md-header .md-logo svg {
-  height: 42px; /* This should match the Apache Sedona logo size */
-  width: auto;  /* Ensures the width scales proportionally */
+.footer .footer__bot .md-copyright a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: 0.3s all ease;
 }
 
-
-/* ==========================================================================
-   Mobile Navigation Styles
-   ========================================================================== */
-
-/*
-  Force the entire mobile navigation header to be black, overriding theme defaults.
-*/
-.md-nav--primary .md-nav__title,
-.md-nav--primary .md-nav__source {
-  background-color: var(--color-dark) !important;
+.footer .footer__bot .md-copyright a:hover {
+  color: var(--color-white);
 }
 
-/* ==========================================================================
-   Swap Logo ONLY in Mobile Navigation
-   ========================================================================== */
-
-/*
-  Target the logo link (<a> tag) directly and apply the new logo
-  as a background image, overriding the theme's default icon.
-*/
-.md-sidebar--primary .md-nav__title a.md-nav__button.md-logo {
-  background-image: url('/docs/image/sedona_logo_symbol.svg');
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-
-  /* Hide the theme's default icon which is applied via a mask */
-  -webkit-mask: none;
-  mask: none;
-}
-
-/* Change the mobile nav header label text to white */
-label.md-nav__title {
-  color: #FFFFFF !important;
+@media (max-width: 480px) {
+  .footer .footer__top {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+  .footer .footer__bot .md-copyright {
+    text-align: left;
+  }
 }
