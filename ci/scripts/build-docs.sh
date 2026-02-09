@@ -34,7 +34,7 @@ for notebook in $(find "${SEDONADB_DIR}/docs" -name "*.ipynb"); do
 done
 
 # Clean + build SQL function documentation
-pushd "${SEDONADB_DIR}/docs/reference/functions"
+pushd "${SEDONADB_DIR}/docs/reference/sql"
 
 # Remove built markdown files (they confuse quarto)
 find . -name "*.md" -delete
