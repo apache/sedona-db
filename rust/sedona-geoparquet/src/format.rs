@@ -53,7 +53,7 @@ use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
-    metadata::{GeoParquetColumnEncoding, GeoParquetColumnMetadata, GeoParquetMetadata},
+    metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
@@ -341,10 +341,11 @@ impl FileFormat for GeoParquetFormat {
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(
+        let mut source =
             GeoParquetFileSource::try_from_file_source(self.inner().file_source(), None, None)
-                .unwrap(),
-        )
+                .unwrap();
+        source.options = self.options.clone();
+        Arc::new(source)
     }
 }
 
@@ -361,7 +362,7 @@ pub struct GeoParquetFileSource {
     inner: ParquetSource,
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
-    overrides: Option<HashMap<String, GeoParquetColumnMetadata>>,
+    options: TableGeoParquetOptions,
 }
 
 impl GeoParquetFileSource {
@@ -371,7 +372,7 @@ impl GeoParquetFileSource {
             inner: ParquetSource::new(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
-            overrides: options.geometry_columns.clone(),
+            options,
         }
     }
 
@@ -419,7 +420,9 @@ impl GeoParquetFileSource {
                 inner: parquet_source.clone(),
                 metadata_size_hint,
                 predicate: new_predicate,
-                overrides: None,
+                options: TableGeoParquetOptions::from(
+                    parquet_source.table_parquet_options().clone(),
+                ),
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -432,7 +435,7 @@ impl GeoParquetFileSource {
             inner: self.inner.with_predicate(predicate.clone()),
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
-            overrides: self.overrides.clone(),
+            options: self.options.clone(),
         }
     }
 
@@ -457,7 +460,7 @@ impl GeoParquetFileSource {
             inner: parquet_source,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
-            overrides: self.overrides.clone(),
+            options: self.options.clone(),
         }
     }
 
@@ -467,7 +470,7 @@ impl GeoParquetFileSource {
             inner: self.inner.clone().with_metadata_size_hint(hint),
             metadata_size_hint: Some(hint),
             predicate: self.predicate.clone(),
-            overrides: self.overrides.clone(),
+            options: self.options.clone(),
         }
     }
 }
@@ -483,8 +486,7 @@ impl FileSource for GeoParquetFileSource {
             self.inner
                 .create_file_opener(object_store.clone(), base_config, partition);
 
-        // If there are no geo columns or no pruning predicate, just return the inner opener
-        if self.predicate.is_none() || !storage_schema_contains_geo(base_config.file_schema()) {
+        if !storage_schema_contains_geo(base_config.file_schema()) {
             return inner_opener;
         }
 
@@ -492,13 +494,13 @@ impl FileSource for GeoParquetFileSource {
             inner: inner_opener,
             object_store,
             metadata_size_hint: self.metadata_size_hint,
-            predicate: self.predicate.clone().unwrap(),
+            predicate: self.predicate.clone(),
             file_schema: base_config.file_schema().clone(),
             enable_pruning: self.inner.table_parquet_options().global.pruning,
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
-            overrides: self.overrides.clone(),
+            options: self.options.clone(),
         })
     }
 
@@ -516,8 +518,7 @@ impl FileSource for GeoParquetFileSource {
                     // TODO should this be None?
                     None,
                 )?;
-                // TODO: part of try_from_file_source()?
-                updated_inner.overrides = self.overrides.clone();
+                updated_inner.options = self.options.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),
@@ -529,35 +530,43 @@ impl FileSource for GeoParquetFileSource {
     }
 
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
-        Arc::new(Self::from_file_source(
+        let mut source = Self::from_file_source(
             self.inner.with_batch_size(batch_size),
             self.metadata_size_hint,
             self.predicate.clone(),
-        ))
+        );
+        source.options = self.options.clone();
+        Arc::new(source)
     }
 
     fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        Arc::new(Self::from_file_source(
+        let mut source = Self::from_file_source(
             self.inner.with_schema(schema),
             self.metadata_size_hint,
             self.predicate.clone(),
-        ))
+        );
+        source.options = self.options.clone();
+        Arc::new(source)
     }
 
     fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self::from_file_source(
+        let mut source = Self::from_file_source(
             self.inner.with_projection(config),
             self.metadata_size_hint,
             self.predicate.clone(),
-        ))
+        );
+        source.options = self.options.clone();
+        Arc::new(source)
     }
 
     fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        Arc::new(Self::from_file_source(
+        let mut source = Self::from_file_source(
             self.inner.with_statistics(statistics),
             self.metadata_size_hint,
             self.predicate.clone(),
-        ))
+        );
+        source.options = self.options.clone();
+        Arc::new(source)
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
