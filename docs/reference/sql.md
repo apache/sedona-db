@@ -19,106 +19,6 @@
 
 # SQL API Reference
 
-## ST_Analyze_Agg
-
-#### Description
-
-Return the statistics of geometries for the input geometry.
-
-Since: v0.1.
-
-#### Format
-
-`ST_Analyze_Agg (A: Geometry)`
-
-#### Arguments
-
-  * **geom**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_Analyze_Agg(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'));
-```
-
-## ST_Area
-
-#### Description
-
-Return the area of a geometry.
-
-Since: v0.1.
-
-#### Format
-
-`ST_Area (A: Geometry)`
-
-#### Arguments
-
-  * **geom**: Input geometry.
-
-#### SQL Example
-
-```sql
-SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
-```
-
-## ST_AsBinary
-
-#### Description
-
-Return the Well-Known Binary representation of a geometry or geography. This function also has the alias **ST_AsWKB**.
-
-Since: v0.1.
-
-#### Format
-
-`ST_AsBinary (A: Geometry)`
-
-#### Arguments
-
-  * **geom**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_AsBinary(ST_Point(1.0, 2.0));
-```
-
-## ST_AsText
-
-#### Description
-
-Return the Well-Known Text string representation of a geometry or geography.
-
-Since: v0.1.
-
-#### Format
-
-`ST_AsText (A: Geometry)`
-
-#### Arguments
-
-  * **geom**: Input geometry or geography.
-
-#### SQL Example
-
-```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
-```
-
-## ST_Azimuth
-
-Introduction: Returns Azimuth for two given points in radians null otherwise.
-
-Format: ST_Azimuth(pointA: Point, pointB: Point)
-
-Since: v0.2.
-
-```sql
-SELECT ST_Azimuth(ST_POINT(0.0, 25.0), ST_POINT(0.0, 0.0));
-```
-
 ## ST_Boundary
 
 Returns the closure of the combinatorial boundary of this Geometry.
@@ -129,31 +29,6 @@ Since: v0.2.
 
 ```sql
 SELECT ST_Boundary(ST_GeomFromWKT('POLYGON((1 1,0 0, -1 1, 1 1))'));
-```
-
-## ST_Buffer
-
-#### Description
-
-Returns a geometry that represents all points whose distance from the input geometry is less than or equal to a specified distance.
-
-Since: v0.1.
-
-Changed in version v0.2: Support buffer parameters argument
-
-#### Format
-
-`ST_Buffer (A: Geometry, distance: Double)`
-
-#### Arguments
-
-  * **geom**: Input geometry.
-  * **distance**: Radius of the buffer.
-
-#### SQL Example
-
-```sql
-SELECT ST_Buffer(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), 1.0);
 ```
 
 ## ST_Centroid
