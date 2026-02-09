@@ -16,16 +16,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_GeogPoint
+description: Creates a geography POINT from given longitude and latitude coordinates.
 kernels:
-  - returns: string
-    args: [geometry]
+  - returns: geography
+    args: [double, double]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_GeogPoint(10, 10), ST_GeogPoint(0, 0);
 ```
 

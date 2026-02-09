@@ -16,16 +16,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_GeogFromWKB
+description: Construct a Geography from WKB Binary.
 kernels:
-  - returns: string
-    args: [geometry]
+  - returns: geography
+    args: [binary]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT ST_GeogFromWKB(decode('010200000002000000000000000084d600c0000000000080b5d6bf00000060e1eff7bf00000080075de5bf', 'hex'));
 ```
 

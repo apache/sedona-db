@@ -19,7 +19,7 @@
 title: ST_CRS
 description: Returns the Coordinate Reference System (CRS) metadata associated with a geometry or geography object.
 kernels:
-  - returns: utf8
+  - returns: string
     args: [geometry]
 ---
 
