@@ -157,14 +157,16 @@ struct SedonaSpatialRefiner {
   /** Clear all built geometries from the refiner */
   int (*clear)(struct SedonaSpatialRefiner* self);
 
+  int (*init_schema)(struct SedonaSpatialRefiner* self,
+                     const struct ArrowSchema* build_schema,
+                     const struct ArrowSchema* probe_schema);
+
   /** Push geometries for building the spatial refiner
    *
-   * @param build_schema The Arrow schema of the build geometries
    * @param build_array The Arrow array of the build geometries
    * @return 0 on success, non-zero on failure
    */
   int (*push_build)(struct SedonaSpatialRefiner* self,
-                    const struct ArrowSchema* build_schema,
                     const struct ArrowArray* build_array);
   /**
    * Finish building the spatial refiner after all geometries have been pushed
@@ -176,7 +178,6 @@ struct SedonaSpatialRefiner {
   /**
    * Refine candidate pairs of geometries
    *
-   * @param probe_schema The Arrow schema of the probe geometries
    * @param probe_array The Arrow array of the probe geometries
    * @param predicate The spatial relation predicate to evaluate
    * @param build_indices An array of build-side indices corresponding to candidate pairs.
@@ -189,8 +190,7 @@ struct SedonaSpatialRefiner {
    * @param new_indices_size Output parameter to store the number of refined pairs
    * @return 0 on success, non-zero on failure
    */
-  int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowSchema* probe_schema,
-                const struct ArrowArray* probe_array,
+  int (*refine)(struct SedonaSpatialRefiner* self, const struct ArrowArray* probe_array,
                 enum SedonaSpatialRelationPredicate predicate, uint32_t* build_indices,
                 uint32_t* probe_indices, uint32_t indices_size,
                 uint32_t* new_indices_size);

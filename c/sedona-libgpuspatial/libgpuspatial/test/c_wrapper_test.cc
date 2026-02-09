@@ -242,6 +242,8 @@ TEST_F(CWrapperTest, InitializeJoiner) {
               NANOARROW_OK)
         << error.message;
 
+    refiner_.init_schema(&refiner_, build_schema.get(), probe_schema.get());
+
     for (int64_t j = 0; j < probe_array->length; j++) {
       ArrowBufferView wkb = ArrowArrayViewGetBytesUnsafe(probe_view.get(), j);
       auto geom = wkb_reader.read(wkb.data.as_uint8, wkb.size_bytes);
@@ -274,12 +276,12 @@ TEST_F(CWrapperTest, InitializeJoiner) {
     index_.get_probe_indices_buffer(&idx_ctx, &probe_indices_ptr, &probe_indices_length);
 
     refiner_.clear(&refiner_);
-    ASSERT_EQ(refiner_.push_build(&refiner_, build_schema.get(), build_array.get()), 0);
+    ASSERT_EQ(refiner_.push_build(&refiner_, build_array.get()), 0);
     ASSERT_EQ(refiner_.finish_building(&refiner_), 0);
 
     uint32_t new_len;
     ASSERT_EQ(refiner_.refine(
-                  &refiner_, probe_schema.get(), probe_array.get(),
+                  &refiner_, probe_array.get(),
                   SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
                   build_indices_ptr, probe_indices_ptr, build_indices_length, &new_len),
               0);

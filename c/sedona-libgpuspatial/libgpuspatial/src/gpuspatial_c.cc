@@ -256,6 +256,8 @@ int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
 struct GpuSpatialRefinerExporter {
   struct Payload {
     std::unique_ptr<gpuspatial::SpatialRefiner> refiner;
+    nanoarrow::UniqueArrayView build_array_view;
+    nanoarrow::UniqueArrayView probe_array_view;
     runtime_data_t* rdata;
   };
   using private_data_t = GpuSpatialWrapper<Payload>;
@@ -277,12 +279,16 @@ struct GpuSpatialRefinerExporter {
     auto refiner = gpuspatial::CreateRTSpatialRefiner(refiner_config);
 
     out->clear = &CClear;
+    out->init_schema = &CInitSchema;
     out->push_build = &CPushBuild;
     out->finish_building = &CFinishBuilding;
     out->refine = &CRefine;
     out->get_last_error = &CGetLastError;
     out->release = &CRelease;
-    out->private_data = new private_data_t{Payload{std::move(refiner), rdata}, ""};
+    out->private_data =
+        new private_data_t{Payload{std::move(refiner), nanoarrow::UniqueArrayView(),
+                                   nanoarrow::UniqueArrayView(), rdata},
+                           ""};
   }
 
   static int CClear(SedonaSpatialRefiner* self) {
@@ -290,24 +296,36 @@ struct GpuSpatialRefinerExporter {
                        [&] { use_refiner(self).Clear(); });
   }
 
-  static int CPushBuild(SedonaSpatialRefiner* self, const ArrowSchema* build_schema,
-                        const ArrowArray* build_array) {
+  static int CInitSchema(SedonaSpatialRefiner* self, const ArrowSchema* build_schema,
+                         const ArrowSchema* probe_schema) {
     return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
-      nanoarrow::UniqueArrayView array_view;
+      auto* private_data = static_cast<private_data_t*>(self->private_data);
       ArrowError arrow_error;
-
-      if (ArrowArrayViewInitFromSchema(array_view.get(), build_schema, &arrow_error) !=
-          NANOARROW_OK) {
+      if (ArrowArrayViewInitFromSchema(private_data->payload.build_array_view.get(),
+                                       build_schema, &arrow_error) != NANOARROW_OK) {
         throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
                                  std::string(arrow_error.message));
       }
-      if (ArrowArrayViewSetArray(array_view.get(), build_array, &arrow_error) !=
-          NANOARROW_OK) {
+      if (ArrowArrayViewInitFromSchema(private_data->payload.probe_array_view.get(),
+                                       probe_schema, &arrow_error) != NANOARROW_OK) {
+        throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
+                                 std::string(arrow_error.message));
+      }
+    });
+  }
+
+  static int CPushBuild(SedonaSpatialRefiner* self, const ArrowArray* build_array) {
+    return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
+      auto* private_data = static_cast<private_data_t*>(self->private_data);
+      auto* array_view = private_data->payload.build_array_view.get();
+      ArrowError arrow_error;
+
+      if (ArrowArrayViewSetArray(array_view, build_array, &arrow_error) != NANOARROW_OK) {
         throw std::runtime_error("ArrowArrayViewSetArray error " +
                                  std::string(arrow_error.message));
       }
 
-      use_refiner(self).PushBuild(array_view.get());
+      use_refiner(self).PushBuild(array_view);
     });
   }
 
@@ -316,28 +334,22 @@ struct GpuSpatialRefinerExporter {
                        [&] { use_refiner(self).FinishBuilding(); });
   }
 
-  static int CRefine(SedonaSpatialRefiner* self, const ArrowSchema* probe_schema,
-                     const ArrowArray* probe_array,
+  static int CRefine(SedonaSpatialRefiner* self, const ArrowArray* probe_array,
                      SedonaSpatialRelationPredicate predicate, uint32_t* build_indices,
                      uint32_t* probe_indices, uint32_t indices_size,
                      uint32_t* new_indices_size) {
     return SafeExecute(static_cast<private_data_t*>(self->private_data), [&] {
-      nanoarrow::UniqueArrayView array_view;
+      auto* private_data = static_cast<private_data_t*>(self->private_data);
+      auto* array_view = private_data->payload.build_array_view.get();
       ArrowError arrow_error;
 
-      if (ArrowArrayViewInitFromSchema(array_view.get(), probe_schema, &arrow_error) !=
-          NANOARROW_OK) {
-        throw std::runtime_error("ArrowArrayViewInitFromSchema error " +
-                                 std::string(arrow_error.message));
-      }
-      if (ArrowArrayViewSetArray(array_view.get(), probe_array, &arrow_error) !=
-          NANOARROW_OK) {
+      if (ArrowArrayViewSetArray(array_view, probe_array, &arrow_error) != NANOARROW_OK) {
         throw std::runtime_error("ArrowArrayViewSetArray error " +
                                  std::string(arrow_error.message));
       }
 
       *new_indices_size = use_refiner(self).Refine(
-          array_view.get(), static_cast<gpuspatial::Predicate>(predicate), build_indices,
+          array_view, static_cast<gpuspatial::Predicate>(predicate), build_indices,
           probe_indices, indices_size);
     });
   }
