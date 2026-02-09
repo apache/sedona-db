@@ -243,7 +243,7 @@ TEST_F(CWrapperTest, InitializeJoiner) {
         << error.message;
 
     for (int64_t j = 0; j < probe_array->length; j++) {
-      ArrowStringView wkb = ArrowArrayViewGetStringUnsafe(probe_view.get(), j);
+      ArrowBufferView wkb = ArrowArrayViewGetBytesUnsafe(probe_view.get(), j);
       auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb.data),
                                   wkb.size_bytes);
 

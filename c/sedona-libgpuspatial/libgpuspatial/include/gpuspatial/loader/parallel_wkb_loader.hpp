@@ -66,7 +66,7 @@ template <typename POINT_T, typename INDEX_T>
 struct HostParsedGeometries {
   constexpr static int n_dim = POINT_T::n_dim;
   using mbr_t = Box<Point<float, n_dim>>;
-  GeometryType type;  // A general type that can reprs
+  GeometryType type;
   // each feature should have only one type except GeometryCollection
   std::vector<GeometryType> feature_types;
   // This number should be one except GeometryCollection, which should be unnested # of

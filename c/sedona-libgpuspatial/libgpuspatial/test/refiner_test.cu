@@ -143,7 +143,7 @@ void TestJoiner(ArrowSchema* build_schema, std::vector<ArrowArray*>& build_array
     probe_geoms.reserve(probe_array->length);
 
     for (int64_t i = 0; i < probe_array->length; i++) {
-      ArrowStringView wkb_view = ArrowArrayViewGetStringUnsafe(probe_view.get(), i);
+      ArrowBufferView wkb_view = ArrowArrayViewGetBytesUnsafe(probe_view.get(), i);
       auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb_view.data),
                                   wkb_view.size_bytes);
 

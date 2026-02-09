@@ -37,7 +37,7 @@ struct GpuSpatialRuntimeConfig {
 };
 
 /** Opaque runtime for GPU spatial operations
- * Each process should only has one instance of GpuSpatialRuntime exactly
+ * Each process should have exactly one instance of GpuSpatialRuntime
  */
 struct GpuSpatialRuntime {
   /** Initialize the runtime (OptiX) with the given configuration
