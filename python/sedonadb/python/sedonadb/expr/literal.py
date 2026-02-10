@@ -115,6 +115,8 @@ def _lit_from_series(obj):
     if len(obj) != 1:
         raise ValueError("Can't create SedonaDB literal from Series with length != 1")
 
+    # A column with dtype "geometry" is not always a GeoSeries; however, if the dtype
+    # is geometry, obj.array.crs should still be available to extract the CRS.
     if obj.dtype.name == "geometry":
         first_value = obj.array[0]
         first_wkb = None if first_value is None else first_value.wkb
@@ -169,6 +171,7 @@ SPECIAL_CASED_LITERALS = {
     "shapely.geometry.point.Point": _lit_from_shapely,
     "shapely.geometry.linestring.LineString": _lit_from_shapely,
     "shapely.geometry.polygon.Polygon": _lit_from_shapely,
+    "shapely.geometry.polygon.LinearRing": _lit_from_shapely,
     "shapely.geometry.multipoint.MultiPoint": _lit_from_shapely,
     "shapely.geometry.multilinestring.MultiLineString": _lit_from_shapely,
     "shapely.geometry.multipolygon.MultiPolygon": _lit_from_shapely,

@@ -79,6 +79,14 @@ def test_shapely_literal(wkt):
     assert array == ga.as_wkb([wkt])
 
 
+def test_shapely_linearring():
+    shapely_obj = shapely.from_wkt("LINEARRING (0 0, 1 0, 0 1, 0 0)")
+    literal = lit(shapely_obj)
+
+    array = pa.array(literal)
+    assert array == ga.as_wkb(["LINESTRING (0 0, 1 0, 0 1, 0 0)"])
+
+
 def test_geopandas_literal():
     geoseries = geopandas.GeoSeries.from_wkt(["POINT (0 1)"], crs=3857)
 
