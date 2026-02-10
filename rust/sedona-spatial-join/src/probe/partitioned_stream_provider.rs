@@ -50,8 +50,10 @@ pub(crate) struct ProbeStreamOptions {
     ///   [`SpatialPartition::Regular(0)`] is supported.
     /// - `Some(_)` enables partitioned streaming with a warm-up (first) pass.
     ///
-    /// We wrap the partitioner in a `Mutex` to make [`ProbeStreamOptions`] Send + Sync,
-    /// which makes it easier to integrate into `SpatialJoinExec`.
+    /// The `Mutex` is used here to make [`ProbeStreamOptions`] (and its contained options)
+    /// `Send + Sync` so it can be shared/cloned into `SpatialJoinExec` and across tasks.
+    /// The partitioner itself is treated as a clonable prototype and is not intended to be
+    /// used by multiple tasks concurrently via this shared `Mutex`.
     pub partitioner: Option<Mutex<Box<dyn SpatialPartitioner>>>,
     /// Target number of rows per output batch produced by the partitioning stream.
     pub target_batch_rows: usize,
