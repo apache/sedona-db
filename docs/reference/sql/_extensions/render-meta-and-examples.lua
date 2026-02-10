@@ -44,12 +44,11 @@ local function render_sql_example(sql_code)
   local success, _, exit_code = handle:close()
   os.remove(temp_file)
 
-  -- If non-zero exit code, emit error to stderr and fallback
+  -- If non-zero exit code, emit error to stderr
   if not success or (exit_code and exit_code ~= 0) then
     if result and result ~= "" then
       io.stderr:write(result)
     end
-    return {pandoc.CodeBlock(sql_code, pandoc.Attr("", {"sql"}, {}))}
   end
 
   -- Parse the markdown result and return as pandoc blocks
@@ -91,12 +90,11 @@ local function render_meta_content(doc)
   local success, _, exit_code = handle:close()
   os.remove(temp_file)
 
-  -- If non-zero exit code, emit error to stderr and return empty
+  -- If non-zero exit code, emit error to stderr
   if not success or (exit_code and exit_code ~= 0) then
     if result and result ~= "" then
       io.stderr:write(result)
     end
-    return {}
   end
 
   -- Parse the markdown result and return as pandoc blocks

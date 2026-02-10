@@ -47,6 +47,11 @@ else
   exit 1
 fi
 
+if grep -e "-- Example failed to render:" *.md; then
+  echo "Example rendering failed"
+  exit 1
+fi
+
 popd
 
 pushd "${SEDONADB_DIR}"
