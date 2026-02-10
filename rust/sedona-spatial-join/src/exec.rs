@@ -1322,19 +1322,6 @@ mod tests {
         Ok(spatial_join_execs)
     }
 
-    fn collect_nested_loop_join_exec(
-        plan: &Arc<dyn ExecutionPlan>,
-    ) -> Result<Vec<&NestedLoopJoinExec>> {
-        let mut execs = Vec::new();
-        plan.apply(|node| {
-            if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
-                execs.push(exec);
-            }
-            Ok(TreeNodeRecursion::Continue)
-        })?;
-        Ok(execs)
-    }
-
     async fn test_mark_join(
         join_type: JoinType,
         options: SpatialJoinOptions,
@@ -1379,7 +1366,17 @@ mod tests {
         ctx_no_opt.register_table("R", mem_table_right)?;
         let df_no_opt = ctx_no_opt.sql(sql).await?;
         let plan_no_opt = df_no_opt.create_physical_plan().await?;
-        let nlj_execs = collect_nested_loop_join_exec(&plan_no_opt)?;
+        fn collect_nlj_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&NestedLoopJoinExec>> {
+            let mut execs = Vec::new();
+            plan.apply(|node| {
+                if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
+                    execs.push(exec);
+                }
+                Ok(TreeNodeRecursion::Continue)
+            })?;
+            Ok(execs)
+        }
+        let nlj_execs = collect_nlj_exec(&plan_no_opt)?;
         assert_eq!(nlj_execs.len(), 1);
         let original_nlj = nlj_execs[0];
         let mark_nlj = NestedLoopJoinExec::try_new(
@@ -1449,11 +1446,22 @@ mod tests {
         result
     }
 
-    fn compute_knn_ground_truth(
+    fn compute_knn_ground_truth_with_pair_filter<F>(
         left_partitions: &[Vec<RecordBatch>],
         right_partitions: &[Vec<RecordBatch>],
         k: usize,
-    ) -> Vec<(i32, i32, f64)> {
+        keep_pair: F,
+    ) -> Vec<(i32, i32, f64)>
+    where
+        F: Fn(i32, i32) -> bool,
+    {
+        // NOTE: This helper mirrors our KNN semantics used in execution:
+        // - select top-K unfiltered candidates by distance (stable by r_id)
+        // - then apply a cross-side predicate to decide which pairs to keep
+        //   (can yield < K results per probe row)
+        //
+        // The predicate is intentionally *post* top-K selection.
+        // (See `test_knn_join_with_filter_correctness`.)
         let left_data = extract_geoms_and_ids(left_partitions);
         let right_data = extract_geoms_and_ids(right_partitions);
 
@@ -1468,8 +1476,11 @@ mod tests {
             // Sort by distance, then by ID for stability
             distances.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
+            // KNN semantics: pick top-K unfiltered, then optionally post-filter.
             for (r_id, dist) in distances.iter().take(k.min(distances.len())) {
-                results.push((l_id, *r_id, *dist));
+                if keep_pair(l_id, *r_id) {
+                    results.push((l_id, *r_id, *dist));
+                }
             }
         }
 
@@ -1478,32 +1489,56 @@ mod tests {
         results
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn test_knn_join_correctness() -> Result<()> {
+    async fn test_knn_join_correctness(
+        #[values(true, false)] point_only: bool,
+        #[values(1, 2, 3, 4)] num_partitions: usize,
+        #[values(10, 30, 1000)] max_batch_size: usize,
+    ) -> Result<()> {
         // Generate slightly larger data
-        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
-            create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) = if point_only {
+            create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?
+        } else {
+            create_default_test_data()?
+        };
 
-        let options = SpatialJoinOptions::default();
-        let k = 3;
+        // Use single partition to verify algorithm correctness first, avoiding partitioning issues
+        let options = SpatialJoinOptions {
+            debug: SpatialJoinDebugOptions {
+                num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let k = 6;
 
         let sql1 = format!(
             "SELECT L.id, R.id, ST_Distance(L.geometry, R.geometry) FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) ORDER BY L.id, R.id",
             k
         );
-        let expected1 = compute_knn_ground_truth(&left_partitions, &right_partitions, k)
-            .into_iter()
-            .map(|(l, r, _)| (l, r))
-            .collect::<Vec<_>>();
-
+        let expected1 = compute_knn_ground_truth_with_pair_filter(
+            &left_partitions,
+            &right_partitions,
+            k,
+            |_l_id, _r_id| true,
+        )
+        .into_iter()
+        .map(|(l, r, _)| (l, r))
+        .collect::<Vec<_>>();
         let sql2 = format!(
             "SELECT R.id, L.id, ST_Distance(L.geometry, R.geometry) FROM L JOIN R ON ST_KNN(R.geometry, L.geometry, {}, false) ORDER BY R.id, L.id",
             k
         );
-        let expected2 = compute_knn_ground_truth(&right_partitions, &left_partitions, k)
-            .into_iter()
-            .map(|(l, r, _)| (l, r))
-            .collect::<Vec<_>>();
+        let expected2 = compute_knn_ground_truth_with_pair_filter(
+            &right_partitions,
+            &left_partitions,
+            k,
+            |_l_id, _r_id| true,
+        )
+        .into_iter()
+        .map(|(l, r, _)| (l, r))
+        .collect::<Vec<_>>();
 
         let sqls = [(&sql1, &expected1), (&sql2, &expected2)];
 
@@ -1514,7 +1549,7 @@ mod tests {
                 left_partitions.clone(),
                 right_partitions.clone(),
                 Some(options.clone()),
-                10,
+                max_batch_size,
                 sql,
             )
             .await?;
@@ -1539,6 +1574,308 @@ mod tests {
             actual_results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
             assert_eq!(actual_results, *expected_results);
+        }
+
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_knn_join_with_filter_correctness(
+        #[values(1, 2, 3, 4)] num_partitions: usize,
+        #[values(10, 30, 1000)] max_batch_size: usize,
+    ) -> Result<()> {
+        let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+            create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;
+
+        let options = SpatialJoinOptions {
+            debug: SpatialJoinDebugOptions {
+                num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let k = 3;
+        let sql = format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND (L.id % 7) = (R.id % 7)",
+            k
+        );
+
+        let batches = run_spatial_join_query(
+            &left_schema,
+            &right_schema,
+            left_partitions.clone(),
+            right_partitions.clone(),
+            Some(options),
+            max_batch_size,
+            &sql,
+        )
+        .await?;
+
+        let mut actual_results = Vec::new();
+        let combined_batch = arrow::compute::concat_batches(&batches.schema(), &[batches])?;
+        let l_ids = combined_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        let r_ids = combined_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+
+        for i in 0..combined_batch.num_rows() {
+            actual_results.push((l_ids.value(i), r_ids.value(i)));
+        }
+        actual_results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        // Prove the test actually exercises the "< K rows after filtering" case.
+        // Build a list of all probe-side IDs and count how many results each has.
+        let all_left_ids: Vec<i32> = extract_geoms_and_ids(&left_partitions)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let mut per_left_counts: std::collections::HashMap<i32, usize> =
+            std::collections::HashMap::new();
+        for (l_id, _) in &actual_results {
+            *per_left_counts.entry(*l_id).or_default() += 1;
+        }
+        let min_count = all_left_ids
+            .iter()
+            .map(|l_id| *per_left_counts.get(l_id).unwrap_or(&0))
+            .min()
+            .unwrap_or(0);
+        assert!(
+            min_count < k,
+            "expected at least one probe row to produce < K rows after filtering; min_count={min_count}, k={k}"
+        );
+
+        let expected_results = compute_knn_ground_truth_with_pair_filter(
+            &left_partitions,
+            &right_partitions,
+            k,
+            |l_id, r_id| (l_id.rem_euclid(7)) == (r_id.rem_euclid(7)),
+        )
+        .into_iter()
+        .map(|(l, r, _)| (l, r))
+        .collect::<Vec<_>>();
+
+        assert_eq!(actual_results, expected_results);
+
+        Ok(())
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_knn_join_include_tie_breakers(
+        #[values(1, 2, 3, 4)] num_partitions: usize,
+        #[values(10, 100)] max_batch_size: usize,
+    ) -> Result<()> {
+        // Construct a larger dataset with *guaranteed* exact ties at the kth distance.
+        //
+        // For each probe point at (10*i, 0), we create two candidate points at (10*i-1, 0)
+        // and (10*i+1, 0). Those two candidates are tied (distance = 1).
+        // A third candidate at (10*i+2, 0) ensures there are also non-tied options.
+        // Spacing by 10 keeps other probes' candidates far enough away that they never interfere.
+        //
+        // With k=1:
+        // - knn_include_tie_breakers=false should return exactly 1 match per probe row.
+        // - knn_include_tie_breakers=true should return 2 matches per probe row (both ties).
+        //
+        // The exact choice of which tied row is returned when tie-breakers are disabled is not
+        // asserted (it is allowed to be either tied candidate).
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("wkt", DataType::Utf8, false),
+        ]));
+
+        let num_probe_rows: i32 = 120;
+        let k = 1;
+
+        let input_batches_left = 6;
+        let input_batches_right = 6;
+
+        fn make_batches(
+            schema: SchemaRef,
+            ids: Vec<i32>,
+            wkts: Vec<String>,
+            num_batches: usize,
+        ) -> Result<Vec<RecordBatch>> {
+            assert_eq!(ids.len(), wkts.len());
+            let total = ids.len();
+            let chunk = total.div_ceil(num_batches);
+
+            let mut batches = Vec::new();
+            for b in 0..num_batches {
+                let start = b * chunk;
+                if start >= total {
+                    break;
+                }
+                let end = ((b + 1) * chunk).min(total);
+                let batch = RecordBatch::try_new(
+                    schema.clone(),
+                    vec![
+                        Arc::new(arrow_array::Int32Array::from(ids[start..end].to_vec())),
+                        Arc::new(arrow_array::StringArray::from(
+                            wkts[start..end]
+                                .iter()
+                                .map(|s| s.as_str())
+                                .collect::<Vec<_>>(),
+                        )),
+                    ],
+                )?;
+                batches.push(batch);
+            }
+            Ok(batches)
+        }
+
+        let mut left_ids = Vec::with_capacity(num_probe_rows as usize);
+        let mut left_wkts = Vec::with_capacity(num_probe_rows as usize);
+
+        let mut right_ids = Vec::with_capacity((num_probe_rows as usize) * 3);
+        let mut right_wkts = Vec::with_capacity((num_probe_rows as usize) * 3);
+
+        for i in 0..num_probe_rows {
+            let cx = (i as i64) * 10;
+            left_ids.push(i);
+            left_wkts.push(format!("POINT ({cx} 0)"));
+
+            // Two tied candidates at distance 1.
+            let base = i * 10;
+            right_ids.push(base + 1);
+            right_wkts.push(format!("POINT ({x} 0)", x = cx - 1));
+
+            right_ids.push(base + 2);
+            right_wkts.push(format!("POINT ({x} 0)", x = cx + 1));
+
+            // One non-tied candidate.
+            right_ids.push(base + 3);
+            right_wkts.push(format!("POINT ({x} 0)", x = cx + 2));
+        }
+
+        let left_batches = make_batches(schema.clone(), left_ids, left_wkts, input_batches_left)?;
+        let right_batches =
+            make_batches(schema.clone(), right_ids, right_wkts, input_batches_right)?;
+
+        // Put each side into a single MemTable partition, but with multiple batches.
+        // This ensures the build/probe collectors see 4–8 batches and the round-robin batch
+        // partitioner has something to distribute.
+        let left_partitions = vec![left_batches];
+        let right_partitions = vec![right_batches];
+
+        let sql = format!(
+            "SELECT L.id AS l_id, R.id AS r_id \
+             FROM L JOIN R \
+             ON ST_KNN(ST_GeomFromWKT(L.wkt), ST_GeomFromWKT(R.wkt), {k}, false)"
+        );
+
+        let base_options = SpatialJoinOptions {
+            debug: SpatialJoinDebugOptions {
+                num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Without tie-breakers: exactly 1 match per probe row.
+        let out_no_ties = run_spatial_join_query(
+            &schema,
+            &schema,
+            left_partitions.clone(),
+            right_partitions.clone(),
+            Some(SpatialJoinOptions {
+                knn_include_tie_breakers: false,
+                ..base_options.clone()
+            }),
+            max_batch_size,
+            &sql,
+        )
+        .await?;
+        let combined = arrow::compute::concat_batches(&out_no_ties.schema(), &[out_no_ties])?;
+
+        let l_ids = combined
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        let r_ids = combined
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+
+        let mut per_left: std::collections::HashMap<i32, Vec<i32>> =
+            std::collections::HashMap::new();
+        for i in 0..combined.num_rows() {
+            per_left
+                .entry(l_ids.value(i))
+                .or_default()
+                .push(r_ids.value(i));
+        }
+
+        assert_eq!(per_left.len() as i32, num_probe_rows);
+        for l_id in 0..num_probe_rows {
+            let r_list = per_left.get(&l_id).unwrap();
+            assert_eq!(
+                r_list.len(),
+                1,
+                "expected exactly 1 match for l_id={l_id} when tie-breakers are disabled"
+            );
+            let base = l_id * 10;
+            let r_id = r_list[0];
+            assert!(
+                r_id == base + 1 || r_id == base + 2,
+                "expected a tied nearest neighbor for l_id={l_id}, got r_id={r_id}"
+            );
+        }
+
+        // With tie-breakers: exactly 2 matches per probe row (both tied candidates).
+        let out_with_ties = run_spatial_join_query(
+            &schema,
+            &schema,
+            left_partitions.clone(),
+            right_partitions.clone(),
+            Some(SpatialJoinOptions {
+                knn_include_tie_breakers: true,
+                ..base_options
+            }),
+            max_batch_size,
+            &sql,
+        )
+        .await?;
+        let combined = arrow::compute::concat_batches(&out_with_ties.schema(), &[out_with_ties])?;
+        let l_ids = combined
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        let r_ids = combined
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+
+        let mut per_left: std::collections::HashMap<i32, Vec<i32>> =
+            std::collections::HashMap::new();
+        for i in 0..combined.num_rows() {
+            per_left
+                .entry(l_ids.value(i))
+                .or_default()
+                .push(r_ids.value(i));
+        }
+        assert_eq!(per_left.len() as i32, num_probe_rows);
+        for l_id in 0..num_probe_rows {
+            let mut r_list = per_left.get(&l_id).unwrap().clone();
+            r_list.sort();
+            let base = l_id * 10;
+            assert_eq!(
+                r_list,
+                vec![base + 1, base + 2],
+                "expected both tied nearest neighbors for l_id={l_id}"
+            );
         }
 
         Ok(())
