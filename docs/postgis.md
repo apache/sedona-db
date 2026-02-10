@@ -288,4 +288,3 @@ df.head(5).show()
 - Use the GeoPandas-based approach for simplicity and exploratory workflows.
 - Use the ADBC-based approach for large datasets or production pipelines
   where performance and memory efficiency are critical.
-
