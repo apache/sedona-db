@@ -94,25 +94,37 @@ impl SedonaScalarKernel for RsEnvelope {
     }
 }
 
-/// Create WKB for a polygon for the raster
+/// Create WKB for the axis-aligned bounding box (envelope) of the raster.
+///
+/// This computes the four corners of the raster in world coordinates, then
+/// derives the min/max X and Y to produce an axis-aligned bounding box.
+/// For skewed/rotated rasters, this differs from the convex hull.
 fn create_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    // Compute the four corners of the raster in world coordinates.
-    // Due to skew/rotation in the affine transformation, each corner must be
-    // computed individually.
-
     let width = raster.metadata().width() as i64;
     let height = raster.metadata().height() as i64;
 
-    // Compute the four corners in pixel coordinates:
-    // Upper-left (0, 0), Upper-right (width, 0), Lower-right (width, height), Lower-left (0, height)
+    // Compute the four corners in world coordinates
     let (ulx, uly) = to_world_coordinate(raster, 0, 0);
     let (urx, ury) = to_world_coordinate(raster, width, 0);
     let (lrx, lry) = to_world_coordinate(raster, width, height);
     let (llx, lly) = to_world_coordinate(raster, 0, height);
 
+    // Compute the axis-aligned bounding box
+    let min_x = ulx.min(urx).min(lrx).min(llx);
+    let max_x = ulx.max(urx).max(lrx).max(llx);
+    let min_y = uly.min(ury).min(lry).min(lly);
+    let max_y = uly.max(ury).max(lry).max(lly);
+
     write_wkb_polygon(
         out,
-        [(ulx, uly), (urx, ury), (lrx, lry), (llx, lly), (ulx, uly)].into_iter(),
+        [
+            (min_x, max_y),
+            (max_x, max_y),
+            (max_x, min_y),
+            (min_x, min_y),
+            (min_x, max_y),
+        ]
+        .into_iter(),
     )
     .map_err(|e| DataFusionError::External(e.into()))?;
 
@@ -143,26 +155,22 @@ mod tests {
         let udf = rs_envelope_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
 
-        let rasters = generate_test_rasters(3, Some(0)).unwrap();
+        // i=0: no skew, i=1: null, i=2: skewed (scale=0.2,-0.4, skew=0.06,0.08)
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
 
-        // Corners computed using gdal:
-        // Raster 1:
-        // Envelope corner coordinates (X, Y):
-        // (2.00000000, 3.00000000)
-        // (2.20000000, 3.08000000)
-        // (2.29000000, 2.48000000)
-        // (2.09000000, 2.40000000)
+        // Reference values verified against PostGIS ST_Envelope:
         //
-        // Raster 2:
-        // (3.00000000, 4.00000000)
-        // (3.60000000, 4.24000000)
-        // (3.84000000, 2.64000000)
-        // (3.24000000, 2.40000000)
+        // Raster 0 (i=0): width=1, height=2, ul=(1,2), scale=(0.1,-0.2), skew=(0,0)
+        //   No skew, so envelope = convex hull
+        //
+        // Raster 2 (i=2): width=3, height=4, ul=(3,4), scale=(0.2,-0.4), skew=(0.06,0.08)
+        //   Corners: (3,4), (3.6,4.24), (3.84,2.64), (3.24,2.4)
+        //   AABB: x=[3, 3.84], y=[2.4, 4.24]
         let expected = &create_array(
             &[
+                Some("POLYGON ((1 2, 1.1 2, 1.1 1.6, 1 1.6, 1 2))"),
                 None,
-                Some("POLYGON ((2.0 3.0, 2.2 3.08, 2.29 2.48, 2.09 2.4, 2.0 3.0))"),
-                Some("POLYGON ((3.0 4.0, 3.6 4.24, 3.84 2.64, 3.24 2.4, 3.0 4.0))"),
+                Some("POLYGON ((3 4.24, 3.84 4.24, 3.84 2.4, 3 2.4, 3 4.24))"),
             ],
             &WKB_GEOMETRY,
         );

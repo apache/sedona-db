@@ -343,8 +343,8 @@ mod tests {
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
         let expected_values = match g {
             GeoTransformParam::Rotation => vec![Some(-0.0), None, Some(-0.29145679447786704)],
-            GeoTransformParam::ScaleX => vec![Some(0.0), None, Some(0.2)],
-            GeoTransformParam::ScaleY => vec![Some(-0.0), None, Some(-0.4)],
+            GeoTransformParam::ScaleX => vec![Some(0.1), None, Some(0.2)],
+            GeoTransformParam::ScaleY => vec![Some(-0.2), None, Some(-0.4)],
             GeoTransformParam::SkewX => vec![Some(0.0), None, Some(0.06)],
             GeoTransformParam::SkewY => vec![Some(0.0), None, Some(0.08)],
             GeoTransformParam::UpperLeftX => vec![Some(1.0), None, Some(3.0)],

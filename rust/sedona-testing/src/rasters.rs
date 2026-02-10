@@ -44,8 +44,8 @@ pub fn generate_test_rasters(
             height: i as u64 + 2,
             upperleft_x: i as f64 + 1.0,
             upperleft_y: i as f64 + 2.0,
-            scale_x: i as f64 * 0.1,
-            scale_y: i as f64 * -0.2,
+            scale_x: i.max(1) as f64 * 0.1,
+            scale_y: i.max(1) as f64 * -0.2,
             skew_x: i as f64 * 0.03,
             skew_y: i as f64 * 0.04,
         };
@@ -147,6 +147,39 @@ pub fn generate_tiled_rasters(
     }
 
     Ok(raster_builder.finish()?)
+}
+
+/// Builds a 1x1 single-band raster with a non-invertible geotransform (zero scales and skews).
+/// Useful for testing error handling of inverse affine transforms.
+pub fn build_noninvertible_raster() -> StructArray {
+    let mut builder = RasterBuilder::new(1);
+    let metadata = RasterMetadata {
+        width: 1,
+        height: 1,
+        upperleft_x: 0.0,
+        upperleft_y: 0.0,
+        scale_x: 0.0,
+        scale_y: 0.0,
+        skew_x: 0.0,
+        skew_y: 0.0,
+    };
+    let crs = lnglat().unwrap().to_crs_string();
+    builder
+        .start_raster(&metadata, Some(&crs))
+        .expect("start raster");
+    builder
+        .start_band(BandMetadata {
+            datatype: BandDataType::UInt8,
+            nodata_value: None,
+            storage_type: StorageType::InDb,
+            outdb_url: None,
+            outdb_band_id: None,
+        })
+        .expect("start band");
+    builder.band_data_writer().append_value([0u8]);
+    builder.finish_band().expect("finish band");
+    builder.finish_raster().expect("finish raster");
+    builder.finish().expect("finish")
 }
 
 /// Determine if this tile contains a corner of the overall grid and return its position
@@ -410,8 +443,8 @@ mod tests {
             assert_eq!(metadata.height(), i as u64 + 2);
             assert_eq!(metadata.upper_left_x(), i as f64 + 1.0);
             assert_eq!(metadata.upper_left_y(), i as f64 + 2.0);
-            assert_eq!(metadata.scale_x(), (i as f64) * 0.1);
-            assert_eq!(metadata.scale_y(), (i as f64) * -0.2);
+            assert_eq!(metadata.scale_x(), (i.max(1) as f64) * 0.1);
+            assert_eq!(metadata.scale_y(), (i.max(1) as f64) * -0.2);
             assert_eq!(metadata.skew_x(), (i as f64) * 0.03);
             assert_eq!(metadata.skew_y(), (i as f64) * 0.04);
 

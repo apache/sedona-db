@@ -240,7 +240,7 @@ mod tests {
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
-    use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::rasters::{build_noninvertible_raster, generate_test_rasters};
     use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
@@ -290,8 +290,7 @@ mod tests {
         assert_array_equal(&result, &expected);
 
         // Test that we correctly handle non-invertible geotransforms
-        // using non-invertible raster 0
-        let noninvertible_rasters = generate_test_rasters(2, None).unwrap();
+        let noninvertible_rasters = build_noninvertible_raster();
         let result_err =
             tester.invoke_array_scalar_scalar(Arc::new(noninvertible_rasters), 2.0_f64, 3.0_f64);
         assert!(result_err.is_err());
@@ -323,7 +322,7 @@ mod tests {
         assert_array_equal(&result, expected);
 
         // Test that we correctly handle non-invertible geotransforms
-        let noninvertible_rasters = generate_test_rasters(2, None).unwrap();
+        let noninvertible_rasters = build_noninvertible_raster();
         let result_err =
             tester.invoke_array_scalar_scalar(Arc::new(noninvertible_rasters), 2.0_f64, 3.0_f64);
         assert!(result_err.is_err());
