@@ -183,16 +183,17 @@ impl PartitionedProbeStreamProvider {
         let mut state_guard = self.state.lock();
         match std::mem::replace(&mut *state_guard, ProbeStreamState::FirstPass) {
             ProbeStreamState::Pending { source } => {
-                let partitioner = self
+                let partitioner_for_stream = self
                     .options
                     .partitioner
                     .as_ref()
                     .expect("Partitioned first pass requires a partitioner")
                     .lock()
                     .box_clone();
+                let partitioner_for_repartitioner = partitioner_for_stream.box_clone();
                 let repartitioner = StreamRepartitioner::builder(
                     Arc::clone(&self.runtime_env),
-                    partitioner.box_clone(),
+                    partitioner_for_repartitioner,
                     PartitionedSide::ProbeSide,
                     self.metrics.spill_metrics.clone(),
                 )
@@ -246,7 +247,7 @@ impl PartitionedProbeStreamProvider {
                 let first_pass = FirstPassStream::new(
                     source,
                     repartitioner,
-                    partitioner,
+                    partitioner_for_stream,
                     self.metrics.clone(),
                     callback,
                 );

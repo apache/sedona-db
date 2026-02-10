@@ -53,8 +53,7 @@ impl SpatialPartitioner for RoundRobinPartitioner {
 
     fn partition_no_multi(&self, _bbox: &BoundingBox) -> Result<SpatialPartition> {
         let idx = self.counter.get();
-        self.counter
-            .set(idx.wrapping_add(1));
+        self.counter.set(idx.wrapping_add(1));
         Ok(SpatialPartition::Regular(
             (idx % self.num_partitions) as u32,
         ))
