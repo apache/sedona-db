@@ -88,19 +88,23 @@ impl RasterSchema {
 
 /// Band data type enumeration for raster bands.
 ///
+/// Values align with GDALDataType ordinals for non-complex types (excluding Unknown).
 /// Only supports basic numeric types.
 /// In future versions, consider support for complex types used in
 /// radar and other wave-based data.
 #[repr(u16)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum BandDataType {
-    UInt8 = 0,
-    UInt16 = 1,
-    Int16 = 2,
-    UInt32 = 3,
-    Int32 = 4,
-    Float32 = 5,
-    Float64 = 6,
+    UInt8 = 1,
+    UInt16 = 2,
+    Int16 = 3,
+    UInt32 = 4,
+    Int32 = 5,
+    Float32 = 6,
+    Float64 = 7,
+    UInt64 = 12,
+    Int64 = 13,
+    Int8 = 14,
 }
 
 /// Storage strategy for raster band data within Apache Arrow arrays.
@@ -118,7 +122,7 @@ pub enum BandDataType {
 ///   - Best for: Large satellite imagery, time series data, cloud-native workflows
 ///   - Supported backends: S3, GCS, Azure Blob, local filesystem, HTTP endpoints
 #[repr(u16)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum StorageType {
     InDb = 0,
     OutDbRef = 1,

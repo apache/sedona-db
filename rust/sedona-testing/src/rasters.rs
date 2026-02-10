@@ -115,10 +115,12 @@ pub fn generate_tiled_rasters(
                 // Set a nodata value appropriate for the data type
                 let nodata_value = get_nodata_value_for_type(&data_type);
 
+                let nodata_value_bytes = nodata_value.clone();
+
                 let band_metadata = BandMetadata {
-                    nodata_value: nodata_value.clone(),
+                    nodata_value,
                     storage_type: StorageType::InDb,
-                    datatype: data_type.clone(),
+                    datatype: data_type,
                     outdb_url: None,
                     outdb_band_id: None,
                 };
@@ -133,7 +135,7 @@ pub fn generate_tiled_rasters(
                 let band_data = generate_random_band_data(
                     pixel_count,
                     &data_type,
-                    nodata_value.as_deref(),
+                    nodata_value_bytes.as_deref(),
                     corner_position,
                     &mut rng,
                 );
@@ -229,6 +231,18 @@ fn generate_random_band_data(
             }
             data
         }
+        BandDataType::Int8 => {
+            let mut data = Vec::with_capacity(pixel_count);
+            for _ in 0..pixel_count {
+                data.push(rng.i8(..).to_ne_bytes()[0]);
+            }
+            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
+                if !nodata.is_empty() && pos < data.len() {
+                    data[pos] = nodata[0];
+                }
+            }
+            data
+        }
         BandDataType::UInt16 => {
             let mut data = Vec::with_capacity(pixel_count * 2);
             for _ in 0..pixel_count {
@@ -281,6 +295,30 @@ fn generate_random_band_data(
             }
             data
         }
+        BandDataType::UInt64 => {
+            let mut data = Vec::with_capacity(pixel_count * 8);
+            for _ in 0..pixel_count {
+                data.extend_from_slice(&rng.u64(..).to_ne_bytes());
+            }
+            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
+                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
+                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
+                }
+            }
+            data
+        }
+        BandDataType::Int64 => {
+            let mut data = Vec::with_capacity(pixel_count * 8);
+            for _ in 0..pixel_count {
+                data.extend_from_slice(&rng.i64(..).to_ne_bytes());
+            }
+            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
+                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
+                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
+                }
+            }
+            data
+        }
         BandDataType::Float32 => {
             let mut data = Vec::with_capacity(pixel_count * 4);
             for _ in 0..pixel_count {
@@ -313,10 +351,13 @@ fn generate_random_band_data(
 fn get_nodata_value_for_type(data_type: &BandDataType) -> Option<Vec<u8>> {
     match data_type {
         BandDataType::UInt8 => Some(vec![255u8]),
+        BandDataType::Int8 => Some(i8::MIN.to_ne_bytes().to_vec()),
         BandDataType::UInt16 => Some(u16::MAX.to_ne_bytes().to_vec()),
         BandDataType::Int16 => Some(i16::MIN.to_ne_bytes().to_vec()),
         BandDataType::UInt32 => Some(u32::MAX.to_ne_bytes().to_vec()),
         BandDataType::Int32 => Some(i32::MIN.to_ne_bytes().to_vec()),
+        BandDataType::UInt64 => Some(u64::MAX.to_ne_bytes().to_vec()),
+        BandDataType::Int64 => Some(i64::MIN.to_ne_bytes().to_vec()),
         BandDataType::Float32 => Some(f32::NAN.to_ne_bytes().to_vec()),
         BandDataType::Float64 => Some(f64::NAN.to_ne_bytes().to_vec()),
     }

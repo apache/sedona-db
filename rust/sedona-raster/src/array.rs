@@ -146,13 +146,16 @@ impl<'a> BandMetadataRef for BandMetadataRefImpl<'a> {
 
     fn data_type(&self) -> BandDataType {
         match self.datatype_array.value(self.band_index) {
-            0 => BandDataType::UInt8,
-            1 => BandDataType::UInt16,
-            2 => BandDataType::Int16,
-            3 => BandDataType::UInt32,
-            4 => BandDataType::Int32,
-            5 => BandDataType::Float32,
-            6 => BandDataType::Float64,
+            1 => BandDataType::UInt8,
+            2 => BandDataType::UInt16,
+            3 => BandDataType::Int16,
+            4 => BandDataType::UInt32,
+            5 => BandDataType::Int32,
+            6 => BandDataType::Float32,
+            7 => BandDataType::Float64,
+            12 => BandDataType::UInt64,
+            13 => BandDataType::Int64,
+            14 => BandDataType::Int8,
             _ => panic!(
                 "Unknown band data type: {}",
                 self.datatype_array.value(self.band_index)
