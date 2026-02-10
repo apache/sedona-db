@@ -1294,7 +1294,7 @@ fn truncate_row_selectors_to_top_k(
 mod test {
     use arrow::compute::take_record_batch;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
-    use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+    use rand::{rngs::StdRng, seq::SliceRandom, RngExt, SeedableRng};
     use rstest::rstest;
 
     use super::*;
