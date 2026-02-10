@@ -20,7 +20,7 @@ import os
 import sys
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
 from sedonadb._lib import InternalContext, configure_proj_shared
 from sedonadb._options import Options
@@ -283,7 +283,9 @@ class SedonaContext:
             self.options,
         )
 
-    def sql(self, sql: str) -> DataFrame:
+    def sql(
+        self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
+    ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
 
         Parses a SQL string into a logical plan and returns a DataFrame
@@ -291,15 +293,52 @@ class SedonaContext:
 
         Args:
             sql: A single SQL statement.
+            params: An optional specification of parameters to bind if sql
+                contains placeholders (e.g., `$1` or `$my_param`). Use a
+                list or tuple to replace positional parameters or a dictionary
+                to replace named parameters. This is shorthand for
+                `.sql(...).with_params(...)` that is syntax-compatible with
+                DuckDB. See `lit()` for a list of supported Python objects.
 
         Examples:
 
             >>> sd = sedona.db.connect()
-            >>> sd.sql("SELECT ST_Point(0, 1) as geom")
-            <sedonadb.dataframe.DataFrame object at ...>
+            >>> sd.sql("SELECT ST_Point(0, 1) AS geom").show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
+            >>> sd.sql("SELECT ST_Point($1, $2) AS geom", params=(0, 1)).show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
+            >>> sd.sql("SELECT ST_Point($x, $y) AS geom", params={"x": 0, "y": 1}).show()
+            ┌────────────┐
+            │    geom    │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 1) │
+            └────────────┘
 
         """
-        return DataFrame(self._impl, self._impl.sql(sql), self.options)
+        df = DataFrame(self._impl, self._impl.sql(sql), self.options)
+
+        if params is not None:
+            if isinstance(params, (tuple, list)):
+                return df.with_params(*params)
+            elif isinstance(params, dict):
+                return df.with_params(**params)
+            else:
+                raise ValueError(
+                    "params must be a list, tuple, or dict of scalar values"
+                )
+        else:
+            return df
 
     def register_udf(self, udf: Any):
         """Register a user-defined function
