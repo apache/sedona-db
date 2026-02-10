@@ -37,6 +37,7 @@ This notebook assumes:
 - The following Python packages available:
   - `geopandas`
   - `sqlalchemy`
+  - `geoalchemy2`
   - `psycopg2-binary`
   - `adbc-driver-postgresql`
 
@@ -46,7 +47,8 @@ If you are running this notebook interactively, you can install the required
 dependencies using:
 
 ```bash
-pip install geopandas sqlalchemy psycopg2-binary adbc-driver-postgresql
+pip install geopandas sqlalchemy geoalchemy2 psycopg2-binary adbc-driver-postgresql
+```
 
 
 ## PostGIS Setup
@@ -57,25 +59,8 @@ For development and testing, the SedonaDB repository provides a PostGIS
 Docker container that can be started with:
 
 ```bash
-docker compose up --detach
-
-
-
-```python
-import psycopg2
-
-conn = psycopg2.connect(
-    host="127.0.0.1",
-    port=5432,
-    dbname="postgres",
-    user="postgres",
-)
-print("CONNECTED OK")
-conn.close()
+docker compose up postgis --detach
 ```
-
-    CONNECTED OK
-    
 
 
 ```python
@@ -145,26 +130,12 @@ gdf
 
 
 
-Ensure PostGIS is running and accessible before executing these cells
+We'll use `create_engine()` to access PostGIS via SQLAlchemy.
 
 
 ```python
-engine = create_engine(
-    "postgresql+psycopg2://postgres:password@127.0.0.1:5432/postgres",
-    pool_pre_ping=True,
-)
+engine = create_engine("postgresql+psycopg2://postgres:password@127.0.0.1:5432")
 ```
-
-
-```python
-from sqlalchemy import text
-
-with engine.connect() as conn:
-    print(conn.execute(text("SELECT current_user")).fetchall())
-```
-
-    [('postgres',)]
-    
 
 ## PostGIS → SedonaDB using GeoPandas
 
@@ -174,7 +145,6 @@ This approach reads a PostGIS table into a GeoPandas DataFrame and then converts
 
 ```python
 import geopandas as gpd
-from sqlalchemy import create_engine
 import sedona.db
 ```
 
@@ -213,41 +183,35 @@ df.schema
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ Chicago     ┆ POINT(-87.6298 41.8781)  │
     └─────────────┴──────────────────────────┘
-    
+
 
 
 
 
     SedonaSchema with 2 fields:
-      name: utf8<Utf8>
+      name: utf8<LargeUtf8>
       geometry: geometry<Wkb(epsg:4326)>
 
 
 
 ## High-performance PostGIS integration using ADBC
 
-Apache Arrow Database Connectivity (ADBC) enables efficient, zero-copy data
-transfer between databases and analytical engines. This approach is especially useful when working with large tables or when minimizing memory overhead is important.
+Apache Arrow Database Connectivity (ADBC) enables efficient, zero-copy data transfer between databases and analytical engines. This approach is especially useful when working with large tables or when minimizing memory overhead is important.
 
-By using `adbc_ingest()` and `fetch_arrow()`, this approach avoids row-wise
-iteration and intermediate Pandas DataFrames, making it well suited for
-large datasets and performance-critical pipelines.
+By using `adbc_ingest()` and `fetch_arrow()`, this approach avoids row-wise iteration and intermediate Pandas DataFrames, making it well suited for large datasets and performance-critical pipelines.
 
+First, we'll open the connection using ADBC:
 
 
 ```python
-import sedona.db
 import adbc_driver_postgresql.dbapi
-
-sd = sedona.db.connect()
 
 conn = adbc_driver_postgresql.dbapi.connect(
     "postgresql://postgres:password@127.0.0.1:5432/postgres"
 )
 ```
 
-### Writing data from SedonaDB to PostGIS using ADBC
-
+To write the data from SedonaDB, we'll first ingest the table as a temporary table with geometry columns as WKB. This approach leverages ADBC's optimized Postgres ingest path.
 
 
 ```python
@@ -264,6 +228,8 @@ with conn.cursor() as cur:
     cur.adbc_ingest("ns_water_point_temp", df, temporary=True)
 ```
 
+Next, we'll create the table using a SELECT query that populates the geometry column.
+
 
 ```python
 with conn.cursor() as cur:
@@ -276,8 +242,7 @@ with conn.cursor() as cur:
     """)
 ```
 
-### Reading data from PostGIS into SedonaDB using ADBC
-
+To read data, we'll use the features of `create_data_frame()` that allows us to ingest any Arrow reader as a SedonaDB data frame. Next, we'll collect it while the cursor is still open using `to_memtable()`.
 
 
 ```python
@@ -290,31 +255,33 @@ with conn.cursor() as cur:
     sd.create_data_frame(cur.fetch_arrow()).to_view("postgis_result", overwrite=True)
 
     df = sd.sql("""
-        SELECT ST_GeomFromWKB(geom_wkb) AS geometry
+        SELECT  "OBJECTID", ST_GeomFromWKB(geom_wkb) AS geometry
         FROM postgis_result
     """).to_memtable()
 ```
+
+After the dataframwe has been collected, we can interact with it even after the cursor has been closed.
 
 
 ```python
 df.head(5).show()
 ```
 
-    ┌──────────────────────────────────────────────────────────────────┐
-    │                             geometry                             │
-    │                             geometry                             │
-    ╞══════════════════════════════════════════════════════════════════╡
-    │ POINT Z(300175.22580000013 4910284.878799999 166.39999999999418) │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT Z(300229.72580000013 4910146.878799999 166.39999999999418) │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT Z(300258.0247999998 4910111.278899999 166.39999999999418)  │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT Z(300267.62480000034 4910089.1789 166.39999999999418)      │
-    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ POINT Z(300321.22580000013 4910120.1778 166.39999999999418)      │
-    └──────────────────────────────────────────────────────────────────┘
-    
+    ┌──────────┬──────────────────────────────────────────────────────────────────┐
+    │ OBJECTID ┆                             geometry                             │
+    │   int64  ┆                             geometry                             │
+    ╞══════════╪══════════════════════════════════════════════════════════════════╡
+    │     1055 ┆ POINT Z(258976.3273 4820275.6807 -0.5)                           │
+    ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │     1023 ┆ POINT Z(258340.72730000038 4819923.080700001 0.6000000000058208) │
+    ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │     1021 ┆ POINT Z(258338.4263000004 4819908.080700001 0.5)                 │
+    ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │      985 ┆ POINT Z(258526.62729999982 4819583.580700001 0)                  │
+    ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │      994 ┆ POINT Z(258498.92729999963 4819652.080700001 1.8999999999941792) │
+    └──────────┴──────────────────────────────────────────────────────────────────┘
+
 
 ### Choosing an approach
 
