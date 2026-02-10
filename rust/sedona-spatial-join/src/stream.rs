@@ -1581,7 +1581,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow_array::cast::AsArray;
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     fn create_test_batches(
         num_batches: usize,

@@ -22,7 +22,7 @@ use arrow_schema::DataType;
 use datafusion_common::{exec_datafusion_err, Result, ScalarValue};
 use datafusion_expr::{AggregateUDF, ScalarUDF};
 use geo_types::Rect;
-use rand::{distr::Uniform, rngs::StdRng, Rng, SeedableRng};
+use rand::{distr::Uniform, rngs::StdRng, Rng, RngExt, SeedableRng};
 
 use sedona_common::sedona_internal_err;
 use sedona_geometry::types::GeometryTypeId;
