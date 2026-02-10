@@ -41,8 +41,16 @@ local function render_sql_example(sql_code)
   end
 
   local result = handle:read("*all")
-  handle:close()
+  local success, _, exit_code = handle:close()
   os.remove(temp_file)
+
+  -- If non-zero exit code, emit error to stderr and fallback
+  if not success or (exit_code and exit_code ~= 0) then
+    if result and result ~= "" then
+      io.stderr:write(result)
+    end
+    return {pandoc.CodeBlock(sql_code, pandoc.Attr("", {"sql"}, {}))}
+  end
 
   -- Parse the markdown result and return as pandoc blocks
   if result and result ~= "" then
@@ -80,12 +88,18 @@ local function render_meta_content(doc)
   end
 
   local result = handle:read("*all")
-  if not result then
-    result = "Error: Could not read output from _render_meta.py"
+  local success, _, exit_code = handle:close()
+  os.remove(temp_file)
+
+  -- If non-zero exit code, emit error to stderr and return empty
+  if not success or (exit_code and exit_code ~= 0) then
+    if result and result ~= "" then
+      io.stderr:write(result)
+    end
+    return {}
   end
 
-  handle:close()
-  os.remove(temp_file)  -- Parse the markdown result and return as pandoc blocks
+  -- Parse the markdown result and return as pandoc blocks
   if result and result ~= "" then
     local doc_result = pandoc.read(result, "markdown")
     return doc_result.blocks

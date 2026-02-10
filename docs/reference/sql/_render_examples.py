@@ -115,6 +115,7 @@ if __name__ == "__main__":
     try:
         render_examples(args.examples, width=args.width, ascii=args.ascii)
     except Exception as e:
-        raise ValueError(
-            f"Failed to render examples:\n{'\n----\n'.join(args.examples)}"
-        ) from e
+        err_text = f"Example failed to render:\n{e}"
+        err_text_commented = "\n".join(f"-- {line}" for line in err_text.splitlines())
+        print(f"{err_text_commented}\n```")
+        sys.exit(1)
