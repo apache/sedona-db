@@ -32,5 +32,17 @@ kernels:
 ## Examples
 
 ```sql
-SELECT * FROM table1 a JOIN table2 b ON ST_KNN(a.geom, b.geom, 5, false);
+WITH table2 AS (
+    SELECT geom1 FROM (VALUES
+        (ST_Point(0, 1)),
+        (ST_Point(2, 3)),
+        (ST_Point(4, 5)),
+        (ST_Point(6, 7)),
+        (ST_Point(8, 9))
+    ) AS t(geom1)
+),
+table1 AS (
+    SELECT ST_Point(0, 0) AS geom2
+)
+SELECT * FROM table1 JOIN table2 ON ST_KNN(geom1, geom2, 3, false);
 ```
