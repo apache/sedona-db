@@ -118,11 +118,11 @@ fn create_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) ->
     write_wkb_polygon(
         out,
         [
-            (min_x, max_y),
-            (max_x, max_y),
-            (max_x, min_y),
             (min_x, min_y),
+            (max_x, min_y),
+            (max_x, max_y),
             (min_x, max_y),
+            (min_x, min_y),
         ]
         .into_iter(),
     )
@@ -168,9 +168,9 @@ mod tests {
         //   AABB: x=[3, 3.84], y=[2.4, 4.24]
         let expected = &create_array(
             &[
-                Some("POLYGON ((1 2, 1.1 2, 1.1 1.6, 1 1.6, 1 2))"),
+                Some("POLYGON ((1 1.6, 1.1 1.6, 1.1 2, 1 2, 1 1.6))"),
                 None,
-                Some("POLYGON ((3 4.24, 3.84 4.24, 3.84 2.4, 3 2.4, 3 4.24))"),
+                Some("POLYGON ((3 2.4, 3.84 2.4, 3.84 4.24, 3 4.24, 3 2.4))"),
             ],
             &WKB_GEOMETRY,
         );
