@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{sync::Arc, vec};
+use std::{fmt::Write, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use arrow_array::{
@@ -30,6 +30,9 @@ use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::array::RasterStructArray;
+use sedona_raster::traits::RasterRef;
+use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// SD_Format() scalar UDF implementation
@@ -149,7 +152,7 @@ fn sedona_type_to_formatted_type(sedona_type: &SedonaType) -> Result<SedonaType>
                 _ => Ok(sedona_type.clone()),
             }
         }
-        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
+        SedonaType::Raster => Ok(SedonaType::Arrow(DataType::Utf8)),
     }
 }
 
@@ -167,6 +170,7 @@ fn columnar_value_to_formatted_value(
         SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {
             geospatial_value_to_formatted_value(sedona_type, columnar_value, maybe_width_hint)
         }
+        SedonaType::Raster => raster_value_to_formatted_value(columnar_value, maybe_width_hint),
         SedonaType::Arrow(arrow_type) => match arrow_type {
             DataType::Struct(fields) => match columnar_value {
                 ColumnarValue::Array(array) => {
@@ -211,7 +215,6 @@ fn columnar_value_to_formatted_value(
             },
             _ => Ok(columnar_value.clone()),
         },
-        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
     }
 }
 
@@ -356,6 +359,78 @@ fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     ))
 }
 
+fn raster_value_to_formatted_value(
+    columnar_value: &ColumnarValue,
+    maybe_width_hint: Option<usize>,
+) -> Result<ColumnarValue> {
+    match columnar_value {
+        ColumnarValue::Array(array) => {
+            let struct_array = array.as_struct();
+            let raster_array = RasterStructArray::new(struct_array);
+            let min_output_size = match maybe_width_hint {
+                Some(width_hint) => raster_array.len() * width_hint,
+                None => raster_array.len() * 48,
+            };
+            let mut builder =
+                StringBuilder::with_capacity(raster_array.len(), min_output_size.max(1));
+
+            for i in 0..raster_array.len() {
+                if raster_array.is_null(i) {
+                    builder.append_null();
+                    continue;
+                }
+
+                let raster = raster_array
+                    .get(i)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                let metadata = raster.metadata();
+                let bands = raster.bands();
+
+                let has_outdb = bands.iter().any(|band| {
+                    matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef))
+                });
+
+                let mut output = String::new();
+                let mut limited_output =
+                    LimitedSizeOutput::new(&mut output, maybe_width_hint.unwrap_or(usize::MAX));
+
+                let _ = write!(
+                    limited_output,
+                    "Raster[w={}, h={}, ul=({:.6}, {:.6}), scale=({:.6}, {:.6}), skew=({:.6}, {:.6}), bands={}, outdb={}]",
+                    metadata.width(),
+                    metadata.height(),
+                    metadata.upper_left_x(),
+                    metadata.upper_left_y(),
+                    metadata.scale_x(),
+                    metadata.scale_y(),
+                    metadata.skew_x(),
+                    metadata.skew_y(),
+                    bands.len(),
+                    has_outdb
+                );
+
+                builder.append_value(output);
+            }
+
+            Ok(ColumnarValue::Array(Arc::new(builder.finish())))
+        }
+        ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
+            let formatted = raster_value_to_formatted_value(
+                &ColumnarValue::Array(Arc::new(struct_array.as_ref().clone())),
+                maybe_width_hint,
+            )?;
+            if let ColumnarValue::Array(array) = formatted {
+                Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                    &array, 0,
+                )?))
+            } else {
+                internal_err!("Expected array formatted value for raster scalar")
+            }
+        }
+        _ => internal_err!("Unsupported raster columnar value"),
+    }
+}
+
 struct LimitedSizeOutput<'a, T> {
     inner: &'a mut T,
     current_item_size: usize,
@@ -395,9 +470,11 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
-    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+    use sedona_testing::{
+        create::create_array, rasters::generate_test_rasters, testers::ScalarUdfTester,
+    };
     use std::sync::Arc;
 
     use super::*;
@@ -554,6 +631,21 @@ mod tests {
                 assert_eq!(&result, &test_array, "Failed for test case: {description}");
             }
         }
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns() {
+        let udf = sd_format_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
+        let raster_array = generate_test_rasters(2, None).unwrap();
+        let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
+        let formatted = result.as_string::<i32>();
+
+        assert_eq!(formatted.value(0),
+            "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]"
+        );
+        assert!(formatted.value(1).starts_with("Raster[w=2, h=3"));
     }
 
     #[rstest]
