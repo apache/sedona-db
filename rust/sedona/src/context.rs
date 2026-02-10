@@ -52,6 +52,11 @@ use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
 };
+#[cfg(feature = "pointcloud")]
+use sedona_pointcloud::{
+    laz::{format::LazFormatFactory, options::LasExtraBytes},
+    options::{GeometryEncoding, PointcloudOptions},
+};
 
 /// Sedona SessionContext wrapper
 ///
@@ -84,6 +89,13 @@ impl SedonaContext {
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
         let session_config = add_sedona_option_extension(session_config);
+        #[cfg(feature = "pointcloud")]
+        let session_config = session_config.with_option_extension(
+            PointcloudOptions::default()
+                .with_geometry_encoding(GeometryEncoding::Wkb)
+                .with_las_extra_bytes(LasExtraBytes::Typed),
+        );
+
         let rt_builder = RuntimeEnvBuilder::new();
         let runtime_env = rt_builder.build_arc()?;
 
@@ -101,6 +113,10 @@ impl SedonaContext {
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
+        #[cfg(feature = "pointcloud")]
+        {
+            state.register_file_format(Arc::new(LazFormatFactory::new()), false)?;
+        }
 
         // Enable dynamic file query (i.e., select * from 'filename')
         let ctx = SessionContext::new_with_state(state).enable_url_table();
