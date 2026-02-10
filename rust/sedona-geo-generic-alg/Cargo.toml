@@ -36,7 +36,7 @@ log = "0.4.11"
 num-traits = { workspace = true }
 robust = "1.1.0"
 rstar = "0.12.0"
-i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
+i_overlay = { version = "4.0.7", default-features = false }
 
 [dev-dependencies]
 sedona-testing = { workspace = true }
