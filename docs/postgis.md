@@ -17,6 +17,7 @@ specific language governing permissions and limitations
 under the License.
 -->
 
+
 # SedonaDB + PostGIS
 
 This page demonstrates how to integrate PostGIS with SedonaDB.
@@ -25,6 +26,7 @@ Two approaches are covered:
 
 1. A GeoPandas-based workflow for simplicity and exploratory use.
 2. A high-performance ADBC-based workflow for large datasets and production use cases.
+
 
 ## Prerequisites
 
@@ -43,7 +45,7 @@ This notebook assumes:
 If you are running this notebook interactively, you can install the required
 dependencies using:
 
-````bash
+```bash
 pip install geopandas sqlalchemy psycopg2-binary adbc-driver-postgresql
 
 
@@ -70,9 +72,11 @@ conn = psycopg2.connect(
 )
 print("CONNECTED OK")
 conn.close()
-````
+```
 
     CONNECTED OK
+    
+
 
 ```python
 import geopandas as gpd
@@ -92,8 +96,10 @@ gdf = gpd.GeoDataFrame(
 )
 
 gdf
-
 ```
+
+
+
 
 <div>
 <style scoped>
@@ -108,7 +114,6 @@ gdf
     .dataframe thead th {
         text-align: right;
     }
-
 </style>
 <table border="1" class="dataframe">
   <thead>
@@ -138,36 +143,41 @@ gdf
 </table>
 </div>
 
+
+
 Ensure PostGIS is running and accessible before executing these cells
 
-```python
-from sqlalchemy import create_engine
 
+```python
 engine = create_engine(
     "postgresql+psycopg2://postgres:password@127.0.0.1:5432/postgres",
     pool_pre_ping=True,
 )
 ```
 
+
 ```python
 from sqlalchemy import text
 
 with engine.connect() as conn:
     print(conn.execute(text("SELECT current_user")).fetchall())
-
 ```
 
     [('postgres',)]
+    
 
 ## PostGIS → SedonaDB using GeoPandas
 
 This approach reads a PostGIS table into a GeoPandas DataFrame and then converts it into a SedonaDB DataFrame.
+
+
 
 ```python
 import geopandas as gpd
 from sqlalchemy import create_engine
 import sedona.db
 ```
+
 
 ```python
 gdf.to_postgis(
@@ -178,6 +188,7 @@ gdf.to_postgis(
 )
 ```
 
+
 ```python
 gdf = gpd.read_postgis(
     "SELECT * FROM my_places",
@@ -185,13 +196,11 @@ gdf = gpd.read_postgis(
     geom_col="geometry",
 )
 
-import sedona.db
 
 sd = sedona.db.connect()
 df = sd.create_data_frame(gdf)
 df.show()
 df.schema
-
 ```
 
     ┌─────────────┬──────────────────────────┐
@@ -204,7 +213,7 @@ df.schema
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ Chicago     ┆ POINT(-87.6298 41.8781)  │
     └─────────────┴──────────────────────────┘
-
+    
 
 
 
@@ -212,6 +221,8 @@ df.schema
     SedonaSchema with 2 fields:
       name: utf8<Utf8>
       geometry: geometry<Wkb(epsg:4326)>
+
+
 
 ## High-performance PostGIS integration using ADBC
 
@@ -222,6 +233,8 @@ By using `adbc_ingest()` and `fetch_arrow()`, this approach avoids row-wise
 iteration and intermediate Pandas DataFrames, making it well suited for
 large datasets and performance-critical pipelines.
 
+
+
 ```python
 import sedona.db
 import adbc_driver_postgresql.dbapi
@@ -231,10 +244,11 @@ sd = sedona.db.connect()
 conn = adbc_driver_postgresql.dbapi.connect(
     "postgresql://postgres:password@127.0.0.1:5432/postgres"
 )
-
 ```
 
 ### Writing data from SedonaDB to PostGIS using ADBC
+
+
 
 ```python
 with conn.cursor() as cur:
@@ -250,6 +264,7 @@ with conn.cursor() as cur:
     cur.adbc_ingest("ns_water_point_temp", df, temporary=True)
 ```
 
+
 ```python
 with conn.cursor() as cur:
     cur.executescript("""
@@ -262,6 +277,8 @@ with conn.cursor() as cur:
 ```
 
 ### Reading data from PostGIS into SedonaDB using ADBC
+
+
 
 ```python
 with conn.cursor() as cur:
@@ -277,6 +294,7 @@ with conn.cursor() as cur:
         FROM postgis_result
     """).to_memtable()
 ```
+
 
 ```python
 df.head(5).show()
@@ -296,9 +314,11 @@ df.head(5).show()
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ POINT Z(300321.22580000013 4910120.1778 166.39999999999418)      │
     └──────────────────────────────────────────────────────────────────┘
+    
 
 ### Choosing an approach
 
 - Use the GeoPandas-based approach for simplicity and exploratory workflows.
 - Use the ADBC-based approach for large datasets or production pipelines
   where performance and memory efficiency are critical.
+
