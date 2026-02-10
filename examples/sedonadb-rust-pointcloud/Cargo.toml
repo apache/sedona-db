@@ -20,12 +20,13 @@ name = "sedonadb-rust-pointcloud-example"
 version = "0.0.1"
 authors.workspace = true
 license.workspace = true
-description = "Apache SedonaDB Rust API Example"
+description = "Apache SedonaDB Rust Point Cloud API Example"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
 
 [dependencies]
-sedona = { workspace = true, features = ["pointcloud"] }
+# We use a git dependency here so that we can test these examples
+sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona", features = ["pointcloud"] }
 sedona-pointcloud = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"]}
