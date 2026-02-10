@@ -449,19 +449,21 @@ impl ExecutionPlan for SpatialJoinExec {
         // Determine build/probe plans based on predicate type.
         // For KNN joins, the probe/build assignment is dynamic based on the KNN predicate's
         // probe_side. For regular spatial joins, left is always build and right is always probe.
-        let (build_plan, probe_plan) = match &self.on {
-            SpatialPredicate::KNearestNeighbors(knn_pred) => determine_knn_build_probe_plans(
-                knn_pred,
-                &self.left,
-                &self.right,
-                &self.join_schema,
-            )?,
-            _ => (&self.left, &self.right),
+        let (build_plan, probe_plan, probe_side) = match &self.on {
+            SpatialPredicate::KNearestNeighbors(knn_pred) => {
+                let (build_plan, probe_plan) = determine_knn_build_probe_plans(
+                    knn_pred,
+                    &self.left,
+                    &self.right,
+                    &self.join_schema,
+                )?;
+                (build_plan, probe_plan, knn_pred.probe_side)
+            }
+            _ => (&self.left, &self.right, JoinSide::Right),
         };
 
         // Determine which input index corresponds to the probe side for ordering checks
-        let probe_is_left = std::ptr::eq(probe_plan.as_ref(), self.left.as_ref());
-        let probe_input_index = if probe_is_left { 0 } else { 1 };
+        let probe_input_index = if probe_side == JoinSide::Left { 0 } else { 1 };
 
         // A OnceFut for preparing the spatial join components once.
         let once_fut_spatial_join_components = {

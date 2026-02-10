@@ -271,7 +271,7 @@ async fn get_or_init_expected_join_results<'a>(
                     sql,
                 )
                 .await
-                .unwrap_or_else(|_| panic!("Failed to generate expected result {}", i + 1));
+                .unwrap_or_else(|e| panic!("Failed to generate expected result {}: {}", i + 1, e));
                 expected_results.push(result);
             }
 
