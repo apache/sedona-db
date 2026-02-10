@@ -18,7 +18,7 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 use sedona_spatial_join::partitioning::{kdb::KDBPartitioner, SpatialPartitioner};
 
@@ -102,7 +102,7 @@ fn synthetic_bboxes(
     boxes
 }
 
-fn random_bbox(extent: &BoundingBox, rng: &mut StdRng, max_span: f64) -> BoundingBox {
+fn random_bbox(extent: &BoundingBox, rng: &mut impl RngExt, max_span: f64) -> BoundingBox {
     let (min_x, max_x) = (extent.x().lo(), extent.x().hi());
     let (min_y, max_y) = (extent.y().lo(), extent.y().hi());
 

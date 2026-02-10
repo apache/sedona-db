@@ -16,14 +16,25 @@
 // under the License.
 #pragma once
 
-#include "gpuspatial/geom/point.cuh"
-#include "gpuspatial/utils/array_view.h"
-#include "gpuspatial/utils/pinned_vector.h"
+#include "gpuspatial/geom/point.hpp"
+#include "gpuspatial/relate/predicate.hpp"
+#include "gpuspatial/utils/array_view.hpp"
+#include "gpuspatial/utils/pinned_vector.hpp"
 
 #include "gtest/gtest.h"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
 #include "rmm/exec_policy.hpp"
+
+#include <geos/geom/Envelope.h>
+#include <geos/geom/Geometry.h>
+#include <geos/geom/GeometryFactory.h>
+#include <geos/index/ItemVisitor.h>
+#include <geos/index/strtree/STRtree.h>
+#include <geos/io/WKBReader.h>
+
+#include "nanoarrow/nanoarrow.h"
+#include "nanoarrow/nanoarrow.hpp"
 
 #include "arrow/api.h"
 #include "arrow/c/bridge.h"
@@ -74,7 +85,7 @@ gpuspatial::PinnedVector<T> ToVector(const rmm::cuda_stream_view& stream,
 }
 
 // Function to convert a relative path string to an absolute path string
-std::string GetCanonicalPath(const std::string& relative_path_str) {
+inline std::string GetCanonicalPath(const std::string& relative_path_str) {
   try {
     // 1. Create a path object from the relative string
     std::filesystem::path relative_path = relative_path_str;
@@ -88,6 +99,139 @@ std::string GetCanonicalPath(const std::string& relative_path_str) {
   } catch (const std::filesystem::filesystem_error& e) {
     std::cerr << "Filesystem Error: " << e.what() << std::endl;
     return "";  // Return an empty string on error
+  }
+}
+
+// Helper to evaluate predicates using GEOS C++ API
+static bool EvaluateGeosPredicate(gpuspatial::Predicate predicate,
+                                  const geos::geom::Geometry* geom1,
+                                  const geos::geom::Geometry* geom2) {
+  switch (predicate) {
+    case gpuspatial::Predicate::kContains:
+      return geom1->contains(geom2);
+    case gpuspatial::Predicate::kIntersects:
+      return geom1->intersects(geom2);
+    case gpuspatial::Predicate::kWithin:
+      return geom1->within(geom2);
+    case gpuspatial::Predicate::kEquals:
+      return geom1->equals(geom2);
+    case gpuspatial::Predicate::kTouches:
+      return geom1->touches(geom2);
+    default:
+      throw std::out_of_range("Unsupported GEOS predicate enumeration value.");
+  }
+}
+
+// Helper structure to keep visitor context
+struct JoinVisitorContext {
+  const geos::geom::Geometry* probe_geom;
+  std::vector<uint32_t>* build_indices;
+  std::vector<uint32_t>* probe_indices;
+  size_t current_probe_index;
+  gpuspatial::Predicate predicate;
+};
+
+// GEOS Visitor Implementation
+class JoinVisitor : public geos::index::ItemVisitor {
+ public:
+  JoinVisitorContext* ctx;
+  explicit JoinVisitor(JoinVisitorContext* c) : ctx(c) {}
+
+  void visitItem(void* item) override {
+    const auto* build_geom = static_cast<const geos::geom::Geometry*>(item);
+
+    // Use the existing predicate evaluator from TestUtils
+    if (EvaluateGeosPredicate(ctx->predicate, build_geom, ctx->probe_geom)) {
+      size_t build_idx = (size_t)build_geom->getUserData();
+
+      ctx->build_indices->push_back(static_cast<uint32_t>(build_idx));
+      ctx->probe_indices->push_back(static_cast<uint32_t>(ctx->current_probe_index));
+    }
+  }
+};
+
+inline void ComputeGeosJoin(ArrowSchema* build_schema,
+                            const std::vector<ArrowArray*>& build_arrays,
+                            ArrowSchema* probe_schema,
+                            const std::vector<ArrowArray*>& probe_arrays,
+                            gpuspatial::Predicate predicate,
+                            std::vector<uint32_t>& out_build_indices,
+                            std::vector<uint32_t>& out_probe_indices) {
+  // Initialize GEOS components
+  auto factory = geos::geom::GeometryFactory::create();
+  geos::io::WKBReader wkb_reader(*factory);
+  geos::index::strtree::STRtree tree(10);
+
+  // Storage to keep geometries alive during the operation
+  std::vector<std::unique_ptr<geos::geom::Geometry>> build_geoms_storage;
+  ArrowError error;
+
+  // --- Build Phase ---
+  size_t global_build_offset = 0;
+
+  for (auto* array : build_arrays) {
+    nanoarrow::UniqueArrayView array_view;
+    if (ArrowArrayViewInitFromSchema(array_view.get(), build_schema, &error) !=
+        NANOARROW_OK) {
+      throw std::runtime_error("GEOS Build: Failed to init view: " +
+                               std::string(error.message));
+    }
+    if (ArrowArrayViewSetArray(array_view.get(), array, &error) != NANOARROW_OK) {
+      throw std::runtime_error("GEOS Build: Failed to set array: " +
+                               std::string(error.message));
+    }
+
+    for (int64_t i = 0; i < array->length; i++) {
+      // Parse WKB
+      ArrowStringView wkb_view = ArrowArrayViewGetStringUnsafe(array_view.get(), i);
+      auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb_view.data),
+                                  wkb_view.size_bytes);
+
+      // Set global index as user data
+      size_t current_idx = global_build_offset + i;
+      geom->setUserData((void*)current_idx);
+
+      // Insert into Index
+      tree.insert(geom->getEnvelopeInternal(), geom.get());
+
+      // Transfer ownership
+      build_geoms_storage.push_back(std::move(geom));
+    }
+    global_build_offset += array->length;
+  }
+
+  // --- Probe Phase ---
+  size_t global_probe_offset = 0;
+  JoinVisitorContext ctx;
+  ctx.build_indices = &out_build_indices;
+  ctx.probe_indices = &out_probe_indices;
+  ctx.predicate = predicate;
+  JoinVisitor visitor(&ctx);
+
+  for (auto* array : probe_arrays) {
+    nanoarrow::UniqueArrayView array_view;
+    if (ArrowArrayViewInitFromSchema(array_view.get(), probe_schema, &error) !=
+        NANOARROW_OK) {
+      throw std::runtime_error("GEOS Probe: Failed to init view: " +
+                               std::string(error.message));
+    }
+    if (ArrowArrayViewSetArray(array_view.get(), array, &error) != NANOARROW_OK) {
+      throw std::runtime_error("GEOS Probe: Failed to set array: " +
+                               std::string(error.message));
+    }
+
+    for (int64_t i = 0; i < array->length; i++) {
+      ArrowStringView wkb_view = ArrowArrayViewGetStringUnsafe(array_view.get(), i);
+      auto geom = wkb_reader.read(reinterpret_cast<const unsigned char*>(wkb_view.data),
+                                  wkb_view.size_bytes);
+
+      ctx.probe_geom = geom.get();
+      ctx.current_probe_index = global_probe_offset + i;
+
+      // Query the tree
+      tree.query(geom->getEnvelopeInternal(), visitor);
+    }
+    global_probe_offset += array->length;
   }
 }
 

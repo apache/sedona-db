@@ -113,7 +113,7 @@ geo-traits = "0.3.0"
 geo = "0.31.0"
 geojson = "0.24.2"
 
-geo-index = { version = "0.3.2", features = ["use-geo_0_31"] }
+geo-index = { git="https://github.com/georust/geo-index.git", rev="d70f049bc02da7364d923c519a484a482c9c0a11", features = ["use-geo_0_31"] }
 
 wkb = "0.9.2"
 wkt = "0.14.0"
@@ -124,7 +124,7 @@ parquet = { version = "57.0.0", default-features = false, features = [
     "async",
     "object_store",
 ] }
-rand = "0.9"
+rand = "0.10"
 regex = "1.12"
 rstest = "0.26.1"
 serde = { version = "1" }

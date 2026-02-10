@@ -275,11 +275,12 @@ pub(crate) fn apply_join_filter_to_indices(
     probe_batch: &RecordBatch,
     build_indices: UInt64Array,
     probe_indices: UInt32Array,
+    distances: Option<&[f64]>,
     filter: &JoinFilter,
     build_side: JoinSide,
-) -> Result<(UInt64Array, UInt32Array)> {
+) -> Result<(UInt64Array, UInt32Array, Option<Vec<f64>>)> {
     if build_indices.is_empty() && probe_indices.is_empty() {
-        return Ok((build_indices, probe_indices));
+        return Ok((build_indices, probe_indices, distances.map(|_| Vec::new())));
     };
 
     let intermediate_batch = build_batch_from_indices(
@@ -300,9 +301,28 @@ pub(crate) fn apply_join_filter_to_indices(
 
     let left_filtered = compute::filter(&build_indices, mask)?;
     let right_filtered = compute::filter(&probe_indices, mask)?;
+
+    let filtered_distances = if let Some(distances) = distances {
+        debug_assert_eq!(
+            distances.len(),
+            build_indices.len(),
+            "distances length should match indices length"
+        );
+        let dist_array = arrow_array::Float64Array::from(distances.to_vec());
+        let filtered = compute::filter(&dist_array, mask)?;
+        let filtered = filtered
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .expect("filtered distance array should be Float64Array");
+        Some(filtered.values().to_vec())
+    } else {
+        None
+    };
+
     Ok((
         downcast_array(left_filtered.as_ref()),
         downcast_array(right_filtered.as_ref()),
+        filtered_distances,
     ))
 }
 

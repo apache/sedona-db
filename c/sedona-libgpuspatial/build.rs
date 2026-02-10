@@ -119,10 +119,18 @@ fn main() {
                 println!("cargo:warning=CMAKE_CUDA_ARCHITECTURES environment variable not set. Defaulting to '86;89'.");
                 "86;89".to_string()
             });
+        // Determine the build profile to match Cargo's debug/release mode
+        let profile_mode = if cfg!(debug_assertions) {
+            "Debug"
+        } else {
+            "Release"
+        };
+
         let dst = cmake::Config::new("./libgpuspatial")
             .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures)
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
             .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
+            .define("SPDLOG_FMT_EXTERNAL", "OFF") // Prevent spdlog from using external fmt library
             .build();
         let include_path = dst.join("include");
         println!(
@@ -157,6 +165,17 @@ fn main() {
         println!("cargo:rustc-link-lib=static=gpuspatial");
         println!("cargo:rustc-link-lib=static=rmm");
         println!("cargo:rustc-link-lib=static=rapids_logger");
+        // Use the 'd' suffix for the debug build of spdlog (libspdlogd.a)
+        let spdlog_lib_name = if cfg!(debug_assertions) {
+            "spdlogd"
+        } else {
+            "spdlog"
+        };
+        println!(
+            "cargo:warning=Linking spdlog in {} mode: lib{}.a",
+            profile_mode, spdlog_lib_name
+        );
+        println!("cargo:rustc-link-lib=static={}", spdlog_lib_name);
         println!("cargo:rustc-link-lib=static=geoarrow");
         println!("cargo:rustc-link-lib=static=nanoarrow");
         println!("cargo:rustc-link-lib=stdc++");

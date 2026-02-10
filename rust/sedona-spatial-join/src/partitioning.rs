@@ -18,9 +18,11 @@
 use datafusion_common::Result;
 use sedona_geometry::bounding_box::BoundingBox;
 
+pub mod broadcast;
 pub mod flat;
 pub mod kdb;
 pub(crate) mod partition_slots;
+pub mod round_robin;
 pub mod rtree;
 pub mod stream_repartitioner;
 pub(crate) mod util;

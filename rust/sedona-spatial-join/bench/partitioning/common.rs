@@ -17,7 +17,7 @@
 
 //! Shared helpers for partitioner benchmarks.
 
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 
 pub const GRID_DIM: usize = 4; // 4x4 grid => 16 partitions like typical workloads
@@ -66,7 +66,7 @@ pub fn sample_queries(extent: &BoundingBox, batch_size: usize) -> Vec<BoundingBo
         .collect()
 }
 
-fn random_bbox(extent: &BoundingBox, rng: &mut StdRng, max_span: f64) -> BoundingBox {
+fn random_bbox(extent: &BoundingBox, rng: &mut impl RngExt, max_span: f64) -> BoundingBox {
     let (min_x, max_x) = (extent.x().lo(), extent.x().hi());
     let (min_y, max_y) = (extent.y().lo(), extent.y().hi());
 
