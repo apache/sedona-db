@@ -389,9 +389,9 @@ pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()>
 
 /// Do something with the global thread-local PROJ engine, creating it if it has not
 /// already been created.
-pub(crate) fn with_global_proj_engine(
-    mut func: impl FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<()>,
-) -> Result<()> {
+pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>>(
+    mut func: F,
+) -> Result<R> {
     PROJ_ENGINE.with(|engine_cell| {
         // If there is already an engine, use it!
         if let Some(engine) = engine_cell.get() {
@@ -417,8 +417,7 @@ pub(crate) fn with_global_proj_engine(
         engine_cell
             .set(CachingCrsEngine::new(proj_engine))
             .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
-        func(engine_cell.get().unwrap())?;
-        Ok(())
+        func(engine_cell.get().unwrap())
     })
 }
 
@@ -426,6 +425,10 @@ pub(crate) fn with_global_proj_engine(
 /// or never set to use all default settings.
 static PROJ_ENGINE_BUILDER: RwLock<Option<ProjCrsEngineBuilder>> =
     RwLock::<Option<ProjCrsEngineBuilder>>::new(None);
+
+thread_local! {
+    static PROJ_CACHE_SIZE: OnceCell<usize> = const { OnceCell::new() };
+}
 
 // CrsTransform backed by PROJ is not thread safe, so we define the cache as thread-local
 // to avoid race conditions.

@@ -21,13 +21,12 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::builder::UInt32Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_common::DataFusionError;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::crs::deserialize_crs;
+use sedona_schema::crs::CachedCrsToSRIDMapping;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_SRID() scalar UDF implementation
@@ -97,45 +96,17 @@ impl SedonaScalarKernel for RsSrid {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = UInt32Builder::with_capacity(executor.num_iterations());
 
+        let mut crs_to_srid_mapping =
+            CachedCrsToSRIDMapping::with_capacity(executor.num_iterations());
         executor.execute_raster_void(|_i, raster_opt| {
-            match raster_opt {
-                None => builder.append_null(),
-                Some(raster) => {
-                    match raster.crs() {
-                        None => {
-                            // When no CRS is set, SRID is 0
-                            builder.append_value(0);
-                        }
-                        Some(crs_str) => {
-                            let crs = deserialize_crs(crs_str).map_err(|e| {
-                                DataFusionError::Execution(format!(
-                                    "Failed to deserialize CRS: {e}"
-                                ))
-                            })?;
+            let Some(raster) = raster_opt else {
+                builder.append_null();
+                return Ok(());
+            };
 
-                            match crs {
-                                Some(crs_ref) => {
-                                    let srid = crs_ref.srid().map_err(|e| {
-                                        DataFusionError::Execution(format!(
-                                            "Failed to get SRID from CRS: {e}"
-                                        ))
-                                    })?;
-
-                                    match srid {
-                                        Some(srid_val) => builder.append_value(srid_val),
-                                        None => {
-                                            return Err(DataFusionError::Execution(
-                                                "CRS has no SRID".to_string(),
-                                            ))
-                                        }
-                                    }
-                                }
-                                None => builder.append_value(0),
-                            }
-                        }
-                    }
-                }
-            }
+            let maybe_crs = raster.crs_str_ref();
+            let srid = crs_to_srid_mapping.get_srid(maybe_crs)?;
+            builder.append_value(srid);
             Ok(())
         })?;
 
@@ -167,26 +138,14 @@ impl SedonaScalarKernel for RsCrs {
             StringBuilder::with_capacity(executor.num_iterations(), preallocate_bytes);
 
         executor.execute_raster_void(|_i, raster_opt| {
-            match raster_opt {
-                None => builder.append_null(),
-                Some(raster) => match raster.crs() {
-                    None => builder.append_null(),
-                    Some(crs_str) => {
-                        let crs = deserialize_crs(crs_str).map_err(|e| {
-                            DataFusionError::Execution(format!("Failed to deserialize CRS: {e}"))
-                        })?;
+            let Some(raster) = raster_opt else {
+                builder.append_null();
+                return Ok(());
+            };
 
-                        let crs_string = crs
-                            .ok_or_else(|| {
-                                DataFusionError::Execution(
-                                    "Failed to parse non-null CRS string".to_string(),
-                                )
-                            })?
-                            .to_crs_string();
-                        builder.append_value(crs_string);
-                    }
-                },
-            }
+            // This is similar to ST_CRS: if no CRS is set, return "0"
+            let crs_str = raster.crs().unwrap_or("0");
+            builder.append_value(crs_str);
             Ok(())
         })?;
 
@@ -200,7 +159,10 @@ mod tests {
     use arrow_array::{StringArray, UInt32Array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
+    use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::{BandDataType, StorageType};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
@@ -234,6 +196,34 @@ mod tests {
         // Test with null scalar
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::UInt32(None));
+
+        // Test with raster missing CRS
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, None);
+        let rasters = builder.finish().unwrap();
+
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt32Array::from(vec![Some(0)]));
+        assert_array_equal(&result, &expected);
+    }
+
+    #[test]
+    fn udf_srid_missing_srid_returns_error() {
+        let udf: ScalarUDF = rs_srid_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+
+        // A PROJJSON CRS without an authority identifier should error.
+        let projjson_crs = "{\"type\":\"GeographicCRS\",\"name\":\"No authority id\"}";
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, Some(projjson_crs));
+        let rasters = builder.finish().unwrap();
+
+        let err = tester.invoke_array(Arc::new(rasters)).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Can't extract SRID from item-level CRS"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -255,8 +245,43 @@ mod tests {
         let result = tester.invoke_array(Arc::new(rasters)).unwrap();
         assert_array_equal(&result, &expected);
 
+        // Test with raster missing CRS
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, None);
+        let rasters = builder.finish().unwrap();
+
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(StringArray::from(vec![Some("0")]));
+        assert_array_equal(&result, &expected);
+
         // Test with null scalar
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+    }
+
+    fn append_1x1_raster_with_crs(builder: &mut RasterBuilder, crs: Option<&str>) {
+        let raster_metadata = RasterMetadata {
+            width: 1,
+            height: 1,
+            upperleft_x: 0.0,
+            upperleft_y: 0.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        builder.start_raster(&raster_metadata, crs).unwrap();
+        builder
+            .start_band(BandMetadata {
+                datatype: BandDataType::UInt8,
+                nodata_value: None,
+                storage_type: StorageType::InDb,
+                outdb_url: None,
+                outdb_band_id: None,
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([0u8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
     }
 }

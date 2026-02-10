@@ -14,8 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_common::{plan_datafusion_err, plan_err, DataFusionError, Result};
+use datafusion_common::{
+    exec_err, plan_datafusion_err, plan_err, DataFusionError, HashMap, Result,
+};
 use lru::LruCache;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 use std::num::NonZeroUsize;
@@ -50,7 +53,7 @@ pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
         return Ok(cached);
     }
 
-    // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}" and "0"
+    // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}", WKT CRS strings and "0"
     let crs = if LngLat::is_str_lnglat(crs_str) {
         lnglat()
     } else if crs_str == "0" {
@@ -78,6 +81,10 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
     }
 
     if let Some(crs_str) = crs_value.as_str() {
+        if crs_str.is_empty() || crs_str == "0" {
+            return Ok(None);
+        }
+
         // Handle JSON strings "OGC:CRS84" and "EPSG:4326"
         if LngLat::is_str_lnglat(crs_str) {
             return Ok(lnglat());
@@ -99,6 +106,55 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
     };
 
     Ok(Some(Arc::new(projjson)))
+}
+
+/// Translating CRS into integer SRID with a cache to avoid expensive CRS deserialization.
+pub struct CachedCrsToSRIDMapping {
+    cache: HashMap<Cow<'static, str>, u32>,
+}
+
+impl Default for CachedCrsToSRIDMapping {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CachedCrsToSRIDMapping {
+    /// Create a new CachedCrsSRIDMapping with an empty cache.
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Create a new CachedCrsSRIDMapping with an optional initial capacity for the cache.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Get the SRID for a given CRS string, using the cache to avoid expensive deserialization where possible.
+    /// Returns 0 for missing CRS or CRS that don't have an SRID. Errors if the CRS string is invalid or if the
+    /// CRS can't be deserialized.
+    pub fn get_srid(&mut self, maybe_crs: Option<&str>) -> Result<u32> {
+        if let Some(crs_str) = maybe_crs {
+            if let Some(srid) = self.cache.get(crs_str) {
+                Ok(*srid)
+            } else if let Some(crs) = deserialize_crs(crs_str)? {
+                if let Some(srid) = crs.srid()? {
+                    self.cache.insert(Cow::Owned(crs_str.to_string()), srid);
+                    Ok(srid)
+                } else {
+                    exec_err!("Can't extract SRID from item-level CRS '{crs_str}'")
+                }
+            } else {
+                Ok(0)
+            }
+        } else {
+            Ok(0)
+        }
+    }
 }
 
 /// Longitude/latitude CRS (WGS84)
