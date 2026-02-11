@@ -22,6 +22,14 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     benchmark::scalar(c, &f, "native-raster", "rs_crs", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_envelope", Raster(64, 64));
+    benchmark::scalar(c, &f, "native-raster", "rs_georeference", Raster(64, 64));
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_georeference",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), String("ESRI".to_string())),
+    );
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
     benchmark::scalar(
         c,
