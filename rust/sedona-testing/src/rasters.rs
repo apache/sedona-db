@@ -220,131 +220,36 @@ fn generate_random_band_data(
     corner_position: Option<usize>,
     rng: &mut Rng,
 ) -> Vec<u8> {
+    /// Generate random band data for a given pixel type and set the corner pixel
+    /// to the nodata value if applicable.
+    macro_rules! gen_band {
+        ($byte_size:expr, $rng_expr:expr) => {{
+            let byte_size: usize = $byte_size;
+            let mut data = Vec::with_capacity(pixel_count * byte_size);
+            for _ in 0..pixel_count {
+                data.extend_from_slice(&$rng_expr.to_ne_bytes());
+            }
+            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
+                if nodata.len() >= byte_size && pos * byte_size + byte_size <= data.len() {
+                    data[pos * byte_size..(pos * byte_size) + byte_size]
+                        .copy_from_slice(&nodata[0..byte_size]);
+                }
+            }
+            data
+        }};
+    }
+
     match data_type {
-        BandDataType::UInt8 => {
-            let mut data: Vec<u8> = (0..pixel_count).map(|_| rng.u8(..)).collect();
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if !nodata.is_empty() && pos < data.len() {
-                    data[pos] = nodata[0];
-                }
-            }
-            data
-        }
-        BandDataType::Int8 => {
-            let mut data = Vec::with_capacity(pixel_count);
-            for _ in 0..pixel_count {
-                data.push(rng.i8(..).to_ne_bytes()[0]);
-            }
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if !nodata.is_empty() && pos < data.len() {
-                    data[pos] = nodata[0];
-                }
-            }
-            data
-        }
-        BandDataType::UInt16 => {
-            let mut data = Vec::with_capacity(pixel_count * 2);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.u16(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 2 && pos * 2 + 2 <= data.len() {
-                    data[pos * 2..(pos * 2) + 2].copy_from_slice(&nodata[0..2]);
-                }
-            }
-            data
-        }
-        BandDataType::Int16 => {
-            let mut data = Vec::with_capacity(pixel_count * 2);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.i16(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 2 && pos * 2 + 2 <= data.len() {
-                    data[pos * 2..(pos * 2) + 2].copy_from_slice(&nodata[0..2]);
-                }
-            }
-            data
-        }
-        BandDataType::UInt32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.u32(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::Int32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.i32(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::UInt64 => {
-            let mut data = Vec::with_capacity(pixel_count * 8);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.u64(..).to_ne_bytes());
-            }
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
-                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
-                }
-            }
-            data
-        }
-        BandDataType::Int64 => {
-            let mut data = Vec::with_capacity(pixel_count * 8);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.i64(..).to_ne_bytes());
-            }
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
-                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
-                }
-            }
-            data
-        }
-        BandDataType::Float32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.f32().to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::Float64 => {
-            let mut data = Vec::with_capacity(pixel_count * 8);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.f64().to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
-                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
-                }
-            }
-            data
-        }
+        BandDataType::UInt8 => gen_band!(1, rng.u8(..)),
+        BandDataType::Int8 => gen_band!(1, rng.i8(..)),
+        BandDataType::UInt16 => gen_band!(2, rng.u16(..)),
+        BandDataType::Int16 => gen_band!(2, rng.i16(..)),
+        BandDataType::UInt32 => gen_band!(4, rng.u32(..)),
+        BandDataType::Int32 => gen_band!(4, rng.i32(..)),
+        BandDataType::UInt64 => gen_band!(8, rng.u64(..)),
+        BandDataType::Int64 => gen_band!(8, rng.i64(..)),
+        BandDataType::Float32 => gen_band!(4, rng.f32()),
+        BandDataType::Float64 => gen_band!(8, rng.f64()),
     }
 }
 
