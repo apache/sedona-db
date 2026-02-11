@@ -35,7 +35,7 @@ use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use crate::{
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate, SpatialPredicateTrait},
-    stream::{SpatialJoinProbeMetrics, SpatialJoinStream},
+    stream::SpatialJoinStream,
     utils::{
         join_utils::{
             asymmetric_join_output_partitioning, boundedness_from_children,
@@ -441,12 +441,8 @@ impl ExecutionPlan for SpatialJoinExec {
         // probe_side. For regular spatial joins, left is always build and right is always probe.
         let (build_plan, probe_plan, probe_side) = match &self.on {
             SpatialPredicate::KNearestNeighbors(knn_pred) => {
-                let (build_plan, probe_plan) = determine_knn_build_probe_plans(
-                    knn_pred,
-                    &self.left,
-                    &self.right,
-                    &self.join_schema,
-                )?;
+                let (build_plan, probe_plan) =
+                    determine_knn_build_probe_plans(knn_pred, &self.left, &self.right)?;
                 (build_plan, probe_plan, knn_pred.probe_side)
             }
             _ => (&self.left, &self.right, JoinSide::Right),
@@ -563,7 +559,7 @@ mod exec_transform_tests {
     }
 
     #[test]
-    fn test_mark_join_projection_pushdown_is_graceful() -> Result<()> {
+    fn test_mark_join_projection_pushdown_should_not_panic() -> Result<()> {
         let left_schema = make_schema(&[("l", DataType::Int32)]);
         let right_schema = make_schema(&[("r", DataType::Int32)]);
         let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
@@ -746,8 +742,62 @@ mod exec_transform_tests {
     }
 
     #[test]
+    fn test_swap_inputs_invert_spatial_predicate() -> Result<()> {
+        let left_schema = make_schema(&[
+            ("l0", DataType::Int32),
+            ("l1", DataType::Int32),
+            ("lgeom", DataType::Binary),
+        ]);
+        let right_schema = make_schema(&[("r0", DataType::Int32), ("rgeom", DataType::Binary)]);
+
+        let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
+        let right: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&right_schema)));
+
+        let on = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("lgeom", 2)),
+            Arc::new(Column::new("rgeom", 1)),
+            SpatialRelationType::Contains,
+        ));
+        let exec =
+            SpatialJoinExec::try_new_internal(left, right, on, None, &JoinType::Left, None, 0)?;
+
+        let swapped = exec.swap_inputs()?;
+        let spatial_execs = collect_spatial_join_exec(&swapped)?;
+        assert_eq!(spatial_execs.len(), 1);
+
+        let swapped_exec = spatial_execs[0];
+        let SpatialPredicate::Relation(rel) = &swapped_exec.on else {
+            return sedona_internal_err!("expected Relation predicate");
+        };
+
+        // Children swapped, so predicate operator and join type are inverted.
+        assert_eq!(rel.relation_type, SpatialRelationType::Within);
+        assert_eq!(swapped_exec.join_type, JoinType::Right);
+        let new_left = rel
+            .left
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        let new_right = rel
+            .right
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column expr");
+        assert_eq!(new_left.name(), "rgeom");
+        assert_eq!(new_left.index(), 1);
+        assert_eq!(new_right.name(), "lgeom");
+        assert_eq!(new_right.index(), 2);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_swap_inputs_flips_knn_probe_side_without_swapping_exprs() -> Result<()> {
-        let left_schema = make_schema(&[("l0", DataType::Int32), ("lgeom", DataType::Binary)]);
+        let left_schema = make_schema(&[
+            ("l0", DataType::Int32),
+            ("l1", DataType::Int32),
+            ("lgeom", DataType::Binary),
+        ]);
         let right_schema = make_schema(&[("r0", DataType::Int32), ("rgeom", DataType::Binary)]);
 
         let left: Arc<dyn ExecutionPlan> = Arc::new(EmptyExec::new(Arc::clone(&left_schema)));
@@ -755,7 +805,7 @@ mod exec_transform_tests {
 
         let on = SpatialPredicate::KNearestNeighbors(KNNPredicate {
             left: Arc::new(Column::new("rgeom", 1)),
-            right: Arc::new(Column::new("lgeom", 1)),
+            right: Arc::new(Column::new("lgeom", 2)),
             k: 3,
             use_spheroid: false,
             probe_side: JoinSide::Right,
@@ -789,7 +839,7 @@ mod exec_transform_tests {
         assert_eq!(probe_expr.name(), "rgeom");
         assert_eq!(probe_expr.index(), 1);
         assert_eq!(build_expr.name(), "lgeom");
-        assert_eq!(build_expr.index(), 1);
+        assert_eq!(build_expr.index(), 2);
 
         Ok(())
     }
