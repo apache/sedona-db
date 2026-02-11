@@ -21,26 +21,19 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*};
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
 
-    // RS_Rotation(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_rotation", Raster(64, 64));
+    let func_names = [
+        "rs_rotation",
+        "rs_scalex",
+        "rs_scaley",
+        "rs_skewx",
+        "rs_skewy",
+        "rs_upperleftx",
+        "rs_upperlefty",
+    ];
 
-    // RS_ScaleX(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_scalex", Raster(64, 64));
-
-    // RS_ScaleY(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_scaley", Raster(64, 64));
-
-    // RS_SkewX(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_skewx", Raster(64, 64));
-
-    // RS_SkewY(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_skewy", Raster(64, 64));
-
-    // RS_UpperLeftX(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_upperleftx", Raster(64, 64));
-
-    // RS_UpperLeftY(raster)
-    benchmark::scalar(c, &f, "rs_geotransform", "rs_upperlefty", Raster(64, 64));
+    for func_name in func_names {
+        benchmark::scalar(c, &f, "rs_geotransform", func_name, Raster(64, 64));
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);

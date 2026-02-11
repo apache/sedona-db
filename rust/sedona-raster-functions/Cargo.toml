@@ -50,7 +50,7 @@ rstest = { workspace = true }
 
 [[bench]]
 harness = false
-name = "rs_envelope"
+name = "simple_functions"
 
 [[bench]]
 harness = false
@@ -59,10 +59,6 @@ name = "rs_geotransform"
 [[bench]]
 harness = false
 name = "rs_rastercoordinate"
-
-[[bench]]
-harness = false
-name = "rs_size"
 
 [[bench]]
 harness = false
