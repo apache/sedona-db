@@ -85,7 +85,7 @@ impl SedonaScalarKernel for RsConvexHull {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 Some(raster) => {
-                    create_convexhull_wkb(raster, &mut builder)?;
+                    write_convexhull_wkb(raster, &mut builder)?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
                 }
@@ -115,12 +115,12 @@ impl SedonaScalarKernel for RsConvexHull {
     }
 }
 
-/// Create WKB for a convex hull polygon for the raster
+/// Write WKB for a convex hull polygon for the raster
 ///
 /// For a raster, the convex hull is the polygon formed by the four corners
 /// of the raster in world coordinates. Due to skew/rotation in the affine
 /// transformation, each corner must be computed individually.
-fn create_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
+fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
     let width = raster.metadata().width() as i64;
     let height = raster.metadata().height() as i64;
 

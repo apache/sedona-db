@@ -83,7 +83,7 @@ impl SedonaScalarKernel for RsEnvelope {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 Some(raster) => {
-                    create_envelope_wkb(raster, &mut builder)?;
+                    write_envelope_wkb(raster, &mut builder)?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
                 }
@@ -113,12 +113,12 @@ impl SedonaScalarKernel for RsEnvelope {
     }
 }
 
-/// Create WKB for the axis-aligned bounding box (envelope) of the raster.
+/// Write WKB for the axis-aligned bounding box (envelope) of the raster.
 ///
 /// This computes the four corners of the raster in world coordinates, then
 /// derives the min/max X and Y to produce an axis-aligned bounding box.
 /// For skewed/rotated rasters, this differs from the convex hull.
-fn create_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
+fn write_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
     let width = raster.metadata().width() as i64;
     let height = raster.metadata().height() as i64;
 
