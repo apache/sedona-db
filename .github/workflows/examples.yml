@@ -50,6 +50,10 @@ jobs:
   rust:
     strategy:
       fail-fast: false
+      matrix:
+        example:
+          - sedonadb-rust
+          - sedonadb-rust-pointcloud
 
     runs-on: ubuntu-latest
     env:
@@ -66,17 +70,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Update this key to force a new cache
-          prefix-key: "rust-${{ matrix.name }}-v5"
+          prefix-key: "rust-${{ matrix.example }}-v5"
 
       - name: Install dependencies
         shell: bash
         run: |
           sudo apt-get update && sudo apt-get install -y libgeos-dev
 
-      - name: Build and run examples/sedonadb-rust
+      - name: Build and run examples/${{ matrix.example }}
         shell: bash
         run: |
-          cd examples/sedonadb-rust
+          cd examples/${{ matrix.example }}
           # Use current PR/branch commit instead of main branch
           if [ -n "${{ github.event.pull_request.head.sha }}" ]; then
             REV="${{ github.event.pull_request.head.sha }}"
@@ -88,6 +92,3 @@ jobs:
           sed -i "s|git = \"https://github.com/apache/sedona-db.git\"|git = \"https://github.com/${REPO}.git\", rev = \"${REV}\"|" Cargo.toml
           cat Cargo.toml
           cargo run
-
-      - name: Build and run examples/sedonadb-rust-pointcloud
-        run: cargo run -p sedonadb-rust-pointcloud-example

@@ -23,7 +23,7 @@ use sedona::context::{SedonaContext, SedonaDataFrame};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = SedonaContext::new_local_interactive().await?;
-    let url = "rust/sedona-pointcloud/tests/data/extra.laz";
+    let url = "../../rust/sedona-pointcloud/tests/data/extra.laz";
     let df = ctx.sql(&format!("SELECT geometry FROM \"{url}\" ")).await?;
     let output = df.show_sedona(&ctx, Some(5), Default::default()).await?;
     println!("{output}");

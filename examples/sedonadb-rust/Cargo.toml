@@ -31,6 +31,6 @@ rust-version = "1.86"
 
 [dependencies]
 datafusion = { version = "51.0.0"}
-# When sedona is released on crates.io, this can be a version and not a git repo
-sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona"}
+# We use a git dependency here so that we can test these examples
+sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona" }
 tokio = { version = "1.44", features = ["rt-multi-thread"]}
