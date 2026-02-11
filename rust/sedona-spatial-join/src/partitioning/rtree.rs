@@ -35,6 +35,8 @@
 //! 4. **None-partition Handling**: If a bbox doesn't intersect any partition boundary, it's assigned
 //!    to [`SpatialPartition::None`].
 
+use std::sync::Arc;
+
 use datafusion_common::Result;
 use geo::Rect;
 use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
@@ -50,15 +52,9 @@ use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 /// This partitioner constructs an RTree index over a set of partition boundaries
 /// (rectangles) and uses it to efficiently determine which partition a given
 /// bounding box belongs to based on spatial intersection.
+#[derive(Clone)]
 pub struct RTreePartitioner {
-    /// The RTree index storing partition boundaries as f32 rectangles
-    rtree: RTree<f32>,
-    /// Flat representation of partition boundaries for overlap calculations
-    boundaries: Vec<Rect<f32>>,
-    /// Number of partitions (excluding None and Multi)
-    num_partitions: usize,
-    /// Map from RTree index to original partition index
-    partition_map: Vec<usize>,
+    inner: Arc<RawRTreePartitioner>,
 }
 
 impl RTreePartitioner {
@@ -84,12 +80,58 @@ impl RTreePartitioner {
     /// let partitioner = RTreePartitioner::try_new(boundaries).unwrap();
     /// ```
     pub fn try_new(boundaries: Vec<BoundingBox>) -> Result<Self> {
-        Self::build(boundaries, None)
+        let inner = RawRTreePartitioner::try_new(boundaries)?;
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
     }
 
     /// Create a new RTree partitioner with a custom node size.
     pub fn try_new_with_node_size(boundaries: Vec<BoundingBox>, node_size: u16) -> Result<Self> {
-        Self::build(boundaries, Some(node_size))
+        let inner = RawRTreePartitioner::build(boundaries, Some(node_size))?;
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
+    }
+
+    /// Return the number of levels in the underlying RTree.
+    pub fn depth(&self) -> usize {
+        self.inner.depth()
+    }
+}
+
+impl SpatialPartitioner for RTreePartitioner {
+    fn num_regular_partitions(&self) -> usize {
+        self.inner.num_regular_partitions()
+    }
+
+    fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
+        self.inner.partition(bbox)
+    }
+
+    fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {
+        self.inner.partition_no_multi(bbox)
+    }
+
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner> {
+        Box::new(self.clone())
+    }
+}
+
+struct RawRTreePartitioner {
+    /// The RTree index storing partition boundaries as f32 rectangles
+    rtree: RTree<f32>,
+    /// Flat representation of partition boundaries for overlap calculations
+    boundaries: Vec<Rect<f32>>,
+    /// Number of partitions (excluding None and Multi)
+    num_partitions: usize,
+    /// Map from RTree index to original partition index
+    partition_map: Vec<usize>,
+}
+
+impl RawRTreePartitioner {
+    fn try_new(boundaries: Vec<BoundingBox>) -> Result<Self> {
+        Self::build(boundaries, None)
     }
 
     fn build(boundaries: Vec<BoundingBox>, node_size: Option<u16>) -> Result<Self> {
@@ -122,7 +164,7 @@ impl RTreePartitioner {
 
         let rtree = rtree_builder.finish::<HilbertSort>();
 
-        Ok(RTreePartitioner {
+        Ok(RawRTreePartitioner {
             rtree,
             boundaries: rects,
             num_partitions,
@@ -130,15 +172,12 @@ impl RTreePartitioner {
         })
     }
 
-    /// Return the number of levels in the underlying RTree.
-    pub fn depth(&self) -> usize {
-        self.rtree.num_levels()
-    }
-}
-
-impl SpatialPartitioner for RTreePartitioner {
     fn num_regular_partitions(&self) -> usize {
         self.num_partitions
+    }
+
+    fn depth(&self) -> usize {
+        self.rtree.num_levels()
     }
 
     fn partition(&self, bbox: &BoundingBox) -> Result<SpatialPartition> {

@@ -57,7 +57,7 @@ pub enum SpatialPartition {
 }
 
 /// Partitioning larger-than-memory indexed side to support out-of-core spatial join.
-pub trait SpatialPartitioner: Send + Sync {
+pub trait SpatialPartitioner: Send {
     /// Get the total number of spatial partitions, excluding the None partition and Multi partition.
     fn num_regular_partitions(&self) -> usize;
 
@@ -68,6 +68,9 @@ pub trait SpatialPartitioner: Send + Sync {
     /// Multi partition. If `bbox` intersects with multiple partitions, only one of them will be
     /// selected as regular partition.
     fn partition_no_multi(&self, bbox: &BoundingBox) -> Result<SpatialPartition>;
+
+    /// Clone the partitioner as a boxed trait object.
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner>;
 }
 
 /// Indicates for which side of the spatial join the partitioning is being performed.

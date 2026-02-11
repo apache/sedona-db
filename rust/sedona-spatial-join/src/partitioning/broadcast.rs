@@ -26,6 +26,7 @@ use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 /// This partitioner is useful when we want to broadcast the data to all partitions.
 /// Currently it is used for KNN join where regular spatial partitioning is hard because
 /// it is hard to know in advance how far away a given number of neighbours will be to assign it.
+#[derive(Clone)]
 pub struct BroadcastPartitioner {
     num_partitions: usize,
 }
@@ -47,6 +48,10 @@ impl SpatialPartitioner for BroadcastPartitioner {
 
     fn partition_no_multi(&self, _bbox: &BoundingBox) -> Result<SpatialPartition> {
         sedona_internal_err!("BroadcastPartitioner does not support partition_no_multi")
+    }
+
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner> {
+        Box::new(self.clone())
     }
 }
 

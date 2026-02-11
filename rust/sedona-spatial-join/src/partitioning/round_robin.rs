@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use datafusion_common::Result;
 use sedona_geometry::bounding_box::BoundingBox;
@@ -27,16 +27,17 @@ use crate::partitioning::{SpatialPartition, SpatialPartitioner};
 /// This partitioner is used for KNN join, where the build side is partitioned
 /// into `num_partitions` partitions, and the probe side is assigned to the
 /// `Multi` partition (i.e., broadcast to all partitions).
+#[derive(Clone)]
 pub struct RoundRobinPartitioner {
     num_partitions: usize,
-    counter: AtomicUsize,
+    counter: Cell<usize>,
 }
 
 impl RoundRobinPartitioner {
     pub fn new(num_partitions: usize) -> Self {
         Self {
             num_partitions,
-            counter: AtomicUsize::new(0),
+            counter: Cell::new(0),
         }
     }
 }
@@ -51,10 +52,15 @@ impl SpatialPartitioner for RoundRobinPartitioner {
     }
 
     fn partition_no_multi(&self, _bbox: &BoundingBox) -> Result<SpatialPartition> {
-        let idx = self.counter.fetch_add(1, Ordering::Relaxed);
+        let idx = self.counter.get();
+        self.counter.set(idx.wrapping_add(1));
         Ok(SpatialPartition::Regular(
             (idx % self.num_partitions) as u32,
         ))
+    }
+
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner> {
+        Box::new(self.clone())
     }
 }
 

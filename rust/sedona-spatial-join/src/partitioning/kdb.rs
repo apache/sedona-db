@@ -455,6 +455,7 @@ impl KDBTree {
 /// let query_bbox = BoundingBox::xy((5.0, 15.0), (5.0, 15.0));
 /// let partition = partitioner.partition(&query_bbox).unwrap();
 /// ```
+#[derive(Clone)]
 pub struct KDBPartitioner {
     tree: Arc<KDBTree>,
 }
@@ -565,6 +566,10 @@ impl SpatialPartitioner for KDBPartitioner {
             Some(leaf_id) => Ok(SpatialPartition::Regular(leaf_id)),
             None => Ok(SpatialPartition::None),
         }
+    }
+
+    fn box_clone(&self) -> Box<dyn SpatialPartitioner> {
+        Box::new(self.clone())
     }
 }
 

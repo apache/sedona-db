@@ -244,8 +244,8 @@ impl SpatialJoinComponentsBuilder {
         num_partitions: usize,
         build_partitions: &mut Vec<BuildPartition>,
         seed: u64,
-    ) -> Result<Arc<dyn SpatialPartitioner>> {
-        let build_partitioner: Arc<dyn SpatialPartitioner> = if matches!(
+    ) -> Result<Box<dyn SpatialPartitioner>> {
+        let build_partitioner: Box<dyn SpatialPartitioner> = if matches!(
             self.spatial_predicate,
             SpatialPredicate::KNearestNeighbors(_)
         ) {
@@ -253,7 +253,7 @@ impl SpatialJoinComponentsBuilder {
             // partitioning to spread the indexed data evenly to make each index fit in memory, and
             // the probe side will be broadcasted to all partitions by partitioning all of them to
             // the Multi partition.
-            Arc::new(RoundRobinPartitioner::new(num_partitions))
+            Box::new(RoundRobinPartitioner::new(num_partitions))
         } else {
             // Use spatial partitioners to partition the build side and the probe side, this will
             // reduce the amount of work needed for probing each partitioned index.
@@ -290,7 +290,7 @@ impl SpatialJoinComponentsBuilder {
                 kdb_partitioner.debug_str()
             );
 
-            Arc::new(kdb_partitioner)
+            Box::new(kdb_partitioner)
         };
 
         Ok(build_partitioner)
@@ -302,12 +302,12 @@ impl SpatialJoinComponentsBuilder {
         &self,
         num_partitions: usize,
         merged_spilled_partitions: &SpilledPartitions,
-    ) -> Result<Arc<dyn SpatialPartitioner>> {
-        let probe_partitioner: Arc<dyn SpatialPartitioner> = if matches!(
+    ) -> Result<Box<dyn SpatialPartitioner>> {
+        let probe_partitioner: Box<dyn SpatialPartitioner> = if matches!(
             self.spatial_predicate,
             SpatialPredicate::KNearestNeighbors(_)
         ) {
-            Arc::new(BroadcastPartitioner::new(num_partitions))
+            Box::new(BroadcastPartitioner::new(num_partitions))
         } else {
             // Build a flat partitioner using these partitions
             let mut partition_bounds = Vec::with_capacity(num_partitions);
@@ -320,7 +320,7 @@ impl SpatialJoinComponentsBuilder {
                     .unwrap_or(BoundingBox::empty());
                 partition_bounds.push(partition_bound);
             }
-            Arc::new(FlatPartitioner::try_new(partition_bounds)?)
+            Box::new(FlatPartitioner::try_new(partition_bounds)?)
         };
         Ok(probe_partitioner)
     }
@@ -330,7 +330,7 @@ impl SpatialJoinComponentsBuilder {
     async fn repartition_build_side(
         &self,
         build_partitions: Vec<BuildPartition>,
-        build_partitioner: Arc<dyn SpatialPartitioner>,
+        build_partitioner: Box<dyn SpatialPartitioner>,
         memory_plan: &MemoryPlan,
     ) -> Result<Vec<SpilledPartitions>> {
         // Spawn each task for each build partition to repartition the data using the spatial partitioner for
@@ -349,7 +349,7 @@ impl SpatialJoinComponentsBuilder {
             let metrics = &partition.metrics;
             let spill_metrics = metrics.spill_metrics();
             let runtime_env = Arc::clone(&runtime_env);
-            let partitioner = Arc::clone(&build_partitioner);
+            let partitioner = build_partitioner.box_clone();
             join_set.spawn(async move {
                 let partitioned_spill_files = StreamRepartitioner::builder(
                     runtime_env,
@@ -437,7 +437,7 @@ impl SpatialJoinComponentsBuilder {
     fn create_multi_partitioned_spatial_join_components(
         self,
         merged_spilled_partitions: SpilledPartitions,
-        probe_partitioner: Arc<dyn SpatialPartitioner>,
+        probe_partitioner: Box<dyn SpatialPartitioner>,
         reservations: Vec<MemoryReservation>,
         memory_plan: &MemoryPlan,
     ) -> Result<SpatialJoinComponents> {
@@ -459,13 +459,13 @@ impl SpatialJoinComponentsBuilder {
         );
 
         let buffer_bytes_threshold = memory_for_intermittent_usage / self.probe_threads_count;
-        let probe_stream_options = ProbeStreamOptions {
-            partitioner: Some(probe_partitioner),
-            target_batch_rows: target_batch_size,
+        let probe_stream_options = ProbeStreamOptions::new(
+            Some(probe_partitioner),
+            target_batch_size,
             spill_compression,
             buffer_bytes_threshold,
             spilled_batch_in_memory_size_threshold,
-        };
+        );
 
         Ok(SpatialJoinComponents {
             partitioned_index_provider: Arc::new(partitioned_index_provider),
