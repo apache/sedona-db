@@ -44,6 +44,7 @@ use crate::{
         flat::FlatPartitioner,
         kdb::KDBPartitioner,
         round_robin::RoundRobinPartitioner,
+        rtree::RTreePartitioner,
         stream_repartitioner::{SpilledPartition, SpilledPartitions, StreamRepartitioner},
         PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
@@ -296,8 +297,14 @@ impl SpatialJoinComponentsBuilder {
         Ok(build_partitioner)
     }
 
-    /// Construct a `SpatialPartitioner` (e.g. Flat) from the statistics of partitioned build
-    /// side for partitioning the probe side.
+    /// The number of partitions above which the probe side uses an RTree
+    /// partitioner instead of a flat (linear-scan) partitioner.  Benchmarks
+    /// show the crossover at ~36 partitions; 48 gives a comfortable margin.
+    const RTREE_PARTITION_THRESHOLD: usize = 48;
+
+    /// Construct a `SpatialPartitioner` for partitioning the probe side.
+    /// Uses a flat linear-scan partitioner when the number of partitions is
+    /// small, and switches to an RTree-based partitioner for larger counts.
     fn create_spatial_partitioner_for_probe_side(
         &self,
         num_partitions: usize,
@@ -309,7 +316,7 @@ impl SpatialJoinComponentsBuilder {
         ) {
             Box::new(BroadcastPartitioner::new(num_partitions))
         } else {
-            // Build a flat partitioner using these partitions
+            // Collect partition bounding boxes from the spilled partitions
             let mut partition_bounds = Vec::with_capacity(num_partitions);
             for k in 0..num_partitions {
                 let partition = SpatialPartition::Regular(k as u32);
@@ -320,7 +327,12 @@ impl SpatialJoinComponentsBuilder {
                     .unwrap_or(BoundingBox::empty());
                 partition_bounds.push(partition_bound);
             }
-            Box::new(FlatPartitioner::try_new(partition_bounds)?)
+
+            if num_partitions <= Self::RTREE_PARTITION_THRESHOLD {
+                Box::new(FlatPartitioner::try_new(partition_bounds)?)
+            } else {
+                Box::new(RTreePartitioner::try_new(partition_bounds)?)
+            }
         };
         Ok(probe_partitioner)
     }
