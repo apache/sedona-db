@@ -35,6 +35,10 @@ concurrency:
   group: ${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
+env:
+  # At GEOS updated to 3.14.0
+  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
+
 jobs:
   source:
     runs-on: ubuntu-latest
@@ -100,6 +104,39 @@ jobs:
 
       - uses: quarto-dev/quarto-actions/setup@v2
 
+      - name: Clone vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      - name: Set up environment variables and bootstrap vcpkg
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+        run: |
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+          cd ..
+
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> $GITHUB_ENV
+          echo "PATH=$VCPKG_ROOT:$PATH" >> $GITHUB_ENV
+          echo "CMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE" >> $GITHUB_ENV
+
+      - name: Cache vcpkg binaries
+        id: cache-vcpkg
+        uses: actions/cache@v5
+        with:
+          path: vcpkg/packages
+          # Bump the number at the end of this line to force a new dependency build
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
+
+      - name: Install vcpkg dependencies
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        run: |
+          ./vcpkg/vcpkg install abseil openssl
+
       - name: Use stable Rust
         id: rust
         run: |
@@ -120,6 +157,8 @@ jobs:
             pip install -r docs/requirements.txt
 
       - name: Install dev SedonaDB Python
+        env:
+          MATURIN_PEP517_ARGS: "--features s2geography,pyo3/extension-module"
         run: |
             pip install "python/sedonadb/[geopandas]" -v
 
