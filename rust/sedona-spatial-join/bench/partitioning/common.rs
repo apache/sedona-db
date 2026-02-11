@@ -16,6 +16,10 @@
 // under the License.
 
 //! Shared helpers for partitioner benchmarks.
+//!
+//! This module is included (`mod common;`) by multiple independent bench binaries,
+//! not all of which use every item. Suppress dead-code warnings accordingly.
+#![allow(dead_code)]
 
 use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
