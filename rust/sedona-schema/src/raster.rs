@@ -88,10 +88,9 @@ impl RasterSchema {
 
 /// Band data type enumeration for raster bands.
 ///
-/// Values align with GDALDataType ordinals for non-complex types (excluding Unknown).
-/// Only supports basic numeric types.
-/// In future versions, consider support for complex types used in
-/// radar and other wave-based data.
+/// Ordinals match GDALDataType for real-valued pixel types only.
+/// GDT_Unknown (0) and complex types (CInt16=8, CInt32=9, CFloat32=10, CFloat64=11)
+/// are intentionally omitted.
 #[repr(u16)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum BandDataType {
