@@ -17,6 +17,7 @@
 mod catalog;
 pub mod context;
 mod exec;
+pub mod memory_pool;
 mod object_storage;
 pub mod random_geometry_provider;
 pub mod reader;

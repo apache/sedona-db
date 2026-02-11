@@ -15,19 +15,34 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/apache/datafusion/19fe44cf2f30cbdd63d4a4f52c74055163c6cc38/docs/logos/standalone_logo/logo_original.svg",
-    html_favicon_url = "https://raw.githubusercontent.com/apache/datafusion/19fe44cf2f30cbdd63d4a4f52c74055163c6cc38/docs/logos/standalone_logo/logo_original.svg"
-)]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
-#![doc = include_str!("../README.md")]
-pub const DATAFUSION_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+use std::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
-pub mod command;
-pub mod exec;
-pub mod functions;
-pub mod helper;
-pub mod highlighter;
-pub mod pool_type;
-pub mod print_format;
-pub mod print_options;
+#[derive(PartialEq, Debug, Clone)]
+pub enum PoolType {
+    Greedy,
+    Fair,
+}
+
+impl FromStr for PoolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Greedy" | "greedy" => Ok(PoolType::Greedy),
+            "Fair" | "fair" => Ok(PoolType::Fair),
+            _ => Err(format!("Invalid memory pool type '{s}'")),
+        }
+    }
+}
+
+impl Display for PoolType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            PoolType::Greedy => write!(f, "greedy"),
+            PoolType::Fair => write!(f, "fair"),
+        }
+    }
+}
