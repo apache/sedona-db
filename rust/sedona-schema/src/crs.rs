@@ -120,14 +120,14 @@ impl Default for CachedCrsToSRIDMapping {
 }
 
 impl CachedCrsToSRIDMapping {
-    /// Create a new CachedCrsSRIDMapping with an empty cache.
+    /// Create a new CachedCrsToSRIDMapping with an empty cache.
     pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
         }
     }
 
-    /// Create a new CachedCrsSRIDMapping with an optional initial capacity for the cache.
+    /// Create a new CachedCrsToSRIDMapping with an optional initial capacity for the cache.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             cache: HashMap::with_capacity(capacity),
