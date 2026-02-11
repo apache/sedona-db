@@ -34,7 +34,7 @@ pub const DEFAULT_UNSPILLABLE_RESERVE_RATIO: f64 = 0.2;
 /// [`datafusion::physical_plan::repartition::RepartitionExec`] for the probe side. The Merge
 /// consumer of [`datafusion::physical_plan::repartition::RepartitionExec`] is unspillable, while
 /// the [`sedona_spatial_join::exec::SpatialJoinExec`] is spillable.
-/// [`sedona_spatial_join::exec::SpatialJoinExec`] could consume all memory, resulting a reservation
+/// [`sedona_spatial_join::exec::SpatialJoinExec`] could consume all memory, resulting in a reservation
 /// failure of [`datafusion::physical_plan::repartition::RepartitionExec`].
 ///
 /// By reserving a configurable fraction of the total memory pool specifically for unspillable

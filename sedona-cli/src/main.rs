@@ -82,7 +82,8 @@ struct Args {
     #[clap(
         long,
         help = "The fraction of memory reserved for unspillable consumers (0.0 - 1.0)",
-        default_value_t = DEFAULT_UNSPILLABLE_RESERVE_RATIO
+        default_value_t = DEFAULT_UNSPILLABLE_RESERVE_RATIO,
+        value_parser(validate_unspillable_reserve_ratio)
     )]
     unspillable_reserve_ratio: f64,
 
@@ -166,14 +167,15 @@ async fn main_inner() -> Result<()> {
     // set memory pool size
     if let Some(memory_limit) = args.memory_limit {
         // set memory pool type
+        let track_capacity = NonZeroUsize::new(10).expect("track capacity must be non-zero");
         let pool: Arc<dyn MemoryPool> = match args.mem_pool_type {
             PoolType::Fair => Arc::new(TrackConsumersPool::new(
                 SedonaFairSpillPool::new(memory_limit, args.unspillable_reserve_ratio),
-                NonZeroUsize::new(10).unwrap(),
+                track_capacity,
             )),
             PoolType::Greedy => Arc::new(TrackConsumersPool::new(
                 GreedyMemoryPool::new(memory_limit),
-                NonZeroUsize::new(10).unwrap(),
+                track_capacity,
             )),
         };
 
@@ -273,7 +275,7 @@ fn parse_size_string(size: &str, label: &str) -> Result<usize, String> {
     });
 
     static SUFFIX_REGEX: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^(-?[0-9]+)([a-z]+)?$").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"^([0-9]+)([a-z]+)?$").unwrap());
 
     let lower = size.to_lowercase();
     if let Some(caps) = SUFFIX_REGEX.captures(&lower) {
@@ -299,4 +301,16 @@ fn parse_size_string(size: &str, label: &str) -> Result<usize, String> {
 
 pub fn extract_memory_pool_size(size: &str) -> Result<usize, String> {
     parse_size_string(size, "memory pool size")
+}
+
+fn validate_unspillable_reserve_ratio(s: &str) -> Result<f64, String> {
+    let value: f64 = s
+        .parse()
+        .map_err(|_| format!("Invalid unspillable reserve ratio '{s}'"))?;
+    if !(0.0..=1.0).contains(&value) {
+        return Err(format!(
+            "Unspillable reserve ratio must be between 0.0 and 1.0, got {value}"
+        ));
+    }
+    Ok(value)
 }
