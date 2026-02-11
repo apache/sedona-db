@@ -848,7 +848,7 @@ pub(crate) fn try_pushdown_through_join(
 
     // Mark joins produce a synthetic column that does not belong to either child. This synthetic
     // `mark` column will make `new_join_children` fail, so we skip pushdown for such joins.
-    // This limitation if inherited from DataFusion's builtin `try_pushdown_through_join`.
+    // This limitation is inherited from DataFusion's builtin `try_pushdown_through_join`.
     if matches!(join_type, JoinType::LeftMark | JoinType::RightMark) {
         return Ok(None);
     }

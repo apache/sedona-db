@@ -135,7 +135,7 @@ struct MergeSpatialProjectionIntoJoin;
 
 impl OptimizerRule for MergeSpatialProjectionIntoJoin {
     fn name(&self) -> &str {
-        "spatial_join_optimizer"
+        "merge_spatial_filter_into_join"
     }
 
     fn apply_order(&self) -> Option<ApplyOrder> {

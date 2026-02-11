@@ -65,7 +65,7 @@ impl PartialOrd for SpatialJoinPlanNode {
             filter: &other.filter,
             join_type: &other.join_type,
             join_constraint: &other.join_constraint,
-            null_equality: &self.null_equality,
+            null_equality: &other.null_equality,
         };
         comparable_self
             .partial_cmp(&comparable_other)
