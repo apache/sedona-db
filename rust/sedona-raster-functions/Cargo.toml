@@ -50,4 +50,24 @@ rstest = { workspace = true }
 
 [[bench]]
 harness = false
-name = "native-raster-functions"
+name = "rs_envelope"
+
+[[bench]]
+harness = false
+name = "rs_geotransform"
+
+[[bench]]
+harness = false
+name = "rs_rastercoordinate"
+
+[[bench]]
+harness = false
+name = "rs_size"
+
+[[bench]]
+harness = false
+name = "rs_srid"
+
+[[bench]]
+harness = false
+name = "rs_worldcoordinate"
