@@ -775,4 +775,68 @@ mod tests {
         .await
         .expect("should succeed because aws and gcs options were stripped");
     }
+
+    #[tokio::test]
+    async fn test_sedona_spark_serde() -> Result<()> {
+        let ctx = SedonaContext::new();
+
+        let geometry_data = ctx.sql(
+            "SELECT
+                ST_AsText(
+                    ST_GeomFromSedonaSpark(X'1200000001000000000000000000F03F000000000000F03F', 'EPSG:4326')
+                ) AS geom"
+        )
+        .await?
+        .collect()
+        .await?;
+
+        assert_batches_eq!(
+            [
+                "+------------+",
+                "| geom       |",
+                "+------------+",
+                "| POINT(1 1) |",
+                "+------------+",
+            ],
+            &geometry_data
+        );
+
+        let srid_value = ctx.sql(
+            "SELECT
+                ST_SRID(
+                    ST_GeomFromSedonaSpark(X'1200000001000000000000000000F03F000000000000F03F', 'EPSG:4326')
+                ) AS srid"
+        )
+            .await?
+            .collect()
+            .await?;
+
+        assert_batches_eq!(
+            ["+------+", "| srid |", "+------+", "| 4326 |", "+------+",],
+            &srid_value
+        );
+
+        let from_sedona_spark_and_reverse = ctx.sql(
+            "SELECT
+                ST_GeomToSedonaSpark(
+                    ST_GeomFromSedonaSpark(X'1200000001000000000000000000F03F000000000000F03F', 'EPSG:4326')
+                ) AS sedona_bytes"
+        )
+            .await?
+            .collect()
+            .await?;
+
+        assert_batches_eq!(
+            [
+                "+--------------------------------------------------+",
+                "| sedona_bytes                                     |",
+                "+--------------------------------------------------+",
+                "| 130010e601000000000000000000f03f000000000000f03f |",
+                "+--------------------------------------------------+",
+            ],
+            &from_sedona_spark_and_reverse
+        );
+
+        Ok(())
+    }
 }
