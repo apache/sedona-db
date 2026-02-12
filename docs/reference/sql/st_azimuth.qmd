@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Azimuth
-description: Returns Azimuth for two given points in radians null or otherwise.
+description: Returns the azimuth between two points in radians, or NULL if not available.
 kernels:
   - returns: double
     args: [geometry, geometry]
