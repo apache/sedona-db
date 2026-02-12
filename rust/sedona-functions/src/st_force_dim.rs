@@ -277,9 +277,46 @@ mod tests {
 
     #[test]
     fn udf_metadata() {
+        let st_force2d: ScalarUDF = st_force2d_udf().into();
+        assert_eq!(st_force2d.name(), "st_force2d");
+        assert!(st_force2d.documentation().is_some());
+
         let st_force3d: ScalarUDF = st_force3d_udf().into();
         assert_eq!(st_force3d.name(), "st_force3d");
         assert!(st_force3d.documentation().is_some());
+    }
+
+    #[rstest]
+    fn udf_2d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(st_force2d_udf().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let points = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT Z EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT Z (3 4 5)"),
+                Some("POINT ZM (8 9 10 11)"),
+            ],
+            &sedona_type,
+        );
+
+        let expected = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT (3 4)"),
+                Some("POINT (8 9)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_arrays(vec![points]).unwrap();
+        assert_array_equal(&result, &expected);
     }
 
     #[rstest]
