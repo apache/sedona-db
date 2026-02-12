@@ -35,7 +35,7 @@ Returns TRUE if the geometry type of the input is a geometry collection type. Co
 ## Examples
 
 ```sql
-SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT(0 0), (6 6)'));
+SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT(0 0, 6 6)'));
 ```
 
 ```sql
