@@ -16,6 +16,7 @@
 // under the License.
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
+use geo_traits::Dimensions;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
@@ -218,7 +219,11 @@ impl ProjTransform {
 }
 
 impl CrsTransform for ProjTransform {
-    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+    fn transform_coord(
+        &self,
+        coord: &mut (f64, f64),
+        _input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
         let res = self.proj.borrow_mut().transform_xy(*coord).map_err(|e| {
             SedonaGeometryError::Invalid(format!(
                 "PROJ coordinate transformation failed with error: {e}"
@@ -229,7 +234,11 @@ impl CrsTransform for ProjTransform {
         Ok(())
     }
 
-    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+        _input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
         let res = self.proj.borrow_mut().transform_xyz(*coord).map_err(|e| {
             SedonaGeometryError::Invalid(format!(
                 "PROJ coordinate transformation failed with error: {e}"
@@ -306,12 +315,18 @@ mod test {
             .unwrap();
 
         let mut coord = (4_760_096.4, 3_744_293.5);
-        trans.as_ref().transform_coord(&mut coord).unwrap();
+        trans
+            .as_ref()
+            .transform_coord(&mut coord, Dimensions::Xy)
+            .unwrap();
         assert_relative_eq!(coord.x(), 1_450_880.284_378, epsilon = 1e-6);
         assert_relative_eq!(coord.y(), 1_141_262.941_224, epsilon = 1e-6);
 
         coord = (f64::NAN, f64::NAN);
-        trans.as_ref().transform_coord(&mut coord).unwrap();
+        trans
+            .as_ref()
+            .transform_coord(&mut coord, Dimensions::Xy)
+            .unwrap();
         assert!(
             coord.x().is_nan() && coord.y().is_nan(),
             "Expected NaN coordinates"

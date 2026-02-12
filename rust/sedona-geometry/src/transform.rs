@@ -437,7 +437,11 @@ mod test {
     #[derive(Debug)]
     struct MockTransform {}
     impl CrsTransform for MockTransform {
-        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+        fn transform_coord(
+            &self,
+            coord: &mut (f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
             coord.0 += 10.0;
             coord.1 += 20.0;
             Ok(())
@@ -448,7 +452,11 @@ mod test {
     struct Mock3DTransform {}
     impl CrsTransform for Mock3DTransform {
         // This transforms 2D and 3D differently for testing purposes
-        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+        fn transform_coord(
+            &self,
+            coord: &mut (f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
             coord.0 += 100.0;
             coord.1 += 200.0;
             Ok(())
@@ -457,6 +465,7 @@ mod test {
         fn transform_coord_3d(
             &self,
             coord: &mut (f64, f64, f64),
+            _input_dims: Dimensions,
         ) -> Result<(), SedonaGeometryError> {
             coord.0 += 10.0;
             coord.1 += 20.0;

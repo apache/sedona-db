@@ -21,6 +21,7 @@ use arrow_array::builder::UInt64Builder;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
+use geo_traits::Dimensions;
 use sedona_expr::scalar_udf::SedonaScalarKernel;
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_geometry::{transform::CrsEngine, wkb_header::WkbHeader};
@@ -99,7 +100,7 @@ impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<
                                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
                             let mut first_xy = header.first_xy();
                             to_lnglat
-                                .transform_coord(&mut first_xy)
+                                .transform_coord(&mut first_xy, Dimensions::Xy)
                                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
                             let order = (self.order_fn)(first_xy);
                             builder.append_value(order);
