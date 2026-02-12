@@ -15,12 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::error::GpuSpatialError;
 use arrow_schema::DataType;
 use geo::Rect;
 
-#[cfg(gpu_available)]
 pub mod error;
-#[cfg(gpu_available)]
 mod libgpuspatial;
 #[cfg(gpu_available)]
 mod libgpuspatial_glue_bindgen;
@@ -37,9 +36,6 @@ pub struct GpuSpatialOptions {
 use crate::libgpuspatial::GpuSpatialRelationPredicate;
 /// Spatial predicates for GPU operations
 // Re-export Error type from the sys module abstraction
-pub use sys::GpuSpatialError;
-
-pub type Result<T> = std::result::Result<T, GpuSpatialError>;
 
 // 1. GPU Available Implementation
 #[cfg(gpu_available)]
@@ -47,6 +43,8 @@ mod sys {
     use super::libgpuspatial;
     use super::libgpuspatial_glue_bindgen;
     use super::*;
+
+    pub type Result<T> = std::result::Result<T, GpuSpatialError>;
 
     use std::sync::{Arc, Mutex};
 
@@ -305,33 +303,33 @@ pub struct GpuSpatial {
 }
 
 impl GpuSpatial {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, GpuSpatialError> {
         Ok(Self {
             inner: sys::SpatialImpl::new()?,
         })
     }
 
-    pub fn init(&mut self, options: GpuSpatialOptions) -> Result<()> {
+    pub fn init(&mut self, options: GpuSpatialOptions) -> Result<(), GpuSpatialError> {
         self.inner.init(options)
     }
 
-    pub fn index_clear(&mut self) -> Result<()> {
+    pub fn index_clear(&mut self) -> Result<(), GpuSpatialError> {
         self.inner.index_clear()
     }
 
-    pub fn index_push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
+    pub fn index_push_build(&mut self, rects: &[Rect<f32>]) -> Result<(), GpuSpatialError> {
         self.inner.index_push_build(rects)
     }
 
-    pub fn index_finish_building(&mut self) -> Result<()> {
+    pub fn index_finish_building(&mut self) -> Result<(), GpuSpatialError> {
         self.inner.index_finish_building()
     }
 
-    pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
+    pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>), GpuSpatialError> {
         self.inner.probe(rects)
     }
 
-    pub fn refiner_clear(&mut self) -> Result<()> {
+    pub fn refiner_clear(&mut self) -> Result<(), GpuSpatialError> {
         self.inner.refiner_clear()
     }
 
@@ -339,16 +337,19 @@ impl GpuSpatial {
         &mut self,
         build_data_type: &DataType,
         probe_data_type: &DataType,
-    ) -> Result<()> {
+    ) -> Result<(), GpuSpatialError> {
         self.inner
             .refiner_init_schema(build_data_type, probe_data_type)
     }
 
-    pub fn refiner_push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
+    pub fn refiner_push_build(
+        &mut self,
+        array: &arrow_array::ArrayRef,
+    ) -> Result<(), GpuSpatialError> {
         self.inner.refiner_push_build(array)
     }
 
-    pub fn refiner_finish_building(&mut self) -> Result<()> {
+    pub fn refiner_finish_building(&mut self) -> Result<(), GpuSpatialError> {
         self.inner.refiner_finish_building()
     }
 
@@ -358,7 +359,7 @@ impl GpuSpatial {
         predicate: GpuSpatialRelationPredicate,
         build_indices: &mut Vec<u32>,
         probe_indices: &mut Vec<u32>,
-    ) -> Result<()> {
+    ) -> Result<(), GpuSpatialError> {
         self.inner
             .refine(probe_array, predicate, build_indices, probe_indices)
     }
