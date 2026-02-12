@@ -26,8 +26,10 @@ pub const DEFAULT_UNSPILLABLE_RESERVE_RATIO: f64 = 0.2;
 /// A [`MemoryPool`] implementation similar to DataFusion's [`datafusion::execution::memory_pool::FairSpillPool`],
 /// but with the following changes:
 ///
-/// It implements a reservation mechanism for unspillable memory consumers. This addresses an issue
-/// where spillable consumers could potentially exhaust all available memory, preventing unspillable
+/// Spillable and non-spillable operators use logically separate portions of the memory pool,
+/// controlled by `unspillable_reserve_ratio`, instead of sharing a single pool as in
+/// DataFusion's default FairSpillPool, which can lead to the following issue:
+/// spillable consumers could potentially exhaust all available memory, preventing unspillable
 /// operations from acquiring necessary resources. This behavior is tracked in DataFusion issue
 /// https://github.com/apache/datafusion/issues/17334. In the context of Sedona, a typical example
 /// is a [`sedona_spatial_join::exec::SpatialJoinExec`] operator with an auto inserted

@@ -27,9 +27,9 @@ use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool, TrackCons
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use sedona::context::SedonaContext;
 use sedona::memory_pool::{SedonaFairSpillPool, DEFAULT_UNSPILLABLE_RESERVE_RATIO};
+use sedona::pool_type::PoolType;
 use sedona_cli::{
     exec,
-    pool_type::PoolType,
     print_format::PrintFormat,
     print_options::{MaxRows, PrintOptions},
     DATAFUSION_CLI_VERSION,
@@ -275,25 +275,25 @@ fn parse_size_string(size: &str, label: &str) -> Result<usize, String> {
     });
 
     static SUFFIX_REGEX: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^([0-9]+)([a-z]+)?$").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"^([0-9.]+)\s*([a-z]+)?$").unwrap());
 
     let lower = size.to_lowercase();
     if let Some(caps) = SUFFIX_REGEX.captures(&lower) {
         let num_str = caps.get(1).unwrap().as_str();
         let num = num_str
-            .parse::<usize>()
+            .parse::<f64>()
             .map_err(|_| format!("Invalid numeric value in {label} '{size}'"))?;
 
         let suffix = caps.get(2).map(|m| m.as_str()).unwrap_or("b");
         let unit = BYTE_SUFFIXES
             .get(suffix)
             .ok_or_else(|| format!("Invalid {label} '{size}'"))?;
-        let total_bytes = usize::try_from(unit.multiplier())
-            .ok()
-            .and_then(|multiplier| num.checked_mul(multiplier))
-            .ok_or_else(|| format!("{label} '{size}' is too large"))?;
+        let total_bytes = num * unit.multiplier() as f64;
+        if !total_bytes.is_finite() || total_bytes > usize::MAX as f64 {
+            return Err(format!("{label} '{size}' is too large"));
+        }
 
-        Ok(total_bytes)
+        Ok(total_bytes as usize)
     } else {
         Err(format!("Invalid {label} '{size}'"))
     }
@@ -313,4 +313,74 @@ fn validate_unspillable_reserve_ratio(s: &str) -> Result<f64, String> {
         ));
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_conversion(input: &str, expected: Result<usize, String>) {
+        let result = extract_memory_pool_size(input);
+        match expected {
+            Ok(v) => assert_eq!(result.unwrap(), v),
+            Err(e) => assert_eq!(result.unwrap_err(), e),
+        }
+    }
+
+    #[test]
+    fn memory_pool_size() -> Result<(), String> {
+        // Test basic sizes without suffix, assumed to be bytes
+        assert_conversion("5", Ok(5));
+        assert_conversion("100", Ok(100));
+
+        // Test various units
+        assert_conversion("5b", Ok(5));
+        assert_conversion("4k", Ok(4 * 1024));
+        assert_conversion("4kb", Ok(4 * 1024));
+        assert_conversion("20m", Ok(20 * 1024 * 1024));
+        assert_conversion("20mb", Ok(20 * 1024 * 1024));
+        assert_conversion("2g", Ok(2 * 1024 * 1024 * 1024));
+        assert_conversion("2gb", Ok(2 * 1024 * 1024 * 1024));
+        assert_conversion("3t", Ok(3 * 1024 * 1024 * 1024 * 1024));
+        assert_conversion("4tb", Ok(4 * 1024 * 1024 * 1024 * 1024));
+
+        // Test case insensitivity
+        assert_conversion("4K", Ok(4 * 1024));
+        assert_conversion("4KB", Ok(4 * 1024));
+        assert_conversion("20M", Ok(20 * 1024 * 1024));
+        assert_conversion("20MB", Ok(20 * 1024 * 1024));
+        assert_conversion("2G", Ok(2 * 1024 * 1024 * 1024));
+        assert_conversion("2GB", Ok(2 * 1024 * 1024 * 1024));
+        assert_conversion("2T", Ok(2 * 1024 * 1024 * 1024 * 1024));
+
+        // Test decimal values
+        assert_conversion("1.5g", Ok((1.5 * 1024.0 * 1024.0 * 1024.0) as usize));
+        assert_conversion("0.5m", Ok((0.5 * 1024.0 * 1024.0) as usize));
+        assert_conversion("9.5 gb", Ok((9.5 * 1024.0 * 1024.0 * 1024.0) as usize));
+
+        // Test with spaces between number and suffix
+        assert_conversion("4 k", Ok(4 * 1024));
+        assert_conversion("20 mb", Ok(20 * 1024 * 1024));
+
+        // Test invalid input
+        assert_conversion(
+            "invalid",
+            Err("Invalid memory pool size 'invalid'".to_string()),
+        );
+        assert_conversion("4kbx", Err("Invalid memory pool size '4kbx'".to_string()));
+        assert_conversion("-20mb", Err("Invalid memory pool size '-20mb'".to_string()));
+        assert_conversion("-100", Err("Invalid memory pool size '-100'".to_string()));
+        assert_conversion(
+            "12k12k",
+            Err("Invalid memory pool size '12k12k'".to_string()),
+        );
+
+        // Test overflow
+        assert_conversion(
+            "99999999t",
+            Err("memory pool size '99999999t' is too large".to_string()),
+        );
+
+        Ok(())
+    }
 }
