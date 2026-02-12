@@ -23,6 +23,7 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
+use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues};
@@ -33,7 +34,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
@@ -185,8 +186,6 @@ impl InternalDataFrame {
         partition_by: Vec<String>,
         sort_by: Vec<String>,
         single_file_output: bool,
-        geoparquet_version: Option<String>,
-        overwrite_bbox_columns: bool,
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
@@ -203,12 +202,13 @@ impl InternalDataFrame {
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
 
-        let options_map = options.iter().map(|(k, v)| {
-            Ok((k.extract::<String>()?, v.extract::<String>()?))
-        }).collect::<Result<HashMap<_, _>, PySedonaError>>()?;
+        let options_map = options
+            .iter()
+            .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+            .collect::<Result<HashMap<_, _>, PySedonaError>>()?;
 
         // Create GeoParquet options
-        let mut writer_options = TableGeoParquetOptions::new();
+        let mut writer_options = TableGeoParquetOptions::default();
 
         // Resolve writer options from the context configuration
         let global_parquet_options = ctx
@@ -227,20 +227,15 @@ impl InternalDataFrame {
             writer_options.set(k, v)?;
         }
 
-        // Override using actual values of keyword arguments if specified
-        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
-        if let Some(geoparquet_version) = geoparquet_version {
-            writer_options.geoparquet_version = geoparquet_version.parse()?;
-        } else {
-            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
-        }
-
         wait_for_future(
             py,
             &self.runtime,
-            self.inner
-                .clone()
-                .write_geoparquet(&ctx.inner, &path, write_options, Some(writer_options)),
+            self.inner.clone().write_geoparquet(
+                &ctx.inner,
+                &path,
+                write_options,
+                Some(writer_options),
+            ),
         )??;
         Ok(())
     }

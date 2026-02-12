@@ -342,10 +342,10 @@ class DataFrame:
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1"] = "1.0",
+        geoparquet_version: Literal["1.0", "1.1", None] = None,
         overwrite_bbox_columns: bool = False,
-        max_row_group_size: Optional[int]=None,
-        compression: Optional[str] = None
+        max_row_group_size: Optional[int] = None,
+        compression: Optional[str] = None,
     ):
         """Write this DataFrame to one or more (Geo)Parquet files
 
@@ -407,6 +407,18 @@ class DataFrame:
         else:
             options = {}
 
+        if max_row_group_size is not None:
+            options["max_row_group_size"] = str(max_row_group_size)
+
+        if compression is not None:
+            options["compression"] = str(compression)
+
+        if geoparquet_version is not None:
+            options["geoparquet_version"] = str(geoparquet_version)
+
+        if overwrite_bbox_columns is not None:
+            options["overwrite_bbox_columns"] = str(overwrite_bbox_columns)
+
         if single_file_output is None:
             single_file_output = partition_by is None and str(path).endswith(".parquet")
 
@@ -424,12 +436,6 @@ class DataFrame:
         else:
             sort_by = []
 
-        if max_row_group_size is not None:
-            options["max_row_group_size"] = str(max_row_group_size)
-
-        if compression is not None:
-            options["compression"] = str(compression)
-
         self._impl.to_parquet(
             self._ctx,
             str(path),
@@ -437,8 +443,6 @@ class DataFrame:
             partition_by,
             sort_by,
             single_file_output,
-            geoparquet_version,
-            overwrite_bbox_columns,
         )
 
     def show(

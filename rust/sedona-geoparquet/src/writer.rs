@@ -678,7 +678,7 @@ mod test {
             .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
+        let mut options = TableGeoParquetOptions::default();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
@@ -723,7 +723,7 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
+        let mut options = TableGeoParquetOptions::default();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
@@ -770,7 +770,7 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
+        let mut options = TableGeoParquetOptions::default();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
@@ -825,7 +825,7 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
+        let mut options = TableGeoParquetOptions::default();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
@@ -886,7 +886,7 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
+        let mut options = TableGeoParquetOptions::default();
         options.geoparquet_version = GeoParquetVersion::V1_1;
 
         let df_batches_with_bbox = df

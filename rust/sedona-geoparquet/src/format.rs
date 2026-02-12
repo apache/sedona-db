@@ -24,7 +24,7 @@ use std::{
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
-    config::ConfigOptions,
+    config::{ConfigField, ConfigOptions},
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
@@ -97,8 +97,18 @@ impl FileFormatFactory for GeoParquetFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         let mut options_mut = self.options.clone().unwrap_or_default();
         let mut format_options_mut = format_options.clone();
-        if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
-            options_mut.geoparquet_version = version_string.parse()?;
+
+        // Remove GeoParquet-specific options that will cause an error if passed
+        // to inner.create().
+        for key in [
+            "geoparquet_version",
+            "geometry_columns",
+            "validate",
+            "overwrite_bbox_columns",
+        ] {
+            if let Some(value) = format_options_mut.remove(key) {
+                options_mut.set(key, &value)?;
+            }
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
@@ -215,7 +225,7 @@ impl FileFormat for GeoParquetFormat {
         for metadata in &metadatas {
             let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
                 metadata,
-                self.options.geometry_columns.as_ref(),
+                self.options.geometry_columns.inner(),
             )?;
 
             match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
