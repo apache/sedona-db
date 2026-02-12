@@ -338,11 +338,14 @@ class DataFrame:
         self,
         path: Union[str, Path],
         *,
+        options: Optional[Dict[str, Any]] = None,
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
         geoparquet_version: Literal["1.0", "1.1"] = "1.0",
         overwrite_bbox_columns: bool = False,
+        max_row_group_size: Optional[int]=None,
+        compression: Optional[str] = None
     ):
         """Write this DataFrame to one or more (Geo)Parquet files
 
@@ -353,6 +356,11 @@ class DataFrame:
 
         Args:
             path: A filename or directory to which parquet file(s) should be written.
+            options: Key/value options to be used when constructing a parquet writer.
+                Common options are exposed as other arguments to `to_parquet()`; however,
+                this argument allows setting any DataFusion Parquet writer option. If
+                an option is specified here and by an argument to this function, the
+                value specified as a keyword argument takes precedence.
             partition_by: A vector of column names to partition by. If non-empty,
                 applies hive-style partitioning to the output.
             sort_by: A vector of column names to sort by. Currently only ascending
@@ -376,6 +384,11 @@ class DataFrame:
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
                 (the default), an error will be raised if a bbox column already exists.
+            max_row_group_size: Target maximum number of rows in each row group. Defaults
+                to the global configuration value (1M rows).
+            compression: Sets the Parquet compression codec. Valid values are: uncompressed,
+                snappy, gzip(level), brotli(level), lz4, zstd(level), and lz4_raw. Defaults
+                to the global configuration value (zstd(3)).
 
         Examples:
 
@@ -388,6 +401,11 @@ class DataFrame:
         """
 
         path = Path(path)
+
+        if options is not None:
+            options = {k: str(v) for k, v in options.items()}
+        else:
+            options = {}
 
         if single_file_output is None:
             single_file_output = partition_by is None and str(path).endswith(".parquet")
@@ -406,9 +424,16 @@ class DataFrame:
         else:
             sort_by = []
 
+        if max_row_group_size is not None:
+            options["max_row_group_size"] = str(max_row_group_size)
+
+        if compression is not None:
+            options["compression"] = str(compression)
+
         self._impl.to_parquet(
             self._ctx,
             str(path),
+            options,
             partition_by,
             sort_by,
             single_file_output,

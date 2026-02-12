@@ -181,6 +181,7 @@ impl InternalDataFrame {
         py: Python<'py>,
         ctx: &InternalContext,
         path: String,
+        options: Bound<'py, PyDict>,
         partition_by: Vec<String>,
         sort_by: Vec<String>,
         single_file_output: bool,
@@ -197,18 +198,17 @@ impl InternalDataFrame {
             })
             .collect::<Vec<_>>();
 
-        let options = SedonaWriteOptions::new()
+        let write_options = SedonaWriteOptions::new()
             .with_partition_by(partition_by)
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
 
+        let options_map = options.iter().map(|(k, v)| {
+            Ok((k.extract::<String>()?, v.extract::<String>()?))
+        }).collect::<Result<HashMap<_, _>, PySedonaError>>()?;
+
+        // Create GeoParquet options
         let mut writer_options = TableGeoParquetOptions::new();
-        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
-        if let Some(geoparquet_version) = geoparquet_version {
-            writer_options.geoparquet_version = geoparquet_version.parse()?;
-        } else {
-            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
-        }
 
         // Resolve writer options from the context configuration
         let global_parquet_options = ctx
@@ -222,12 +222,25 @@ impl InternalDataFrame {
             .clone();
         writer_options.inner.global = global_parquet_options;
 
+        // Set values from options dictionary
+        for (k, v) in &options_map {
+            writer_options.set(k, v)?;
+        }
+
+        // Override using actual values of keyword arguments if specified
+        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
+        if let Some(geoparquet_version) = geoparquet_version {
+            writer_options.geoparquet_version = geoparquet_version.parse()?;
+        } else {
+            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
+        }
+
         wait_for_future(
             py,
             &self.runtime,
             self.inner
                 .clone()
-                .write_geoparquet(&ctx.inner, &path, options, Some(writer_options)),
+                .write_geoparquet(&ctx.inner, &path, write_options, Some(writer_options)),
         )??;
         Ok(())
     }

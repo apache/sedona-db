@@ -17,8 +17,8 @@
 
 use std::{collections::HashMap, str::FromStr};
 
-use datafusion::config::TableParquetOptions;
-use datafusion_common::{plan_err, DataFusionError};
+use datafusion::config::{ConfigField, TableParquetOptions};
+use datafusion_common::{plan_err, DataFusionError, Result};
 
 use crate::metadata::GeoParquetColumnMetadata;
 
@@ -39,8 +39,23 @@ pub struct TableGeoParquetOptions {
 }
 
 impl TableGeoParquetOptions {
+    /// Create new options with default values
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set a configuration option using serialized values
+    pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "geoparquet_version" => {
+                self.geoparquet_version = value.parse()?;
+            }
+            other => {
+                self.inner.set(other, value)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
