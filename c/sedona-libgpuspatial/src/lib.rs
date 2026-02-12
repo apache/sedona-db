@@ -48,10 +48,6 @@ mod sys {
         FloatIndex2DBuilder, GpuSpatialRefinerWrapper, GpuSpatialRelationPredicate,
         GpuSpatialRuntimeWrapper, SharedFloatIndex2D,
     };
-    use libgpuspatial_glue_bindgen::SedonaSpatialIndexContext;
-
-    // -- Thread Safety Setup --
-    unsafe impl Send for SedonaSpatialIndexContext {}
     unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
     unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
 
