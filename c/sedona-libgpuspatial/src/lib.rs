@@ -15,22 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::error::GpuSpatialError;
 use arrow_schema::DataType;
 use geo::Rect;
 
-pub mod error;
-mod libgpuspatial;
+mod error;
 #[cfg(gpu_available)]
+mod libgpuspatial;
 mod libgpuspatial_glue_bindgen;
-pub mod options;
+mod options;
+mod predicate;
+// Re-export to the users
+pub use error::GpuSpatialError;
+pub use options::GpuSpatialOptions;
+pub use predicate::GpuSpatialRelationPredicate;
 
-use crate::libgpuspatial::GpuSpatialRelationPredicate;
-use crate::options::GpuSpatialOptions;
-/// Spatial predicates for GPU operations
-// Re-export Error type from the sys module abstraction
-
-// 1. GPU Available Implementation
 #[cfg(gpu_available)]
 mod sys {
     use super::libgpuspatial;
@@ -41,13 +39,10 @@ mod sys {
 
     use std::sync::{Arc, Mutex};
 
-    // Re-export the error from the parent module so the public API works
-    pub use super::error::GpuSpatialError;
-
     use libgpuspatial::{
-        FloatIndex2DBuilder, GpuSpatialRefinerWrapper, GpuSpatialRelationPredicate,
-        GpuSpatialRuntimeWrapper, SharedFloatIndex2D,
+        FloatIndex2DBuilder, GpuSpatialRefinerWrapper, GpuSpatialRuntimeWrapper, SharedFloatIndex2D,
     };
+    // To be used in the global state. We need to ensure these are Send + Sync since they will be shared across threads.
     unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
     unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
 
@@ -221,17 +216,11 @@ mod sys {
                 .as_ref()
                 .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
 
-            refiner.refine(
-                probe_array,
-                GpuSpatialRelationPredicate::from(predicate),
-                build_indices,
-                probe_indices,
-            )
+            refiner.refine(probe_array, predicate, build_indices, probe_indices)
         }
     }
 }
 
-// 2. GPU Not Available Implementation
 #[cfg(not(gpu_available))]
 mod sys {
     use super::*;
@@ -281,10 +270,6 @@ mod sys {
         }
     }
 }
-
-// ----------------------------------------------------------------------
-// Main GpuSpatial Wrapper
-// ----------------------------------------------------------------------
 
 /// High-level wrapper for GPU spatial operations
 pub struct GpuSpatial {
@@ -354,9 +339,6 @@ impl GpuSpatial {
     }
 }
 
-// ----------------------------------------------------------------------
-// Tests
-// ----------------------------------------------------------------------
 #[cfg(gpu_available)]
 #[cfg(test)]
 mod tests {

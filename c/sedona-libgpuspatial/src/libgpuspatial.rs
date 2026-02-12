@@ -18,12 +18,13 @@
 use crate::error::GpuSpatialError;
 #[cfg(gpu_available)]
 use crate::libgpuspatial_glue_bindgen::*;
+use crate::predicate::GpuSpatialRelationPredicate;
 use arrow_array::{Array, ArrayRef};
 use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::DataType;
 use std::convert::TryFrom;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_uint};
+use std::os::raw::c_char;
 use std::sync::{Arc, Mutex};
 
 // ----------------------------------------------------------------------
@@ -329,52 +330,6 @@ impl Drop for FloatIndex2DContext {
             unsafe {
                 destroy_context_fn(&mut self.context);
             }
-        }
-    }
-}
-
-// ----------------------------------------------------------------------
-// Predicate Wrapper
-// ----------------------------------------------------------------------
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum GpuSpatialRelationPredicate {
-    Equals,
-    Disjoint,
-    Touches,
-    Contains,
-    Covers,
-    Intersects,
-    Within,
-    CoveredBy,
-}
-
-impl GpuSpatialRelationPredicate {
-    /// Internal helper to convert the Rust enum to the C-compatible integer.
-    fn as_c_uint(self) -> c_uint {
-        match self {
-            Self::Equals => 0,
-            Self::Disjoint => 1,
-            Self::Touches => 2,
-            Self::Contains => 3,
-            Self::Covers => 4,
-            Self::Intersects => 5,
-            Self::Within => 6,
-            Self::CoveredBy => 7,
-        }
-    }
-}
-impl std::fmt::Display for GpuSpatialRelationPredicate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GpuSpatialRelationPredicate::Equals => write!(f, "equals"),
-            GpuSpatialRelationPredicate::Disjoint => write!(f, "disjoint"),
-            GpuSpatialRelationPredicate::Touches => write!(f, "touches"),
-            GpuSpatialRelationPredicate::Contains => write!(f, "contains"),
-            GpuSpatialRelationPredicate::Covers => write!(f, "covers"),
-            GpuSpatialRelationPredicate::Intersects => write!(f, "intersects"),
-            GpuSpatialRelationPredicate::Within => write!(f, "within"),
-            GpuSpatialRelationPredicate::CoveredBy => write!(f, "coveredby"),
         }
     }
 }
