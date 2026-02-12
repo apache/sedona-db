@@ -43,14 +43,18 @@ use sedona_common::option::SedonaOptions;
 
 /// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
 pub(crate) fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
-    builder.with_query_planner(Arc::new(SedonaSpatialQueryPlanner))
+    let extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>> =
+        vec![Arc::new(SpatialJoinExtensionPlanner {})];
+    builder.with_query_planner(Arc::new(SedonaSpatialQueryPlanner { extension_planners }))
 }
 
 /// Query planner that enables Sedona's spatial join planning.
 ///
 /// Installs an [`ExtensionPlanner`] that recognizes `SpatialJoinPlanNode` and produces
 /// `SpatialJoinExec` when supported and enabled.
-pub struct SedonaSpatialQueryPlanner;
+struct SedonaSpatialQueryPlanner {
+    extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>,
+}
 
 impl fmt::Debug for SedonaSpatialQueryPlanner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,9 +69,8 @@ impl QueryPlanner for SedonaSpatialQueryPlanner {
         logical_plan: &LogicalPlan,
         session_state: &SessionState,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let physical_planner = DefaultPhysicalPlanner::with_extension_planners(vec![Arc::new(
-            SpatialJoinExtensionPlanner {},
-        )]);
+        let physical_planner =
+            DefaultPhysicalPlanner::with_extension_planners(self.extension_planners.clone());
         physical_planner
             .create_physical_plan(logical_plan, session_state)
             .await

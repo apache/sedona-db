@@ -19,9 +19,10 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
 
-use datafusion_common::{plan_err, DFSchemaRef, NullEquality, Result};
+use datafusion_common::{DFSchemaRef, NullEquality, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNodeCore;
 use datafusion_expr::{Expr, JoinConstraint, JoinType, LogicalPlan};
+use sedona_common::sedona_internal_err;
 
 /// Logical extension node used as a planning hook for spatial joins.
 ///
