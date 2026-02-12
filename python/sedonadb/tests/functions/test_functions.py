@@ -1483,7 +1483,7 @@ def test_st_flipcoordinates(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected_2d", "expected_3d"),
     [
-        (None, None),
+        (None, None, None),
         ("POINT EMPTY", "POINT (nan nan)", "POINT Z (nan nan nan)"),
         ("POLYGON EMPTY", "POLYGON EMPTY", "POLYGON Z EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY", "LINESTRING Z EMPTY"),
@@ -1513,7 +1513,7 @@ def test_st_flipcoordinates(eng, geom, expected):
         ),
     ],
 )
-def test_st_force_dims(eng, geom, expected_2d, expected_3d):
+def test_st_force_dim(eng, geom, expected_2d, expected_3d):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Force2D({geom_or_null(geom)})", expected_2d)
     eng.assert_query_result(f"SELECT ST_Force3D({geom_or_null(geom)}, 5)", expected_3d)
