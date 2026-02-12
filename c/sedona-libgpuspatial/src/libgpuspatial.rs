@@ -313,35 +313,16 @@ impl Drop for GpuSpatialIndexFloat2DWrapper {
 // Predicate Wrapper
 // ----------------------------------------------------------------------
 
-#[repr(u32)]
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum GpuSpatialRelationPredicateWrapper {
-    Equals = 0,
-    Disjoint = 1,
-    Touches = 2,
-    Contains = 3,
-    Covers = 4,
-    Intersects = 5,
-    Within = 6,
-    CoveredBy = 7,
-}
-
-impl TryFrom<c_uint> for GpuSpatialRelationPredicateWrapper {
-    type Error = &'static str;
-
-    fn try_from(v: c_uint) -> Result<Self, Self::Error> {
-        match v {
-            0 => Ok(Self::Equals),
-            1 => Ok(Self::Disjoint),
-            2 => Ok(Self::Touches),
-            3 => Ok(Self::Contains),
-            4 => Ok(Self::Covers),
-            5 => Ok(Self::Intersects),
-            6 => Ok(Self::Within),
-            7 => Ok(Self::CoveredBy),
-            _ => Err("Invalid GpuSpatialPredicate value"),
-        }
-    }
+    Equals,
+    Disjoint,
+    Touches,
+    Contains,
+    Covers,
+    Intersects,
+    Within,
+    CoveredBy,
 }
 
 // ----------------------------------------------------------------------

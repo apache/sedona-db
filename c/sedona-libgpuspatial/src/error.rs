@@ -26,6 +26,7 @@ pub enum GpuSpatialError {
     FinishBuild(String),
     Probe(String),
     Refine(String),
+    GpuNotAvailable,
 }
 
 impl From<ArrowError> for GpuSpatialError {
