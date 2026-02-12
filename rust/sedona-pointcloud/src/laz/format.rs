@@ -20,21 +20,21 @@ use std::{any::Any, collections::HashMap, fmt, sync::Arc};
 use arrow_schema::{Schema, SchemaRef};
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{
-    config::ExtensionOptions, error::DataFusionError, internal_err,
-    parsers::CompressionTypeVariant, GetExt, Statistics,
+    config::ExtensionOptions, error::DataFusionError, parsers::CompressionTypeVariant, GetExt,
+    Statistics,
 };
 use datafusion_datasource::{
     file::FileSource,
     file_compression_type::FileCompressionType,
     file_format::{FileFormat, FileFormatFactory},
-    file_scan_config::FileScanConfig,
+    file_scan_config::{FileScanConfig, FileScanConfigBuilder},
 };
 use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::{
-    laz::{metadata::LazMetadataReader, source::LazSource},
+    laz::{metadata::LazMetadataReader, reader::LazFileReaderFactory, source::LazSource},
     options::PointcloudOptions,
 };
 
@@ -137,7 +137,9 @@ impl FileFormat for LazFormat {
         let ext = self.get_ext();
         match file_compression_type.get_variant() {
             CompressionTypeVariant::UNCOMPRESSED => Ok(ext),
-            _ => internal_err!("Laz FileFormat does not support compression."),
+            _ => Err(DataFusionError::External(
+                "Laz FileFormat does not support compression.".into(),
+            )),
         }
     }
 
@@ -200,9 +202,28 @@ impl FileFormat for LazFormat {
 
     async fn create_physical_plan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         conf: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
+        let mut source = conf
+            .file_source()
+            .as_any()
+            .downcast_ref::<LazSource>()
+            .cloned()
+            .ok_or_else(|| DataFusionError::External("Expected LazSource".into()))?;
+        source = source.with_options(self.options.clone());
+
+        let metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+        let store = state
+            .runtime_env()
+            .object_store(conf.object_store_url.clone())?;
+        let laz_reader_factory = Arc::new(LazFileReaderFactory::new(store, Some(metadata_cache)));
+        let source = source.with_reader_factory(laz_reader_factory);
+
+        let conf = FileScanConfigBuilder::from(conf)
+            .with_source(Arc::new(source))
+            .build();
+
         Ok(DataSourceExec::from_data_source(conf))
     }
 
