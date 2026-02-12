@@ -18,14 +18,14 @@
 //! Head-to-head benchmark of FlatPartitioner vs RTreePartitioner across
 //! varying partition counts to find the optimal switch point.
 
-mod common;
-
 use std::hint::black_box;
 
-use common::{default_extent, grid_partitions, sample_queries, QUERY_BATCH_SIZE};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use sedona_spatial_join::partitioning::{
     flat::FlatPartitioner, rtree::RTreePartitioner, SpatialPartitioner,
+};
+use sedona_spatial_join::utils::internal_benchmark_util::{
+    default_extent, grid_partitions, sample_queries, QUERY_BATCH_SIZE,
 };
 
 /// Grid dimensions to benchmark. Each produces dim*dim partitions.

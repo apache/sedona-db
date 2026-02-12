@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod common;
-
 use std::hint::black_box;
 
-use common::{default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use sedona_spatial_join::partitioning::{flat::FlatPartitioner, SpatialPartitioner};
+use sedona_spatial_join::utils::internal_benchmark_util::{
+    default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE,
+};
 
 fn bench_flat_partition_queries(c: &mut Criterion) {
     let extent = default_extent();

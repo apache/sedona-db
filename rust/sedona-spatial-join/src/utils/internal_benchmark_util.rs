@@ -17,11 +17,10 @@
 
 //! Shared helpers for partitioner benchmarks.
 //!
-//! This module is included (`mod common;`) by multiple independent bench binaries,
-//! not all of which use every item. Suppress dead-code warnings accordingly.
-#![allow(dead_code)]
+//! This module is **not** part of the public API and exists only to share
+//! utility code across benchmark binaries without resorting to a
+//! module-level `#![allow(dead_code)]`.
 
-use rand::{rngs::StdRng, RngExt, SeedableRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 
 pub const GRID_DIM: usize = 4; // 4x4 grid => 16 partitions like typical workloads
@@ -63,22 +62,27 @@ pub fn grid_partitions(extent: &BoundingBox, cells_per_axis: usize) -> Vec<Bound
 }
 
 pub fn sample_queries(extent: &BoundingBox, batch_size: usize) -> Vec<BoundingBox> {
-    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let mut rng = fastrand::Rng::with_seed(RNG_SEED);
     let characteristic_span = extent_span(extent) / 8.0;
     (0..batch_size)
         .map(|_| random_bbox(extent, &mut rng, characteristic_span))
         .collect()
 }
 
-fn random_bbox(extent: &BoundingBox, rng: &mut impl RngExt, max_span: f64) -> BoundingBox {
+/// Generate a random f64 in `[lo, hi]`.
+fn random_f64_range(rng: &mut fastrand::Rng, lo: f64, hi: f64) -> f64 {
+    lo + rng.f64() * (hi - lo)
+}
+
+fn random_bbox(extent: &BoundingBox, rng: &mut fastrand::Rng, max_span: f64) -> BoundingBox {
     let (min_x, max_x) = (extent.x().lo(), extent.x().hi());
     let (min_y, max_y) = (extent.y().lo(), extent.y().hi());
 
-    let span_x = rng.random_range(0.01..max_span).min(max_x - min_x);
-    let span_y = rng.random_range(0.01..max_span).min(max_y - min_y);
+    let span_x = random_f64_range(rng, 0.01, max_span).min(max_x - min_x);
+    let span_y = random_f64_range(rng, 0.01, max_span).min(max_y - min_y);
 
-    let start_x = rng.random_range(min_x..=max_x - span_x);
-    let start_y = rng.random_range(min_y..=max_y - span_y);
+    let start_x = random_f64_range(rng, min_x, max_x - span_x);
+    let start_y = random_f64_range(rng, min_y, max_y - span_y);
 
     BoundingBox::xy((start_x, start_x + span_x), (start_y, start_y + span_y))
 }
