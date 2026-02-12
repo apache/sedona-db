@@ -37,7 +37,7 @@ kernels:
 
 Transforms the coordinate reference system of a geometry between EPSG reference systems. If provided with 2 arguments, target_crs can be specified as an EPSG code (e.g., 'EPSG:4326') or as a PROJ string.
 
-When a 3 arguments are provided, a source_crs can be used to specify the source CRS in case the input geometry doesn't have an SRID defined. The source_crs takes precedence over the geometry's SRID.
+When 3 arguments are provided, a source_crs can be used to specify the source CRS in case the input geometry doesn't have an SRID defined. The source_crs takes precedence over the geometry's SRID.
 
 ## Examples
 
