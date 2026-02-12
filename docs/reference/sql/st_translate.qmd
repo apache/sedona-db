@@ -26,6 +26,15 @@ kernels:
       type: double
     - name: deltaY
       type: double
+  - returns: geometry
+    args:
+    - geometry
+    - name: deltaX
+      type: double
+    - name: deltaY
+      type: double
+    - name: deltaZ
+      type: double
 ---
 
 ## Examples
