@@ -68,6 +68,11 @@ pub trait CrsTransform: std::fmt::Debug {
         coord.1 = coord_2d.1;
         Ok(())
     }
+
+    // The dimension of the output. If `None`, the input dimension is preserved.
+    fn output_dim(&self) -> Option<Dimensions> {
+        None
+    }
 }
 
 /// A boxed trait object for dynamic dispatch of CRS transformations.
@@ -275,30 +280,32 @@ pub fn transform(
     trans: &dyn CrsTransform,
     out: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
-    let dims = geom.dim();
+    // If the CrsTransform specifies the dimension, use it.
+    // Otherwise, the input dimension is preserved.
+    let dims = trans.output_dim().unwrap_or_else(|| geom.dim());
     match geom.as_type() {
         GeometryType::Point(pt) => {
             if pt.coord().is_some() {
                 write_wkb_point_header(out, dims)?;
-                transform_and_write_coords(out, trans, pt.coord().into_iter())?;
+                transform_and_write_coords(out, trans, pt.coord().into_iter(), dims)?;
             } else {
                 write_wkb_empty_point(out, dims)?;
             }
         }
         GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(out, ls.dim(), ls.coords().count())?;
-            transform_and_write_coords(out, trans, ls.coords())?;
+            write_wkb_linestring_header(out, dims, ls.coords().count())?;
+            transform_and_write_coords(out, trans, ls.coords(), dims)?;
         }
         GeometryType::Polygon(pl) => {
             let num_rings = pl.interiors().count() + pl.exterior().is_some() as usize;
-            write_wkb_polygon_header(out, pl.dim(), num_rings)?;
+            write_wkb_polygon_header(out, dims, num_rings)?;
 
             if let Some(exterior) = pl.exterior() {
-                transform_and_write_ring(out, trans, exterior)?;
+                transform_and_write_ring(out, trans, exterior, dims)?;
             }
 
             for interior in pl.interiors() {
-                transform_and_write_ring(out, trans, interior)?;
+                transform_and_write_ring(out, trans, interior, dims)?;
             }
         }
         GeometryType::MultiPoint(multi_pt) => {
@@ -339,13 +346,14 @@ fn transform_and_write_ring<'a, L>(
     buf: &mut impl Write,
     trans: &dyn CrsTransform,
     ring: L,
+    dims: Dimensions,
 ) -> Result<(), SedonaGeometryError>
 where
     L: LineStringTrait<T = f64> + 'a,
 {
     let num_points = ring.coords().count();
     write_wkb_polygon_ring_header(buf, num_points)?;
-    transform_and_write_coords(buf, trans, ring.coords())?;
+    transform_and_write_coords(buf, trans, ring.coords(), dims)?;
     Ok(())
 }
 
@@ -353,13 +361,14 @@ fn transform_and_write_coords<'a, C, I>(
     buf: &mut impl Write,
     trans: &dyn CrsTransform,
     coords: I,
+    dims: Dimensions,
 ) -> Result<(), SedonaGeometryError>
 where
     C: CoordTrait<T = f64> + 'a,
     I: Iterator<Item = C>,
 {
     for coord in coords {
-        match coord.dim() {
+        match dims {
             Dimensions::Xy => {
                 let mut xy: (f64, f64) = (coord.x(), coord.y());
                 trans.transform_coord(&mut xy)?;
