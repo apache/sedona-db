@@ -34,37 +34,11 @@ pub struct GpuSpatialOptions {
     pub pipeline_batches: u32,
 }
 
+use crate::libgpuspatial::GpuSpatialRelationPredicate;
 /// Spatial predicates for GPU operations
-#[repr(u32)]
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum GpuSpatialRelationPredicate {
-    Equals = 0,
-    Disjoint = 1,
-    Touches = 2,
-    Contains = 3,
-    Covers = 4,
-    Intersects = 5,
-    Within = 6,
-    CoveredBy = 7,
-}
-
-impl std::fmt::Display for GpuSpatialRelationPredicate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GpuSpatialRelationPredicate::Equals => write!(f, "equals"),
-            GpuSpatialRelationPredicate::Disjoint => write!(f, "disjoint"),
-            GpuSpatialRelationPredicate::Touches => write!(f, "touches"),
-            GpuSpatialRelationPredicate::Contains => write!(f, "contains"),
-            GpuSpatialRelationPredicate::Covers => write!(f, "covers"),
-            GpuSpatialRelationPredicate::Intersects => write!(f, "intersects"),
-            GpuSpatialRelationPredicate::Within => write!(f, "within"),
-            GpuSpatialRelationPredicate::CoveredBy => write!(f, "coveredby"),
-        }
-    }
-}
-
 // Re-export Error type from the sys module abstraction
 pub use sys::GpuSpatialError;
+
 pub type Result<T> = std::result::Result<T, GpuSpatialError>;
 
 // 1. GPU Available Implementation
@@ -74,15 +48,14 @@ mod sys {
     use super::libgpuspatial_glue_bindgen;
     use super::*;
 
-    use nvml_wrapper::Nvml;
     use std::sync::{Arc, Mutex};
 
     // Re-export the error from the parent module so the public API works
     pub use super::error::GpuSpatialError;
 
     use libgpuspatial::{
-        GpuSpatialIndexFloat2DWrapper, GpuSpatialRefinerWrapper,
-        GpuSpatialRelationPredicateWrapper, GpuSpatialRuntimeWrapper,
+        FloatIndex2DBuilder, GpuSpatialRefinerWrapper, GpuSpatialRelationPredicate,
+        GpuSpatialRuntimeWrapper, SharedFloatIndex2D,
     };
     use libgpuspatial_glue_bindgen::SedonaSpatialIndexContext;
 
@@ -90,43 +63,17 @@ mod sys {
     unsafe impl Send for SedonaSpatialIndexContext {}
     unsafe impl Send for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
     unsafe impl Sync for libgpuspatial_glue_bindgen::GpuSpatialRuntime {}
-    unsafe impl Send for libgpuspatial_glue_bindgen::SedonaFloatIndex2D {}
-    unsafe impl Send for libgpuspatial_glue_bindgen::SedonaSpatialRefiner {}
-    unsafe impl Sync for libgpuspatial_glue_bindgen::SedonaFloatIndex2D {}
-    unsafe impl Sync for libgpuspatial_glue_bindgen::SedonaSpatialRefiner {}
 
     // -- Global State --
     static GLOBAL_GPUSPATIAL_RUNTIME: Mutex<Option<Arc<Mutex<GpuSpatialRuntimeWrapper>>>> =
         Mutex::new(None);
 
-    // -- Conversion Trait --
-    impl From<GpuSpatialRelationPredicate> for GpuSpatialRelationPredicateWrapper {
-        fn from(pred: GpuSpatialRelationPredicate) -> Self {
-            match pred {
-                GpuSpatialRelationPredicate::Equals => GpuSpatialRelationPredicateWrapper::Equals,
-                GpuSpatialRelationPredicate::Disjoint => {
-                    GpuSpatialRelationPredicateWrapper::Disjoint
-                }
-                GpuSpatialRelationPredicate::Touches => GpuSpatialRelationPredicateWrapper::Touches,
-                GpuSpatialRelationPredicate::Contains => {
-                    GpuSpatialRelationPredicateWrapper::Contains
-                }
-                GpuSpatialRelationPredicate::Covers => GpuSpatialRelationPredicateWrapper::Covers,
-                GpuSpatialRelationPredicate::Intersects => {
-                    GpuSpatialRelationPredicateWrapper::Intersects
-                }
-                GpuSpatialRelationPredicate::Within => GpuSpatialRelationPredicateWrapper::Within,
-                GpuSpatialRelationPredicate::CoveredBy => {
-                    GpuSpatialRelationPredicateWrapper::CoveredBy
-                }
-            }
-        }
-    }
-
     // -- The Actual Implementation Struct --
     pub struct SpatialImpl {
         runtime: Option<Arc<Mutex<GpuSpatialRuntimeWrapper>>>,
-        index: Option<GpuSpatialIndexFloat2DWrapper>,
+        // Index state is either building (Builder) or built (Shared)
+        index_builder: Option<FloatIndex2DBuilder>,
+        index: Option<SharedFloatIndex2D>,
         refiner: Option<GpuSpatialRefinerWrapper>,
     }
 
@@ -134,6 +81,7 @@ mod sys {
         pub fn new() -> Result<Self> {
             Ok(Self {
                 runtime: None,
+                index_builder: None,
                 index: None,
                 refiner: None,
             })
@@ -161,14 +109,15 @@ mod sys {
             let runtime_ref = global_runtime_guard.as_ref().unwrap().clone();
             self.runtime = Some(runtime_ref);
 
-            // FIX: Clone the Arc here
-            let index = GpuSpatialIndexFloat2DWrapper::try_new(
+            // Create the builder
+            let builder = FloatIndex2DBuilder::try_new(
                 self.runtime.as_ref().unwrap().clone(),
                 options.concurrency,
             )?;
-            self.index = Some(index);
+            self.index_builder = Some(builder);
+            self.index = None; // Reset built index if any
 
-            // FIX: Clone the Arc here as well
+            // Create refiner
             let refiner = GpuSpatialRefinerWrapper::try_new(
                 self.runtime.as_ref().unwrap().clone(),
                 options.concurrency,
@@ -181,51 +130,59 @@ mod sys {
         }
 
         pub fn index_clear(&mut self) -> Result<()> {
-            let index = self
-                .index
-                .as_mut()
-                .ok_or_else(|| GpuSpatialError::Init("GPU index is not available".into()))?;
-            index.clear();
-            Ok(())
+            // We can only clear the builder. If we have a finished index, we can't clear it.
+            // If the user wants to restart, they should conceptually re-init or we need
+            // to store config to recreate the builder.
+            // For now, assuming this is called during build phase.
+            if let Some(builder) = self.index_builder.as_mut() {
+                builder.clear();
+                Ok(())
+            } else {
+                Err(GpuSpatialError::Init(
+                    "Cannot clear index: Index is already built or not initialized".into(),
+                ))
+            }
         }
 
         pub fn index_push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
-            let index = self
-                .index
+            let builder = self
+                .index_builder
                 .as_mut()
-                .ok_or_else(|| GpuSpatialError::Init("GPU index not available".into()))?;
-            unsafe { index.push_build(rects.as_ptr() as *const f32, rects.len() as u32) }
+                .ok_or_else(|| GpuSpatialError::Init("GPU index builder not available".into()))?;
+
+            unsafe { builder.push_build(rects.as_ptr() as *const f32, rects.len() as u32) }
         }
 
         pub fn index_finish_building(&mut self) -> Result<()> {
-            self.index
-                .as_mut()
-                .ok_or_else(|| GpuSpatialError::Init("GPU index not available".into()))?
-                .finish_building()
+            // Take the builder out, consume it, and store the shared index
+            let builder = self
+                .index_builder
+                .take()
+                .ok_or_else(|| GpuSpatialError::Init("GPU index builder not available".into()))?;
+
+            let shared_index = builder.finish()?;
+            self.index = Some(shared_index);
+            Ok(())
         }
 
         pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
             let index = self
                 .index
                 .as_ref()
-                .ok_or_else(|| GpuSpatialError::Init("GPU index not available".into()))?;
+                .ok_or_else(|| GpuSpatialError::Init("GPU index not built".into()))?;
 
-            let mut ctx = SedonaSpatialIndexContext {
-                private_data: std::ptr::null_mut(),
-            };
-            index.create_context(&mut ctx);
+            // Create a thread-local context wrapper
+            let mut ctx_wrapper = index.create_context()?;
 
-            let result = (|| -> Result<(Vec<u32>, Vec<u32>)> {
-                unsafe {
-                    index.probe(&mut ctx, rects.as_ptr() as *const f32, rects.len() as u32)?;
-                }
-                let build_indices = index.get_build_indices_buffer(&mut ctx).to_vec();
-                let probe_indices = index.get_probe_indices_buffer(&mut ctx).to_vec();
-                Ok((build_indices, probe_indices))
-            })();
+            unsafe {
+                ctx_wrapper.probe(rects.as_ptr() as *const f32, rects.len() as u32)?;
+            }
 
-            index.destroy_context(&mut ctx);
-            result
+            let build_indices = ctx_wrapper.get_build_indices_buffer().to_vec();
+            let probe_indices = ctx_wrapper.get_probe_indices_buffer().to_vec();
+
+            Ok((build_indices, probe_indices))
+            // ctx_wrapper is dropped here, which calls destroy_context in C
         }
 
         pub fn refiner_clear(&mut self) -> Result<()> {
@@ -252,7 +209,7 @@ mod sys {
         pub fn refiner_push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
             let refiner = self
                 .refiner
-                .as_ref()
+                .as_mut()
                 .ok_or_else(|| GpuSpatialError::Init("GPU refiner not available".into()))?;
             refiner.push_build(array)
         }
@@ -279,17 +236,10 @@ mod sys {
 
             refiner.refine(
                 probe_array,
-                GpuSpatialRelationPredicateWrapper::from(predicate),
+                GpuSpatialRelationPredicate::from(predicate),
                 build_indices,
                 probe_indices,
             )
-        }
-    }
-
-    pub fn is_gpu_available() -> bool {
-        match Nvml::init() {
-            Ok(instance) => instance.device_count().map(|c| c > 0).unwrap_or(false),
-            Err(_) => false,
         }
     }
 }
@@ -298,12 +248,6 @@ mod sys {
 #[cfg(not(gpu_available))]
 mod sys {
     use super::*;
-
-    #[derive(Debug, thiserror::Error)]
-    pub enum GpuSpatialError {
-        #[error("GPU not available - CUDA not found during build")]
-        GpuNotAvailable,
-    }
 
     pub struct SpatialImpl;
 
@@ -349,10 +293,6 @@ mod sys {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }
-
-    pub fn is_gpu_available() -> bool {
-        false
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -369,10 +309,6 @@ impl GpuSpatial {
         Ok(Self {
             inner: sys::SpatialImpl::new()?,
         })
-    }
-
-    pub fn is_gpu_available() -> bool {
-        sys::is_gpu_available()
     }
 
     pub fn init(&mut self, options: GpuSpatialOptions) -> Result<()> {

@@ -56,6 +56,9 @@ impl fmt::Display for GpuSpatialError {
             GpuSpatialError::Refine(errmsg) => {
                 write!(f, "Refine failed: {}", errmsg)
             }
+            GpuSpatialError::GpuNotAvailable => {
+                write!(f, "GPU is not available")
+            }
         }
     }
 }

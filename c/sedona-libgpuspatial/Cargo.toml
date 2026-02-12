@@ -43,7 +43,6 @@ thiserror = { workspace = true }
 log = { workspace = true }
 geo = { workspace = true }
 sedona-schema = { workspace = true }
-nvml-wrapper = "0.10.0"
 
 [dev-dependencies]
 wkt = { workspace = true }
