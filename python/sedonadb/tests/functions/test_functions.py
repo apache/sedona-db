@@ -17,8 +17,8 @@
 import math
 
 import pytest
-import shapely
 import sedonadb
+import shapely
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
 
 
@@ -1477,6 +1477,46 @@ def test_st_flipcoordinates(eng, geom, expected):
     eng.assert_query_result(
         f"SELECT ST_FlipCoordinates({geom_or_null(geom)})", expected
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected_2d", "expected_3d"),
+    [
+        (None, None),
+        ("POINT EMPTY", "POINT (nan nan)", "POINT Z (nan nan nan)"),
+        ("POLYGON EMPTY", "POLYGON EMPTY", "POLYGON Z EMPTY"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY", "LINESTRING Z EMPTY"),
+        ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY", "MULTIPOINT Z EMPTY"),
+        ("MULTILINESTRING EMPTY", "MULTILINESTRING EMPTY", "MULTILINESTRING Z EMPTY"),
+        ("MULTIPOLYGON EMPTY", "MULTIPOLYGON EMPTY", "MULTIPOLYGON Z EMPTY"),
+        (
+            "GEOMETRYCOLLECTION EMPTY",
+            "GEOMETRYCOLLECTION EMPTY",
+            "GEOMETRYCOLLECTION EMPTY",
+        ),
+        ("POINT (0 1)", "POINT (1 0)", "POINT Z (1 0 5)"),
+        (
+            "LINESTRING (0 1, 2 3)",
+            "LINESTRING (1 0, 3 2)",
+            "LINESTRING Z (1 0 5, 3 2 5)",
+        ),
+        (
+            "MULTIPOINT (0 1, 2 3)",
+            "MULTIPOINT (1 0, 3 2)",
+            "MULTIPOINT Z (1 0 5, 3 2 5)",
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT (2 1), LINESTRING (4 3, 6 5), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT Z (2 1 5), LINESTRING Z (4 3 5, 6 5 5), POLYGON Z ((0 0 5, 1 0 5, 1 1 5, 0 1 5, 0 0 5)))",
+        ),
+    ],
+)
+def test_st_force_dims(eng, geom, expected_2d, expected_3d):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Force2D({geom_or_null(geom)})", expected_2d)
+    eng.assert_query_result(f"SELECT ST_Force3D({geom_or_null(geom)}, 5)", expected_3d)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
