@@ -142,9 +142,9 @@ mod tests {
             let bands = raster.bands();
             let band = bands.band(1).unwrap();
             let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type(), BandDataType::UInt8);
+            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
             assert_eq!(band_metadata.nodata_value(), Some(&[127u8][..]));
-            assert_eq!(band_metadata.storage_type(), StorageType::InDb);
+            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
         } else {
             panic!("Expected scalar struct result");
         }

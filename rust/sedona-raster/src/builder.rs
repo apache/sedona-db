@@ -414,8 +414,8 @@ mod tests {
         assert_eq!(band.data()[0], 1u8);
 
         let band_meta = band.metadata();
-        assert_eq!(band_meta.storage_type(), StorageType::InDb);
-        assert_eq!(band_meta.data_type(), BandDataType::UInt8);
+        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
 
         let crs = raster.crs().unwrap();
         assert_eq!(crs, epsg4326);
@@ -573,7 +573,7 @@ mod tests {
         // But band data and metadata should be different
         let target_band = target_raster.bands().band(1).unwrap();
         let target_band_meta = target_band.metadata();
-        assert_eq!(target_band_meta.data_type(), BandDataType::UInt16);
+        assert_eq!(target_band_meta.data_type().unwrap(), BandDataType::UInt16);
         assert!(target_band_meta.nodata_value().is_none());
         assert_eq!(target_band.data().len(), 2016); // 1008 * 2 bytes per u16
 
@@ -702,7 +702,7 @@ mod tests {
             // Bands are 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let band_metadata = band.metadata();
-            let actual_type = band_metadata.data_type();
+            let actual_type = band_metadata.data_type().unwrap();
 
             assert_eq!(
                 actual_type, *expected_type,
@@ -770,8 +770,8 @@ mod tests {
         // Test InDb band
         let indb_band = bands.band(1).unwrap();
         let indb_metadata = indb_band.metadata();
-        assert_eq!(indb_metadata.storage_type(), StorageType::InDb);
-        assert_eq!(indb_metadata.data_type(), BandDataType::UInt8);
+        assert_eq!(indb_metadata.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(indb_metadata.data_type().unwrap(), BandDataType::UInt8);
         assert!(indb_metadata.outdb_url().is_none());
         assert!(indb_metadata.outdb_band_id().is_none());
         assert_eq!(indb_band.data().len(), 100);
@@ -779,8 +779,11 @@ mod tests {
         // Test OutDbRef band
         let outdb_band = bands.band(2).unwrap();
         let outdb_metadata = outdb_band.metadata();
-        assert_eq!(outdb_metadata.storage_type(), StorageType::OutDbRef);
-        assert_eq!(outdb_metadata.data_type(), BandDataType::Float32);
+        assert_eq!(
+            outdb_metadata.storage_type().unwrap(),
+            StorageType::OutDbRef
+        );
+        assert_eq!(outdb_metadata.data_type().unwrap(), BandDataType::Float32);
         assert_eq!(
             outdb_metadata.outdb_url().unwrap(),
             "s3://mybucket/satellite_image.tif"

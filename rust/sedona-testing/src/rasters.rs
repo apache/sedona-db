@@ -340,8 +340,8 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
         let band_meta1 = band1.metadata();
         let band_meta2 = band2.metadata();
         assert_eq!(
-            band_meta1.data_type(),
-            band_meta2.data_type(),
+            band_meta1.data_type().unwrap(),
+            band_meta2.data_type().unwrap(),
             "Band data types do not match"
         );
         assert_eq!(
@@ -350,8 +350,8 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             "Band nodata values do not match"
         );
         assert_eq!(
-            band_meta1.storage_type(),
-            band_meta2.storage_type(),
+            band_meta1.storage_type().unwrap(),
+            band_meta2.storage_type().unwrap(),
             "Band storage types do not match"
         );
         assert_eq!(
@@ -397,9 +397,9 @@ mod tests {
             let bands = raster.bands();
             let band = bands.band(1).unwrap();
             let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type(), BandDataType::UInt16);
+            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt16);
             assert_eq!(band_metadata.nodata_value(), Some(&[0u8, 0u8][..]));
-            assert_eq!(band_metadata.storage_type(), StorageType::InDb);
+            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
             assert_eq!(band_metadata.outdb_url(), None);
             assert_eq!(band_metadata.outdb_band_id(), None);
 
@@ -438,8 +438,8 @@ mod tests {
             for band_index in 0..3 {
                 let band = bands.band(band_index + 1).unwrap();
                 let band_metadata = band.metadata();
-                assert_eq!(band_metadata.data_type(), BandDataType::UInt8);
-                assert_eq!(band_metadata.storage_type(), StorageType::InDb);
+                assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
+                assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
                 let band_data = band.data();
                 assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
             }

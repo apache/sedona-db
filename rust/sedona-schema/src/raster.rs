@@ -88,10 +88,9 @@ impl RasterSchema {
 
 /// Band data type enumeration for raster bands.
 ///
-/// Ordinals match GDALDataType for real-valued pixel types only.
-/// GDT_Unknown (0) and complex types (CInt16=8, CInt32=9, CFloat32=10, CFloat64=11)
-/// are intentionally omitted.
-#[repr(u16)]
+/// Only supports basic numeric types.
+/// In future versions, consider support for complex types used in
+/// radar and other wave-based data.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum BandDataType {
     UInt8 = 1,
@@ -101,9 +100,9 @@ pub enum BandDataType {
     Int32 = 5,
     Float32 = 6,
     Float64 = 7,
-    UInt64 = 12,
-    Int64 = 13,
-    Int8 = 14,
+    UInt64 = 8,
+    Int64 = 9,
+    Int8 = 10,
 }
 
 /// Storage strategy for raster band data within Apache Arrow arrays.
