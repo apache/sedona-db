@@ -262,3 +262,96 @@ impl CrsTransform for Force3DTransform {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use arrow_array::create_array;
+    use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
+    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_testing::{
+        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+    };
+
+    use super::*;
+
+    #[test]
+    fn udf_metadata() {
+        let st_force3d: ScalarUDF = st_force3d_udf().into();
+        assert_eq!(st_force3d.name(), "st_force3d");
+        assert!(st_force3d.documentation().is_some());
+    }
+
+    #[rstest]
+    fn udf_3d_without_z(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(st_force3d_udf().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let points = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT Z EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT Z (3 4 5)"),
+                Some("POINT ZM (8 9 10 11)"),
+            ],
+            &sedona_type,
+        );
+
+        let expected = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT Z EMPTY"),
+                Some("POINT Z (1 2 0)"),
+                Some("POINT Z (3 4 5)"),
+                Some("POINT Z (8 9 10)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_arrays(vec![points]).unwrap();
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn udf_3d_with_z(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_force3d_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let points = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT (1 2)"),
+                Some("POINT Z (3 4 5)"),
+                Some("POINT (6 7)"),
+                Some("POINT ZM (8 9 10 11)"),
+            ],
+            &sedona_type,
+        );
+        let z = create_array!(
+            Float64,
+            [Some(9.0), Some(9.0), Some(9.0), Some(9.0), None, Some(9.0)]
+        );
+
+        let expected = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT Z (1 2 9)"),
+                Some("POINT Z (3 4 5)"),
+                None,
+                Some("POINT Z (8 9 10)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester.invoke_arrays(vec![points, z]).unwrap();
+        assert_array_equal(&result, &expected);
+    }
+}
