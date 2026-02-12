@@ -21,7 +21,6 @@ use arrow_array::builder::UInt64Builder;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
-use geo_traits::Dimensions;
 use sedona_expr::scalar_udf::SedonaScalarKernel;
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_geometry::{transform::CrsEngine, wkb_header::WkbHeader};

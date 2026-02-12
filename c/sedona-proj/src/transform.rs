@@ -219,11 +219,7 @@ impl ProjTransform {
 }
 
 impl CrsTransform for ProjTransform {
-    fn transform_coord(
-        &self,
-        coord: &mut (f64, f64),
-        _input_dims: Dimensions,
-    ) -> Result<(), SedonaGeometryError> {
+    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
         let res = self.proj.borrow_mut().transform_xy(*coord).map_err(|e| {
             SedonaGeometryError::Invalid(format!(
                 "PROJ coordinate transformation failed with error: {e}"
