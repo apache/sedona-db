@@ -1493,23 +1493,23 @@ def test_st_flipcoordinates(eng, geom, expected):
         (
             "GEOMETRYCOLLECTION EMPTY",
             "GEOMETRYCOLLECTION EMPTY",
-            "GEOMETRYCOLLECTION EMPTY",
+            "GEOMETRYCOLLECTION Z EMPTY",
         ),
-        ("POINT (0 1)", "POINT (1 0)", "POINT Z (1 0 5)"),
+        ("POINT (0 1)", "POINT (0 1)", "POINT Z (0 1 5)"),
         (
             "LINESTRING (0 1, 2 3)",
-            "LINESTRING (1 0, 3 2)",
-            "LINESTRING Z (1 0 5, 3 2 5)",
+            "LINESTRING (0 1, 2 3)",
+            "LINESTRING Z (0 1 5, 2 3 5)",
         ),
         (
             "MULTIPOINT (0 1, 2 3)",
-            "MULTIPOINT (1 0, 3 2)",
-            "MULTIPOINT Z (1 0 5, 3 2 5)",
+            "MULTIPOINT (0 1, 2 3)",
+            "MULTIPOINT Z (0 1 5, 2 3 5)",
         ),
         (
             "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
-            "GEOMETRYCOLLECTION (POINT (2 1), LINESTRING (4 3, 6 5), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
-            "GEOMETRYCOLLECTION (POINT Z (2 1 5), LINESTRING Z (4 3 5, 6 5 5), POLYGON Z ((0 0 5, 1 0 5, 1 1 5, 0 1 5, 0 0 5)))",
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            "GEOMETRYCOLLECTION Z (POINT Z (1 2 5), LINESTRING Z (3 4 5, 5 6 5), POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5)))",
         ),
     ],
 )
