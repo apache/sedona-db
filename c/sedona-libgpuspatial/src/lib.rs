@@ -224,11 +224,12 @@ mod sys {
 #[cfg(not(gpu_available))]
 mod sys {
     use super::*;
+    pub type Result<T> = std::result::Result<T, crate::error::GpuSpatialError>;
 
     pub struct SpatialImpl;
 
     impl SpatialImpl {
-        pub fn new() -> std::result::Result<Self, GpuSpatialError> {
+        pub fn new() -> Result<Self> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
 

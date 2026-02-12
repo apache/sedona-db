@@ -31,6 +31,7 @@ pub enum GpuSpatialRelationPredicate {
 
 impl GpuSpatialRelationPredicate {
     /// Internal helper to convert the Rust enum to the C-compatible integer.
+    #[allow(dead_code)] // not used if the GPU feature is disabled
     pub(crate) fn as_c_uint(self) -> c_uint {
         match self {
             Self::Equals => 0,
