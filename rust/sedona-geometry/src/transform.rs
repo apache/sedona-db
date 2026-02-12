@@ -57,13 +57,21 @@ pub trait CrsEngine: Debug {
 
 /// Trait for transforming coordinates in a geometry from one CRS to another.
 pub trait CrsTransform: std::fmt::Debug {
-    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError>;
+    fn transform_coord(
+        &self,
+        coord: &mut (f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError>;
 
     // CrsTransform can optionally handle 3D coordinates. If this method is not implemented,
     // the Z coordinate is simply ignored.
-    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
         let mut coord_2d = (coord.0, coord.1);
-        self.transform_coord(&mut coord_2d)?;
+        self.transform_coord(&mut coord_2d, input_dims)?;
         coord.0 = coord_2d.0;
         coord.1 = coord_2d.1;
         Ok(())
@@ -77,12 +85,20 @@ pub trait CrsTransform: std::fmt::Debug {
 
 /// A boxed trait object for dynamic dispatch of CRS transformations.
 impl CrsTransform for Box<dyn CrsTransform> {
-    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
-        self.as_ref().transform_coord(coord)
+    fn transform_coord(
+        &self,
+        coord: &mut (f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        self.as_ref().transform_coord(coord, input_dims)
     }
 
-    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
-        self.as_ref().transform_coord_3d(coord)
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        self.as_ref().transform_coord_3d(coord, input_dims)
     }
 }
 
@@ -282,52 +298,52 @@ pub fn transform(
 ) -> Result<(), SedonaGeometryError> {
     // If the CrsTransform specifies the dimension, use it.
     // Otherwise, the input dimension is preserved.
-    let dims = trans.output_dim().unwrap_or_else(|| geom.dim());
+    let output_dims = trans.output_dim().unwrap_or_else(|| geom.dim());
     match geom.as_type() {
         GeometryType::Point(pt) => {
             if pt.coord().is_some() {
-                write_wkb_point_header(out, dims)?;
-                transform_and_write_coords(out, trans, pt.coord().into_iter(), dims)?;
+                write_wkb_point_header(out, output_dims)?;
+                transform_and_write_coords(out, trans, pt.coord().into_iter(), output_dims)?;
             } else {
-                write_wkb_empty_point(out, dims)?;
+                write_wkb_empty_point(out, output_dims)?;
             }
         }
         GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(out, dims, ls.coords().count())?;
-            transform_and_write_coords(out, trans, ls.coords(), dims)?;
+            write_wkb_linestring_header(out, output_dims, ls.coords().count())?;
+            transform_and_write_coords(out, trans, ls.coords(), output_dims)?;
         }
         GeometryType::Polygon(pl) => {
             let num_rings = pl.interiors().count() + pl.exterior().is_some() as usize;
-            write_wkb_polygon_header(out, dims, num_rings)?;
+            write_wkb_polygon_header(out, output_dims, num_rings)?;
 
             if let Some(exterior) = pl.exterior() {
-                transform_and_write_ring(out, trans, exterior, dims)?;
+                transform_and_write_ring(out, trans, exterior, output_dims)?;
             }
 
             for interior in pl.interiors() {
-                transform_and_write_ring(out, trans, interior, dims)?;
+                transform_and_write_ring(out, trans, interior, output_dims)?;
             }
         }
         GeometryType::MultiPoint(multi_pt) => {
-            write_wkb_multipoint_header(out, dims, multi_pt.points().count())?;
+            write_wkb_multipoint_header(out, output_dims, multi_pt.points().count())?;
             for pt in multi_pt.points() {
                 transform(pt, trans, out)?;
             }
         }
         GeometryType::MultiLineString(multi_ls) => {
-            write_wkb_multilinestring_header(out, dims, multi_ls.line_strings().count())?;
+            write_wkb_multilinestring_header(out, output_dims, multi_ls.line_strings().count())?;
             for ls in multi_ls.line_strings() {
                 transform(ls, trans, out)?;
             }
         }
         GeometryType::MultiPolygon(multi_pl) => {
-            write_wkb_multipolygon_header(out, dims, multi_pl.polygons().count())?;
+            write_wkb_multipolygon_header(out, output_dims, multi_pl.polygons().count())?;
             for pl in multi_pl.polygons() {
                 transform(pl, trans, out)?;
             }
         }
         GeometryType::GeometryCollection(collection) => {
-            write_wkb_geometrycollection_header(out, dims, collection.geometries().count())?;
+            write_wkb_geometrycollection_header(out, output_dims, collection.geometries().count())?;
             for geom in collection.geometries() {
                 transform(geom, trans, out)?;
             }
@@ -346,14 +362,14 @@ fn transform_and_write_ring<'a, L>(
     buf: &mut impl Write,
     trans: &dyn CrsTransform,
     ring: L,
-    dims: Dimensions,
+    output_dims: Dimensions,
 ) -> Result<(), SedonaGeometryError>
 where
     L: LineStringTrait<T = f64> + 'a,
 {
     let num_points = ring.coords().count();
     write_wkb_polygon_ring_header(buf, num_points)?;
-    transform_and_write_coords(buf, trans, ring.coords(), dims)?;
+    transform_and_write_coords(buf, trans, ring.coords(), output_dims)?;
     Ok(())
 }
 
@@ -361,32 +377,33 @@ fn transform_and_write_coords<'a, C, I>(
     buf: &mut impl Write,
     trans: &dyn CrsTransform,
     coords: I,
-    dims: Dimensions,
+    output_dims: Dimensions,
 ) -> Result<(), SedonaGeometryError>
 where
     C: CoordTrait<T = f64> + 'a,
     I: Iterator<Item = C>,
 {
     for coord in coords {
-        match dims {
+        let input_dims = coord.dim();
+        match output_dims {
             Dimensions::Xy => {
                 let mut xy: (f64, f64) = (coord.x(), coord.y());
-                trans.transform_coord(&mut xy)?;
+                trans.transform_coord(&mut xy, input_dims)?;
                 write_wkb_coord(buf, (xy.0, xy.1))?;
             }
             Dimensions::Xyz => {
-                let mut xyz: (f64, f64, f64) = (coord.x(), coord.y(), coord.nth_or_panic(2));
-                trans.transform_coord_3d(&mut xyz)?;
+                let mut xyz = fill_or_extract_coord(&coord, input_dims);
+                trans.transform_coord_3d(&mut xyz, input_dims)?;
                 write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2))?;
             }
             Dimensions::Xym => {
                 let mut xy: (f64, f64) = (coord.x(), coord.y());
-                trans.transform_coord(&mut xy)?;
+                trans.transform_coord(&mut xy, input_dims)?;
                 write_wkb_coord(buf, (xy.0, xy.1, coord.nth_or_panic(2)))?;
             }
             Dimensions::Xyzm => {
-                let mut xyz: (f64, f64, f64) = (coord.x(), coord.y(), coord.nth_or_panic(2));
-                trans.transform_coord_3d(&mut xyz)?;
+                let mut xyz = fill_or_extract_coord(&coord, input_dims);
+                trans.transform_coord_3d(&mut xyz, input_dims)?;
                 write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2, coord.nth_or_panic(3)))?;
             }
             _ => {
@@ -397,6 +414,17 @@ where
         }
     }
     Ok(())
+}
+
+fn fill_or_extract_coord<C>(coord: &C, input_dims: Dimensions) -> (f64, f64, f64)
+where
+    C: CoordTrait<T = f64>,
+{
+    match input_dims {
+        // If the input doesn't have Z coordinate, fill with 0.
+        Dimensions::Xy | Dimensions::Xym | Dimensions::Unknown(_) => (coord.x(), coord.y(), 0.0),
+        Dimensions::Xyz | Dimensions::Xyzm => (coord.x(), coord.y(), coord.nth_or_panic(2)),
+    }
 }
 
 #[cfg(test)]

@@ -119,6 +119,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_transform::st_transform_udf,
         crate::st_translate::st_translate_udf,
         crate::st_force_dim::st_force2d_udf,
+        crate::st_force_dim::st_force3d_udf,
         crate::st_xyzm_minmax::st_mmax_udf,
         crate::st_xyzm_minmax::st_mmin_udf,
         crate::st_xyzm_minmax::st_xmax_udf,

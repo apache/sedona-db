@@ -17,11 +17,13 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{error::Result, DataFusionError};
+use arrow_array::{builder::BinaryBuilder, Array, Float64Array};
+use arrow_schema::DataType;
+use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -37,6 +39,8 @@ use sedona_schema::{
 };
 
 use crate::executor::WkbExecutor;
+
+// *** 2D *************************
 
 /// ST_Force2D() scalar UDF
 pub fn st_force2d_udf() -> SedonaScalarUDF {
@@ -56,7 +60,7 @@ pub fn st_force2d_udf() -> SedonaScalarUDF {
 fn st_force2d_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Update coordinates of geom by a fixed offset",
+        "Forces the geometry into a 2-dimensional model",
         "ST_Force2D (geom: Geometry)",
     )
     .with_argument("geom", "geometry: Input geometry")
@@ -122,7 +126,141 @@ impl CrsTransform for Force2DTransform {
     fn transform_coord(
         &self,
         _coord: &mut (f64, f64),
+        _input_dims: Dimensions,
     ) -> std::result::Result<(), SedonaGeometryError> {
+        Ok(())
+    }
+}
+
+// *** 3D *************************
+
+/// ST_Force3D() scalar UDF
+pub fn st_force3d_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_force3d",
+        ItemCrsKernel::wrap_impl(vec![
+            Arc::new(STForce3D {
+                is_geography: false,
+            }),
+            Arc::new(STForce3D { is_geography: true }),
+        ]),
+        Volatility::Immutable,
+        Some(st_force3d_doc()),
+    )
+}
+
+fn st_force3d_doc() -> Documentation {
+    Documentation::builder(
+        DOC_SECTION_OTHER,
+        "Forces the geometry into a 3-dimensional model.",
+        "ST_Force3D (geom: Geometry)",
+    )
+    .with_argument("geom", "geometry: Input geometry")
+    .with_argument("z", "numeric: default Z value")
+    .with_sql_example("SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'))")
+    .build()
+}
+
+#[derive(Debug)]
+struct STForce3D {
+    is_geography: bool,
+}
+
+impl SedonaScalarKernel for STForce3D {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = if self.is_geography {
+            ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::optional(ArgMatcher::is_numeric()),
+                ],
+                WKB_GEOGRAPHY,
+            )
+        } else {
+            ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geometry(),
+                    ArgMatcher::optional(ArgMatcher::is_numeric()),
+                ],
+                WKB_GEOMETRY,
+            )
+        };
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+
+        let z_array = match args.get(1) {
+            Some(arg) => arg
+                .cast_to(&DataType::Float64, None)?
+                .to_array(executor.num_iterations())?,
+            None => Arc::new(Float64Array::from(vec![0.0; executor.num_iterations()])),
+        };
+        let z_array = as_float64_array(&z_array)?;
+
+        let mut i = 0usize;
+        executor.execute_wkb_void(|maybe_wkb| {
+            match (maybe_wkb, z_array.is_null(i)) {
+                (Some(wkb), false) => {
+                    let trans = Force3DTransform {
+                        z: z_array.value(i),
+                    };
+                    transform(wkb, &trans, &mut builder)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    builder.append_value([]);
+                }
+                _ => {
+                    builder.append_null();
+                }
+            }
+            i += 1;
+
+            Ok(())
+        })?;
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+#[derive(Debug)]
+struct Force3DTransform {
+    z: f64,
+}
+
+impl CrsTransform for Force3DTransform {
+    fn output_dim(&self) -> Option<geo_traits::Dimensions> {
+        Some(geo_traits::Dimensions::Xyz)
+    }
+
+    fn transform_coord(
+        &self,
+        _coord: &mut (f64, f64),
+        _input_dims: Dimensions,
+    ) -> std::result::Result<(), SedonaGeometryError> {
+        unreachable!()
+    }
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        // If the input doesn't have Z coordinate, fill with the default value
+        if matches!(
+            input_dims,
+            Dimensions::Xy | Dimensions::Xym | Dimensions::Unknown(_)
+        ) {
+            coord.2 = self.z
+        }
         Ok(())
     }
 }
