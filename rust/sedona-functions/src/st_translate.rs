@@ -226,11 +226,7 @@ struct Translate {
 }
 
 impl CrsTransform for Translate {
-    fn transform_coord(
-        &self,
-        coord: &mut (f64, f64),
-        _input_dims: Dimensions,
-    ) -> Result<(), SedonaGeometryError> {
+    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
         coord.0 += self.deltax;
         coord.1 += self.deltay;
         Ok(())

@@ -126,7 +126,6 @@ impl CrsTransform for Force2DTransform {
     fn transform_coord(
         &self,
         _coord: &mut (f64, f64),
-        _input_dims: Dimensions,
     ) -> std::result::Result<(), SedonaGeometryError> {
         Ok(())
     }
@@ -245,7 +244,6 @@ impl CrsTransform for Force3DTransform {
     fn transform_coord(
         &self,
         _coord: &mut (f64, f64),
-        _input_dims: Dimensions,
     ) -> std::result::Result<(), SedonaGeometryError> {
         unreachable!()
     }

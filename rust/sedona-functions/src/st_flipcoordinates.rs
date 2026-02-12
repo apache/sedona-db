@@ -22,7 +22,6 @@ use datafusion_common::error::{DataFusionError, Result};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
-use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -123,7 +122,6 @@ impl CrsTransform for SwapXy {
     fn transform_coord(
         &self,
         coord: &mut (f64, f64),
-        _input_dims: Dimensions,
     ) -> std::result::Result<(), SedonaGeometryError> {
         let (x, y) = *coord;
         *coord = (y, x);

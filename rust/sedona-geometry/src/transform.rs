@@ -57,21 +57,17 @@ pub trait CrsEngine: Debug {
 
 /// Trait for transforming coordinates in a geometry from one CRS to another.
 pub trait CrsTransform: std::fmt::Debug {
-    fn transform_coord(
-        &self,
-        coord: &mut (f64, f64),
-        input_dims: Dimensions,
-    ) -> Result<(), SedonaGeometryError>;
+    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError>;
 
     // CrsTransform can optionally handle 3D coordinates. If this method is not implemented,
     // the Z coordinate is simply ignored.
     fn transform_coord_3d(
         &self,
         coord: &mut (f64, f64, f64),
-        input_dims: Dimensions,
+        _input_dims: Dimensions,
     ) -> Result<(), SedonaGeometryError> {
         let mut coord_2d = (coord.0, coord.1);
-        self.transform_coord(&mut coord_2d, input_dims)?;
+        self.transform_coord(&mut coord_2d)?;
         coord.0 = coord_2d.0;
         coord.1 = coord_2d.1;
         Ok(())
@@ -85,12 +81,8 @@ pub trait CrsTransform: std::fmt::Debug {
 
 /// A boxed trait object for dynamic dispatch of CRS transformations.
 impl CrsTransform for Box<dyn CrsTransform> {
-    fn transform_coord(
-        &self,
-        coord: &mut (f64, f64),
-        input_dims: Dimensions,
-    ) -> Result<(), SedonaGeometryError> {
-        self.as_ref().transform_coord(coord, input_dims)
+    fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+        self.as_ref().transform_coord(coord)
     }
 
     fn transform_coord_3d(
@@ -388,7 +380,7 @@ where
         match output_dims {
             Dimensions::Xy => {
                 let mut xy: (f64, f64) = (coord.x(), coord.y());
-                trans.transform_coord(&mut xy, input_dims)?;
+                trans.transform_coord(&mut xy)?;
                 write_wkb_coord(buf, (xy.0, xy.1))?;
             }
             Dimensions::Xyz => {
@@ -398,7 +390,7 @@ where
             }
             Dimensions::Xym => {
                 let mut xy: (f64, f64) = (coord.x(), coord.y());
-                trans.transform_coord(&mut xy, input_dims)?;
+                trans.transform_coord(&mut xy)?;
                 write_wkb_coord(buf, (xy.0, xy.1, coord.nth_or_panic(2)))?;
             }
             Dimensions::Xyzm => {
@@ -437,11 +429,7 @@ mod test {
     #[derive(Debug)]
     struct MockTransform {}
     impl CrsTransform for MockTransform {
-        fn transform_coord(
-            &self,
-            coord: &mut (f64, f64),
-            _input_dims: Dimensions,
-        ) -> Result<(), SedonaGeometryError> {
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
             coord.0 += 10.0;
             coord.1 += 20.0;
             Ok(())
@@ -452,11 +440,7 @@ mod test {
     struct Mock3DTransform {}
     impl CrsTransform for Mock3DTransform {
         // This transforms 2D and 3D differently for testing purposes
-        fn transform_coord(
-            &self,
-            coord: &mut (f64, f64),
-            _input_dims: Dimensions,
-        ) -> Result<(), SedonaGeometryError> {
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
             coord.0 += 100.0;
             coord.1 += 200.0;
             Ok(())

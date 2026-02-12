@@ -468,7 +468,6 @@ impl CrsTransform for DAffine {
     fn transform_coord(
         &self,
         coord: &mut (f64, f64),
-        _input_dims: Dimensions,
     ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
         match self {
             DAffine::DAffine2(daffine2) => {
@@ -626,9 +625,7 @@ mod tests {
     fn daffine_crs_transform_changes_coords() {
         let mut coord_2d = (1.0, 2.0);
         let affine_2d = DAffine::DAffine2(glam::DAffine2::from_scale(glam::DVec2::new(2.0, 3.0)));
-        affine_2d
-            .transform_coord(&mut coord_2d, Dimensions::Xy)
-            .unwrap();
+        affine_2d.transform_coord(&mut coord_2d).unwrap();
         assert_eq!(coord_2d, (2.0, 6.0));
 
         let mut coord_3d = (1.0, 2.0, 3.0);

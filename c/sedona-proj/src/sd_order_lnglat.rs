@@ -100,7 +100,7 @@ impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<
                                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
                             let mut first_xy = header.first_xy();
                             to_lnglat
-                                .transform_coord(&mut first_xy, Dimensions::Xy)
+                                .transform_coord(&mut first_xy)
                                 .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
                             let order = (self.order_fn)(first_xy);
                             builder.append_value(order);

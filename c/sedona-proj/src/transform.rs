@@ -315,18 +315,12 @@ mod test {
             .unwrap();
 
         let mut coord = (4_760_096.4, 3_744_293.5);
-        trans
-            .as_ref()
-            .transform_coord(&mut coord, Dimensions::Xy)
-            .unwrap();
+        trans.as_ref().transform_coord(&mut coord).unwrap();
         assert_relative_eq!(coord.x(), 1_450_880.284_378, epsilon = 1e-6);
         assert_relative_eq!(coord.y(), 1_141_262.941_224, epsilon = 1e-6);
 
         coord = (f64::NAN, f64::NAN);
-        trans
-            .as_ref()
-            .transform_coord(&mut coord, Dimensions::Xy)
-            .unwrap();
+        trans.as_ref().transform_coord(&mut coord).unwrap();
         assert!(
             coord.x().is_nan() && coord.y().is_nan(),
             "Expected NaN coordinates"
