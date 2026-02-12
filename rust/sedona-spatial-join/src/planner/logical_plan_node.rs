@@ -111,10 +111,10 @@ impl UserDefinedLogicalNodeCore for SpatialJoinPlanNode {
         mut inputs: Vec<LogicalPlan>,
     ) -> Result<Self> {
         if exprs.len() != 1 {
-            return plan_err!("SpatialJoinPlanNode expects 1 expr");
+            return sedona_internal_err!("SpatialJoinPlanNode expects 1 expr");
         }
         if inputs.len() != 2 {
-            return plan_err!("SpatialJoinPlanNode expects 2 inputs");
+            return sedona_internal_err!("SpatialJoinPlanNode expects 2 inputs");
         }
         Ok(Self {
             left: inputs.swap_remove(0),

@@ -42,7 +42,7 @@ use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 
 /// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
-pub fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
+pub(crate) fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
     builder.with_query_planner(Arc::new(SedonaSpatialQueryPlanner))
 }
 

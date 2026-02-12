@@ -33,7 +33,7 @@ use sedona_common::option::SedonaOptions;
 ///
 /// This enables building `Join(filter=...)` from patterns like `Filter(CrossJoin)`.
 /// It intentionally does not register any physical plan rewrite rules.
-pub fn register_spatial_join_logical_optimizer(
+pub(crate) fn register_spatial_join_logical_optimizer(
     session_state_builder: SessionStateBuilder,
 ) -> SessionStateBuilder {
     session_state_builder
@@ -76,7 +76,7 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             return Ok(Transformed::no(plan));
         };
 
-        // v1: only rewrite joins that already have a spatial predicate in `filter`.
+        // only rewrite joins that already have a spatial predicate in `filter`.
         let Some(filter) = join.filter.as_ref() else {
             return Ok(Transformed::no(plan));
         };
