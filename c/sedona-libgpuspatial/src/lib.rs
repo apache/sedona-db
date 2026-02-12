@@ -23,17 +23,10 @@ pub mod error;
 mod libgpuspatial;
 #[cfg(gpu_available)]
 mod libgpuspatial_glue_bindgen;
-
-pub struct GpuSpatialOptions {
-    pub cuda_use_memory_pool: bool,
-    pub cuda_memory_pool_init_percent: i32,
-    pub concurrency: u32,
-    pub device_id: i32,
-    pub compress_bvh: bool,
-    pub pipeline_batches: u32,
-}
+pub mod options;
 
 use crate::libgpuspatial::GpuSpatialRelationPredicate;
+use crate::options::GpuSpatialOptions;
 /// Spatial predicates for GPU operations
 // Re-export Error type from the sys module abstraction
 

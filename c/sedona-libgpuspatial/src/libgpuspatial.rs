@@ -16,6 +16,7 @@
 // under the License.
 
 use crate::error::GpuSpatialError;
+#[cfg(gpu_available)]
 use crate::libgpuspatial_glue_bindgen::*;
 use arrow_array::{Array, ArrayRef};
 use arrow_schema::ffi::FFI_ArrowSchema;
