@@ -71,6 +71,11 @@ config_namespace! {
         /// Include tie-breakers in KNN join results when there are tied distances
         pub knn_include_tie_breakers: bool, default = false
 
+        /// Repartition the probe side before performing spatial join. This can improve performance by
+        /// balancing the workload, especially for skewed datasets or large sorted datasets where spatial
+        /// locality might cause imbalanced partitions when running out-of-core spatial join.
+        pub repartition_probe_side: bool, default = true
+
         /// Maximum number of sample bounding boxes collected from the index side for partitioning the
         /// data when running out-of-core spatial join
         pub max_index_side_bbox_samples: usize, default = 10000
