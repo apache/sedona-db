@@ -626,7 +626,6 @@ mod test {
         state
             .register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)
             .unwrap();
-
         SessionContext::new_with_state(state).enable_url_table()
     }
 

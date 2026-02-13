@@ -109,7 +109,8 @@ impl SedonaContext {
         );
 
         #[allow(unused_mut)]
-        let mut state_builder = SessionStateBuilder::new_with_default_features()
+        let mut state_builder = SessionStateBuilder::new()
+            .with_default_features()
             .with_runtime_env(runtime_env)
             .with_config(session_config);
 

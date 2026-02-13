@@ -48,7 +48,6 @@ s2geography = ["dep:sedona-s2geography"]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 rstest = { workspace = true }
-datafusion-common = { workspace = true, features = ["backtrace"] }
 
 [dependencies]
 arrow-schema = { workspace = true }

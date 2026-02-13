@@ -39,6 +39,13 @@ pub struct TableGeoParquetOptions {
 }
 
 impl TableGeoParquetOptions {
+    /// Special-cased TableOptions names
+    ///
+    /// When the TableGeoParquet options is being constructed from a place
+    /// where DataFusion internals are interacting with a TableOptions instance,
+    /// these are the option names that get created (e.g. OPTIONS ('validate' true))
+    /// becomes a string key of format.validate). There are several places that we
+    /// need to intercept these before they are used to update the TableOptions.
     pub const TABLE_OPTIONS_KEYS: [&str; 4] = [
         "format.geoparquet_version",
         "format.geometry_columns",
