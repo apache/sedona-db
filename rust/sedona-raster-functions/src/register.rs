@@ -38,6 +38,9 @@ pub fn default_function_set() -> FunctionSet {
 
     register_scalar_udfs!(
         function_set,
+        crate::rs_band_accessors::rs_bandpixeltype_udf,
+        crate::rs_band_accessors::rs_bandnodatavalue_udf,
+        crate::rs_band_accessors::rs_bandisnodata_udf,
         crate::rs_bandpath::rs_bandpath_udf,
         crate::rs_convexhull::rs_convexhull_udf,
         crate::rs_envelope::rs_envelope_udf,

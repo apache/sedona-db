@@ -20,6 +20,23 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
 
+    // RS_BandIsNoData
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandisnodata",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+    // RS_BandNoDataValue
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandnodatavalue",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+    // RS_BandPath
     benchmark::scalar(
         c,
         &f,
@@ -34,6 +51,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_bandpath",
         BenchmarkArgs::ArrayScalar(Raster(64, 64), Int32(1, 2)),
     );
+    // RS_BandPixelType
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandpixeltype",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+
     benchmark::scalar(c, &f, "native-raster", "rs_convexhull", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_crs", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_envelope", Raster(64, 64));
