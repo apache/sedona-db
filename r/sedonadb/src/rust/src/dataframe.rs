@@ -262,8 +262,10 @@ impl InternalDataFrame {
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
 
-        let mut writer_options = TableGeoParquetOptions::new();
-        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
+        let mut writer_options = TableGeoParquetOptions {
+            overwrite_bbox_columns,
+            ..Default::default()
+        };
         if let Some(geoparquet_version) = geoparquet_version {
             writer_options.geoparquet_version = geoparquet_version
                 .parse()
