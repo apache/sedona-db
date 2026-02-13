@@ -52,6 +52,5 @@ mod test {
     fn udf_metadata() {
         let udf: SedonaScalarUDF = st_transform_udf();
         assert_eq!(udf.name(), "st_transform");
-        assert!(udf.documentation().is_none());
     }
 }

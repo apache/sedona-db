@@ -118,11 +118,9 @@ mod tests {
     fn udf_size() {
         let udf: ScalarUDF = rs_width_udf().into();
         assert_eq!(udf.name(), "rs_width");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_height_udf().into();
         assert_eq!(udf.name(), "rs_height");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

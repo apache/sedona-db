@@ -74,6 +74,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_distance_udf().into();
         assert_eq!(udf.name(), "st_distance");
-        assert!(udf.documentation().is_none())
     }
 }

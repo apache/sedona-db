@@ -106,6 +106,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_intersects_udf().into();
         assert_eq!(udf.name(), "st_intersects");
-        assert!(udf.documentation().is_none())
     }
 }

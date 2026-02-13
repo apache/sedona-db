@@ -382,7 +382,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = sd_format_udf().into();
         assert_eq!(udf.name(), "sd_format");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

@@ -210,31 +210,24 @@ mod tests {
     fn udf_info() {
         let udf: ScalarUDF = rs_rotation_udf().into();
         assert_eq!(udf.name(), "rs_rotation");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_scalex_udf().into();
         assert_eq!(udf.name(), "rs_scalex");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_scaley_udf().into();
         assert_eq!(udf.name(), "rs_scaley");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_skewx_udf().into();
         assert_eq!(udf.name(), "rs_skewx");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_skewy_udf().into();
         assert_eq!(udf.name(), "rs_skewy");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_upperleftx_udf().into();
         assert_eq!(udf.name(), "rs_upperleftx");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_upperlefty_udf().into();
         assert_eq!(udf.name(), "rs_upperlefty");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

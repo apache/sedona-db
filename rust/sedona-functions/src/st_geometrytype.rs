@@ -123,7 +123,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_geometry_type_udf().into();
         assert_eq!(udf.name(), "st_geometrytype");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

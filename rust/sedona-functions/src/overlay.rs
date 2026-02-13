@@ -20,25 +20,25 @@ use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 /// ST_Intersection() scalar UDF stub
 pub fn st_intersection_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Intersection", "Intersection")
+    overlay_stub_udf("ST_Intersection")
 }
 
 /// ST_Union() scalar UDF stub
 pub fn st_union_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Union", "Union")
+    overlay_stub_udf("ST_Union")
 }
 
 /// ST_Difference() scalar UDF stub
 pub fn st_difference_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Difference", "Difference")
+    overlay_stub_udf("ST_Difference")
 }
 
 /// ST_SymDifference() scalar UDF stub
 pub fn st_sym_difference_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_SymDifference", "Symmetric difference")
+    overlay_stub_udf("ST_SymDifference")
 }
 
-pub fn overlay_stub_udf(name: &str, action: &str) -> SedonaScalarUDF {
+pub fn overlay_stub_udf(name: &str) -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
         &name.to_lowercase(),
         ArgMatcher::new(
@@ -63,6 +63,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_intersection_udf().into();
         assert_eq!(udf.name(), "st_intersection");
-        assert!(udf.documentation().is_none())
     }
 }

@@ -180,7 +180,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_envelope_udf().into();
         assert_eq!(udf.name(), "st_envelope");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

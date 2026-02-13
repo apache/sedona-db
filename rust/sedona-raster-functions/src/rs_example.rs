@@ -108,7 +108,6 @@ mod tests {
     fn udf_size() {
         let udf: ScalarUDF = rs_example_udf().into();
         assert_eq!(udf.name(), "rs_example");
-        assert!(udf.documentation().is_none());
     }
 
     #[test]

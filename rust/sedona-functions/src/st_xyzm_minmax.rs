@@ -219,35 +219,27 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_xmin_udf().into();
         assert_eq!(udf.name(), "st_xmin");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_xmax_udf().into();
         assert_eq!(udf.name(), "st_xmax");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_ymin_udf().into();
         assert_eq!(udf.name(), "st_ymin");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_ymax_udf().into();
         assert_eq!(udf.name(), "st_ymax");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_zmin_udf().into();
         assert_eq!(udf.name(), "st_zmin");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_zmax_udf().into();
         assert_eq!(udf.name(), "st_zmax");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_mmin_udf().into();
         assert_eq!(udf.name(), "st_mmin");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_mmax_udf().into();
         assert_eq!(udf.name(), "st_mmax");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

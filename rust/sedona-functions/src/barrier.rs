@@ -356,7 +356,6 @@ mod tests {
     fn test_barrier_basic() {
         let udf: ScalarUDF = barrier_udf().into();
         assert_eq!(udf.name(), "barrier");
-        assert!(udf.documentation().is_none());
     }
 
     /// Type alias for test case tuple to reduce complexity

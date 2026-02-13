@@ -103,7 +103,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_isempty_udf().into();
         assert_eq!(udf.name(), "st_isempty");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

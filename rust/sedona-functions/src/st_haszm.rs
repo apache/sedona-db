@@ -139,11 +139,9 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_hasz_udf().into();
         assert_eq!(udf.name(), "st_hasz");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_hasm_udf().into();
         assert_eq!(udf.name(), "st_hasm");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

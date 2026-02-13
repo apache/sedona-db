@@ -43,6 +43,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_concavehull_udf().into();
         assert_eq!(udf.name(), "st_concavehull");
-        assert!(udf.documentation().is_none());
     }
 }

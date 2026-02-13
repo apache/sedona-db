@@ -58,10 +58,8 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_line_interpolate_point_udf().into();
         assert_eq!(udf.name(), "st_lineinterpolatepoint");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_line_locate_point_udf().into();
         assert_eq!(udf.name(), "st_linelocatepoint");
-        assert!(udf.documentation().is_none());
     }
 }

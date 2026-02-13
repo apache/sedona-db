@@ -42,6 +42,5 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_polygonize_agg_udf().into();
         assert_eq!(udf.name(), "st_polygonize_agg");
-        assert!(udf.documentation().is_none());
     }
 }

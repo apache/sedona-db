@@ -129,7 +129,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_azimuth_udf().into();
         assert_eq!(udf.name(), "st_azimuth");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

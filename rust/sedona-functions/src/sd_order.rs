@@ -75,7 +75,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = sd_order_udf().into();
         assert_eq!(udf.name(), "sd_order");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

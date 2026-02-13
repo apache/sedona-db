@@ -147,11 +147,9 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_srid_udf().into();
         assert_eq!(udf.name(), "rs_srid");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_crs_udf().into();
         assert_eq!(udf.name(), "rs_crs");
-        assert!(udf.documentation().is_none());
     }
 
     #[test]

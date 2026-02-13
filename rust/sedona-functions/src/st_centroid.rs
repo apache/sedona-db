@@ -40,6 +40,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_centroid_udf().into();
         assert_eq!(udf.name(), "st_centroid");
-        assert!(udf.documentation().is_none())
     }
 }

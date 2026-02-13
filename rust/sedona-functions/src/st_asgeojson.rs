@@ -44,6 +44,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_asgeojson_udf().into();
         assert_eq!(udf.name(), "st_asgeojson");
-        assert!(udf.documentation().is_none())
     }
 }

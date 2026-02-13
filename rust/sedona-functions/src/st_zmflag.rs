@@ -117,7 +117,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_zmflag_udf().into();
         assert_eq!(udf.name(), "st_zmflag");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

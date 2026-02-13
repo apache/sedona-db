@@ -87,7 +87,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_asbinary_udf().into();
         assert_eq!(udf.name(), "st_asbinary");
-        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

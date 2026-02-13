@@ -153,7 +153,6 @@ mod tests {
     fn udf_docs() {
         let udf: ScalarUDF = rs_envelope_udf().into();
         assert_eq!(udf.name(), "rs_envelope");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

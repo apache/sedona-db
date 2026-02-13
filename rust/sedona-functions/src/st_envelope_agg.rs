@@ -347,7 +347,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_envelope_agg_udf().into();
         assert_eq!(udf.name(), "st_envelope_agg");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

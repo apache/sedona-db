@@ -132,7 +132,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_flipcoordinates_udf().into();
         assert_eq!(udf.name(), "st_flipcoordinates");
-        assert!(udf.documentation().is_none());
     }
 
     #[test]

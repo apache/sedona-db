@@ -48,6 +48,5 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_intersection_agg_udf().into();
         assert_eq!(udf.name(), "st_intersection_agg");
-        assert!(udf.documentation().is_none());
     }
 }

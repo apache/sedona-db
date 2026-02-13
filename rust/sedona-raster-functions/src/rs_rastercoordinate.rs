@@ -204,15 +204,12 @@ mod tests {
     fn udf_docs() {
         let udf: ScalarUDF = rs_worldtorastercoordy_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoordy");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_worldtorastercoordx_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoordx");
-        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_worldtorastercoord_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoord");
-        assert!(udf.documentation().is_none());
     }
 
     #[rstest]
