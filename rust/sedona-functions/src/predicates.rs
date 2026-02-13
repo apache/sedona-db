@@ -21,42 +21,42 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_Equals() scalar UDF stub
 pub fn st_equals_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Equals", "equals")
+    predicate_stub_udf("ST_Equals")
 }
 
 /// ST_Intersects() scalar UDF stub
 pub fn st_intersects_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Intersects", "intersects")
+    predicate_stub_udf("ST_Intersects")
 }
 
 /// ST_Disjoint() scalar UDF stub
 pub fn st_disjoint_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Disjoint", "is disjoint from")
+    predicate_stub_udf("ST_Disjoint")
 }
 
 /// ST_Contains() scalar UDF stub
 pub fn st_contains_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Contains", "contains")
+    predicate_stub_udf("ST_Contains")
 }
 
 /// ST_Within() scalar UDF stub
 pub fn st_within_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Within", "is fully contained by")
+    predicate_stub_udf("ST_Within")
 }
 
 /// ST_Covers() scalar UDF stub
 pub fn st_covers_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Covers", "covers")
+    predicate_stub_udf("ST_Covers")
 }
 
 /// ST_CoveredBy() scalar UDF stub
 pub fn st_covered_by_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_CoveredBy", "is covered by")
+    predicate_stub_udf("ST_CoveredBy")
 }
 
 /// ST_Touches() scalar UDF stub
 pub fn st_touches_udf() -> SedonaScalarUDF {
-    predicate_stub_udf("ST_Touches", "touches")
+    predicate_stub_udf("ST_Touches")
 }
 
 /// ST_KNN() scalar UDF stub
@@ -81,7 +81,7 @@ pub fn st_knn_udf() -> SedonaScalarUDF {
     )
 }
 
-pub fn predicate_stub_udf(name: &str, action: &str) -> SedonaScalarUDF {
+pub fn predicate_stub_udf(name: &str) -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
         &name.to_lowercase(),
         ArgMatcher::new(
