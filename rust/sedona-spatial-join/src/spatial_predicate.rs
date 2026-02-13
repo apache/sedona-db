@@ -16,8 +16,11 @@
 // under the License.
 use std::sync::Arc;
 
-use datafusion_common::JoinSide;
+use datafusion_common::{JoinSide, Result};
+use datafusion_physical_expr::projection::update_expr;
 use datafusion_physical_expr::PhysicalExpr;
+use datafusion_physical_plan::projection::ProjectionExpr;
+use sedona_common::sedona_internal_err;
 
 /// Spatial predicate is the join condition of a spatial join. It can be a distance predicate,
 /// a relation predicate, or a KNN predicate.
@@ -298,7 +301,7 @@ impl KNNPredicate {
     /// * `right` - Expression for the right side (object) geometry
     /// * `k` - Number of nearest neighbors to find (literal value)
     /// * `use_spheroid` - Whether to use spheroid distance (literal value, currently must be false)
-    /// * `probe_side` - Which execution plan side the probe expression belongs to
+    /// * `probe_side` - Which execution plan side the probe expression belongs to, cannot be None
     pub fn new(
         left: Arc<dyn PhysicalExpr>,
         right: Arc<dyn PhysicalExpr>,
@@ -306,6 +309,7 @@ impl KNNPredicate {
         use_spheroid: bool,
         probe_side: JoinSide,
     ) -> Self {
+        assert!(matches!(probe_side, JoinSide::Left | JoinSide::Right));
         Self {
             left,
             right,
@@ -323,5 +327,396 @@ impl std::fmt::Display for KNNPredicate {
             "ST_KNN({}, {}, {}, {})",
             self.left, self.right, self.k, self.use_spheroid
         )
+    }
+}
+
+/// Common operations needed by the planner/executor to keep spatial predicates valid
+/// when join inputs are swapped or projected.
+pub trait SpatialPredicateTrait: Sized {
+    /// Returns a semantically equivalent predicate after the join children are swapped.
+    ///
+    /// Used by `SpatialJoinExec::swap_inputs` to keep the predicate aligned with the new
+    /// left/right inputs.
+    fn swap_for_swapped_children(&self) -> Self;
+
+    /// Rewrites the predicate to reference projected child expressions.
+    ///
+    /// Returns `Ok(None)` when the predicate cannot be expressed using the projected inputs
+    /// (so projection pushdown must be skipped).
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>>;
+}
+
+impl SpatialPredicateTrait for SpatialPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        match self {
+            SpatialPredicate::Relation(pred) => {
+                SpatialPredicate::Relation(pred.swap_for_swapped_children())
+            }
+            SpatialPredicate::Distance(pred) => {
+                SpatialPredicate::Distance(pred.swap_for_swapped_children())
+            }
+            SpatialPredicate::KNearestNeighbors(pred) => {
+                SpatialPredicate::KNearestNeighbors(pred.swap_for_swapped_children())
+            }
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        match self {
+            SpatialPredicate::Relation(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::Relation)),
+            SpatialPredicate::Distance(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::Distance)),
+            SpatialPredicate::KNearestNeighbors(pred) => Ok(pred
+                .update_for_child_projections(projected_left_exprs, projected_right_exprs)?
+                .map(SpatialPredicate::KNearestNeighbors)),
+        }
+    }
+}
+
+impl SpatialPredicateTrait for RelationPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            left: Arc::clone(&self.right),
+            right: Arc::clone(&self.left),
+            relation_type: self.relation_type.invert(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let Some(left) = update_expr(&self.left, projected_left_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, projected_right_exprs, false)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
+            left,
+            right,
+            relation_type: self.relation_type,
+        }))
+    }
+}
+
+impl SpatialPredicateTrait for DistancePredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            left: Arc::clone(&self.right),
+            right: Arc::clone(&self.left),
+            distance: Arc::clone(&self.distance),
+            distance_side: self.distance_side.negate(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let Some(left) = update_expr(&self.left, projected_left_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, projected_right_exprs, false)? else {
+            return Ok(None);
+        };
+
+        let distance = match self.distance_side {
+            JoinSide::Left => {
+                let Some(distance) = update_expr(&self.distance, projected_left_exprs, false)?
+                else {
+                    return Ok(None);
+                };
+                distance
+            }
+            JoinSide::Right => {
+                let Some(distance) = update_expr(&self.distance, projected_right_exprs, false)?
+                else {
+                    return Ok(None);
+                };
+                distance
+            }
+            JoinSide::None => Arc::clone(&self.distance),
+        };
+
+        Ok(Some(Self {
+            left,
+            right,
+            distance,
+            distance_side: self.distance_side,
+        }))
+    }
+}
+
+impl SpatialPredicateTrait for KNNPredicate {
+    fn swap_for_swapped_children(&self) -> Self {
+        Self {
+            // Keep query/object expressions stable; only flip which child is considered probe.
+            left: Arc::clone(&self.left),
+            right: Arc::clone(&self.right),
+            k: self.k,
+            use_spheroid: self.use_spheroid,
+            probe_side: self.probe_side.negate(),
+        }
+    }
+
+    fn update_for_child_projections(
+        &self,
+        projected_left_exprs: &[ProjectionExpr],
+        projected_right_exprs: &[ProjectionExpr],
+    ) -> Result<Option<Self>> {
+        let (query_exprs, object_exprs) = match self.probe_side {
+            JoinSide::Left => (projected_left_exprs, projected_right_exprs),
+            JoinSide::Right => (projected_right_exprs, projected_left_exprs),
+            JoinSide::None => {
+                return sedona_internal_err!("KNN join requires explicit probe_side designation")
+            }
+        };
+
+        let Some(left) = update_expr(&self.left, query_exprs, false)? else {
+            return Ok(None);
+        };
+        let Some(right) = update_expr(&self.right, object_exprs, false)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
+            left,
+            right,
+            k: self.k,
+            use_spheroid: self.use_spheroid,
+            probe_side: self.probe_side,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use datafusion_common::ScalarValue;
+    use datafusion_physical_expr::expressions::{Column, Literal};
+
+    fn proj_col(name: &str, index: usize) -> Arc<dyn PhysicalExpr> {
+        Arc::new(Column::new(name, index))
+    }
+
+    fn proj_expr(expr: Arc<dyn PhysicalExpr>, alias: &str) -> ProjectionExpr {
+        ProjectionExpr {
+            expr,
+            alias: alias.to_string(),
+        }
+    }
+
+    fn assert_is_column(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
+        let col = expr
+            .as_any()
+            .downcast_ref::<Column>()
+            .expect("expected Column");
+        assert_eq!(col.name(), name);
+        assert_eq!(col.index(), index);
+    }
+
+    #[test]
+    fn relation_rewrite_success() -> Result<()> {
+        let on = SpatialPredicate::Relation(RelationPredicate {
+            left: proj_col("a", 1),
+            right: proj_col("x", 2),
+            relation_type: SpatialRelationType::Intersects,
+        });
+
+        let projected_left_exprs = vec![proj_expr(proj_col("a", 1), "a_new")];
+        let projected_right_exprs = vec![proj_expr(proj_col("x", 2), "x_new")];
+
+        let updated = on
+            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+            .unwrap();
+
+        let SpatialPredicate::Relation(updated) = updated else {
+            unreachable!("expected relation")
+        };
+        assert_is_column(&updated.left, "a_new", 0);
+        assert_is_column(&updated.right, "x_new", 0);
+        Ok(())
+    }
+
+    #[test]
+    fn relation_rewrite_column_index_unchanged() -> Result<()> {
+        let on = SpatialPredicate::Relation(RelationPredicate {
+            left: proj_col("a", 0),
+            right: proj_col("x", 0),
+            relation_type: SpatialRelationType::Intersects,
+        });
+
+        let projected_left_exprs = vec![proj_expr(proj_col("a", 0), "a_new")];
+        let projected_right_exprs = vec![proj_expr(proj_col("x", 0), "x_new")];
+
+        let updated = on
+            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+            .unwrap();
+
+        let SpatialPredicate::Relation(updated) = updated else {
+            unreachable!("expected relation")
+        };
+        assert_is_column(&updated.left, "a_new", 0);
+        assert_is_column(&updated.right, "x_new", 0);
+        Ok(())
+    }
+
+    #[test]
+    fn relation_rewrite_none_when_missing() -> Result<()> {
+        let on = SpatialPredicate::Relation(RelationPredicate {
+            left: proj_col("a", 1),
+            right: proj_col("x", 0),
+            relation_type: SpatialRelationType::Intersects,
+        });
+
+        let projected_left_exprs = vec![proj_expr(proj_col("a", 0), "a0")];
+        let projected_right_exprs = vec![proj_expr(proj_col("x", 0), "x0")];
+
+        assert!(on
+            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+            .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn distance_rewrite_distance_side_left() -> Result<()> {
+        let on = SpatialPredicate::Distance(DistancePredicate {
+            left: proj_col("geom", 0),
+            right: proj_col("geom", 0),
+            distance: proj_col("dist", 1),
+            distance_side: JoinSide::Left,
+        });
+
+        let projected_left_exprs = vec![
+            proj_expr(proj_col("geom", 0), "geom_out"),
+            proj_expr(proj_col("dist", 1), "dist_out"),
+        ];
+        let projected_right_exprs = vec![proj_expr(proj_col("geom", 0), "geom_r")];
+
+        let updated = on
+            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+            .unwrap();
+
+        let SpatialPredicate::Distance(updated) = updated else {
+            unreachable!("expected distance")
+        };
+        assert_is_column(&updated.left, "geom_out", 0);
+        assert_is_column(&updated.right, "geom_r", 0);
+        assert_is_column(&updated.distance, "dist_out", 1);
+        assert_eq!(updated.distance_side, JoinSide::Left);
+        Ok(())
+    }
+
+    #[test]
+    fn distance_rewrite_distance_side_none_keeps_literal() -> Result<()> {
+        let distance_lit: Arc<dyn PhysicalExpr> =
+            Arc::new(Literal::new(ScalarValue::Float64(Some(1.0))));
+
+        let on = SpatialPredicate::Distance(DistancePredicate {
+            left: proj_col("geom", 2),
+            right: proj_col("geom", 1),
+            distance: Arc::clone(&distance_lit),
+            distance_side: JoinSide::None,
+        });
+
+        let projected_left_exprs = vec![proj_expr(proj_col("geom", 2), "geom_out")];
+        let projected_right_exprs = vec![proj_expr(proj_col("geom", 1), "geom_r")];
+
+        let updated = on
+            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+            .unwrap();
+
+        let SpatialPredicate::Distance(updated) = updated else {
+            unreachable!("expected distance")
+        };
+        assert_is_column(&updated.left, "geom_out", 0);
+        assert_is_column(&updated.right, "geom_r", 0);
+        assert!(Arc::ptr_eq(&updated.distance, &distance_lit));
+        assert_eq!(updated.distance_side, JoinSide::None);
+        Ok(())
+    }
+
+    #[test]
+    fn knn_rewrite_success_probe_left_and_right() -> Result<()> {
+        let base = SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left: proj_col("probe", 1),
+            right: proj_col("build", 2),
+            k: 10,
+            use_spheroid: false,
+            probe_side: JoinSide::Left,
+        });
+
+        let left_exprs = vec![proj_expr(proj_col("probe", 1), "probe_out")];
+        let right_exprs = vec![proj_expr(proj_col("build", 2), "build_out")];
+
+        let updated = base
+            .update_for_child_projections(&left_exprs, &right_exprs)?
+            .unwrap();
+        let SpatialPredicate::KNearestNeighbors(updated) = updated else {
+            unreachable!("expected knn")
+        };
+        assert_is_column(&updated.left, "probe_out", 0);
+        assert_is_column(&updated.right, "build_out", 0);
+        assert_eq!(updated.probe_side, JoinSide::Left);
+
+        let base = SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left: proj_col("probe", 1),
+            right: proj_col("build", 2),
+            k: 10,
+            use_spheroid: false,
+            probe_side: JoinSide::Right,
+        });
+
+        // For probe_side=Right: predicate.left (probe) is rewritten using right projections,
+        // and predicate.right (build) is rewritten using left projections.
+        let left_exprs = vec![proj_expr(proj_col("build", 2), "build_out_l")];
+        let right_exprs = vec![proj_expr(proj_col("probe", 1), "probe_out_r")];
+        let updated = base
+            .update_for_child_projections(&left_exprs, &right_exprs)?
+            .unwrap();
+        let SpatialPredicate::KNearestNeighbors(updated) = updated else {
+            unreachable!("expected knn")
+        };
+        assert_is_column(&updated.left, "probe_out_r", 0);
+        assert_is_column(&updated.right, "build_out_l", 0);
+        assert_eq!(updated.probe_side, JoinSide::Right);
+
+        Ok(())
+    }
+
+    #[test]
+    fn knn_rewrite_errors_on_none_probe_side() {
+        let on = SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left: proj_col("probe", 0),
+            right: proj_col("build", 0),
+            k: 10,
+            use_spheroid: false,
+            probe_side: JoinSide::None,
+        });
+
+        let left_exprs = vec![proj_expr(proj_col("probe", 0), "probe_out")];
+        let right_exprs = vec![proj_expr(proj_col("build", 0), "build_out")];
+
+        let err = on
+            .update_for_child_projections(&left_exprs, &right_exprs)
+            .expect_err("expected error");
+        let msg = err.to_string();
+        assert!(msg.contains("KNN join requires explicit probe_side designation"));
     }
 }

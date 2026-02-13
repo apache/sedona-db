@@ -36,7 +36,9 @@ use sedona_common::SedonaOptions;
 use sedona_geo::to_geo::GeoTypesExecutor;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
-use sedona_spatial_join::{register_spatial_join_optimizer, SpatialJoinExec};
+use sedona_spatial_join::{
+    register_planner, spatial_predicate::RelationPredicate, SpatialJoinExec, SpatialPredicate,
+};
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
 
@@ -140,7 +142,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     session_config = add_sedona_option_extension(session_config);
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
-        state_builder = register_spatial_join_optimizer(state_builder);
+        state_builder = register_planner(state_builder);
         let opts = session_config
             .options_mut()
             .extensions
@@ -366,6 +368,83 @@ async fn test_spatial_join_with_filter() -> Result<()> {
         test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
             "SELECT L.id l_id, R.id r_id, L.dist l_dist, R.dist r_dist FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY l_id, r_id").await?;
     }
+
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_spatial_join_swap_inputs_produces_same_plan(
+    #[values(
+        ("INNER", "INNER", "L.id, R.id"),
+        ("LEFT", "RIGHT", "L.id, R.id"),
+        ("RIGHT", "LEFT", "L.id, R.id"),
+        ("FULL", "FULL", "L.id, R.id"),
+        ("LEFT SEMI", "RIGHT SEMI", "L.id"),
+        ("RIGHT SEMI", "LEFT SEMI", "R.id"),
+        ("LEFT ANTI", "RIGHT ANTI", "L.id"),
+        ("RIGHT ANTI", "LEFT ANTI", "R.id"),
+    )]
+    join_types: (&str, &str, &str),
+) -> Result<()> {
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
+    let options = SpatialJoinOptions::default();
+    let batch_size = 100;
+
+    let mem_table_left: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+        left_schema.clone(),
+        left_partitions.clone(),
+    )?);
+    let mem_table_right: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+        right_schema.clone(),
+        right_partitions.clone(),
+    )?);
+
+    let ctx = setup_context(Some(options.clone()), batch_size)?;
+    ctx.register_table("L", mem_table_left.clone())?;
+    ctx.register_table("R", mem_table_right.clone())?;
+
+    // We use a Left Join as a template to create the plan, then modify it to Mark Join
+    let sqls = [
+        format!("SELECT {} FROM L {} JOIN R ON ST_Contains(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY {}", join_types.2, join_types.0, join_types.2),
+        format!("SELECT {} FROM R {} JOIN L ON ST_Within(R.geometry, L.geometry) AND L.dist < R.dist ORDER BY {}", join_types.2, join_types.1, join_types.2),
+    ];
+    let mut spatial_exec_plans = Vec::with_capacity(sqls.len());
+    let mut results = Vec::with_capacity(sqls.len());
+    for sql in sqls {
+        let df = ctx.sql(&sql).await?;
+        let plan = df.clone().create_physical_plan().await?;
+        let spatial_join_execs = collect_spatial_join_exec(&plan)?;
+        assert_eq!(spatial_join_execs.len(), 1);
+        let original_exec = spatial_join_execs[0];
+        spatial_exec_plans.push((sql, (*original_exec.join_type(), original_exec.on.clone())));
+        let result_batches = df.collect().await?;
+        results.push(result_batches);
+    }
+
+    // Verify that join types and predicates are the same, the smaller input is always swapped to the left (build) side
+    let (join_type_0, predicate_0) = &spatial_exec_plans[0].1;
+    let (join_type_1, predicate_1) = &spatial_exec_plans[1].1;
+    assert_eq!(join_type_0, join_type_1);
+    match (predicate_0, predicate_1) {
+        (
+            SpatialPredicate::Relation(RelationPredicate {
+                relation_type: rel_0,
+                ..
+            }),
+            SpatialPredicate::Relation(RelationPredicate {
+                relation_type: rel_1,
+                ..
+            }),
+        ) => {
+            assert_eq!(rel_0, rel_1);
+        }
+        _ => panic!("Expected RelationPredicate"),
+    }
+
+    // Verify that results are the same
+    assert_eq!(results[0], results[1]);
 
     Ok(())
 }

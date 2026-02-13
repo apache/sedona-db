@@ -117,7 +117,7 @@ impl SedonaContext {
         // Register the spatial join planner extension
         #[cfg(feature = "spatial-join")]
         {
-            state_builder = sedona_spatial_join::register_spatial_join_optimizer(state_builder);
+            state_builder = sedona_spatial_join::register_planner(state_builder);
         }
 
         let mut state = state_builder.build();
