@@ -16,6 +16,7 @@
 // under the License.
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
+use geo_traits::Dimensions;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
@@ -229,7 +230,11 @@ impl CrsTransform for ProjTransform {
         Ok(())
     }
 
-    fn transform_coord_3d(&self, coord: &mut (f64, f64, f64)) -> Result<(), SedonaGeometryError> {
+    fn transform_coord_3d(
+        &self,
+        coord: &mut (f64, f64, f64),
+        _input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
         let res = self.proj.borrow_mut().transform_xyz(*coord).map_err(|e| {
             SedonaGeometryError::Invalid(format!(
                 "PROJ coordinate transformation failed with error: {e}"

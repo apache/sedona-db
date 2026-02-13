@@ -19,6 +19,7 @@ use arrow_array::Array;
 use arrow_array::PrimitiveArray;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
+use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
 use sedona_geometry::transform::CrsTransform;
 use std::sync::Arc;
@@ -438,6 +439,7 @@ impl CrsTransform for DAffine {
     fn transform_coord_3d(
         &self,
         coord: &mut (f64, f64, f64),
+        _input_dims: Dimensions,
     ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
         match self {
             DAffine::DAffine2(daffine2) => {
@@ -536,6 +538,7 @@ mod tests {
     use super::*;
     use arrow_array::Array;
     use arrow_array::Float64Array;
+    use geo_traits::Dimensions;
     use std::sync::Arc;
 
     fn float_array(values: Vec<Option<f64>>) -> Arc<dyn Array> {
@@ -628,7 +631,9 @@ mod tests {
         let mut coord_3d = (1.0, 2.0, 3.0);
         let affine_3d =
             DAffine::DAffine3(glam::DAffine3::from_scale(glam::DVec3::new(2.0, 3.0, 4.0)));
-        affine_3d.transform_coord_3d(&mut coord_3d).unwrap();
+        affine_3d
+            .transform_coord_3d(&mut coord_3d, Dimensions::Xyz)
+            .unwrap();
         assert_eq!(coord_3d, (2.0, 6.0, 12.0));
     }
 }

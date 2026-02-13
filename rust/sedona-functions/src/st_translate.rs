@@ -20,6 +20,7 @@ use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
+use geo_traits::Dimensions;
 
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -234,6 +235,7 @@ impl CrsTransform for Translate {
     fn transform_coord_3d(
         &self,
         coord: &mut (f64, f64, f64),
+        _input_dims: Dimensions,
     ) -> std::result::Result<(), SedonaGeometryError> {
         coord.0 += self.deltax;
         coord.1 += self.deltay;
