@@ -23,8 +23,15 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if the two geometries have at least one boundary point in common but no interior points in common.
+
 ## Examples
 
 ```sql
-SELECT ST_Touches(ST_GeomFromText('POINT(1 2)'), ST_GeomFromText('POLYGON((1 1, 1 4, 4 4, 4 1, 1 1))'));
+SELECT ST_Touches(
+    ST_GeomFromText('POINT(1 2)'),
+    ST_GeomFromText('POLYGON((1 1, 1 4, 4 4, 4 1, 1 1))')
+);
 ```

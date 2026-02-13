@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Intersection_Agg
-description: Return the intersection of all geometries in the input.
+description: Return the cumulative intersection of all geometries in the input.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -26,6 +26,9 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_Intersection_Agg(geom) FROM my_table;
+SELECT ST_Intersection_Agg(geom) FROM (
+  VALUES
+    (ST_GeomFromText('POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0))')),
+    (ST_GeomFromText('POLYGON ((2 2, 2 6, 6 6, 6 2, 2 2))'))
+) AS t(geom);
 ```
-

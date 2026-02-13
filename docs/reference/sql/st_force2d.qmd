@@ -23,9 +23,12 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Discards any Z and M values present (if any).
+
 ## Examples
 
 ```sql
 SELECT ST_Force2D(ST_GeomFromWKT('POINT Z (1 2 3)'));
 ```
-

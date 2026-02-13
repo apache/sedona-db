@@ -23,15 +23,20 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+An aggregate function that collects multiple geometries into a single
+GeometryCollection or the appropriate Multi-type if all inputs share the same
+geometry type.
+
 ## Examples
 
 ```sql
-SELECT ST_Collect_Agg(geom) as collected_points
+SELECT ST_Collect_Agg(geom) AS collected_points
 FROM (
-    SELECT ST_Point(-122.4194, 37.7749) as geom  -- San Francisco
-    UNION ALL
-    SELECT ST_Point(-118.2437, 34.0522)           -- Los Angeles
-    UNION ALL
-    SELECT ST_Point(-122.6765, 45.5231)           -- Portland
-) as cities;
+  VALUES
+    (ST_Point(-122.4194, 37.7749)),
+    (ST_Point(-118.2437, 34.0522)),
+    (ST_Point(-122.6765, 45.5231))
+) AS cities(geom);
 ```

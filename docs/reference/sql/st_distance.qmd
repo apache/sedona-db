@@ -23,9 +23,15 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns the 2D Cartesian (planar) distance between two geometries, in the units
+of the coordinate reference system. For geographic distance calculations, use
+`ST_DistanceSphere` or `ST_DistanceSpheroid`.
+
 ## Examples
 
 ```sql
-SELECT ST_Distance(ST_Point(0 0), ST_Point(1 1));
+SELECT ST_Distance(ST_Point(0, 0), ST_Point(1, 1));
 ```
 

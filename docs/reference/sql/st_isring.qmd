@@ -23,8 +23,14 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns `true` if the LineString is both closed (`ST_IsClosed`) and simple (`ST_IsSimple`). In othe words, the input forms a ring with no self-intersections.
+
 ## Examples
 
 ```sql
-SELECT ST_IsRing(ST_GeomFromText('LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)'));
+SELECT ST_IsRing(
+  ST_GeomFromText('LINESTRING(0 0, 0 1, 1 1, 1 0, 0 0)')
+);
 ```

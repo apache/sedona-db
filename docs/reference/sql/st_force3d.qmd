@@ -28,9 +28,20 @@ kernels:
       type: double
 ---
 
+## Description
+
+If the geometry already has Z values they are preserved; otherwise the optional `z` argument (default 0) is used.
+
 ## Examples
 
 ```sql
 SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'), 10.0);
 ```
 
+```sql
+SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'));
+```
+
+```sql
+SELECT ST_Force3D(ST_GeomFromWKT('POINT Z (1 2 3)', 10.0));
+```

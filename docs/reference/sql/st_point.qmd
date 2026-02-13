@@ -27,8 +27,18 @@ kernels:
       type: double
 ---
 
+## Description
+
+Constructs a Point geometry from X and Y coordinates. An optional SRID or CRS can be provided as a third argument.
+
 ## Examples
 
 ```sql
 SELECT ST_AsText(ST_Point(-74.0060, 40.7128));
+```
+
+With an SRID:
+
+```sql
+SELECT ST_Point(-74.0060, 40.7128, 4326);
 ```

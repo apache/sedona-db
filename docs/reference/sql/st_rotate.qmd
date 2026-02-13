@@ -31,4 +31,3 @@ kernels:
 ```sql
 SELECT ST_Rotate(ST_GeomFromText('POINT (1 0)'), radians(90));
 ```
-

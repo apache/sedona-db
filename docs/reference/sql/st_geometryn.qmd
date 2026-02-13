@@ -26,8 +26,15 @@ kernels:
       type: integer
 ---
 
+## Description
+
+Returns NULL if the index is out of range.
+
 ## Examples
 
 ```sql
-SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1);
+SELECT ST_GeometryN(
+    ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'),
+    1
+);
 ```

@@ -27,6 +27,11 @@ kernels:
       type: double
 ---
 
+## Description
+
+Creates a geography Point from longitude and latitude coordinates. An optional
+SRID or CRS can be provided as a third argument.
+
 ## Examples
 
 ```sql

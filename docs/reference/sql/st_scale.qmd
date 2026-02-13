@@ -37,9 +37,12 @@ kernels:
       type: double
 ---
 
+## Description
+
+Scales a geometry by multiplying each coordinate by the corresponding scale factor. A 3D variant accepts `scaleZ`.
+
 ## Examples
 
 ```sql
 SELECT ST_Scale(ST_GeomFromText('POINT (1 2)'), 2.0, 3.0);
 ```
-

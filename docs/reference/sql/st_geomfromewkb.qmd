@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromEWKB
-description: Construct a geometry from EWKB.
+description: Construct a geometry from Extended Well-Known Binary (EWKB).
 kernels:
   - returns: geometry
     args:
@@ -25,9 +25,12 @@ kernels:
       type: binary
 ---
 
+## Description
+
+Parses an EWKB binary value and returns a geometry. EWKB extends the WKB format to include SRID information in the binary header and is useful for PostGIS compatibility.
+
 ## Examples
 
 ```sql
 SELECT ST_GeomFromEWKB(x'0101000000000000000000f03f0000000000000040');
 ```
-

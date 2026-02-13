@@ -23,9 +23,17 @@ kernels:
     args: [geography, geography]
 ---
 
+## Description
+
+Returns the great-circle distance between two geographies in **meters**,
+calculated on a sphere.
+
 ## Examples
 
 ```sql
-SELECT ST_DistanceSphere(ST_GeogFromText('POINT(0 0)'), ST_GeogFromText('POINT(1 1)'));
+SELECT ST_DistanceSphere(
+    ST_GeogFromText('POINT(0 0)'),
+    ST_GeogFromText('POINT(1 1)')
+);
 ```
 

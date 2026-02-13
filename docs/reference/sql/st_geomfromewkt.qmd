@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromEWKT
-description: Construct a geometry from EWKT.
+description: Construct a geometry from Extended Well-Known Text (EWKT).
 kernels:
   - returns: geometry
     args:
@@ -25,9 +25,12 @@ kernels:
       type: string
 ---
 
+## Description
+
+Parses an EWKT string in the format `SRID=<srid>;<wkt>` and returns a geometry with the embedded SRID set. EWKT is used by PostGIS and other systems for human-readable output when an item-level SRID required.
+
 ## Examples
 
 ```sql
 SELECT ST_GeomFromEWKT('SRID=4326;POINT(40.7128 -74.0060)');
 ```
-

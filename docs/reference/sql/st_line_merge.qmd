@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_LineMerge
-description: Merge connected line segments into a single geometry.
+description: Merges a collection of potentially connected line segments into the fewest possible LineStrings.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -26,6 +26,7 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_LineMerge(ST_GeomFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))'));
+SELECT ST_LineMerge(
+    ST_GeomFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))')
+);
 ```
-

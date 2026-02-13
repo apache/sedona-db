@@ -23,8 +23,16 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if geometry A is completely inside geometry B. This is the inverse
+of `ST_Contains`: `ST_Within(A, B)` is equivalent to `ST_Contains(B, A)`.
+
 ## Examples
 
 ```sql
-SELECT ST_Within(ST_GeomFromWKT('POINT(1 1)'), ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'));
+SELECT ST_Within(
+    ST_GeomFromWKT('POINT(1 1)'),
+    ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')
+);
 ```

@@ -23,6 +23,10 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+EWKB extends WKB to include SRID information in the binary header and is useful for PostGIS compatibility. This function preserves item-level CRSes or will repeat a type-level CRS for all elements if present.
+
 ## Examples
 
 ```sql

@@ -23,9 +23,17 @@ kernels:
     args: [geography, geography]
 ---
 
+## Description
+
+Returns the distance between two geographies in meters, calculated on the
+WGS 84 reference ellipsoid for higher accuracy than the spherical approximation
+used by `ST_DistanceSphere`.
+
 ## Examples
 
 ```sql
-SELECT ST_DistanceSpheroid(ST_GeogFromText('POINT(0 0)'), ST_GeogFromText('POINT(1 1)'));
+SELECT ST_DistanceSpheroid(
+    ST_GeogFromText('POINT(0 0)'),
+    ST_GeogFromText('POINT(1 1)')
+);
 ```
-
