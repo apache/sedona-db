@@ -16,7 +16,7 @@
 // under the License.
 
 use arrow_schema::DataType;
-use geo::Rect;
+use geo_types::Rect;
 
 mod error;
 #[cfg(gpu_available)]
@@ -28,6 +28,11 @@ mod predicate;
 pub use error::GpuSpatialError;
 pub use options::GpuSpatialOptions;
 pub use predicate::GpuSpatialRelationPredicate;
+
+// Re-export the sys implementations directly to remove the extra wrapper layer
+pub use sys::{
+    GpuSpatialIndex, GpuSpatialIndexBuilder, GpuSpatialRefiner, GpuSpatialRefinerBuilder,
+};
 
 #[cfg(gpu_available)]
 mod sys {
@@ -90,47 +95,50 @@ mod sys {
         }
     }
 
-    pub struct IndexBuilderImpl {
+    /// Builder for creating a GPU Spatial Index.
+    pub struct GpuSpatialIndexBuilder {
         inner: IndexBuilderInner,
     }
 
-    impl IndexBuilderImpl {
+    impl GpuSpatialIndexBuilder {
+        /// Initializes the builder and GPU runtime context.
         pub fn try_new(options: &GpuSpatialOptions) -> Result<Self> {
             let ctx = SpatialContext::try_new(options)?;
             let inner = IndexBuilderInner::try_new(ctx.runtime(), options.concurrency)?;
             Ok(Self { inner })
         }
 
+        /// Clears any previously inserted data from the builder.
         pub fn clear(&mut self) {
             self.inner.clear()
         }
+
+        /// Pushes a batch of rectangles into the builder. This can be called multiple times before finishing.
         pub fn push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
-            unsafe {
-                self.inner
-                    .push_build(rects.as_ptr() as *const f32, rects.len() as u32)
-            }
+            self.inner
+                .push_build(rects.as_ptr() as *const f32, rects.len() as u32)
         }
 
-        pub fn finish_building(self) -> Result<IndexImpl> {
-            let index = self.inner.finish()?;
-            Ok(IndexImpl { inner: index })
+        /// Finishes building the index and returns an immutable `GpuSpatialIndex` ready for probing.
+        pub fn finish_building(self) -> Result<GpuSpatialIndex> {
+            let index = self.inner.finish_building()?;
+            Ok(GpuSpatialIndex { inner: index })
         }
     }
 
-    pub struct IndexImpl {
+    /// A constructed, immutable GPU Spatial Index ready for probing.
+    pub struct GpuSpatialIndex {
         inner: IndexInner,
     }
 
-    impl IndexImpl {
+    impl GpuSpatialIndex {
+        /// Probes the index with a batch of rectangles and returns matching build and probe indices.
         pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
             // 1. Create a thread-local context
             let mut ctx = self.inner.create_context()?;
 
             // 2. Perform the probe using the context
-            unsafe {
-                self.inner
-                    .probe(&mut ctx, rects.as_ptr() as *const f32, rects.len() as u32)?;
-            }
+            ctx.probe(rects.as_ptr() as *const f32, rects.len() as u32)?;
 
             // 3. Extract results from the context
             Ok((
@@ -140,11 +148,13 @@ mod sys {
         }
     }
 
-    pub struct RefinerBuilderImpl {
+    /// Builder for creating a GPU Spatial Refiner.
+    pub struct GpuSpatialRefinerBuilder {
         inner: RefinerBuilderInner,
     }
 
-    impl RefinerBuilderImpl {
+    impl GpuSpatialRefinerBuilder {
+        /// Initializes the refiner builder and GPU runtime context.
         pub fn try_new(options: &GpuSpatialOptions) -> Result<Self> {
             let ctx = SpatialContext::try_new(options)?;
             let inner = RefinerBuilderInner::try_new(
@@ -156,38 +166,44 @@ mod sys {
             Ok(Self { inner })
         }
 
+        /// Initializes the schema for the refiner based on the build and probe data types.
         pub fn init_schema(&mut self, build: &DataType, probe: &DataType) -> Result<()> {
             self.inner.init_schema(build, probe)
         }
 
+        /// Clears any previously inserted data from the refiner builder.
         pub fn clear(&mut self) {
             self.inner.clear()
         }
+
+        /// Pushes a batch of geometries into the refiner builder. This can be called multiple times before finishing.
         pub fn push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
             self.inner.push_build(array)
         }
 
-        pub fn finish_building(self) -> Result<RefinerImpl> {
+        /// Finishes building the refiner and returns an immutable `GpuSpatialRefiner` ready for refining.
+        pub fn finish_building(self) -> Result<GpuSpatialRefiner> {
             let refiner_wrapper = self.inner.finish_building()?;
-            Ok(RefinerImpl {
+            Ok(GpuSpatialRefiner {
                 inner: refiner_wrapper,
             })
         }
     }
 
-    pub struct RefinerImpl {
+    pub struct GpuSpatialRefiner {
         inner: RefinerInner,
     }
 
-    impl RefinerImpl {
+    impl GpuSpatialRefiner {
+        /// Refines candidate pairs of geometries based on the specified spatial relation predicate.
         pub fn refine(
             &self,
             probe: &arrow_array::ArrayRef,
             pred: GpuSpatialRelationPredicate,
-            bi: &mut Vec<u32>,
-            pi: &mut Vec<u32>,
+            build_indices: &mut Vec<u32>,
+            probe_indices: &mut Vec<u32>,
         ) -> Result<()> {
-            self.inner.refine(probe, pred, bi, pi)
+            self.inner.refine(probe, pred, build_indices, probe_indices)
         }
     }
 }
@@ -197,12 +213,12 @@ mod sys {
     use super::*;
     pub type Result<T> = std::result::Result<T, crate::error::GpuSpatialError>;
 
-    pub struct IndexBuilderImpl;
-    pub struct IndexImpl;
-    pub struct RefinerBuilderImpl;
-    pub struct RefinerImpl;
+    pub struct GpuSpatialIndexBuilder;
+    pub struct GpuSpatialIndex;
+    pub struct GpuSpatialRefinerBuilder;
+    pub struct GpuSpatialRefiner;
 
-    impl IndexBuilderImpl {
+    impl GpuSpatialIndexBuilder {
         pub fn try_new(_opts: &GpuSpatialOptions) -> Result<Self> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
@@ -210,16 +226,18 @@ mod sys {
         pub fn push_build(&mut self, _r: &[Rect<f32>]) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn finish_building(self) -> Result<IndexImpl> {
+        pub fn finish_building(self) -> Result<GpuSpatialIndex> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }
-    impl IndexImpl {
+
+    impl GpuSpatialIndex {
         pub fn probe(&self, _r: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }
-    impl RefinerBuilderImpl {
+
+    impl GpuSpatialRefinerBuilder {
         pub fn try_new(_opts: &GpuSpatialOptions) -> Result<Self> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
@@ -230,119 +248,21 @@ mod sys {
         pub fn push_build(&mut self, _arr: &arrow_array::ArrayRef) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn finish_building(self) -> Result<RefinerImpl> {
+        pub fn finish_building(self) -> Result<GpuSpatialRefiner> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }
-    impl RefinerImpl {
+
+    impl GpuSpatialRefiner {
         pub fn refine(
             &self,
             _p: &arrow_array::ArrayRef,
             _pr: GpuSpatialRelationPredicate,
-            _bi: &mut Vec<u32>,
-            _pi: &mut Vec<u32>,
+            _build_indices: &mut Vec<u32>,
+            _probe_indices: &mut Vec<u32>,
         ) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-    }
-}
-
-/// Builder for creating a GPU Spatial Index.
-pub struct GpuSpatialIndexBuilder {
-    inner: sys::IndexBuilderImpl,
-}
-
-impl GpuSpatialIndexBuilder {
-    /// Create a new builder with the specified options.
-    pub fn try_new(options: GpuSpatialOptions) -> Result<Self, GpuSpatialError> {
-        Ok(Self {
-            inner: sys::IndexBuilderImpl::try_new(&options)?,
-        })
-    }
-    /// Clear any existing data from the builder.
-    pub fn clear(&mut self) {
-        self.inner.clear()
-    }
-
-    /// Add bounding boxes to the index construction.
-    pub fn push_build(&mut self, rects: &[Rect<f32>]) -> Result<(), GpuSpatialError> {
-        self.inner.push_build(rects)
-    }
-
-    /// Finalize construction and return the immutable, queryable Index.
-    pub fn finish_building(self) -> Result<GpuSpatialIndex, GpuSpatialError> {
-        Ok(GpuSpatialIndex {
-            inner: self.inner.finish_building()?,
-        })
-    }
-}
-
-/// A constructed, immutable GPU Spatial Index ready for probing.
-pub struct GpuSpatialIndex {
-    inner: sys::IndexImpl,
-}
-
-impl GpuSpatialIndex {
-    /// Probe the index with query rectangles.
-    pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>), GpuSpatialError> {
-        self.inner.probe(rects)
-    }
-}
-
-/// Builder for creating a GPU Spatial Refiner.
-pub struct GpuSpatialRefinerBuilder {
-    inner: sys::RefinerBuilderImpl,
-}
-
-impl GpuSpatialRefinerBuilder {
-    /// Create a new refiner builder with the specified options.
-    pub fn try_new(options: GpuSpatialOptions) -> Result<Self, GpuSpatialError> {
-        Ok(Self {
-            inner: sys::RefinerBuilderImpl::try_new(&options)?,
-        })
-    }
-
-    /// Initialize the refiner schema with the build and probe data types.
-    pub fn init_schema(
-        &mut self,
-        build_data_type: &DataType,
-        probe_data_type: &DataType,
-    ) -> Result<(), GpuSpatialError> {
-        self.inner.init_schema(build_data_type, probe_data_type)
-    }
-    /// Clear any existing build-side data from the builder.
-    pub fn clear(&mut self) {
-        self.inner.clear()
-    }
-
-    /// Add build-side data to the refiner construction.
-    pub fn push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<(), GpuSpatialError> {
-        self.inner.push_build(array)
-    }
-
-    /// Finalize construction and return the immutable, queryable Refiner.
-    pub fn finish_building(self) -> Result<GpuSpatialRefiner, GpuSpatialError> {
-        Ok(GpuSpatialRefiner {
-            inner: self.inner.finish_building()?,
-        })
-    }
-}
-
-pub struct GpuSpatialRefiner {
-    inner: sys::RefinerImpl,
-}
-
-impl GpuSpatialRefiner {
-    /// Refine candidate pairs using the specified spatial predicate.
-    pub fn refine(
-        &self,
-        probe_array: &arrow_array::ArrayRef,
-        predicate: GpuSpatialRelationPredicate,
-        build_indices: &mut Vec<u32>,
-        probe_indices: &mut Vec<u32>,
-    ) -> Result<(), GpuSpatialError> {
-        self.inner
-            .refine(probe_array, predicate, build_indices, probe_indices)
     }
 }
 
@@ -368,7 +288,7 @@ mod tests {
 
         // 1. Create Builder
         let mut builder =
-            GpuSpatialIndexBuilder::try_new(options).expect("Failed to create builder");
+            GpuSpatialIndexBuilder::try_new(&options).expect("Failed to create builder");
 
         let polygon_values = &[
             Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),
@@ -418,7 +338,7 @@ mod tests {
 
         // 1. Create Refiner Builder
         let mut builder =
-            GpuSpatialRefinerBuilder::try_new(options).expect("Failed to create refiner builder");
+            GpuSpatialRefinerBuilder::try_new(&options).expect("Failed to create refiner builder");
 
         let polygon_values = &[Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))")];
         let polygons = create_array_storage(polygon_values, &WKB_GEOMETRY);

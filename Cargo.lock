@@ -5436,7 +5436,7 @@ dependencies = [
  "bindgen",
  "cmake",
  "geo",
- "log",
+ "geo-types",
  "sedona-expr",
  "sedona-geos",
  "sedona-schema",
