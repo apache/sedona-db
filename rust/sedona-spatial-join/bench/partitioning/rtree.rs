@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod common;
-
 use std::hint::black_box;
 
-use common::{default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_spatial_join::partitioning::{rtree::RTreePartitioner, SpatialPartitioner};
+use sedona_spatial_join::utils::internal_benchmark_util::{
+    default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE,
+};
 const NODE_SIZES: [u16; 5] = [4, 8, 16, 32, 64]; // smaller node size => deeper tree
 
 fn bench_rtree_partition_queries(c: &mut Criterion) {
