@@ -15,11 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{
-    io::{Cursor, Read, Seek},
-    ops::Range,
-    sync::Arc,
-};
+use std::{io::Cursor, ops::Range, sync::Arc};
 
 use arrow_array::RecordBatch;
 use bytes::Bytes;
@@ -27,14 +23,14 @@ use datafusion_common::error::DataFusionError;
 use datafusion_datasource::PartitionedFile;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use futures::{future::BoxFuture, FutureExt};
-use las::{raw::Point as RawPoint, Point};
+use las::{raw::Point as RawPoint, Header, Point};
 use laz::{
     record::{
         LayeredPointRecordDecompressor, RecordDecompressor, SequentialPointRecordDecompressor,
     },
-    DecompressionSelection, LasZipError, LazItem,
+    DecompressionSelection, LasZipError,
 };
-use object_store::{Error, ObjectStore};
+use object_store::ObjectStore;
 
 use crate::{
     laz::{
@@ -100,11 +96,6 @@ impl LazFileReader {
         .boxed()
     }
 
-    async fn get_bytes(&self, range: Range<u64>) -> Result<Bytes, Error> {
-        let location = &self.partitioned_file.object_meta.location;
-        self.store.get_range(location, range).await
-    }
-
     pub async fn get_batch(&self, chunk_meta: &ChunkMeta) -> Result<RecordBatch, DataFusionError> {
         let metadata = self.get_metadata().await?;
         let header = metadata.header.clone();
@@ -113,11 +104,7 @@ impl LazFileReader {
         let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
 
         // laz decompressor
-        let laz_vlr = header
-            .laz_vlr()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let reader = Cursor::new(bytes);
-        let mut decompressor = record_decompressor(laz_vlr.items(), reader)
+        let mut decompressor = record_decompressor(&header, bytes)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // record batch builder
@@ -151,34 +138,44 @@ impl LazFileReader {
 
         Ok(RecordBatch::from(struct_array))
     }
+
+    async fn get_bytes(&self, range: Range<u64>) -> Result<Bytes, object_store::Error> {
+        let location = &self.partitioned_file.object_meta.location;
+        self.store.get_range(location, range).await
+    }
 }
 
-fn record_decompressor<'a, R: Read + Seek + Send + Sync + 'a>(
-    items: &Vec<LazItem>,
-    input: R,
-) -> Result<Box<dyn RecordDecompressor<R> + Send + Sync + 'a>, LasZipError> {
-    let first_item = items
+pub fn record_decompressor(
+    header: &Header,
+    bytes: Bytes,
+) -> Result<Box<dyn RecordDecompressor<Cursor<Bytes>>>, las::Error> {
+    let laz_vlr = header.laz_vlr()?;
+    let reader = Cursor::new(bytes);
+
+    let first_item = laz_vlr
+        .items()
         .first()
         .expect("There should be at least one LazItem to be able to create a RecordDecompressor");
 
     let mut decompressor = match first_item.version() {
         1 | 2 => {
-            let decompressor = SequentialPointRecordDecompressor::new(input);
-            Box::new(decompressor) as Box<dyn RecordDecompressor<R> + Send + Sync>
+            let decompressor = SequentialPointRecordDecompressor::new(reader);
+            Box::new(decompressor) as Box<dyn RecordDecompressor<Cursor<Bytes>>>
         }
         3 | 4 => {
-            let decompressor = LayeredPointRecordDecompressor::new(input);
-            Box::new(decompressor) as Box<dyn RecordDecompressor<R> + Send + Sync>
+            let decompressor = LayeredPointRecordDecompressor::new(reader);
+            Box::new(decompressor) as Box<dyn RecordDecompressor<Cursor<Bytes>>>
         }
         _ => {
             return Err(LasZipError::UnsupportedLazItemVersion(
                 first_item.item_type(),
                 first_item.version(),
-            ));
+            )
+            .into());
         }
     };
 
-    decompressor.set_fields_from(items)?;
+    decompressor.set_fields_from(laz_vlr.items())?;
     decompressor.set_selection(DecompressionSelection::all());
 
     Ok(decompressor)

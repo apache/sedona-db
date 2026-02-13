@@ -17,7 +17,7 @@
 
 use std::{any::Any, sync::Arc};
 
-use datafusion_common::{config::ConfigOptions, error::DataFusionError, internal_err, Statistics};
+use datafusion_common::{config::ConfigOptions, error::DataFusionError, Statistics};
 use datafusion_datasource::{
     file::FileSource, file_scan_config::FileScanConfig, file_stream::FileOpener, TableSchema,
 };
@@ -42,7 +42,7 @@ pub struct LazSource {
     /// Optional predicate for row filtering during parquet scan
     pub(crate) predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Laz file reader factory
-    pub(crate) laz_file_reader_factory: Option<Arc<LazFileReaderFactory>>,
+    pub(crate) reader_factory: Option<Arc<LazFileReaderFactory>>,
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
@@ -52,6 +52,11 @@ pub struct LazSource {
 impl LazSource {
     pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    pub fn with_reader_factory(mut self, reader_factory: Arc<LazFileReaderFactory>) -> Self {
+        self.reader_factory = Some(reader_factory);
         self
     }
 }
@@ -68,7 +73,7 @@ impl FileSource for LazSource {
             .unwrap_or_else(|| (0..base_config.projected_file_schema().fields().len()).collect());
 
         let laz_file_reader_factory = self
-            .laz_file_reader_factory
+            .reader_factory
             .clone()
             .unwrap_or_else(|| Arc::new(LazFileReaderFactory::new(object_store, None)));
 
@@ -114,7 +119,9 @@ impl FileSource for LazSource {
 
     fn statistics(&self) -> Result<Statistics, DataFusionError> {
         let Some(statistics) = &self.projected_statistics else {
-            return internal_err!("projected_statistics must be set");
+            return Err(DataFusionError::External(
+                "projected_statistics must be set".into(),
+            ));
         };
 
         if self.filter().is_some() {

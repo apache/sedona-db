@@ -5442,6 +5442,7 @@ version = "0.3.0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
+ "arrow-ipc",
  "arrow-schema",
  "async-stream",
  "async-trait",
@@ -5461,6 +5462,7 @@ dependencies = [
  "las-crs",
  "laz",
  "object_store",
+ "sedona",
  "sedona-expr",
  "sedona-geometry",
  "tempfile",
