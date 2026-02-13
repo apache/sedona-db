@@ -380,20 +380,16 @@ fn raster_value_to_formatted_value(
                     continue;
                 }
 
-                let raster = raster_array
-                    .get(i)
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                let raster = raster_array.get(i)?;
                 let metadata = raster.metadata();
                 let bands = raster.bands();
 
-                let has_outdb = bands.iter().any(|band| {
+                let has_outdb_band = bands.iter().any(|band| {
                     matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef))
                 });
 
-                let mut output = String::new();
                 let mut limited_output =
-                    LimitedSizeOutput::new(&mut output, maybe_width_hint.unwrap_or(usize::MAX));
-
+                    LimitedSizeOutput::new(&mut builder, maybe_width_hint.unwrap_or(usize::MAX));
                 let _ = write!(
                     limited_output,
                     "Raster[w={}, h={}, ul=({:.6}, {:.6}), scale=({:.6}, {:.6}), skew=({:.6}, {:.6}), bands={}, outdb={}]",
@@ -406,10 +402,9 @@ fn raster_value_to_formatted_value(
                     metadata.skew_x(),
                     metadata.skew_y(),
                     bands.len(),
-                    has_outdb
+                    has_outdb_band
                 );
-
-                builder.append_value(output);
+                builder.append_value("");
             }
 
             Ok(ColumnarValue::Array(Arc::new(builder.finish())))
@@ -638,14 +633,53 @@ mod tests {
         let udf = sd_format_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
 
-        let raster_array = generate_test_rasters(2, None).unwrap();
+        let raster_array = generate_test_rasters(3, Some(1)).unwrap();
+        let result = tester.invoke_array(Arc::new(raster_array.clone())).unwrap();
+        let formatted = result.as_string::<i32>();
+
+        // Index 0: valid raster
+        let full_output = "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]";
+        assert_eq!(formatted.value(0), full_output);
+        // Index 1: null raster should produce null output
+        assert!(formatted.is_null(1));
+        // Index 2: valid raster
+        assert!(formatted.value(2).starts_with("Raster[w=3, h=4"));
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns_with_null() {
+        let udf = sd_format_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
+        // Generate 3 rasters with a null at index 1
+        let raster_array = generate_test_rasters(3, Some(1)).unwrap();
         let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
         let formatted = result.as_string::<i32>();
 
-        assert_eq!(formatted.value(0),
-            "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]"
-        );
-        assert!(formatted.value(1).starts_with("Raster[w=2, h=3"));
+        // Index 0: valid raster
+        assert!(formatted.value(0).starts_with("Raster[w=1, h=2"));
+        // Index 1: null raster should produce null output
+        assert!(formatted.is_null(1));
+        // Index 2: valid raster
+        assert!(formatted.value(2).starts_with("Raster[w=3, h=4"));
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns_with_width_hint() {
+        let udf = sd_format_udf();
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+
+        let raster_array = generate_test_rasters(2, None).unwrap();
+        let result = tester
+            .invoke_array_scalar(Arc::new(raster_array), r#"{"width_hint": 10}"#)
+            .unwrap();
+        let formatted = result.as_string::<i32>();
+
+        // With a small width_hint, output should be truncated
+        let full_output = "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]";
+        assert!(formatted.value(0).starts_with("Raster["));
+        assert!(formatted.value(0).len() < full_output.len());
     }
 
     #[rstest]
