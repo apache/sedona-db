@@ -618,7 +618,7 @@ mod test {
     use datafusion_physical_expr::PhysicalExpr;
 
     use rstest::rstest;
-    use sedona_schema::crs::lnglat;
+    use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
@@ -627,10 +627,11 @@ mod test {
     use super::*;
 
     fn setup_context() -> SessionContext {
-        let mut state = SessionStateBuilder::new().build();
+        let mut state = SessionStateBuilder::new_with_default_features().build();
         state
             .register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)
             .unwrap();
+
         SessionContext::new_with_state(state).enable_url_table()
     }
 
@@ -760,6 +761,42 @@ mod test {
         assert_eq!(
             err.message(),
             "failed to resolve schema: file_does_not_exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn format_from_external_table() {
+        let ctx = setup_context();
+        let example = test_geoparquet("example", "geometry").unwrap();
+        ctx.sql(&format!(
+            r#"
+            CREATE EXTERNAL TABLE test
+            STORED AS PARQUET
+            LOCATION '{example}'
+            OPTIONS ('geometry_columns' '{{"geometry": {{"encoding": "WKB", "crs": "EPSG:3857"}}}}');
+            "#
+        ))
+        .await
+        .unwrap();
+
+        let df = ctx.table("test").await.unwrap();
+
+        // Check that the logical plan resulting from a read has the correct schema
+        assert_eq!(
+            df.schema().clone().strip_qualifiers().field_names(),
+            ["wkt", "geometry"]
+        );
+
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
         );
     }
 
