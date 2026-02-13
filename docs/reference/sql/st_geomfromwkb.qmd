@@ -28,7 +28,7 @@ kernels:
     - name: wkb
       type: binary
     - name: srid
-      type: integer
+      type: crs
 ---
 
 ## Description

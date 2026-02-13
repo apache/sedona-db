@@ -25,6 +25,8 @@ kernels:
       type: double
     - name: y
       type: double
+    - name: srid
+      type: crs
 ---
 
 ## Description
@@ -41,4 +43,10 @@ With an SRID:
 
 ```sql
 SELECT ST_Point(-74.0060, 40.7128, 4326);
+```
+
+With a CRS:
+
+```sql
+SELECT ST_Point(-74.0060, 40.7128, 'EPSG:3857');
 ```

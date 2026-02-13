@@ -27,12 +27,12 @@ kernels:
     - name: geomb
       type: geometry
       description: Column containing candidate geometries.
-    - geometry
     - name: k
       type: integer
       description: The number of nearest neighbours to return.
     - name: use_spheroid
-      type: true to use spherical distance, false for Euclidean
+      type: boolean
+      description: true to use spherical distance, false for Euclidean
 ---
 
 ## Description

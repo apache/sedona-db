@@ -29,11 +29,10 @@ kernels:
 
 ## Description
 
-Creates a geography Point from longitude and latitude coordinates. An optional
-SRID or CRS can be provided as a third argument.
+Creates a geography Point from longitude and latitude coordinates.
 
 ## Examples
 
 ```sql
-SELECT ST_GeogPoint(10, 10), ST_GeogPoint(0, 0);
+SELECT ST_GeogPoint(-64, 45);
 ```

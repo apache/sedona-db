@@ -74,9 +74,6 @@ pub fn st_geogfromwkb_udf() -> SedonaScalarUDF {
     )
 }
 
-/// for `ST_GeomFromWKBUnchecked()`.
-///
-/// Parameterized for reuse if `ST_GeogFromWKBUnchecked()` is implemented in the future.
 #[derive(Debug)]
 struct STGeomFromWKB {
     validate: bool,
