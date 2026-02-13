@@ -211,6 +211,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
+    use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -228,23 +229,26 @@ mod tests {
 
         tester.assert_return_type(DataType::Utf8);
 
-        // Test with rasters
+        // Test with rasters (one-arg, default GDAL)
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let result = tester.invoke_array(Arc::new(rasters.clone())).unwrap();
 
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
+        let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
+            Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
+            None,
+            Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
+        ]));
+        assert_array_equal(&result, &expected);
 
-        assert_eq!(
-            string_array.iter().collect::<Vec<_>>(),
-            vec![
-                Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
-                None,
-                Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
-            ]
-        );
+        // Test with explicit "GDAL" or "gdal" (two-arg)
+        for format in ["GDAL", "gdal"] {
+            let udf: ScalarUDF = rs_georeference_udf().into();
+            let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+            let result = tester
+                .invoke_array_scalar(Arc::new(rasters.clone()), format)
+                .unwrap();
+            assert_array_equal(&result, &expected);
+        }
     }
 
     #[test]
@@ -252,24 +256,19 @@ mod tests {
         let udf: ScalarUDF = rs_georeference_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
 
-        let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters), "ESRI")
-            .unwrap();
+        let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
+            Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000"),
+            None,
+            Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1000000000\n3.8000000000"),
+        ]));
 
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
-
-        assert_eq!(
-            string_array.iter().collect::<Vec<_>>(),
-            vec![
-                Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000"),
-                None,
-                Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1000000000\n3.8000000000"),
-            ]
-        );
+        for format in ["ESRI", "esri"] {
+            let rasters = generate_test_rasters(3, Some(1)).unwrap();
+            let result = tester
+                .invoke_array_scalar(Arc::new(rasters), format)
+                .unwrap();
+            assert_array_equal(&result, &expected);
+        }
     }
 
     #[test]
@@ -298,15 +297,7 @@ mod tests {
         let result = tester
             .invoke_arrays(vec![Arc::new(rasters), formats])
             .unwrap();
-
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
-
-        assert_eq!(
-            string_array.iter().collect::<Vec<_>>(),
-            vec![
+        let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
                 // explicit GDAL
                 Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
                 // null raster
@@ -315,8 +306,8 @@ mod tests {
                 Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
                 // explicit ESRI
                 Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1500000000\n4.7000000000"),
-            ]
-        );
+        ]));
+        assert_array_equal(&result, &expected);
     }
 
     #[test]
