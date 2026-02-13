@@ -47,6 +47,28 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_numbands", Raster(64, 64));
+    // RS_PixelAsPoint, RS_PixelAsCentroid, RS_PixelAsPolygon
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelaspoint",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelascentroid",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelaspolygon",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
     benchmark::scalar(
         c,
         &f,
