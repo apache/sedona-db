@@ -697,14 +697,7 @@ mod test {
     async fn geoparquet_1_1_basic() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
-        let df = ctx
-            .table(&example)
-            .await
-            .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
-            .unwrap();
+        let df = ctx.table(&example).await.unwrap();
 
         let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V1_1,
@@ -737,8 +730,8 @@ mod test {
             &ctx,
             &format!(
                 r#"COPY (
-                    SELECT * FROM '{example}' WHERE geometry IS NOT NULL)
-                   TO '{}'
+                    SELECT * FROM '{example}'
+                   ) TO '{}'
                    OPTIONS (GEOPARQUET_VERSION '1.1')
                 "#,
                 tmp_parquet.display()
@@ -759,10 +752,6 @@ mod test {
         let df = ctx
             .table(&example)
             .await
-            .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .select(vec![
                 col("wkt"),
@@ -811,10 +800,6 @@ mod test {
         let df = ctx
             .table(&example)
             .await
-            .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .select(vec![
                 lit("this is definitely not a bbox").alias("bbox"),
@@ -867,10 +852,6 @@ mod test {
         let df = ctx
             .table(&example)
             .await
-            .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
             .unwrap()
             .select(vec![
                 lit("some_partition").alias("part"),
