@@ -32,33 +32,35 @@ use sedona_raster::traits::RasterRef;
 use sedona_schema::datatypes::Edges;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-/// RS_Envelope() scalar UDF documentation
+/// RS_ConvexHull() scalar UDF documentation
 ///
-/// Returns the envelope (bounding box) of the given raster as a WKB Polygon.
-pub fn rs_envelope_udf() -> SedonaScalarUDF {
+/// Returns the convex hull geometry of the raster including the NoDataBandValue band pixels.
+/// For regular shaped and non-skewed rasters, this gives more or less the same result as RS_Envelope
+/// and hence is only useful for irregularly shaped or skewed rasters.
+pub fn rs_convexhull_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
-        "rs_envelope",
-        vec![Arc::new(RsEnvelope {})],
+        "rs_convexhull",
+        vec![Arc::new(RsConvexHull {})],
         Volatility::Immutable,
-        Some(rs_envelope_doc()),
+        Some(rs_convexhull_doc()),
     )
 }
 
-fn rs_envelope_doc() -> Documentation {
+fn rs_convexhull_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the envelope of the raster as a Geometry.".to_string(),
-        "RS_Envelope(raster: Raster)".to_string(),
+        "Returns the convex hull geometry of the raster including the NoDataBandValue band pixels. For regular shaped and non-skewed rasters, this gives more or less the same result as RS_Envelope.".to_string(),
+        "RS_ConvexHull(raster: Raster)".to_string(),
     )
     .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Envelope(RS_Example())".to_string())
+    .with_sql_example("SELECT RS_ConvexHull(RS_Example())".to_string())
     .build()
 }
 
 #[derive(Debug)]
-struct RsEnvelope {}
+struct RsConvexHull {}
 
-impl SedonaScalarKernel for RsEnvelope {
+impl SedonaScalarKernel for RsConvexHull {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let out_type = SedonaType::new_item_crs(&SedonaType::Wkb(Edges::Planar, None))?;
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_raster()], out_type);
@@ -83,7 +85,7 @@ impl SedonaScalarKernel for RsEnvelope {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 Some(raster) => {
-                    write_envelope_wkb(raster, &mut builder)?;
+                    write_convexhull_wkb(raster, &mut builder)?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
                 }
@@ -113,37 +115,25 @@ impl SedonaScalarKernel for RsEnvelope {
     }
 }
 
-/// Write WKB for the axis-aligned bounding box (envelope) of the raster.
+/// Write WKB for a convex hull polygon for the raster
 ///
-/// This computes the four corners of the raster in world coordinates, then
-/// derives the min/max X and Y to produce an axis-aligned bounding box.
-/// For skewed/rotated rasters, this differs from the convex hull.
-fn write_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
+/// For a raster, the convex hull is the polygon formed by the four corners
+/// of the raster in world coordinates. Due to skew/rotation in the affine
+/// transformation, each corner must be computed individually.
+fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
     let width = raster.metadata().width() as i64;
     let height = raster.metadata().height() as i64;
 
-    // Compute the four corners in world coordinates
+    // Compute the four corners in pixel coordinates:
+    // Upper-left (0, 0), Upper-right (width, 0), Lower-right (width, height), Lower-left (0, height)
     let (ulx, uly) = to_world_coordinate(raster, 0, 0);
     let (urx, ury) = to_world_coordinate(raster, width, 0);
     let (lrx, lry) = to_world_coordinate(raster, width, height);
     let (llx, lly) = to_world_coordinate(raster, 0, height);
 
-    // Compute the axis-aligned bounding box
-    let min_x = ulx.min(urx).min(lrx).min(llx);
-    let max_x = ulx.max(urx).max(lrx).max(llx);
-    let min_y = uly.min(ury).min(lry).min(lly);
-    let max_y = uly.max(ury).max(lry).max(lly);
-
     write_wkb_polygon(
         out,
-        [
-            (min_x, min_y),
-            (max_x, min_y),
-            (max_x, max_y),
-            (min_x, max_y),
-            (min_x, min_y),
-        ]
-        .into_iter(),
+        [(ulx, uly), (urx, ury), (lrx, lry), (llx, lly), (ulx, uly)].into_iter(),
     )
     .map_err(|e| DataFusionError::External(e.into()))?;
 
@@ -164,34 +154,38 @@ mod tests {
 
     #[test]
     fn udf_docs() {
-        let udf: ScalarUDF = rs_envelope_udf().into();
-        assert_eq!(udf.name(), "rs_envelope");
+        let udf: ScalarUDF = rs_convexhull_udf().into();
+        assert_eq!(udf.name(), "rs_convexhull");
         assert!(udf.documentation().is_some());
     }
 
     #[rstest]
     fn udf_invoke() {
-        let udf = rs_envelope_udf();
+        let udf = rs_convexhull_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
 
-        // i=0: no skew, i=1: null, i=2: skewed (scale=0.2,-0.4, skew=0.06,0.08)
-        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let rasters = generate_test_rasters(3, Some(0)).unwrap();
 
-        // Reference values verified against PostGIS ST_Envelope:
+        // Corners computed using gdal:
+        // Raster 1:
+        // Envelope corner coordinates (X, Y):
+        // (2.00000000, 3.00000000)
+        // (2.20000000, 3.08000000)
+        // (2.29000000, 2.48000000)
+        // (2.09000000, 2.40000000)
         //
-        // Raster 0 (i=0): width=1, height=2, ul=(1,2), scale=(0.1,-0.2), skew=(0,0)
-        //   No skew, so envelope = convex hull
-        //
-        // Raster 2 (i=2): width=3, height=4, ul=(3,4), scale=(0.2,-0.4), skew=(0.06,0.08)
-        //   Corners: (3,4), (3.6,4.24), (3.84,2.64), (3.24,2.4)
-        //   AABB: x=[3, 3.84], y=[2.4, 4.24]
+        // Raster 2:
+        // (3.00000000, 4.00000000)
+        // (3.60000000, 4.24000000)
+        // (3.84000000, 2.64000000)
+        // (3.24000000, 2.40000000)
         let expected = &create_array_item_crs(
             &[
-                Some("POLYGON ((1 1.6, 1.1 1.6, 1.1 2, 1 2, 1 1.6))"),
                 None,
-                Some("POLYGON ((3 2.4, 3.84 2.4, 3.84 4.24, 3 4.24, 3 2.4))"),
+                Some("POLYGON ((2.0 3.0, 2.2 3.08, 2.29 2.48, 2.09 2.4, 2.0 3.0))"),
+                Some("POLYGON ((3.0 4.0, 3.6 4.24, 3.84 2.64, 3.24 2.4, 3.0 4.0))"),
             ],
-            [Some("OGC:CRS84"), None, Some("OGC:CRS84")],
+            [None, Some("OGC:CRS84"), Some("OGC:CRS84")],
             &WKB_GEOMETRY,
         );
 

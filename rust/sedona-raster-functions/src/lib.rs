@@ -17,6 +17,7 @@
 
 mod executor;
 pub mod register;
+pub mod rs_convexhull;
 pub mod rs_envelope;
 pub mod rs_example;
 pub mod rs_geotransform;
