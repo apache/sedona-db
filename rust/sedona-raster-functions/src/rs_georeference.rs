@@ -22,6 +22,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
+use datafusion_common::DataFusionError;
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
@@ -64,10 +65,14 @@ enum GeoReferenceFormat {
 }
 
 impl GeoReferenceFormat {
-    fn from_str(s: &str) -> Self {
+    fn from_str(s: &str) -> Result<Self> {
         match s.to_uppercase().as_str() {
-            "ESRI" => GeoReferenceFormat::Esri,
-            _ => GeoReferenceFormat::Gdal, // Default to GDAL for unknown formats
+            "GDAL" => Ok(GeoReferenceFormat::Gdal),
+            "ESRI" => Ok(GeoReferenceFormat::Esri),
+            _ => Err(DataFusionError::Execution(format!(
+                "Invalid GeoReference format '{}'. Supported formats are 'GDAL' and 'ESRI'.",
+                s
+            ))),
         }
     }
 }
@@ -142,7 +147,7 @@ impl SedonaScalarKernel for RsGeoReferenceTwoArg {
             let format = if format_array.is_null(i) {
                 GeoReferenceFormat::Gdal
             } else {
-                GeoReferenceFormat::from_str(format_array.value(i))
+                GeoReferenceFormat::from_str(format_array.value(i))?
             };
             format_georeference(raster_opt, format, &mut builder)
         })?;
@@ -274,12 +279,12 @@ mod tests {
         let udf: ScalarUDF = rs_georeference_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
 
-        // Test with rasters and array of format strings
-        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let rasters = generate_test_rasters(4, Some(1)).unwrap();
         let formats = Arc::new(StringArray::from(vec![
-            Some("GDAL"),
-            Some("ESRI"), // This won't matter since raster 1 is null
-            Some("ESRI"),
+            Some("GDAL"), // explicit GDAL
+            Some("ESRI"), // won't matter since raster 1 is null
+            None,         // null format -> defaults to GDAL
+            Some("ESRI"), // explicit ESRI
         ]));
 
         let result = tester
@@ -294,10 +299,32 @@ mod tests {
         assert_eq!(
             string_array.iter().collect::<Vec<_>>(),
             vec![
+                // explicit GDAL
                 Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
+                // null raster
                 None,
-                Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1000000000\n3.8000000000"),
+                // null format defaults to GDAL
+                Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
+                // explicit ESRI
+                Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1500000000\n4.7000000000"),
             ]
+        );
+    }
+
+    #[test]
+    fn udf_georeference_invalid_format() {
+        let udf: ScalarUDF = rs_georeference_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let result = tester.invoke_array_scalar(Arc::new(rasters), "INVALID");
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Invalid GeoReference format"),
+            "Expected error about invalid format, got: {}",
+            err_msg
         );
     }
 }
