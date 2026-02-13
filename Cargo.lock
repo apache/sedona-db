@@ -5500,14 +5500,18 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "geo-traits",
  "rstest",
  "sedona-common",
  "sedona-expr",
  "sedona-geometry",
+ "sedona-proj",
  "sedona-raster",
  "sedona-schema",
  "sedona-testing",
+ "sedona-tg",
  "serde_json",
+ "wkb",
 ]
 
 [[package]]
