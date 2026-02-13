@@ -643,8 +643,17 @@ mod test {
         assert_eq!(df_parquet_sedona_types, df_sedona_types);
 
         // Check batches without metadata
-        for (df_parquet_batch, df_batch) in zip(df_parquet_batches, expected_batches) {
-            assert_eq!(df_parquet_batch.columns(), df_batch.columns())
+        for (i, (df_parquet_batch, df_batch)) in
+            zip(df_parquet_batches, expected_batches).enumerate()
+        {
+            for (j, (df_parquet_column, df_batch_column)) in
+                zip(df_parquet_batch.columns(), df_batch.columns()).enumerate()
+            {
+                assert_eq!(
+                    df_parquet_column, df_batch_column,
+                    "Batch {i} column {j} did not match"
+                );
+            }
         }
 
         Ok(())
@@ -720,6 +729,25 @@ mod test {
         test_write_dataframe(&ctx, df, df_batches_with_bbox.clone(), options, vec![])
             .await
             .unwrap();
+
+        // Check that we can do this from SQL too
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        test_write_dataframe_sql(
+            &ctx,
+            &format!(
+                r#"COPY (
+                    SELECT * FROM '{example}' WHERE geometry IS NOT NULL)
+                   TO '{}'
+                   OPTIONS (GEOPARQUET_VERSION '1.1')
+                "#,
+                tmp_parquet.display()
+            ),
+            &tmp_parquet,
+            df_batches_with_bbox,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

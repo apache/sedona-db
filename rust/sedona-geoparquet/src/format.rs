@@ -99,15 +99,17 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         let mut format_options_mut = format_options.clone();
 
         // Remove GeoParquet-specific options that will cause an error if passed
-        // to inner.create().
+        // to inner.create(). These are prefixed with `format` when passed by
+        // DataFusion SQL. DataFusion takes care of lowercasing these values before
+        // they are passed here.
         for key in [
-            "geoparquet_version",
-            "geometry_columns",
-            "validate",
-            "overwrite_bbox_columns",
+            "format.geoparquet_version",
+            "format.geometry_columns",
+            "format.validate",
+            "format.overwrite_bbox_columns",
         ] {
             if let Some(value) = format_options_mut.remove(key) {
-                options_mut.set(key, &value)?;
+                options_mut.set(key.strip_prefix("format.").unwrap(), &value)?;
             }
         }
 
