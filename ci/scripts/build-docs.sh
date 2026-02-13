@@ -34,7 +34,7 @@ for notebook in $(find "${SEDONADB_DIR}/docs" -name "*.ipynb"); do
 done
 
 # Clean + build SQL function documentation
-pushd "${SEDONADB_DIR}/docs/reference/functions"
+pushd "${SEDONADB_DIR}/docs/reference/sql"
 
 # Remove built markdown files (they confuse quarto)
 find . -name "*.md" -delete
@@ -44,6 +44,11 @@ if quarto render ; then
   echo "Function reference Quarto project rendered successfully"
 else
   echo "Function reference Quarto project build failed"
+  exit 1
+fi
+
+if grep -e "-- Example failed to render:" *.md; then
+  echo "Example rendering failed"
   exit 1
 fi
 

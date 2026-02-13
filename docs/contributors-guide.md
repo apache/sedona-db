@@ -339,7 +339,7 @@ To contribute to the SedonaDB documentation:
 
 SQL function reference is special: because we provide so many functions, we have
 a specialized syntax for documenting them. The minimum required documentation for
-a function is a file `docs/reference/functions/function_name.qmd`:
+a function is a file `docs/reference/sql/function_name.qmd`:
 
     ---
     title: ST_FunctionName
@@ -358,7 +358,7 @@ a function is a file `docs/reference/functions/function_name.qmd`:
 After writing this file, the `.md` file may be rendered using [Quarto](https://quarto.org):
 
 ```shell
-cd docs/reference/functions
+cd docs/reference/sql
 quarto render
 ```
 

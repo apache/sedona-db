@@ -33,7 +33,7 @@ kernels:
     - name: distance
       type: float64
     - name: params
-      type: utf8
+      type: string
       description: >
         Space-separated `key=value` parameters. Supported parameters include `quad_segs`,
         `endcap`, `join`, `mitre_limit`, and `side`. These parameters are identical to

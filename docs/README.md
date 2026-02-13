@@ -34,7 +34,7 @@ The SQL function documentation is a [Quarto](https://quarto.org) project that mu
 at least once to generate the Markdown files required by mkdocs. This may be done with:
 
 ```shell
-cd docs/reference/functions
+cd docs/reference/sql
 quarto render
 ```
 

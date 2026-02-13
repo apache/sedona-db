@@ -39,7 +39,7 @@ nav:
       - Programming Guide: programming-guide.md
       - API:
         - Python: reference/python.md
-        - SQL: reference/sql.md
+        - SQL: reference/sql/index.md
         - Spatial Joins: reference/sql-joins.md
       - Examples:
         - GeoPandas interop: geopandas-interop.md

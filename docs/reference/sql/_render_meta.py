@@ -83,9 +83,12 @@ def render_args(kernels, level):
 
     print(f"\n{heading(level + 1)} Arguments\n")
     for arg in expanded_args.values():
-        print(
-            f"- **{to_str(arg['name'])}** ({to_str(arg['type'])}): {to_str(arg['description'])}"
-        )
+        if arg["description"] is None:
+            print(f"- **{to_str(arg['name'])}** ({to_str(arg['type'])})")
+        else:
+            print(
+                f"- **{to_str(arg['name'])}** ({to_str(arg['type'])}): {to_str(arg['description'])}"
+            )
 
 
 def expand_args(args):
@@ -193,6 +196,7 @@ def to_str(v):
 if __name__ == "__main__":
     import argparse
     import sys
+
     import yaml
 
     parser = argparse.ArgumentParser(description="Render SedonaDB SQL function header")
