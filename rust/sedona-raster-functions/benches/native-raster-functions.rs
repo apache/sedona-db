@@ -35,6 +35,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayScalar(Raster(64, 64), Int32(1, 2)),
     );
     benchmark::scalar(c, &f, "native-raster", "rs_convexhull", Raster(64, 64));
+    // RS_Count
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_count",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
     benchmark::scalar(c, &f, "native-raster", "rs_crs", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_envelope", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_georeference", Raster(64, 64));
