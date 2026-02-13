@@ -23,6 +23,7 @@ on:
     paths:
       - 'ci/scripts/wheels-*'
       - '.github/workflows/python-wheels.yml'
+      - 'python/sedonadb/python/sedonadb/expr/literal.py'
   push:
     branches:
       - main
