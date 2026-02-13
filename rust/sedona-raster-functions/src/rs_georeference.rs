@@ -48,19 +48,27 @@ pub fn rs_georeference_udf() -> SedonaScalarUDF {
 fn rs_georeference_doc() -> Documentation {
     Documentation::builder(
         DOC_SECTION_OTHER,
-        "Returns the georeference metadata of raster as a string in GDAL or ESRI format. Default is GDAL if not specified.".to_string(),
+        "Returns the georeference metadata of raster as a string in GDAL or ESRI format as commonly seen in a world file. Default is GDAL if not specified. Both formats output six lines: scalex, skewy, skewx, scaley, upperleftx, upperlefty. In GDAL format the upper-left coordinates refer to the corner of the upper-left pixel, while in ESRI format they are shifted to the center of the upper-left pixel.".to_string(),
         "RS_GeoReference(raster: Raster, format: String = 'GDAL')".to_string(),
     )
     .with_argument("raster", "Raster: Input raster")
-    .with_argument("format", "String: Output format, either 'GDAL' (default) or 'ESRI'")
+    .with_argument("format", "String: Output format, either 'GDAL' (default) or 'ESRI'. GDAL reports the upper-left corner of the upper-left pixel; ESRI shifts the coordinates to the center of the upper-left pixel.")
     .with_sql_example("SELECT RS_GeoReference(RS_Example())".to_string())
     .build()
 }
 
-/// Format type for GeoReference output
+/// Format type for GeoReference output as commonly seen in a
+/// [world file](https://en.wikipedia.org/wiki/World_file).
+///
+/// Both formats output six lines: scalex, skewy, skewx, scaley, upperleftx, upperlefty.
+/// The difference is how the upper-left coordinate is reported:
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GeoReferenceFormat {
+    /// GDAL format: upperleftx and upperlefty are the coordinates of the upper-left corner
+    /// of the upper-left pixel.
     Gdal,
+    /// ESRI format: upperleftx and upperlefty are shifted to the center of the upper-left
+    /// pixel, i.e. `upperleftx + scalex * 0.5` and `upperlefty + scaley * 0.5`.
     Esri,
 }
 
