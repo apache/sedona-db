@@ -14,13 +14,35 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-mod catalog;
-pub mod context;
-mod exec;
-pub mod memory_pool;
-mod object_storage;
-pub mod pool_type;
-pub mod random_geometry_provider;
-pub mod reader;
-pub mod record_batch_reader_provider;
-pub mod show;
+
+use std::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum PoolType {
+    Greedy,
+    Fair,
+}
+
+impl FromStr for PoolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Greedy" | "greedy" => Ok(PoolType::Greedy),
+            "Fair" | "fair" => Ok(PoolType::Fair),
+            _ => Err(format!("Invalid memory pool type '{s}'")),
+        }
+    }
+}
+
+impl Display for PoolType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            PoolType::Greedy => write!(f, "greedy"),
+            PoolType::Fair => write!(f, "fair"),
+        }
+    }
+}
