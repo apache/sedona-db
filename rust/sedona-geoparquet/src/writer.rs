@@ -516,6 +516,7 @@ fn append_float_bbox(
 #[cfg(test)]
 mod test {
     use std::iter::zip;
+    use std::path::Path;
 
     use arrow_array::{create_array, Array, RecordBatch};
     use datafusion::datasource::file_format::format_as_file_type;
@@ -545,7 +546,7 @@ mod test {
         SessionContext::new_with_state(state).enable_url_table()
     }
 
-    async fn test_dataframe_roundtrip(ctx: SessionContext, src: DataFrame) {
+    async fn test_dataframe_roundtrip(ctx: &SessionContext, src: DataFrame) {
         let df_batches = src.clone().collect().await.unwrap();
         test_write_dataframe(
             ctx,
@@ -558,8 +559,18 @@ mod test {
         .unwrap()
     }
 
+    async fn test_write_dataframe_sql(
+        ctx: &SessionContext,
+        sql: &str,
+        tmp_parquet: &Path,
+        expected_batches: Vec<RecordBatch>,
+    ) -> Result<()> {
+        ctx.sql(sql).await?.collect().await?;
+        test_write_dataframe_common(ctx, tmp_parquet, expected_batches).await
+    }
+
     async fn test_write_dataframe(
-        ctx: SessionContext,
+        ctx: &SessionContext,
         src: DataFrame,
         expected_batches: Vec<RecordBatch>,
         options: TableGeoParquetOptions,
@@ -585,6 +596,14 @@ mod test {
 
         DataFrame::new(ctx.state(), plan).collect().await?;
 
+        test_write_dataframe_common(ctx, &tmp_parquet, expected_batches).await
+    }
+
+    async fn test_write_dataframe_common(
+        ctx: &SessionContext,
+        tmp_parquet: &Path,
+        expected_batches: Vec<RecordBatch>,
+    ) -> Result<()> {
         let df_parquet_batches = ctx
             .table(tmp_parquet.to_string_lossy().to_string())
             .await
@@ -644,7 +663,7 @@ mod test {
             .select(vec![col("wkt")])
             .unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
@@ -653,7 +672,7 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
@@ -662,7 +681,7 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
@@ -697,7 +716,8 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        // Check that we can do this from a DataFrame
+        test_write_dataframe(&ctx, df, df_batches_with_bbox.clone(), options, vec![])
             .await
             .unwrap();
     }
@@ -748,7 +768,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
@@ -794,7 +814,7 @@ mod test {
 
         // Without setting overwrite_bbox_columns = true, this should error
         let err = test_write_dataframe(
-            ctx.clone(),
+            &ctx,
             df.clone(),
             df_batches_with_bbox.clone(),
             options.clone(),
@@ -807,7 +827,7 @@ mod test {
             .starts_with("Can't overwrite GeoParquet 1.1 bbox column 'bbox'"));
 
         options.overwrite_bbox_columns = true;
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
@@ -855,7 +875,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec!["part".into()])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec!["part".into()])
             .await
             .unwrap();
     }
@@ -911,7 +931,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
