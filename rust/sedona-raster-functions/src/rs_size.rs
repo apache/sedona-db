@@ -20,9 +20,7 @@ use crate::executor::RasterExecutor;
 use arrow_array::builder::UInt64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -37,7 +35,7 @@ pub fn rs_width_udf() -> SedonaScalarUDF {
             size_type: SizeType::Width,
         })],
         Volatility::Immutable,
-        Some(rs_width_doc()),
+        None,
     )
 }
 
@@ -51,30 +49,8 @@ pub fn rs_height_udf() -> SedonaScalarUDF {
             size_type: SizeType::Height,
         })],
         Volatility::Immutable,
-        Some(rs_height_doc()),
+        None,
     )
-}
-
-fn rs_width_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the width component of a raster".to_string(),
-        "RS_Width(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Width(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_height_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the height component of a raster".to_string(),
-        "RS_Height(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Height(RS_Example())".to_string())
-    .build()
 }
 
 #[derive(Debug, Clone)]
@@ -142,11 +118,11 @@ mod tests {
     fn udf_size() {
         let udf: ScalarUDF = rs_width_udf().into();
         assert_eq!(udf.name(), "rs_width");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = rs_height_udf().into();
         assert_eq!(udf.name(), "rs_height");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

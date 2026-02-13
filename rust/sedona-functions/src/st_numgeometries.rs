@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_array::builder::UInt32Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -37,19 +37,8 @@ pub fn st_numgeometries_udf() -> SedonaScalarUDF {
         "st_numgeometries",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNumGeometries {})]),
         Volatility::Immutable,
-        Some(st_numgeometries_doc()),
+        None,
     )
-}
-
-fn st_numgeometries_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the number of geometries in the geometry collection",
-        "ST_NumGeometries (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_NumGeometries(ST_GeomFromWKT('GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 0, 1 1))'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -130,7 +119,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_numgeometries_udf().into();
         assert_eq!(udf.name(), "st_numgeometries");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

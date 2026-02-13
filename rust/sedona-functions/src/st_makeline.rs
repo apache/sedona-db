@@ -20,9 +20,7 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
 use datafusion_common::DataFusionError;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
 use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::ItemCrsKernel;
@@ -52,20 +50,8 @@ pub fn st_makeline_udf() -> SedonaScalarUDF {
             }),
         ]),
         Volatility::Immutable,
-        Some(doc()),
+        None,
     )
-}
-
-fn doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Construct a line".to_string(),
-        "ST_MakeLine (g1: Geometry or Geography, g2: Geometry or Geography)".to_string(),
-    )
-    .with_argument("g1", "Geometry or Geography: The first point or geometry")
-    .with_argument("g2", "Geometry or Geography: The second point or geometry")
-    .with_sql_example("SELECT ST_MakeLine(ST_Point(0, 1), ST_Point(2, 3)) as geom")
-    .build()
 }
 
 #[derive(Debug)]
@@ -224,7 +210,7 @@ mod tests {
     fn udf_metadata() {
         let geom_from_point: ScalarUDF = st_makeline_udf().into();
         assert_eq!(geom_from_point.name(), "st_makeline");
-        assert!(geom_from_point.documentation().is_some());
+        assert!(geom_from_point.documentation().is_none());
     }
 
     #[rstest]

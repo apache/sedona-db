@@ -20,9 +20,7 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, GeometryType, MultiLineStringTrait, MultiPointTrait,
     MultiPolygonTrait,
@@ -46,19 +44,8 @@ pub fn st_dump_udf() -> SedonaScalarUDF {
         "st_dump",
         vec![Arc::new(STDump)],
         Volatility::Immutable,
-        Some(st_dump_doc()),
+        None,
     )
-}
-
-fn st_dump_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Extracts the components of a geometry.",
-        "ST_Dump (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Dump(ST_GeomFromWKT('MULTIPOINT (0 1, 2 3, 4 5)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -272,7 +259,7 @@ mod tests {
     fn udf_metadata() {
         let st_dump_udf: ScalarUDF = st_dump_udf().into();
         assert_eq!(st_dump_udf.name(), "st_dump");
-        assert!(st_dump_udf.documentation().is_some());
+        assert!(st_dump_udf.documentation().is_none());
     }
 
     #[rstest]

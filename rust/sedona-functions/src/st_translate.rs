@@ -17,9 +17,7 @@
 use arrow_array::{builder::BinaryBuilder, types::Float64Type, Array, PrimitiveArray};
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 
 use sedona_common::sedona_internal_err;
@@ -49,21 +47,8 @@ pub fn st_translate_udf() -> SedonaScalarUDF {
             Arc::new(STTranslate { is_3d: false }),
         ]),
         Volatility::Immutable,
-        Some(st_translate_doc()),
+        None,
     )
-}
-
-fn st_translate_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Update coordinates of geom by a fixed offset",
-        "ST_Translate (geom: Geometry, deltax: numeric, deltay: numeric)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("deltax", "numeric: X value difference")
-    .with_argument("deltay", "numeric: Y value difference")
-    .with_sql_example("SELECT ST_Translate(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'), 2.0, 3.0)")
-    .build()
 }
 
 #[derive(Debug)]
@@ -261,7 +246,7 @@ mod tests {
     fn udf_metadata() {
         let st_translate_udf: ScalarUDF = st_translate_udf().into();
         assert_eq!(st_translate_udf.name(), "st_translate");
-        assert!(st_translate_udf.documentation().is_some());
+        assert!(st_translate_udf.documentation().is_none());
     }
 
     #[rstest]

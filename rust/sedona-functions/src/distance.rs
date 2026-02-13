@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_schema::DataType;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -60,20 +60,8 @@ pub fn distance_stub_udf(name: &str, label: &str) -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        Some(distance_doc(name, label)),
+        None,
     )
-}
-
-fn distance_doc(name: &str, label: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!("{label} between geomA and geomB"),
-        format!("{name} (A: Geometry, B: Geometry)")
-    )
-    .with_argument("geomA", "geometry: Input geometry or geography")
-    .with_argument("geomB", "geometry: Input geometry or geography")
-    .with_sql_example(format!("SELECT {name}(ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val"))
-    .build()
 }
 
 #[cfg(test)]
@@ -86,6 +74,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_distance_udf().into();
         assert_eq!(udf.name(), "st_distance");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 }

@@ -23,9 +23,7 @@ use datafusion_common::{
     error::Result,
     exec_datafusion_err, exec_err, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{ewkb_factory::write_ewkb_geometry, wkb_factory::WKB_MIN_PROBABLE_BYTES};
@@ -41,23 +39,8 @@ pub fn st_asewkb_udf() -> SedonaScalarUDF {
         "st_asewkb",
         vec![Arc::new(STAsEWKBItemCrs {}), Arc::new(STAsEWKB {})],
         Volatility::Immutable,
-        Some(st_asewkb_doc()),
+        None,
     )
-}
-
-fn st_asewkb_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        r#"Return the Extended Well-Known Binary (EWKB) representation of a geometry or geography.
-
-Compared to ST_AsBinary(), this function embeds an integer SRID derived from the type or derived
-from the item-level CRS for item CRS types. This is particularly useful for integration with
-PostGIS"#,
-        "ST_AsEWKB (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_AsEWKB(ST_Point(1.0, 2.0, 4326))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -222,7 +205,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_asewkb_udf().into();
         assert_eq!(udf.name(), "st_asewkb");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

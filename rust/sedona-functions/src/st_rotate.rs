@@ -17,9 +17,7 @@
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -46,7 +44,7 @@ pub fn st_rotate_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Z,
         })]),
         Volatility::Immutable,
-        Some(st_rotate_doc("")),
+        None,
     )
 }
 
@@ -60,7 +58,7 @@ pub fn st_rotate_x_udf() -> SedonaScalarUDF {
             axis: RotateAxis::X,
         })]),
         Volatility::Immutable,
-        Some(st_rotate_doc("X")),
+        None,
     )
 }
 
@@ -74,26 +72,8 @@ pub fn st_rotate_y_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Y,
         })]),
         Volatility::Immutable,
-        Some(st_rotate_doc("Y")),
+        None,
     )
-}
-
-fn st_rotate_doc(axis: &str) -> Documentation {
-    let suffix = match axis {
-        "Z" => "",
-        _ => axis,
-    };
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!("Rotates a geometry by a specified angle in radians counter-clockwise around the {axis}-axis "),
-        format!("ST_Rotate{suffix} (geom: Geometry, rot: Double)"),
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("rot", "angle (in radians)")
-    .with_sql_example(
-        format!("SELECT ST_Rotate{suffix}(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), radians(45))"),
-    )
-    .build()
 }
 
 #[derive(Debug)]
@@ -164,15 +144,15 @@ mod tests {
     fn udf_metadata() {
         let st_rotate_udf: ScalarUDF = st_rotate_udf().into();
         assert_eq!(st_rotate_udf.name(), "st_rotate");
-        assert!(st_rotate_udf.documentation().is_some());
+        assert!(st_rotate_udf.documentation().is_none());
 
         let st_rotate_x_udf: ScalarUDF = st_rotate_x_udf().into();
         assert_eq!(st_rotate_x_udf.name(), "st_rotatex");
-        assert!(st_rotate_x_udf.documentation().is_some());
+        assert!(st_rotate_x_udf.documentation().is_none());
 
         let st_rotate_y_udf: ScalarUDF = st_rotate_y_udf().into();
         assert_eq!(st_rotate_y_udf.name(), "st_rotatey");
-        assert!(st_rotate_y_udf.documentation().is_some());
+        assert!(st_rotate_y_udf.documentation().is_none());
     }
 
     #[rstest]

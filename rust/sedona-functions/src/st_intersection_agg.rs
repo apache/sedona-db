@@ -16,7 +16,7 @@
 // under the License.
 use std::vec;
 
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_schema::{
     datatypes::{Edges, SedonaType},
@@ -34,23 +34,8 @@ pub fn st_intersection_agg_udf() -> SedonaAggregateUDF {
             SedonaType::Wkb(Edges::Planar, None),
         ),
         Volatility::Immutable,
-        Some(st_intersection_agg_doc()),
+        None,
     )
-}
-
-fn st_intersection_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the polygon intersection of all polygons in geom.",
-        "ST_Intersection_Agg (A: Geometry, B: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example(
-        "
-            SELECT ST_Intersection_Agg(ST_GeomFromText('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
-                   ST_GeomFromText('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))')",
-    )
-    .build()
 }
 
 #[cfg(test)]
@@ -63,6 +48,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_intersection_agg_udf().into();
         assert_eq!(udf.name(), "st_intersection_agg");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 }

@@ -19,9 +19,7 @@ use std::{sync::Arc, vec};
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -47,19 +45,8 @@ pub fn st_flipcoordinates_udf() -> SedonaScalarUDF {
         "st_flipcoordinates",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STFlipCoordinates {})]),
         Volatility::Immutable,
-        Some(st_flipcoordinates_doc()),
+        None,
     )
-}
-
-fn st_flipcoordinates_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns a version of the given geometry with X and Y axis flipped.",
-        "ST_FlipCoordinates(A:geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_FlipCoordinates(df.geometry)")
-    .build()
 }
 
 #[derive(Debug)]
@@ -145,7 +132,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_flipcoordinates_udf().into();
         assert_eq!(udf.name(), "st_flipcoordinates");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[test]

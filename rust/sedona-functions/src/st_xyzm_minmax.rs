@@ -20,9 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::GeometryTrait;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::{
@@ -43,7 +41,7 @@ pub fn st_xmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("x", false)),
+        None,
     )
 }
 
@@ -55,7 +53,7 @@ pub fn st_xmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("x", true)),
+        None,
     )
 }
 
@@ -67,7 +65,7 @@ pub fn st_ymin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("y", false)),
+        None,
     )
 }
 
@@ -79,7 +77,7 @@ pub fn st_ymax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("y", true)),
+        None,
     )
 }
 
@@ -91,7 +89,7 @@ pub fn st_zmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("z", false)),
+        None,
     )
 }
 
@@ -103,7 +101,7 @@ pub fn st_zmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("z", true)),
+        None,
     )
 }
 
@@ -115,7 +113,7 @@ pub fn st_mmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("m", false)),
+        None,
     )
 }
 
@@ -127,27 +125,8 @@ pub fn st_mmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        Some(st_xyzm_minmax_doc("m", true)),
+        None,
     )
-}
-
-fn st_xyzm_minmax_doc(dim: &str, is_max: bool) -> Documentation {
-    let min_or_max = if is_max { "Max" } else { "Min" };
-    let func_name = format!("ST_{}{}", dim.to_uppercase(), min_or_max);
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Return the {} of the {} dimension of the geometry",
-            min_or_max.to_lowercase(),
-            dim.to_uppercase()
-        ),
-        format!("{func_name} (A: Geometry)"),
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example(format!(
-        "SELECT {func_name}(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))",
-    ))
-    .build()
 }
 
 #[derive(Debug)]
@@ -240,35 +219,35 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_xmin_udf().into();
         assert_eq!(udf.name(), "st_xmin");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_xmax_udf().into();
         assert_eq!(udf.name(), "st_xmax");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_ymin_udf().into();
         assert_eq!(udf.name(), "st_ymin");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_ymax_udf().into();
         assert_eq!(udf.name(), "st_ymax");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_zmin_udf().into();
         assert_eq!(udf.name(), "st_zmin");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_zmax_udf().into();
         assert_eq!(udf.name(), "st_zmax");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_mmin_udf().into();
         assert_eq!(udf.name(), "st_mmin");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_mmax_udf().into();
         assert_eq!(udf.name(), "st_mmax");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

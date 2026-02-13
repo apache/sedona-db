@@ -20,9 +20,7 @@ use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -35,19 +33,8 @@ pub fn st_geometry_type_udf() -> SedonaScalarUDF {
         "st_geometrytype",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryType {})]),
         Volatility::Immutable,
-        Some(st_geometry_type_doc()),
+        None,
     )
-}
-
-fn st_geometry_type_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the type of a geometry",
-        "ST_GeometryType (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -136,7 +123,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_geometry_type_udf().into();
         assert_eq!(udf.name(), "st_geometrytype");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

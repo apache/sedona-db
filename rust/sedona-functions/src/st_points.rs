@@ -17,9 +17,7 @@
 use arrow_array::builder::{BinaryBuilder, UInt64Builder};
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -52,19 +50,8 @@ pub fn st_points_udf() -> SedonaScalarUDF {
         "st_points",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STPoints)]),
         Volatility::Immutable,
-        Some(st_points_doc()),
+        None,
     )
-}
-
-fn st_points_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns all the points of a geometry as MULTIPOINT.",
-        "ST_Points (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Points(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -121,19 +108,8 @@ pub fn st_npoints_udf() -> SedonaScalarUDF {
         "st_npoints",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
-        Some(st_npoints_doc()),
+        None,
     )
-}
-
-fn st_npoints_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the count of the points of a geometry.",
-        "ST_Points (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_NPoints(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -308,11 +284,11 @@ mod tests {
     fn udf_metadata() {
         let st_points_udf: ScalarUDF = st_points_udf().into();
         assert_eq!(st_points_udf.name(), "st_points");
-        assert!(st_points_udf.documentation().is_some());
+        assert!(st_points_udf.documentation().is_none());
 
         let st_npoints_udf: ScalarUDF = st_npoints_udf().into();
         assert_eq!(st_npoints_udf.name(), "st_npoints");
-        assert!(st_npoints_udf.documentation().is_some());
+        assert!(st_npoints_udf.documentation().is_none());
     }
 
     #[rstest]

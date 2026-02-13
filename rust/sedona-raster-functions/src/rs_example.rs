@@ -18,9 +18,7 @@ use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::BandMetadata;
@@ -41,18 +39,8 @@ pub fn rs_example_udf() -> SedonaScalarUDF {
         "rs_example",
         vec![Arc::new(RsExample {})],
         Volatility::Immutable,
-        Some(rs_example_doc()),
+        None,
     )
-}
-
-fn rs_example_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return an example raster".to_string(),
-        "RS_Example()".to_string(),
-    )
-    .with_sql_example("SELECT RS_Example()".to_string())
-    .build()
 }
 
 #[derive(Debug)]
@@ -120,7 +108,7 @@ mod tests {
     fn udf_size() {
         let udf: ScalarUDF = rs_example_udf().into();
         assert_eq!(udf.name(), "rs_example");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[test]

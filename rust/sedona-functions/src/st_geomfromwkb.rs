@@ -18,9 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY},
@@ -42,7 +40,7 @@ pub fn st_geomfromwkb_udf() -> SedonaScalarUDF {
         "st_geomfromwkb",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-        Some(doc("ST_GeomFromWKB", "Geometry")),
+        None,
     )
 }
 
@@ -57,7 +55,7 @@ pub fn st_geomfromwkbunchecked_udf() -> SedonaScalarUDF {
             out_type: WKB_VIEW_GEOMETRY,
         })],
         Volatility::Immutable,
-        Some(doc_unchecked("ST_GeomFromWKBUnchecked", "Geometry")),
+        None,
     )
 }
 
@@ -72,51 +70,13 @@ pub fn st_geogfromwkb_udf() -> SedonaScalarUDF {
             out_type: WKB_VIEW_GEOGRAPHY,
         })],
         Volatility::Immutable,
-        Some(doc("ST_GeogFromWKB", "Geography")),
+        None,
     )
 }
 
-fn doc(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!("Construct a {out_type_name} from WKB"),
-        format!("{name} (Wkb: Binary)"),
-    )
-    .with_argument(
-        "WKB",
-        format!(
-            "binary: Well-known binary representation of the {}",
-            out_type_name.to_lowercase()
-        ),
-    )
-    .with_sql_example(format!("SELECT {name}([01 02 00 00 00 02 00 00 00 00 00 00 00 84 D6 00 C0 00 00 00 00 80 B5 D6 BF 00 00 00 60 E1 EF F7 BF 00 00 00 80 07 5D E5 BF])"))
-    .with_related_udf("ST_AsText")
-    .build()
-}
-
-/// Documentation for `ST_GeomFromWKBUnchecked()`.
+/// for `ST_GeomFromWKBUnchecked()`.
 ///
 /// Parameterized for reuse if `ST_GeogFromWKBUnchecked()` is implemented in the future.
-fn doc_unchecked(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a {out_type_name} from WKB without validation. Invalid WKB input may result in undefined behavior."
-        ),
-        format!("{name} (Wkb: Binary)"),
-    )
-    .with_argument(
-        "WKB",
-        format!(
-            "binary: Well-known binary representation of the {}",
-            out_type_name.to_lowercase()
-        ),
-    )
-    .with_sql_example(format!("SELECT {name}([01 02 00 00 00 02 00 00 00 00 00 00 00 84 D6 00 C0 00 00 00 00 80 B5 D6 BF 00 00 00 60 E1 EF F7 BF 00 00 00 80 07 5D E5 BF])"))
-    .with_related_udf("ST_AsText")
-    .build()
-}
-
 #[derive(Debug)]
 struct STGeomFromWKB {
     validate: bool,
@@ -181,15 +141,15 @@ mod tests {
     fn udf_metadata() {
         let geog_from_wkb: ScalarUDF = st_geogfromwkb_udf().into();
         assert_eq!(geog_from_wkb.name(), "st_geogfromwkb");
-        assert!(geog_from_wkb.documentation().is_some());
+        assert!(geog_from_wkb.documentation().is_none());
 
         let geom_from_wkb: ScalarUDF = st_geomfromwkb_udf().into();
         assert_eq!(geom_from_wkb.name(), "st_geomfromwkb");
-        assert!(geom_from_wkb.documentation().is_some());
+        assert!(geom_from_wkb.documentation().is_none());
 
         let geom_from_wkb_unchecked: ScalarUDF = st_geomfromwkbunchecked_udf().into();
         assert_eq!(geom_from_wkb_unchecked.name(), "st_geomfromwkbunchecked");
-        assert!(geom_from_wkb_unchecked.documentation().is_some());
+        assert!(geom_from_wkb_unchecked.documentation().is_none());
     }
 
     #[rstest]

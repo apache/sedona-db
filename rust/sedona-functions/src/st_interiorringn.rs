@@ -20,7 +20,6 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::cast::as_int64_array;
 use datafusion_common::{DataFusionError, Result};
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation};
 use geo_traits::{GeometryTrait, LineStringTrait, PolygonTrait};
 use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -41,20 +40,8 @@ pub fn st_interiorringn_udf() -> SedonaScalarUDF {
         "st_interiorringn",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STInteriorRingN)]),
         datafusion_expr::Volatility::Immutable,
-        Some(st_interiorringn_doc()),
+        None,
     )
-}
-
-fn st_interiorringn_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the Nth interior ring (hole) of a POLYGON geometry as a LINESTRING. \
-        The index starts at 1. Returns NULL if the geometry is not a polygon or the index is out of range.",
-        "ST_GeometryN (geom: Geometry, n: integer)")
-    .with_argument("geom", "geometry: Input Polygon")
-    .with_argument("n", "n: Index")
-    .with_sql_example("SELECT ST_InteriorRingN('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))', 1)")
-    .build()
 }
 
 #[derive(Debug)]

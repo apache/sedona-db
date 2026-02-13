@@ -26,9 +26,7 @@ use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::scalar::ScalarValue;
 use datafusion_common::DataFusionError;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -57,7 +55,7 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyz,
         })],
         Volatility::Immutable,
-        Some(three_coord_point_doc("ST_PointZ", "Geometry", "Z")),
+        None,
     )
 }
 
@@ -72,7 +70,7 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xym,
         })],
         Volatility::Immutable,
-        Some(three_coord_point_doc("ST_PointM", "Geometry", "M")),
+        None,
     )
 }
 
@@ -87,45 +85,8 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyzm,
         })],
         Volatility::Immutable,
-        Some(xyzm_point_doc("ST_PointZM", "Geometry")),
+        None,
     )
-}
-
-fn three_coord_point_doc(name: &str, out_type_name: &str, third_dim: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a Point {} from X, Y and {}",
-            out_type_name.to_lowercase(),
-            third_dim
-        ),
-        format!("{name} (x: Double, y: Double, z: Double)"),
-    )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
-    .with_argument(
-        third_dim.to_lowercase(),
-        format!("double: {third_dim} value"),
-    )
-    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0)"))
-    .build()
-}
-
-fn xyzm_point_doc(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a Point {} from X, Y, Z and M",
-            out_type_name.to_lowercase()
-        ),
-        format!("{name} (x: Double, y: Double, z: Double)"),
-    )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
-    .with_argument("z", "double: Z value")
-    .with_argument("m", "double: M value")
-    .with_sql_example(format!("{name}(-64.36, 45.09, 100.0, 50.0)"))
-    .build()
 }
 
 #[derive(Debug)]
@@ -265,15 +226,15 @@ mod tests {
     fn udf_metadata() {
         let pointz: ScalarUDF = st_pointz_udf().into();
         assert_eq!(pointz.name(), "st_pointz");
-        assert!(pointz.documentation().is_some());
+        assert!(pointz.documentation().is_none());
 
         let pointm: ScalarUDF = st_pointm_udf().into();
         assert_eq!(pointm.name(), "st_pointm");
-        assert!(pointm.documentation().is_some());
+        assert!(pointm.documentation().is_none());
 
         let pointzm: ScalarUDF = st_pointzm_udf().into();
         assert_eq!(pointzm.name(), "st_pointzm");
-        assert!(pointzm.documentation().is_some());
+        assert!(pointzm.documentation().is_none());
     }
 
     #[rstest]

@@ -18,9 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -35,20 +33,9 @@ pub fn st_asbinary_udf() -> SedonaScalarUDF {
         "st_asbinary",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAsBinary {})]),
         Volatility::Immutable,
-        Some(st_asbinary_doc()),
+        None,
     );
     udf.with_aliases(vec!["st_aswkb".to_string()])
-}
-
-fn st_asbinary_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the Well-Known Binary representation of a geometry or geography",
-        "ST_AsBinary (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_AsBinary(ST_Point(1.0, 2.0))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -100,7 +87,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_asbinary_udf().into();
         assert_eq!(udf.name(), "st_asbinary");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

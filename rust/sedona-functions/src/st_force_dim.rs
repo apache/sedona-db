@@ -20,9 +20,7 @@ use std::sync::Arc;
 use arrow_array::{builder::BinaryBuilder, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -53,19 +51,8 @@ pub fn st_force2d_udf() -> SedonaScalarUDF {
             Arc::new(STForce2D { is_geography: true }),
         ]),
         Volatility::Immutable,
-        Some(st_force2d_doc()),
+        None,
     )
-}
-
-fn st_force2d_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Forces the geometry into a 2-dimensional model",
-        "ST_Force2D (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Force2D(ST_GeomFromWKT('POINT Z (1 2 3)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -144,20 +131,8 @@ pub fn st_force3d_udf() -> SedonaScalarUDF {
             Arc::new(STForce3D { is_geography: true }),
         ]),
         Volatility::Immutable,
-        Some(st_force3d_doc()),
+        None,
     )
-}
-
-fn st_force3d_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Forces the geometry into a 3-dimensional model.",
-        "ST_Force3D (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("z", "numeric: default Z value")
-    .with_sql_example("SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -278,11 +253,11 @@ mod tests {
     fn udf_metadata() {
         let st_force2d: ScalarUDF = st_force2d_udf().into();
         assert_eq!(st_force2d.name(), "st_force2d");
-        assert!(st_force2d.documentation().is_some());
+        assert!(st_force2d.documentation().is_none());
 
         let st_force3d: ScalarUDF = st_force3d_udf().into();
         assert_eq!(st_force3d.name(), "st_force3d");
-        assert!(st_force3d.documentation().is_some());
+        assert!(st_force3d.documentation().is_none());
     }
 
     #[rstest]

@@ -20,9 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -37,21 +35,9 @@ pub fn st_astext_udf() -> SedonaScalarUDF {
         "st_astext",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAsText {})]),
         Volatility::Immutable,
-        Some(st_astext_doc()),
+        None,
     );
     udf.with_aliases(vec!["st_aswkt".to_string()])
-}
-
-fn st_astext_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the Well-Known Text string representation of a geometry or geography",
-        "ST_AsText (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_AsText(ST_Point(1.0, 2.0))")
-    .with_related_udf("ST_GeomFromWKT")
-    .build()
 }
 
 #[derive(Debug)]
@@ -122,7 +108,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_astext_udf().into();
         assert_eq!(udf.name(), "st_astext");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 
     #[rstest]

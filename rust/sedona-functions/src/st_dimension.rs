@@ -20,9 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::Int8Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{GeometryCollectionTrait, GeometryTrait, GeometryType};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -37,19 +35,8 @@ pub fn st_dimension_udf() -> SedonaScalarUDF {
         "st_dimension",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STDimension {})]),
         Volatility::Immutable,
-        Some(st_dimension_doc()),
+        None,
     )
-}
-
-fn st_dimension_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the dimension of the geometry",
-        "ST_Dimension (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Dimension(ST_GeomFromWKT('POLYGON EMPTY'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -121,7 +108,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_dimension_udf().into();
         assert_eq!(udf.name(), "st_dimension");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

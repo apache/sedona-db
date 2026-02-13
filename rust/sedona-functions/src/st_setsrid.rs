@@ -31,9 +31,7 @@ use datafusion_common::{
     error::Result,
     DataFusionError, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::{
@@ -57,7 +55,7 @@ pub fn st_set_srid_with_engine_udf(
         "st_setsrid",
         vec![Arc::new(STSetSRID { engine })],
         Volatility::Immutable,
-        Some(set_srid_doc()),
+        None,
     )
 }
 
@@ -73,7 +71,7 @@ pub fn st_set_crs_with_engine_udf(
         "st_setcrs",
         vec![Arc::new(STSetCRS { engine })],
         Volatility::Immutable,
-        Some(set_crs_doc()),
+        None,
     )
 }
 
@@ -89,35 +87,6 @@ pub fn st_set_srid_udf() -> SedonaScalarUDF {
 /// See [st_set_crs_with_engine_udf] for a validating version of this function
 pub fn st_set_crs_udf() -> SedonaScalarUDF {
     st_set_crs_with_engine_udf(None)
-}
-
-fn set_srid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Sets the spatial reference system identifier (SRID) of the geometry.",
-        "ST_SetSRID (geom: Geometry, srid: Integer)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
-    .with_sql_example("SELECT ST_GeomFromWKT('POINT (-64.363049 45.091501)', 4326)".to_string())
-    .build()
-}
-
-fn set_crs_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Set CRS information for a geometry or geography",
-        "ST_SetCrs (geom: Geometry, crs: String)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_argument(
-        "crs",
-        "string: Coordinate reference system identifier (e.g., 'OGC:CRS84')",
-    )
-    .with_sql_example(
-        "SELECT ST_SetCrs(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 'OGC:CRS84')".to_string(),
-    )
-    .build()
 }
 
 #[derive(Debug)]
@@ -590,11 +559,11 @@ mod test {
     fn udf_metadata() {
         let udf: ScalarUDF = st_set_srid_udf().into();
         assert_eq!(udf.name(), "st_setsrid");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
 
         let udf: ScalarUDF = st_set_crs_udf().into();
         assert_eq!(udf.name(), "st_setcrs");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[test]

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_schema::DataType;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -30,19 +30,8 @@ pub fn st_area_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        Some(st_area_doc()),
+        None,
     )
-}
-
-fn st_area_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the area of a geometry",
-        "ST_Area (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))")
-    .build()
 }
 
 #[cfg(test)]
@@ -55,6 +44,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_area_udf().into();
         assert_eq!(udf.name(), "st_area");
-        assert!(udf.documentation().is_some())
+        assert!(udf.documentation().is_none())
     }
 }

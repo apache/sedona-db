@@ -20,9 +20,7 @@ use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::Int8Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -37,19 +35,8 @@ pub fn st_zmflag_udf() -> SedonaScalarUDF {
         "st_zmflag",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STZmFlag {})]),
         Volatility::Immutable,
-        Some(st_zmflag_doc()),
+        None,
     )
-}
-
-fn st_zmflag_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns a code indicating the ZM coordinate dimension of a geometry. Values are 0 for 2D, 1 for 3D-M, 2 for 3D-Z, and 3 for 4D.".to_string(),
-        "ST_ZmFlag (A: Geometry)".to_string(),
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_ZmFlag(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -130,7 +117,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_zmflag_udf().into();
         assert_eq!(udf.name(), "st_zmflag");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

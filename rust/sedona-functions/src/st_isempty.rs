@@ -20,9 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -36,19 +34,8 @@ pub fn st_isempty_udf() -> SedonaScalarUDF {
         "st_isempty",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsEmpty {})]),
         Volatility::Immutable,
-        Some(st_is_empty_doc()),
+        None,
     )
-}
-
-fn st_is_empty_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return true if the geometry is empty",
-        "ST_IsEmpty (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -116,7 +103,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_isempty_udf().into();
         assert_eq!(udf.name(), "st_isempty");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

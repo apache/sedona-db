@@ -17,9 +17,7 @@
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, ScalarValue};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -46,20 +44,8 @@ pub fn st_pointn_udf() -> SedonaScalarUDF {
         "st_pointn",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STPointN)]),
         Volatility::Immutable,
-        Some(st_pointn_doc()),
+        None,
     )
-}
-
-fn st_pointn_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the nth point of a geometry. Returns NULL if the geometry is empty or not a LINESTRING. Negative values are counted backwards from the end.",
-        "ST_PointN (geom: Geometry, n: integer)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("n", "n: Index")
-    .with_sql_example("SELECT ST_PointN(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'), 2)")
-    .build()
 }
 
 #[derive(Debug)]
@@ -155,7 +141,7 @@ mod tests {
     fn udf_metadata() {
         let st_pointn_udf: ScalarUDF = st_pointn_udf().into();
         assert_eq!(st_pointn_udf.name(), "st_pointn");
-        assert!(st_pointn_udf.documentation().is_some());
+        assert!(st_pointn_udf.documentation().is_none());
     }
 
     #[rstest]

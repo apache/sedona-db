@@ -16,7 +16,7 @@
 // under the License.
 use std::vec;
 
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
@@ -28,26 +28,8 @@ pub fn st_polygonize_agg_udf() -> SedonaAggregateUDF {
         "st_polygonize_agg",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        Some(st_polygonize_agg_doc()),
+        None,
     )
-}
-
-fn st_polygonize_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Creates a GeometryCollection containing polygons formed from the linework of a set of geometries. \
-         Returns an empty GeometryCollection if no polygons can be formed.",
-        "ST_Polygonize_Agg (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry (typically linestrings that form closed rings)")
-    .with_sql_example(
-        "SELECT ST_AsText(ST_Polygonize_Agg(geom)) FROM (VALUES \
-         (ST_GeomFromText('LINESTRING (0 0, 10 0)')), \
-         (ST_GeomFromText('LINESTRING (10 0, 10 10)')), \
-         (ST_GeomFromText('LINESTRING (10 10, 0 0)'))  \
-         ) AS t(geom)"
-    )
-    .build()
 }
 
 #[cfg(test)]
@@ -60,6 +42,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_polygonize_agg_udf().into();
         assert_eq!(udf.name(), "st_polygonize_agg");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 }

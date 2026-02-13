@@ -20,10 +20,7 @@ use std::sync::Arc;
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{cast::as_int64_array, Result};
-use datafusion_expr::scalar_doc_sections::DOC_SECTION_OTHER;
-use datafusion_expr::ColumnarValue;
-use datafusion_expr::Documentation;
-use datafusion_expr::Volatility;
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, MultiLineStringTrait, MultiPointTrait,
     MultiPolygonTrait,
@@ -45,20 +42,8 @@ pub fn st_geometryn_udf() -> SedonaScalarUDF {
         "st_geometryn",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryN)]),
         Volatility::Immutable,
-        Some(st_geometryn_doc()),
+        None,
     )
-}
-
-fn st_geometryn_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the 1-based Nth element geometry of an input geometry which is a GEOMETRYCOLLECTION, MULTIPOINT, MULTILINESTRING, MULTICURVE, MULTI)POLYGON, or POLYHEDRALSURFACE. Otherwise, returns NULL.",
-        "ST_GeometryN (geom: Geometry, n: integer)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("n", "n: Index")
-    .with_sql_example("SELECT ST_GeometryN('GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))', 1)")
-    .build()
 }
 
 #[derive(Debug)]

@@ -19,9 +19,7 @@ use std::{sync::Arc, vec};
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -52,19 +50,8 @@ pub fn st_envelope_udf() -> SedonaScalarUDF {
         "st_envelope",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope {})]),
         Volatility::Immutable,
-        Some(st_envelope_doc()),
+        None,
     )
-}
-
-fn st_envelope_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the envelope of a geometry",
-        "ST_Envelope(A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Envelope(ST_Point(1.0, 2.0))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -193,7 +180,7 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_envelope_udf().into();
         assert_eq!(udf.name(), "st_envelope");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 
     #[rstest]

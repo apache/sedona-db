@@ -16,7 +16,7 @@
 // under the License.
 use std::vec;
 
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::aggregate_udf::SedonaAggregateUDF;
 use sedona_schema::{
     datatypes::{Edges, SedonaType},
@@ -34,19 +34,8 @@ pub fn st_union_agg_udf() -> SedonaAggregateUDF {
             SedonaType::Wkb(Edges::Planar, None),
         ),
         Volatility::Immutable,
-        Some(st_union_agg_doc()),
+        None,
     )
-}
-
-fn st_union_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the geometric union of all geometries in the input column.",
-        "ST_Union_Agg (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_Union_Agg(ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'))")
-    .build()
 }
 
 #[cfg(test)]
@@ -59,6 +48,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_union_agg_udf().into();
         assert_eq!(udf.name(), "st_union_agg");
-        assert!(udf.documentation().is_some());
+        assert!(udf.documentation().is_none());
     }
 }

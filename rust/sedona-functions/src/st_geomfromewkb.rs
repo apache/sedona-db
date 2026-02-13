@@ -19,9 +19,7 @@ use std::{sync::Arc, vec};
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, exec_datafusion_err, ScalarValue};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::make_item_crs,
@@ -44,22 +42,8 @@ pub fn st_geomfromewkb_udf() -> SedonaScalarUDF {
         "st_geomfromewkb",
         vec![Arc::new(STGeomFromEWKB {})],
         Volatility::Immutable,
-        Some(doc()),
+        None,
     )
-}
-
-fn doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Construct a geometry from EWKB".to_string(),
-        "ST_GeomFromEWKB (Wkb: Binary)".to_string(),
-    )
-    .with_argument(
-        "EWKB",
-        "binary: Extended well-known binary (EWKB) representation of the geometry".to_string(),
-    )
-    .with_sql_example("SELECT ST_GeomFromEWKB([01 02 00 00 00 02 00 00 00 00 00 00 00 84 D6 00 C0 00 00 00 00 80 B5 D6 BF 00 00 00 60 E1 EF F7 BF 00 00 00 80 07 5D E5 BF])")
-    .build()
 }
 
 #[derive(Debug)]
@@ -162,7 +146,7 @@ mod tests {
     fn udf_metadata() {
         let geog_from_wkb: ScalarUDF = st_geomfromewkb_udf().into();
         assert_eq!(geog_from_wkb.name(), "st_geomfromewkb");
-        assert!(geog_from_wkb.documentation().is_some());
+        assert!(geog_from_wkb.documentation().is_none());
     }
 
     #[rstest]
