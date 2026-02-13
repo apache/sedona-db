@@ -5462,6 +5462,7 @@ dependencies = [
  "las-crs",
  "laz",
  "object_store",
+ "sedona",
  "sedona-expr",
  "sedona-geometry",
  "tempfile",

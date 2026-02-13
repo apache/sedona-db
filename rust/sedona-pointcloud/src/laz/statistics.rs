@@ -34,12 +34,16 @@ use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::laz::{metadata::ChunkMeta, reader::record_decompressor};
 
+/// Spatial statistics (extent) of LAZ chunks for pruning.
+///
+/// It wraps a `RecordBatch` with x, y, z min and max values and row count per chunk.
 #[derive(Clone, Debug)]
 pub struct LazStatistics {
     pub values: RecordBatch,
 }
 
 impl LazStatistics {
+    /// Get the [BoundingBox] of a chunk by index.
     pub fn get_bbox(&self, index: usize) -> Option<BoundingBox> {
         if index >= self.values.num_rows() {
             None
@@ -190,6 +194,11 @@ impl LasStatisticsBuilder {
     }
 }
 
+/// Extract the [LazStatistics] from a LAZ file in an object store.
+///
+/// This will scan the entire file. To reuse the statistics, they can
+/// optionally be persisted, which creates a sidecar file with a `.stats`
+/// extension next to the original file like `path/to/file.laz.stats`.
 pub async fn chunk_statistics(
     store: &dyn ObjectStore,
     object_meta: &ObjectMeta,
@@ -310,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn chunk_statistics() {
-        let path = "tests/data/extra.laz";
+        let path = "tests/data/large.laz";
 
         // read with `LazMetadataReader`
         let store = LocalFileSystem::new();
@@ -328,14 +337,14 @@ mod tests {
         let metadata_reader = LazMetadataReader::new(&store, &object_meta).with_options(options);
         let metadata = metadata_reader.fetch_metadata().await.unwrap();
         let statistics = metadata.statistics.as_ref().unwrap();
-        assert_eq!(statistics.num_containers(), 1);
+        assert_eq!(statistics.num_containers(), 2);
         assert_eq!(
             statistics
                 .row_counts(&Column::from_name(""))
                 .unwrap()
                 .as_primitive::<UInt64Type>()
                 .value(0),
-            1
+            50000
         );
         assert_eq!(
             statistics.get_bbox(0),
@@ -343,6 +352,15 @@ mod tests {
                 (0.5, 0.5),
                 (0.5, 0.5),
                 Some((0.5, 0.5).into()),
+                None
+            ))
+        );
+        assert_eq!(
+            statistics.get_bbox(1),
+            Some(BoundingBox::xyzm(
+                (1.0, 1.0),
+                (1.0, 1.0),
+                Some((1.0, 1.0).into()),
                 None
             ))
         );

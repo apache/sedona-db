@@ -56,5 +56,6 @@ sedona-geometry = { workspace = true }
 
 [dev-dependencies]
 datafusion = { workspace = true, features = ["sql"] }
+sedona = { workspace = true, features = ["pointcloud"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }
