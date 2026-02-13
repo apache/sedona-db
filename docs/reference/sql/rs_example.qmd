@@ -22,10 +22,3 @@ kernels:
   - returns: raster
     args: []
 ---
-
-## Examples
-
-```sql
--- Not yet supported in table output
--- SELECT RS_Example();
-```
