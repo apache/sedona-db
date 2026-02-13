@@ -209,8 +209,8 @@ impl SedonaScalarKernel for STForce3D {
 
         let mut z_iter = z_array.iter();
         executor.execute_wkb_void(|maybe_wkb| {
-            match (maybe_wkb, z_array.next().unwrap()) {
-                (Some(wkb), z) => {
+            match (maybe_wkb, z_iter.next().unwrap()) {
+                (Some(wkb), Some(z)) => {
                     let trans = Force3DTransform { z };
                     transform(wkb, &trans, &mut builder)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
