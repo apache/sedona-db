@@ -99,7 +99,8 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         let mut format_options_mut = format_options.clone();
 
         // Remove GeoParquet-specific options that will cause an error if passed
-        // to inner.create(). These are prefixed with `format` when passed by
+        // to inner.create() and ensure they are reflected by the GeoParquet
+        // options. These are prefixed with `format` when passed by
         // DataFusion SQL. DataFusion takes care of lowercasing these values before
         // they are passed here.
         for key in [
