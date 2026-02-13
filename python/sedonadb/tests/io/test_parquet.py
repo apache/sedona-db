@@ -333,7 +333,9 @@ def test_write_geoparquet_options(geoarrow_data):
         assert metadata.row_group(0).num_rows == 1024
 
         # Set via keyword arg and ensure that value is respected
-        con.sql("SET datafusion.execution.parquet.max_row_group_size = 1000000").execute()
+        con.sql(
+            "SET datafusion.execution.parquet.max_row_group_size = 1000000"
+        ).execute()
         con.create_data_frame(gdf).to_parquet(
             tmp_parquet,
             max_row_group_size=1024,
