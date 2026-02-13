@@ -27,6 +27,7 @@ use datafusion::{
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, JoinType};
+use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
 use datafusion_physical_plan::ExecutionPlan;
 use geo::{Distance, Euclidean};
@@ -1365,6 +1366,110 @@ async fn test_knn_join_include_tie_breakers(
             "expected both tied nearest neighbors for l_id={l_id}"
         );
     }
+
+    Ok(())
+}
+
+/// Recursively check whether any node in the physical plan tree is a `FilterExec`.
+fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<FilterExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
+}
+
+/// Create a session context with two small tables for filter-pushdown tests.
+///
+/// L(id INT, x DOUBLE) and R(id INT, x DOUBLE) each with 10 rows.
+/// Geometry is constructed in SQL via ST_Point so no geometry column exists on the table itself.
+async fn plan_for_filter_pushdown_test(sql: &str) -> Result<Arc<dyn ExecutionPlan>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("x", DataType::Float64, false),
+    ]));
+
+    let ids: Vec<i32> = (0..10).collect();
+    let xs: Vec<f64> = (0..10).map(|i| i as f64).collect();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(arrow_array::Int32Array::from(ids)),
+            Arc::new(arrow_array::Float64Array::from(xs)),
+        ],
+    )?;
+
+    let options = SpatialJoinOptions::default();
+    let ctx = setup_context(Some(options), 100)?;
+    let mem_l: Arc<dyn TableProvider> = Arc::new(MemTable::try_new(
+        schema.clone(),
+        vec![vec![batch.clone()]],
+    )?);
+    let mem_r: Arc<dyn TableProvider> =
+        Arc::new(MemTable::try_new(schema.clone(), vec![vec![batch]])?);
+    ctx.register_table("L", mem_l)?;
+    ctx.register_table("R", mem_r)?;
+
+    let df = ctx.sql(sql).await?;
+    df.create_physical_plan().await
+}
+
+/// Verify that a filter on the *object* (build / right) side of a KNN join is NOT pushed down
+/// into the build side subtree.
+///
+/// If `PushDownFilter` incorrectly pushes `R.id > 5` below the spatial join, the set of objects
+/// considered for KNN changes, yielding wrong nearest-neighbor results.
+#[tokio::test]
+async fn test_knn_join_object_side_filter_not_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // The build (right / object) side must NOT have a FilterExec pushed into it.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that for a *non-KNN* spatial join, a filter on the build side IS pushed down
+/// (the normal, desirable behaviour).
+#[tokio::test]
+async fn test_non_knn_join_object_side_filter_is_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_Intersects(ST_Buffer(ST_Point(L.x, 0), 1.5), ST_Point(R.x, 1)) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // For non-KNN joins, the filter SHOULD be pushed down to the build side.
+    assert!(
+        subtree_contains_filter_exec(&sj.right),
+        "FilterExec should be pushed into the object (right/build) side of a non-KNN spatial join"
+    );
 
     Ok(())
 }
