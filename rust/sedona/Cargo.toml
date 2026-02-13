@@ -66,6 +66,7 @@ geo-traits = { workspace = true }
 geo-types = { workspace = true }
 object_store = { workspace = true }
 parking_lot = { workspace = true }
+regex = { workspace = true }
 sedona-common = { workspace = true }
 sedona-datasource = { workspace = true }
 sedona-expr = { workspace = true }

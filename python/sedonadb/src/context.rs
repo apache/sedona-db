@@ -14,18 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
-use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool};
-use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use datafusion::execution::{
-    disk_manager::{DiskManagerBuilder, DiskManagerMode},
-    memory_pool::TrackConsumersPool,
-};
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
-use sedona::memory_pool::{SedonaFairSpillPool, DEFAULT_UNSPILLABLE_RESERVE_RATIO};
+use sedona::context_builder::SedonaContextBuilder;
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -46,14 +40,8 @@ pub struct InternalContext {
 #[pymethods]
 impl InternalContext {
     #[new]
-    #[pyo3(signature = (memory_limit=None, temp_dir=None, memory_pool_type=None, unspillable_reserve_ratio=None))]
-    fn new(
-        py: Python,
-        memory_limit: Option<usize>,
-        temp_dir: Option<String>,
-        memory_pool_type: Option<String>,
-        unspillable_reserve_ratio: Option<f64>,
-    ) -> Result<Self, PySedonaError> {
+    #[pyo3(signature = (options=HashMap::new()))]
+    fn new(py: Python, options: HashMap<String, String>) -> Result<Self, PySedonaError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -61,49 +49,10 @@ impl InternalContext {
                 PySedonaError::SedonaPython(format!("Failed to build multithreaded runtime: {e}"))
             })?;
 
-        let mut rt_builder = RuntimeEnvBuilder::new();
-        if let Some(memory_limit) = memory_limit {
-            let pool_type = memory_pool_type.as_deref().unwrap_or("fair");
-            let pool: Arc<dyn MemoryPool> = match pool_type {
-                "fair" => {
-                    let unspillable_reserve =
-                        unspillable_reserve_ratio.unwrap_or(DEFAULT_UNSPILLABLE_RESERVE_RATIO);
-                    let pool = SedonaFairSpillPool::new(memory_limit, unspillable_reserve);
-                    Arc::new(TrackConsumersPool::new(
-                        pool,
-                        NonZeroUsize::new(10).unwrap(),
-                    ))
-                }
-                "greedy" => {
-                    let pool = GreedyMemoryPool::new(memory_limit);
-                    Arc::new(TrackConsumersPool::new(
-                        pool,
-                        NonZeroUsize::new(10).unwrap(),
-                    ))
-                }
-                _ => {
-                    return Err(PySedonaError::SedonaPython(format!(
-                        "Invalid memory pool type: {}",
-                        pool_type
-                    )))
-                }
-            };
-            rt_builder = rt_builder.with_memory_pool(pool);
-        }
-        if let Some(temp_dir) = temp_dir {
-            let dm_builder = DiskManagerBuilder::default()
-                .with_mode(DiskManagerMode::Directories(vec![PathBuf::from(temp_dir)]));
-            rt_builder = rt_builder.with_disk_manager_builder(dm_builder);
-        }
-        let runtime_env = rt_builder.build_arc().map_err(|e| {
-            PySedonaError::SedonaPython(format!("Failed to build runtime env: {e}"))
-        })?;
+        let builder = SedonaContextBuilder::from_options(&options)
+            .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
-        let inner = wait_for_future(
-            py,
-            &runtime,
-            SedonaContext::new_local_interactive_with_runtime_env(runtime_env),
-        )??;
+        let inner = wait_for_future(py, &runtime, builder.build())??;
 
         Ok(Self {
             inner,

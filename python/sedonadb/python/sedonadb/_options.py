@@ -14,15 +14,71 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import Optional
+from typing import Literal, Optional, Union
 
 
 class Options:
-    """Global SedonaDB options"""
+    """Global SedonaDB options
+
+    Options are divided into two categories:
+
+    **Display options** can be changed at any time and affect how results are
+    presented:
+
+    - `interactive`: Enable/disable auto-display of DataFrames.
+    - `width`: Override the detected terminal width.
+
+    **Runtime options** configure the execution environment and must be set
+    *before* the first query is executed (i.e., before the internal context
+    is initialized). Attempting to change these after the context has been
+    created will raise a `RuntimeError`:
+
+    - `memory_limit`: Maximum memory for execution, in bytes or as a
+      human-readable string (e.g., `"4gb"`, `"512m"`).
+    - `temp_dir`: Directory for temporary/spill files.
+    - `memory_pool_type`: Memory pool type (`"greedy"` or `"fair"`).
+    - `unspillable_reserve_ratio`: Fraction of memory reserved for
+      unspillable consumers (only applies to the `"fair"` pool type).
+
+    Examples:
+
+        >>> sd = sedona.db.connect()
+        >>> sd.options.memory_limit = "4gb"
+        >>> sd.options.memory_pool_type = "fair"
+        >>> sd.options.temp_dir = "/tmp/sedona-spill"
+        >>> sd.options.interactive = True
+        >>> sd.sql("SELECT 1 as one")
+        ┌───────┐
+        │  one  │
+        │ int64 │
+        ╞═══════╡
+        │     1 │
+        └───────┘
+    """
 
     def __init__(self):
+        # Display options (can be changed at any time)
         self._interactive = False
         self._width = None
+
+        # Runtime options (must be set before first query)
+        self._memory_limit = None
+        self._temp_dir = None
+        self._memory_pool_type = "greedy"
+        self._unspillable_reserve_ratio = None
+
+        # Set to True once the internal context is created; after this,
+        # runtime options become read-only.
+        self._runtime_frozen = False
+
+    def _check_runtime_mutable(self, name: str) -> None:
+        if self._runtime_frozen:
+            raise RuntimeError(
+                f"Cannot change '{name}' after the context has been initialized. "
+                f"Set this option before executing your first query."
+            )
+
+    # --- Display options ---
 
     @property
     def interactive(self) -> bool:
@@ -52,3 +108,93 @@ class Options:
     @width.setter
     def width(self, value: Optional[int]):
         self._width = value
+
+    # --- Runtime options (must be set before first query) ---
+
+    @property
+    def memory_limit(self) -> Union[int, str, None]:
+        """Maximum memory for query execution.
+
+        Accepts an integer (bytes) or a human-readable string such as
+        `"4gb"`, `"512m"`, or `"1.5g"`. When set, a bounded memory pool is
+        created to enforce this limit. Without a memory limit, DataFusion's
+        default unbounded pool is used.
+
+        Must be set before the first query is executed.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.options.memory_limit = "4gb"
+            >>> sd.options.memory_limit = 4 * 1024 * 1024 * 1024  # equivalent
+        """
+        return self._memory_limit
+
+    @memory_limit.setter
+    def memory_limit(self, value: Union[int, str, None]) -> None:
+        self._check_runtime_mutable("memory_limit")
+        if value is not None and not isinstance(value, (int, str)):
+            raise TypeError(
+                f"memory_limit must be an int, str, or None, got {type(value).__name__}"
+            )
+        self._memory_limit = value
+
+    @property
+    def temp_dir(self) -> Optional[str]:
+        """Directory for temporary/spill files.
+
+        When set, disk-based spilling will use this directory. When `None`,
+        DataFusion's default temporary directory is used.
+
+        Must be set before the first query is executed.
+        """
+        return self._temp_dir
+
+    @temp_dir.setter
+    def temp_dir(self, value: Optional[str]) -> None:
+        self._check_runtime_mutable("temp_dir")
+        self._temp_dir = value
+
+    @property
+    def memory_pool_type(self) -> str:
+        """Memory pool type: `"greedy"` or `"fair"`.
+
+        - `"greedy"`: A simple pool that grants reservations on a
+          first-come-first-served basis. This is the default.
+        - `"fair"`: A pool that fairly distributes memory among spillable
+          consumers and reserves a fraction for unspillable consumers
+          (configured via `unspillable_reserve_ratio`).
+
+        Only takes effect when `memory_limit` is set.
+        Must be set before the first query is executed.
+        """
+        return self._memory_pool_type
+
+    @memory_pool_type.setter
+    def memory_pool_type(self, value: Literal["greedy", "fair"]) -> None:
+        self._check_runtime_mutable("memory_pool_type")
+        if value not in ("greedy", "fair"):
+            raise ValueError(
+                f"memory_pool_type must be 'greedy' or 'fair', got '{value}'"
+            )
+        self._memory_pool_type = value
+
+    @property
+    def unspillable_reserve_ratio(self) -> Optional[float]:
+        """Fraction of memory reserved for unspillable consumers (0.0 - 1.0).
+
+        Only applies when `memory_pool_type` is `"fair"` and
+        `memory_limit` is set. Defaults to 0.2 when not explicitly set.
+
+        Must be set before the first query is executed.
+        """
+        return self._unspillable_reserve_ratio
+
+    @unspillable_reserve_ratio.setter
+    def unspillable_reserve_ratio(self, value: Optional[float]) -> None:
+        self._check_runtime_mutable("unspillable_reserve_ratio")
+        if value is not None and not (0.0 <= value <= 1.0):
+            raise ValueError(
+                f"unspillable_reserve_ratio must be between 0.0 and 1.0, got {value}"
+            )
+        self._unspillable_reserve_ratio = value

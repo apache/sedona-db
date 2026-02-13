@@ -36,6 +36,11 @@ class SedonaContext:
     registered tables, and available memory. This is similar to a
     Spark SessionContext or a database connection.
 
+    Runtime configuration (memory limits, spill directory, pool type) can
+    be set via `options` before executing the first query.  Once the
+    first query runs, the internal execution context is created and
+    runtime options become read-only.
+
     Examples:
 
         >>> sd = sedona.db.connect()
@@ -47,19 +52,45 @@ class SedonaContext:
         ╞═══════╡
         │     1 │
         └───────┘
+
+    Configuring memory limits:
+
+        >>> sd = sedona.db.connect()
+        >>> sd.options.memory_limit = "4gb"
+        >>> sd.options.memory_pool_type = "fair"
+        >>> sd.options.temp_dir = "/tmp/sedona-spill"
     """
 
-    def __init__(
-        self,
-        memory_limit: Optional[int] = None,
-        temp_dir: Optional[str] = None,
-        memory_pool_type: Literal["greedy", "fair"] = "fair",
-        unspillable_reserve_ratio: Optional[float] = None,
-    ):
-        self._impl = InternalContext(
-            memory_limit, temp_dir, memory_pool_type, unspillable_reserve_ratio
-        )
+    def __init__(self):
+        self.__impl = None
         self.options = Options()
+
+    @property
+    def _impl(self):
+        """Lazily initialize the internal Rust context on first use.
+
+        This allows runtime options (memory_limit, temp_dir, etc.) to be
+        configured via `self.options` before the context is created.
+        Once created, runtime options are frozen.
+        """
+        if self.__impl is None:
+            self.options._runtime_frozen = True
+
+            # Build a dict[str, str] of non-None runtime options
+            opts = {}
+            if self.options.memory_limit is not None:
+                opts["memory_limit"] = str(self.options.memory_limit)
+            if self.options.temp_dir is not None:
+                opts["temp_dir"] = self.options.temp_dir
+            if self.options.memory_pool_type is not None:
+                opts["memory_pool_type"] = self.options.memory_pool_type
+            if self.options.unspillable_reserve_ratio is not None:
+                opts["unspillable_reserve_ratio"] = str(
+                    self.options.unspillable_reserve_ratio
+                )
+
+            self.__impl = InternalContext(opts)
+        return self.__impl
 
     def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
         """Create a DataFrame from an in-memory or protocol-enabled object.
@@ -388,26 +419,19 @@ class SedonaContext:
         return Functions(self)
 
 
-def connect(
-    memory_limit: Optional[int] = None,
-    temp_dir: Optional[str] = None,
-    memory_pool_type: Literal["greedy", "fair"] = "fair",
-    unspillable_reserve_ratio: Optional[float] = None,
-) -> SedonaContext:
+def connect() -> SedonaContext:
     """Create a new [SedonaContext][sedonadb.context.SedonaContext]
 
-    Args:
-        memory_limit: The maximum amount of memory to use for execution, in bytes.
-        temp_dir: The directory to use for temporary files.
-        memory_pool_type: The type of memory pool to use. Can be "greedy" or "fair".
-        unspillable_reserve_ratio: The fraction of memory reserved for unspillable consumers (0.0 - 1.0).
+    Runtime configuration (memory limits, spill directory, pool type)
+    can be set via `options` on the returned context before executing
+    the first query::
+
+        sd = sedona.db.connect()
+        sd.options.memory_limit = "4gb"
+        sd.options.memory_pool_type = "fair"
+        sd.options.temp_dir = "/tmp/sedona-spill"
     """
-    return SedonaContext(
-        memory_limit=memory_limit,
-        temp_dir=temp_dir,
-        memory_pool_type=memory_pool_type,
-        unspillable_reserve_ratio=unspillable_reserve_ratio,
-    )
+    return SedonaContext()
 
 
 def configure_proj(
