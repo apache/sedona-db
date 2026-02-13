@@ -21,15 +21,15 @@ description: Returns the 2-dimensional point on geom1 that is closest to geom2.
 kernels:
   - returns: geometry
     args: [geometry, geometry]
+  - returns: geography
+    args: [geography, geography]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(
-    ST_ClosestPoint(
-        ST_GeomFromText('LINESTRING(0 0, 10 10)'),
-        ST_Point(5, 0)
-    )
+SELECT ST_ClosestPoint(
+    ST_GeogFromText('LINESTRING(0 0, 10 10)'),
+    ST_GeogPoint(5, 0)
 );
 ```

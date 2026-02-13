@@ -26,5 +26,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_SRID(raster) FROM rasters;
+SELECT RS_SRID(RS_Example());
 ```

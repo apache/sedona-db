@@ -26,5 +26,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_Envelope(raster) FROM rasters;
+SELECT RS_Envelope(RS_Example());
 ```

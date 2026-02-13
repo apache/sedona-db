@@ -31,5 +31,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_RasterToWorldCoordY(raster, 10, 20) FROM rasters;
+SELECT RS_RasterToWorldCoordY(RS_Example(), 10, 20);
 ```

@@ -26,5 +26,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_Width(raster) FROM rasters;
+SELECT RS_Width(RS_Example());
 ```

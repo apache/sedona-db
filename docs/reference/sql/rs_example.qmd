@@ -26,5 +26,6 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_Example();
+-- Not yet supported in table output
+-- SELECT RS_Example();
 ```

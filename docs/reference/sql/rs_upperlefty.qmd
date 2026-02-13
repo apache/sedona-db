@@ -26,5 +26,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_UpperLeftY(raster) FROM rasters;
+SELECT RS_UpperLeftY(RS_Example());
 ```

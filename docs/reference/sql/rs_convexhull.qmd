@@ -26,5 +26,5 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_ConvexHull(raster) FROM rasters;
+SELECT RS_ConvexHull(RS_Example());
 ```
