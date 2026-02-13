@@ -98,13 +98,6 @@ pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
     acc
 }
 
-/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
-/// `expr` evaluates to a boolean value and originates from a filter logical node.
-pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
-    let pred_names = collect_spatial_predicate_names(expr);
-    !pred_names.is_empty()
-}
-
 /// Transform the join filter to a spatial predicate and a remainder.
 ///
 ///   * The spatial predicate is a spatial predicate that is extracted from the join filter.
@@ -2244,16 +2237,17 @@ mod tests {
     }
 
     #[test]
-    fn test_is_spatial_predicate() {
-        // Test 1: ST_ functions should return true
+    fn test_collect_spatial_predicate_names() {
+        // ST_Intersects should be collected
         let st_intersects_udf = create_dummy_st_intersects_udf();
         let st_intersects_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
             func: st_intersects_udf,
             args: vec![col("geom1"), col("geom2")],
         });
-        assert!(is_spatial_predicate(&st_intersects_expr));
+        let names = collect_spatial_predicate_names(&st_intersects_expr);
+        assert_eq!(names, HashSet::from(["st_intersects".to_string()]));
 
-        // ST_Distance(geom1, geom2) < 100 should return true
+        // ST_Distance(geom1, geom2) < 100 should be collected as st_dwithin
         let st_distance_udf = create_dummy_st_distance_udf();
         let st_distance_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
             func: st_distance_udf,
@@ -2264,29 +2258,33 @@ mod tests {
             op: Operator::Lt,
             right: Box::new(lit(100.0)),
         });
-        assert!(is_spatial_predicate(&distance_lt_expr));
+        let names = collect_spatial_predicate_names(&distance_lt_expr);
+        assert_eq!(names, HashSet::from(["st_dwithin".to_string()]));
 
-        // ST_Distance(geom1, geom2) > 100 should return false
+        // ST_Distance(geom1, geom2) > 100 should not be collected (wrong comparison direction)
         let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
             left: Box::new(st_distance_expr.clone()),
             op: Operator::Gt,
             right: Box::new(lit(100.0)),
         });
-        assert!(!is_spatial_predicate(&distance_gt_expr));
+        let names = collect_spatial_predicate_names(&distance_gt_expr);
+        assert!(names.is_empty());
 
-        // AND expressions with spatial predicates should return true
+        // AND expression: spatial predicate should be collected through conjunction
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
             left: Box::new(st_intersects_expr.clone()),
             op: Operator::And,
             right: Box::new(col("id").eq(lit(1))),
         });
-        assert!(is_spatial_predicate(&and_expr));
+        let names = collect_spatial_predicate_names(&and_expr);
+        assert_eq!(names, HashSet::from(["st_intersects".to_string()]));
 
-        // Non-spatial expressions should return false
+        // Non-spatial expressions should return empty set
 
         // Simple column comparison
         let non_spatial_expr = col("id").eq(lit(1));
-        assert!(!is_spatial_predicate(&non_spatial_expr));
+        let names = collect_spatial_predicate_names(&non_spatial_expr);
+        assert!(names.is_empty());
 
         // Not a spatial relationship function
         let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
@@ -2299,7 +2297,8 @@ mod tests {
             ))),
             args: vec![col("id")],
         });
-        assert!(!is_spatial_predicate(&non_st_func));
+        let names = collect_spatial_predicate_names(&non_st_func);
+        assert!(names.is_empty());
 
         // AND expression with no spatial predicates
         let non_spatial_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2307,6 +2306,7 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("name").eq(lit("test"))),
         });
-        assert!(!is_spatial_predicate(&non_spatial_and));
+        let names = collect_spatial_predicate_names(&non_spatial_and);
+        assert!(names.is_empty());
     }
 }

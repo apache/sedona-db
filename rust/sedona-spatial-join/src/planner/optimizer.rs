@@ -18,7 +18,6 @@ use std::sync::Arc;
 
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::spatial_expr_utils::collect_spatial_predicate_names;
-use crate::planner::spatial_expr_utils::is_spatial_predicate;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use datafusion_common::tree_node::Transformed;
@@ -34,7 +33,7 @@ use sedona_common::option::SedonaOptions;
 /// This inserts rules at specific positions relative to DataFusion's built-in `PushDownFilter`
 /// rule to ensure correct semantics for KNN joins:
 ///
-/// - `MergeSpatialProjectionIntoJoin` and `KnnJoinEarlyRewrite` are inserted *before*
+/// - `MergeSpatialFilterIntoJoin` and `KnnJoinEarlyRewrite` are inserted *before*
 ///   `PushDownFilter` so that KNN joins are converted to `SpatialJoinPlanNode` extension nodes
 ///   before filter pushdown runs. Extension nodes naturally block filter pushdown via
 ///   `prevent_predicate_push_down_columns()`, preventing incorrect pushdown to the build side
@@ -57,20 +56,21 @@ pub(crate) fn register_spatial_join_logical_optimizer(
         .expect("PushDownFilter rule not found in default optimizer rules");
 
     // Insert KNN-specific rules BEFORE PushDownFilter.
-    // MergeSpatialProjectionIntoJoin must come first because it creates the Join(filter=...)
+    // MergeSpatialFilterIntoJoin must come first because it creates the Join(filter=...)
     // nodes that KnnJoinEarlyRewrite then converts to SpatialJoinPlanNode.
     optimizer
         .rules
         .insert(push_down_pos, Arc::new(KnnJoinEarlyRewrite));
     optimizer
         .rules
-        .insert(push_down_pos, Arc::new(MergeSpatialProjectionIntoJoin));
+        .insert(push_down_pos, Arc::new(MergeSpatialFilterIntoJoin));
 
     // Append SpatialJoinLogicalRewrite at the end so non-KNN joins benefit from filter pushdown.
     optimizer.rules.push(Arc::new(SpatialJoinLogicalRewrite));
 
     session_state_builder
 }
+
 /// Early optimizer rule that converts KNN joins to `SpatialJoinPlanNode` extension nodes
 /// *before* DataFusion's `PushDownFilter` runs.
 ///
@@ -114,27 +114,12 @@ impl OptimizerRule for KnnJoinEarlyRewrite {
             return Ok(Transformed::no(plan));
         }
 
-        // Case 1: Join(filter=ST_KNN(...))
+        // Join(filter=ST_KNN(...))
         if let LogicalPlan::Join(join) = &plan {
             if let Some(filter) = join.filter.as_ref() {
                 let names = collect_spatial_predicate_names(filter);
                 if names.contains("st_knn") {
                     return rewrite_join_to_spatial_join_plan_node(join);
-                }
-            }
-        }
-
-        // Case 2: Filter(ST_KNN(...), Join(on=[...]))
-        // When the ON clause has equi-conditions AND ST_KNN, DataFusion's SQL planner puts
-        // the equi-conditions in Join.on and the spatial predicate in a Filter above.
-        if let LogicalPlan::Filter(filter_node) = &plan {
-            let names = collect_spatial_predicate_names(&filter_node.predicate);
-            if names.contains("st_knn") {
-                if let LogicalPlan::Join(join) = filter_node.input.as_ref() {
-                    return rewrite_filter_join_to_spatial_join_plan_node(
-                        &filter_node.predicate,
-                        join,
-                    );
                 }
             }
         }
@@ -192,13 +177,10 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             return Ok(Transformed::no(plan));
         }
 
-        // KNN joins are already handled by KnnJoinEarlyRewrite — skip them here.
-        if spatial_predicate_names.contains("st_knn") {
-            return Ok(Transformed::no(plan));
-        }
-
-        // Non-KNN spatial joins with equi-join conditions are not supported.
-        if !join.on.is_empty() {
+        // Join with with equi-join condition and spatial join condition. Only handle it
+        // when the join condition contains ST_KNN. KNN join is not a regular join and
+        // ST_KNN is also not a regular predicate. It must be handled by our spatial join exec.
+        if !join.on.is_empty() && !spatial_predicate_names.contains("st_knn") {
             return Ok(Transformed::no(plan));
         }
 
@@ -245,65 +227,14 @@ fn rewrite_join_to_spatial_join_plan_node(join: &Join) -> Result<Transformed<Log
     })))
 }
 
-/// Convert a `Filter(predicate, Join(on=[...]))` pattern to a `SpatialJoinPlanNode`.
-///
-/// This handles the case where DataFusion's SQL planner separates the ON clause into:
-/// - equi-join conditions in `Join.on`
-/// - the spatial predicate (+ any remaining conjuncts) in a `Filter` above the `Join`
-///
-/// All predicates (filter predicate + join's existing filter + equi-join on conditions) are
-/// combined into a single filter expression in the `SpatialJoinPlanNode`.
-fn rewrite_filter_join_to_spatial_join_plan_node(
-    filter_predicate: &Expr,
-    join: &Join,
-) -> Result<Transformed<LogicalPlan>> {
-    // Start with the filter predicate from the Filter node above
-    let mut combined = filter_predicate.clone();
-
-    // Add any existing join filter
-    if let Some(join_filter) = &join.filter {
-        combined = Expr::and(combined, join_filter.clone());
-    }
-
-    // Fold equi-join on conditions
-    let eq_op = if join.null_equality == NullEquality::NullEqualsNothing {
-        Operator::Eq
-    } else {
-        Operator::IsNotDistinctFrom
-    };
-    combined = join.on.iter().fold(combined, |acc, (l, r)| {
-        let eq_expr = Expr::BinaryExpr(BinaryExpr::new(
-            Box::new(l.clone()),
-            eq_op,
-            Box::new(r.clone()),
-        ));
-        Expr::and(acc, eq_expr)
-    });
-
-    let schema = Arc::clone(&join.schema);
-    let node = SpatialJoinPlanNode {
-        left: join.left.as_ref().clone(),
-        right: join.right.as_ref().clone(),
-        join_type: join.join_type,
-        filter: combined,
-        schema,
-        join_constraint: join.join_constraint,
-        null_equality: join.null_equality,
-    };
-
-    Ok(Transformed::yes(LogicalPlan::Extension(Extension {
-        node: Arc::new(node),
-    })))
-}
-
 /// Logical optimizer rule that enables spatial join planning.
 ///
 /// This rule turns eligible `Filter(Join(filter=...))` nodes into a `Join(filter=...)` node,
 /// so that the spatial join can be rewritten later by [SpatialJoinLogicalRewrite].
 #[derive(Debug, Default)]
-struct MergeSpatialProjectionIntoJoin;
+struct MergeSpatialFilterIntoJoin;
 
-impl OptimizerRule for MergeSpatialProjectionIntoJoin {
+impl OptimizerRule for MergeSpatialFilterIntoJoin {
     fn name(&self) -> &str {
         "merge_spatial_filter_into_join"
     }
@@ -358,7 +289,9 @@ impl OptimizerRule for MergeSpatialProjectionIntoJoin {
         else {
             return Ok(Transformed::no(plan));
         };
-        if !is_spatial_predicate(predicate) {
+
+        let spatial_predicates = collect_spatial_predicate_names(predicate);
+        if spatial_predicates.is_empty() {
             return Ok(Transformed::no(plan));
         }
 
@@ -377,20 +310,25 @@ impl OptimizerRule for MergeSpatialProjectionIntoJoin {
         };
 
         // Check if this is a suitable join for rewriting
+        let is_equi_join = !on.is_empty() && !spatial_predicates.contains("st_knn");
         if !matches!(
             join_type,
             JoinType::Inner | JoinType::Left | JoinType::Right
-        ) || !on.is_empty()
-            || filter.is_some()
+        ) || is_equi_join
         {
             return Ok(Transformed::no(plan));
         }
+
+        let new_filter = match filter {
+            Some(existing_filter) => Expr::and(predicate.clone(), existing_filter.clone()),
+            None => predicate.clone(),
+        };
 
         let rewritten_plan = Join::try_new(
             Arc::clone(left),
             Arc::clone(right),
             on.clone(),
-            Some(predicate.clone()),
+            Some(new_filter),
             JoinType::Inner,
             *join_constraint,
             *null_equality,
