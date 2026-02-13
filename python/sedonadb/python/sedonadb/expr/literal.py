@@ -164,6 +164,7 @@ SPECIAL_CASED_LITERALS = {
     "geopandas.geoseries.GeoSeries": _lit_from_series,
     # pandas < 3.0
     "pandas.core.frame.DataFrame": _lit_from_dataframe,
+    "pandas.core.series.Series": _lit_from_series,
     # pandas >= 3.0
     "pandas.DataFrame": _lit_from_dataframe,
     "pandas.Series": _lit_from_series,
