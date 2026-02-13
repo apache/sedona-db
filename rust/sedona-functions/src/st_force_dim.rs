@@ -207,13 +207,11 @@ impl SedonaScalarKernel for STForce3D {
         };
         let z_array = as_float64_array(&z_array)?;
 
-        let mut i = 0usize;
+        let mut z_iter = z_array.iter();
         executor.execute_wkb_void(|maybe_wkb| {
-            match (maybe_wkb, z_array.is_null(i)) {
-                (Some(wkb), false) => {
-                    let trans = Force3DTransform {
-                        z: z_array.value(i),
-                    };
+            match (maybe_wkb, z_array.next().unwrap()) {
+                (Some(wkb), z) => {
+                    let trans = Force3DTransform { z };
                     transform(wkb, &trans, &mut builder)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                     builder.append_value([]);
@@ -222,7 +220,6 @@ impl SedonaScalarKernel for STForce3D {
                     builder.append_null();
                 }
             }
-            i += 1;
 
             Ok(())
         })?;
@@ -245,7 +242,7 @@ impl CrsTransform for Force3DTransform {
         &self,
         _coord: &mut (f64, f64),
     ) -> std::result::Result<(), SedonaGeometryError> {
-        unreachable!()
+        sedona_internal_err!("Unexpected call to transform_coord()")
     }
     fn transform_coord_3d(
         &self,
