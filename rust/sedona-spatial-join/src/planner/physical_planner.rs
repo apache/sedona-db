@@ -306,7 +306,13 @@ fn repartition_probe_side(
     let probe_plan = match spatial_predicate {
         SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
             JoinSide::Left => &mut physical_left,
-            _ => &mut physical_right,
+            JoinSide::Right => &mut physical_right,
+            JoinSide::None => {
+                // KNNPredicate::probe_side is asserted not to be None in its constructor;
+                // treat this as a debug-only invariant violation and default to right.
+                debug_assert!(false, "KNNPredicate::probe_side must not be JoinSide::None");
+                &mut physical_right
+            }
         },
         _ => {
             // For Relation/Distance predicates, probe is always Right after swap.
