@@ -1,4 +1,3 @@
-````quarto
 ---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -38,4 +37,3 @@ Returns a formatted representation of the input value. When `options` is provide
 SELECT SD_Format(ST_Point(1.0, 2.0), '{"width_hint": 16}');
 ```
 
-````

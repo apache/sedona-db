@@ -1,4 +1,3 @@
-````quarto
 ---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -32,4 +31,3 @@ kernels:
 SELECT ST_GeomFromEWKT('SRID=4326;POINT(40.7128 -74.0060)');
 ```
 
-````
