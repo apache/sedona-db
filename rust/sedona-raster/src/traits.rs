@@ -101,9 +101,9 @@ pub trait BandMetadataRef {
     /// No-data value as raw bytes (None if null)
     fn nodata_value(&self) -> Option<&[u8]>;
     /// Storage type (InDb, OutDbRef, etc)
-    fn storage_type(&self) -> StorageType;
+    fn storage_type(&self) -> Result<StorageType, ArrowError>;
     /// Band data type (UInt8, Float32, etc.)
-    fn data_type(&self) -> BandDataType;
+    fn data_type(&self) -> Result<BandDataType, ArrowError>;
     /// OutDb URL (only used when storage_type == OutDbRef)
     fn outdb_url(&self) -> Option<&str>;
     /// OutDb band ID (only used when storage_type == OutDbRef)

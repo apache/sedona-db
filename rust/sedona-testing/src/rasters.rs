@@ -115,10 +115,12 @@ pub fn generate_tiled_rasters(
                 // Set a nodata value appropriate for the data type
                 let nodata_value = get_nodata_value_for_type(&data_type);
 
+                let nodata_value_bytes = nodata_value.clone();
+
                 let band_metadata = BandMetadata {
-                    nodata_value: nodata_value.clone(),
+                    nodata_value,
                     storage_type: StorageType::InDb,
-                    datatype: data_type.clone(),
+                    datatype: data_type,
                     outdb_url: None,
                     outdb_band_id: None,
                 };
@@ -133,7 +135,7 @@ pub fn generate_tiled_rasters(
                 let band_data = generate_random_band_data(
                     pixel_count,
                     &data_type,
-                    nodata_value.as_deref(),
+                    nodata_value_bytes.as_deref(),
                     corner_position,
                     &mut rng,
                 );
@@ -218,105 +220,49 @@ fn generate_random_band_data(
     corner_position: Option<usize>,
     rng: &mut Rng,
 ) -> Vec<u8> {
+    /// Generate random band data for a given pixel type and set the corner pixel
+    /// to the nodata value if applicable.
+    macro_rules! gen_band {
+        ($byte_size:expr, $rng_expr:expr) => {{
+            let byte_size: usize = $byte_size;
+            let mut data = Vec::with_capacity(pixel_count * byte_size);
+            for _ in 0..pixel_count {
+                data.extend_from_slice(&$rng_expr.to_ne_bytes());
+            }
+            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
+                if nodata.len() >= byte_size && pos * byte_size + byte_size <= data.len() {
+                    data[pos * byte_size..(pos * byte_size) + byte_size]
+                        .copy_from_slice(&nodata[0..byte_size]);
+                }
+            }
+            data
+        }};
+    }
+
     match data_type {
-        BandDataType::UInt8 => {
-            let mut data: Vec<u8> = (0..pixel_count).map(|_| rng.u8(..)).collect();
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if !nodata.is_empty() && pos < data.len() {
-                    data[pos] = nodata[0];
-                }
-            }
-            data
-        }
-        BandDataType::UInt16 => {
-            let mut data = Vec::with_capacity(pixel_count * 2);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.u16(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 2 && pos * 2 + 2 <= data.len() {
-                    data[pos * 2..(pos * 2) + 2].copy_from_slice(&nodata[0..2]);
-                }
-            }
-            data
-        }
-        BandDataType::Int16 => {
-            let mut data = Vec::with_capacity(pixel_count * 2);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.i16(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 2 && pos * 2 + 2 <= data.len() {
-                    data[pos * 2..(pos * 2) + 2].copy_from_slice(&nodata[0..2]);
-                }
-            }
-            data
-        }
-        BandDataType::UInt32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.u32(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::Int32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.i32(..).to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::Float32 => {
-            let mut data = Vec::with_capacity(pixel_count * 4);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.f32().to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 4 && pos * 4 + 4 <= data.len() {
-                    data[pos * 4..(pos * 4) + 4].copy_from_slice(&nodata[0..4]);
-                }
-            }
-            data
-        }
-        BandDataType::Float64 => {
-            let mut data = Vec::with_capacity(pixel_count * 8);
-            for _ in 0..pixel_count {
-                data.extend_from_slice(&rng.f64().to_ne_bytes());
-            }
-            // Set corner pixel to nodata value if this tile contains a corner
-            if let (Some(nodata), Some(pos)) = (nodata_bytes, corner_position) {
-                if nodata.len() >= 8 && pos * 8 + 8 <= data.len() {
-                    data[pos * 8..(pos * 8) + 8].copy_from_slice(&nodata[0..8]);
-                }
-            }
-            data
-        }
+        BandDataType::UInt8 => gen_band!(1, rng.u8(..)),
+        BandDataType::Int8 => gen_band!(1, rng.i8(..)),
+        BandDataType::UInt16 => gen_band!(2, rng.u16(..)),
+        BandDataType::Int16 => gen_band!(2, rng.i16(..)),
+        BandDataType::UInt32 => gen_band!(4, rng.u32(..)),
+        BandDataType::Int32 => gen_band!(4, rng.i32(..)),
+        BandDataType::UInt64 => gen_band!(8, rng.u64(..)),
+        BandDataType::Int64 => gen_band!(8, rng.i64(..)),
+        BandDataType::Float32 => gen_band!(4, rng.f32()),
+        BandDataType::Float64 => gen_band!(8, rng.f64()),
     }
 }
 
 fn get_nodata_value_for_type(data_type: &BandDataType) -> Option<Vec<u8>> {
     match data_type {
         BandDataType::UInt8 => Some(vec![255u8]),
+        BandDataType::Int8 => Some(i8::MIN.to_ne_bytes().to_vec()),
         BandDataType::UInt16 => Some(u16::MAX.to_ne_bytes().to_vec()),
         BandDataType::Int16 => Some(i16::MIN.to_ne_bytes().to_vec()),
         BandDataType::UInt32 => Some(u32::MAX.to_ne_bytes().to_vec()),
         BandDataType::Int32 => Some(i32::MIN.to_ne_bytes().to_vec()),
+        BandDataType::UInt64 => Some(u64::MAX.to_ne_bytes().to_vec()),
+        BandDataType::Int64 => Some(i64::MIN.to_ne_bytes().to_vec()),
         BandDataType::Float32 => Some(f32::NAN.to_ne_bytes().to_vec()),
         BandDataType::Float64 => Some(f64::NAN.to_ne_bytes().to_vec()),
     }
@@ -394,8 +340,8 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
         let band_meta1 = band1.metadata();
         let band_meta2 = band2.metadata();
         assert_eq!(
-            band_meta1.data_type(),
-            band_meta2.data_type(),
+            band_meta1.data_type().unwrap(),
+            band_meta2.data_type().unwrap(),
             "Band data types do not match"
         );
         assert_eq!(
@@ -404,8 +350,8 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             "Band nodata values do not match"
         );
         assert_eq!(
-            band_meta1.storage_type(),
-            band_meta2.storage_type(),
+            band_meta1.storage_type().unwrap(),
+            band_meta2.storage_type().unwrap(),
             "Band storage types do not match"
         );
         assert_eq!(
@@ -451,9 +397,9 @@ mod tests {
             let bands = raster.bands();
             let band = bands.band(1).unwrap();
             let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type(), BandDataType::UInt16);
+            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt16);
             assert_eq!(band_metadata.nodata_value(), Some(&[0u8, 0u8][..]));
-            assert_eq!(band_metadata.storage_type(), StorageType::InDb);
+            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
             assert_eq!(band_metadata.outdb_url(), None);
             assert_eq!(band_metadata.outdb_band_id(), None);
 
@@ -492,8 +438,8 @@ mod tests {
             for band_index in 0..3 {
                 let band = bands.band(band_index + 1).unwrap();
                 let band_metadata = band.metadata();
-                assert_eq!(band_metadata.data_type(), BandDataType::UInt8);
-                assert_eq!(band_metadata.storage_type(), StorageType::InDb);
+                assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
+                assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
                 let band_data = band.data();
                 assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
             }

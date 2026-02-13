@@ -414,8 +414,8 @@ mod tests {
         assert_eq!(band.data()[0], 1u8);
 
         let band_meta = band.metadata();
-        assert_eq!(band_meta.storage_type(), StorageType::InDb);
-        assert_eq!(band_meta.data_type(), BandDataType::UInt8);
+        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
 
         let crs = raster.crs().unwrap();
         assert_eq!(crs, epsg4326);
@@ -573,7 +573,7 @@ mod tests {
         // But band data and metadata should be different
         let target_band = target_raster.bands().band(1).unwrap();
         let target_band_meta = target_band.metadata();
-        assert_eq!(target_band_meta.data_type(), BandDataType::UInt16);
+        assert_eq!(target_band_meta.data_type().unwrap(), BandDataType::UInt16);
         assert!(target_band_meta.nodata_value().is_none());
         assert_eq!(target_band.data().len(), 2016); // 1008 * 2 bytes per u16
 
@@ -605,6 +605,7 @@ mod tests {
         // Test all BandDataType variants
         let test_cases = vec![
             (BandDataType::UInt8, vec![1u8, 2u8, 3u8, 4u8]),
+            (BandDataType::Int8, vec![255u8, 254u8, 253u8, 252u8]), // -1, -2, -3, -4 as i8
             (
                 BandDataType::UInt16,
                 vec![1u8, 0u8, 2u8, 0u8, 3u8, 0u8, 4u8, 0u8],
@@ -627,6 +628,21 @@ mod tests {
                 ],
             ), // little-endian i32
             (
+                BandDataType::UInt64,
+                vec![
+                    1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 2u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                    3u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 4u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                ],
+            ), // little-endian u64
+            (
+                BandDataType::Int64,
+                vec![
+                    255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 254u8, 255u8, 255u8,
+                    255u8, 255u8, 255u8, 255u8, 255u8, 253u8, 255u8, 255u8, 255u8, 255u8, 255u8,
+                    255u8, 255u8, 252u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8, 255u8,
+                ],
+            ), // little-endian i64: -1, -2, -3, -4
+            (
                 BandDataType::Float32,
                 vec![
                     0u8, 0u8, 128u8, 63u8, 0u8, 0u8, 0u8, 64u8, 0u8, 0u8, 64u8, 64u8, 0u8, 0u8,
@@ -647,7 +663,7 @@ mod tests {
             let band_metadata = BandMetadata {
                 nodata_value: None,
                 storage_type: StorageType::InDb,
-                datatype: expected_data_type.clone(),
+                datatype: expected_data_type,
                 outdb_url: None,
                 outdb_band_id: None,
             };
@@ -665,15 +681,18 @@ mod tests {
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
-        assert_eq!(bands.len(), 7, "Expected 7 bands for all data types");
+        assert_eq!(bands.len(), 10, "Expected 10 bands for all data types");
 
         // Verify each band returns the correct data type
         let expected_types = [
             BandDataType::UInt8,
+            BandDataType::Int8,
             BandDataType::UInt16,
             BandDataType::Int16,
             BandDataType::UInt32,
             BandDataType::Int32,
+            BandDataType::UInt64,
+            BandDataType::Int64,
             BandDataType::Float32,
             BandDataType::Float64,
         ];
@@ -683,7 +702,7 @@ mod tests {
             // Bands are 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let band_metadata = band.metadata();
-            let actual_type = band_metadata.data_type();
+            let actual_type = band_metadata.data_type().unwrap();
 
             assert_eq!(
                 actual_type, *expected_type,
@@ -751,8 +770,8 @@ mod tests {
         // Test InDb band
         let indb_band = bands.band(1).unwrap();
         let indb_metadata = indb_band.metadata();
-        assert_eq!(indb_metadata.storage_type(), StorageType::InDb);
-        assert_eq!(indb_metadata.data_type(), BandDataType::UInt8);
+        assert_eq!(indb_metadata.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(indb_metadata.data_type().unwrap(), BandDataType::UInt8);
         assert!(indb_metadata.outdb_url().is_none());
         assert!(indb_metadata.outdb_band_id().is_none());
         assert_eq!(indb_band.data().len(), 100);
@@ -760,8 +779,11 @@ mod tests {
         // Test OutDbRef band
         let outdb_band = bands.band(2).unwrap();
         let outdb_metadata = outdb_band.metadata();
-        assert_eq!(outdb_metadata.storage_type(), StorageType::OutDbRef);
-        assert_eq!(outdb_metadata.data_type(), BandDataType::Float32);
+        assert_eq!(
+            outdb_metadata.storage_type().unwrap(),
+            StorageType::OutDbRef
+        );
+        assert_eq!(outdb_metadata.data_type().unwrap(), BandDataType::Float32);
         assert_eq!(
             outdb_metadata.outdb_url().unwrap(),
             "s3://mybucket/satellite_image.tif"

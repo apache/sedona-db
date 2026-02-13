@@ -133,31 +133,42 @@ impl<'a> BandMetadataRef for BandMetadataRefImpl<'a> {
         }
     }
 
-    fn storage_type(&self) -> StorageType {
-        match self.storage_type_array.value(self.band_index) {
+    fn storage_type(&self) -> Result<StorageType, ArrowError> {
+        let value = self.storage_type_array.value(self.band_index);
+        let storage_type = match value {
             0 => StorageType::InDb,
             1 => StorageType::OutDbRef,
-            _ => panic!(
-                "Unknown storage type: {}",
-                self.storage_type_array.value(self.band_index)
-            ),
-        }
+            _ => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Unknown storage type: {}",
+                    value
+                )))
+            }
+        };
+        Ok(storage_type)
     }
 
-    fn data_type(&self) -> BandDataType {
-        match self.datatype_array.value(self.band_index) {
-            0 => BandDataType::UInt8,
-            1 => BandDataType::UInt16,
-            2 => BandDataType::Int16,
-            3 => BandDataType::UInt32,
-            4 => BandDataType::Int32,
-            5 => BandDataType::Float32,
-            6 => BandDataType::Float64,
-            _ => panic!(
-                "Unknown band data type: {}",
-                self.datatype_array.value(self.band_index)
-            ),
-        }
+    fn data_type(&self) -> Result<BandDataType, ArrowError> {
+        let value = self.datatype_array.value(self.band_index);
+        let band_data_type = match value {
+            1 => BandDataType::UInt8,
+            2 => BandDataType::UInt16,
+            3 => BandDataType::Int16,
+            4 => BandDataType::UInt32,
+            5 => BandDataType::Int32,
+            6 => BandDataType::Float32,
+            7 => BandDataType::Float64,
+            8 => BandDataType::UInt64,
+            9 => BandDataType::Int64,
+            10 => BandDataType::Int8,
+            _ => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Unknown band data type: {}",
+                    self.datatype_array.value(self.band_index)
+                )))
+            }
+        };
+        Ok(band_data_type)
     }
 
     fn outdb_url(&self) -> Option<&str> {
@@ -543,6 +554,7 @@ mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
     use crate::traits::{BandMetadata, RasterMetadata};
+    use arrow_schema::DataType;
     use sedona_schema::raster::{BandDataType, StorageType};
     use sedona_testing::rasters::generate_test_rasters;
 
@@ -608,8 +620,8 @@ mod tests {
         assert_eq!(band.data()[0], 1u8);
 
         let band_meta = band.metadata();
-        assert_eq!(band_meta.storage_type(), StorageType::InDb);
-        assert_eq!(band_meta.data_type(), BandDataType::UInt8);
+        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
 
         let crs = raster.crs().unwrap();
         assert_eq!(crs, epsg4326);
@@ -692,5 +704,124 @@ mod tests {
         assert_eq!(rasters.len(), 2);
         assert!(!rasters.is_null(0));
         assert!(rasters.is_null(1));
+    }
+
+    /// Test that `data_type()` and `storage_type()` return `Err` for invalid values
+    /// instead of panicking.
+    #[test]
+    fn test_invalid_band_metadata_returns_err() {
+        use arrow_buffer::{OffsetBuffer, ScalarBuffer};
+        use sedona_schema::raster::RasterSchema;
+        use std::sync::Arc;
+
+        // Build a valid single-band raster first
+        let mut builder = RasterBuilder::new(1);
+        let metadata = RasterMetadata {
+            width: 2,
+            height: 2,
+            upperleft_x: 0.0,
+            upperleft_y: 0.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        builder.start_raster(&metadata, None).unwrap();
+        let band_meta = BandMetadata {
+            nodata_value: None,
+            storage_type: StorageType::InDb,
+            datatype: BandDataType::UInt8,
+            outdb_url: None,
+            outdb_band_id: None,
+        };
+        builder.start_band(band_meta).unwrap();
+        builder.band_data_writer().append_value([1u8; 4]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let valid_array = builder.finish().unwrap();
+
+        // Extract original columns from the valid raster
+        let metadata_col = valid_array.column(raster_indices::METADATA).clone();
+        let crs_col = valid_array.column(raster_indices::CRS).clone();
+        let bands_list = valid_array
+            .column(raster_indices::BANDS)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let bands_struct = bands_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let orig_band_meta_struct = bands_struct
+            .column(band_indices::METADATA)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let band_data_col = bands_struct.column(band_indices::DATA).clone();
+
+        // Build tampered band metadata with invalid storage_type=99 and datatype=99
+        let DataType::Struct(band_metadata_fields) = RasterSchema::band_metadata_type() else {
+            panic!("Expected struct type for band metadata");
+        };
+        let tampered_band_metadata = StructArray::new(
+            band_metadata_fields,
+            vec![
+                orig_band_meta_struct
+                    .column(band_metadata_indices::NODATAVALUE)
+                    .clone(),
+                Arc::new(UInt32Array::from(vec![99u32])), // invalid storage_type
+                Arc::new(UInt32Array::from(vec![99u32])), // invalid datatype
+                orig_band_meta_struct
+                    .column(band_metadata_indices::OUTDB_URL)
+                    .clone(),
+                orig_band_meta_struct
+                    .column(band_metadata_indices::OUTDB_BAND_ID)
+                    .clone(),
+            ],
+            None,
+        );
+
+        // Rebuild band struct
+        let DataType::Struct(band_fields) = RasterSchema::band_type() else {
+            panic!("Expected struct type for band");
+        };
+        let tampered_band_struct = StructArray::new(
+            band_fields,
+            vec![Arc::new(tampered_band_metadata), band_data_col],
+            None,
+        );
+
+        // Rebuild bands list
+        let DataType::List(band_field) = RasterSchema::bands_type() else {
+            panic!("Expected list type for bands");
+        };
+        let tampered_bands_list = ListArray::new(
+            band_field,
+            OffsetBuffer::new(ScalarBuffer::from(vec![0i32, 1])),
+            Arc::new(tampered_band_struct),
+            None,
+        );
+
+        // Rebuild the top-level raster struct
+        let tampered_raster = StructArray::new(
+            RasterSchema::fields(),
+            vec![metadata_col, crs_col, Arc::new(tampered_bands_list)],
+            None,
+        );
+
+        // Read back and verify that data_type() and storage_type() return Err
+        let rasters = RasterStructArray::new(&tampered_raster);
+        let raster = rasters.get(0).unwrap();
+        let band = raster.bands().band(1).unwrap();
+        let band_meta = band.metadata();
+
+        let storage_err = band_meta.storage_type().unwrap_err();
+        assert!(storage_err.to_string().contains("Unknown storage type: 99"));
+
+        let data_type_err = band_meta.data_type().unwrap_err();
+        assert!(data_type_err
+            .to_string()
+            .contains("Unknown band data type: 99"));
     }
 }
