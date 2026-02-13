@@ -17,7 +17,9 @@
 # under the License.
 
 title: barrier
-description: Evaluate boolean predicates at runtime to prevent optimizer reordering or pushdown.
+description: >
+    Creates an optimization barrier that prevents filter pushdown by evaluating
+    boolean expressions at runtime.
 kernels:
   - returns: boolean
     args:
@@ -31,15 +33,58 @@ kernels:
 
 ## Description
 
-Evaluates a boolean expression using runtime values. Additional column name and value pairs can be provided to bind variables used in the expression.
+`barrier()` evaluates a boolean expression string at runtime using bound column
+values, and is marked as volatile to prevent the query optimizer from reordering
+or pushing filters past it.
+
+The first argument is a boolean expression string. After that, arguments come in
+pairs of `(column_name, column_value)` that bind variables used in the
+expression.
+
+### Supported expression syntax
+
+- **Comparison operators**: `=`, `==`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
+- **Logical operators**: `AND` / `and`, `OR` / `or`
+- **Literal types**: integers, floats, single- or double-quoted strings, `true`, `false`, `null`
+- Unrecognized expressions evaluate to `false`
+- `NULL` comparisons evaluate to `false`
+
+### When to use
+
+Use `barrier()` when you need a predicate to be evaluated **after** a join or
+scan rather than being pushed down by the optimizer. This is useful when the
+predicate depends on values that are only available at a specific stage of
+query execution.
 
 ## Examples
+
+Filter rows using bound column values:
 
 ```sql
 SELECT *
 FROM orders
 WHERE barrier('amount > 100 AND status = "active"',
-             'amount', amount,
-             'status', status);
+              'amount', amount,
+              'status', status);
+```
+
+Combine multiple conditions with different data types:
+
+```sql
+SELECT *
+FROM products
+WHERE barrier('price > 19.99 AND category = "electronics"',
+              'price', price,
+              'category', category);
+```
+
+Use `OR` logic:
+
+```sql
+SELECT *
+FROM events
+WHERE barrier('priority < 5 OR type = "critical"',
+              'priority', priority,
+              'type', type);
 ```
 
