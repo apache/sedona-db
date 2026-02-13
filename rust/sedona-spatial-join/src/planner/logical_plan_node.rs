@@ -106,6 +106,15 @@ impl UserDefinedLogicalNodeCore for SpatialJoinPlanNode {
         )
     }
 
+    fn necessary_children_exprs(&self, _output_columns: &[usize]) -> Option<Vec<Vec<usize>>> {
+        // Request all columns from both children. This ensures the optimizer
+        // recurses into children while preserving all columns needed by the
+        // join filter and output schema.
+        let left_indices: Vec<usize> = (0..self.left.schema().fields().len()).collect();
+        let right_indices: Vec<usize> = (0..self.right.schema().fields().len()).collect();
+        Some(vec![left_indices, right_indices])
+    }
+
     fn with_exprs_and_inputs(
         &self,
         mut exprs: Vec<Expr>,
