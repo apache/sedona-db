@@ -343,7 +343,7 @@ class DataFrame:
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
         geoparquet_version: Literal["1.0", "1.1", None] = None,
-        overwrite_bbox_columns: bool = False,
+        overwrite_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
     ):
