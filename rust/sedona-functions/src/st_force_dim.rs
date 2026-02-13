@@ -330,7 +330,8 @@ mod tests {
                 Some("POINT Z EMPTY"),
                 Some("POINT (1 2)"),
                 Some("POINT Z (3 4 5)"),
-                Some("POINT ZM (8 9 10 11)"),
+                Some("POINT M (6 7 8)"),
+                Some("POINT ZM (9 10 11 12)"),
             ],
             &sedona_type,
         );
@@ -342,7 +343,8 @@ mod tests {
                 Some("POINT Z EMPTY"),
                 Some("POINT Z (1 2 0)"),
                 Some("POINT Z (3 4 5)"),
-                Some("POINT Z (8 9 10)"),
+                Some("POINT Z (6 7 0)"),
+                Some("POINT Z (9 10 11)"),
             ],
             &WKB_GEOMETRY,
         );
@@ -364,15 +366,24 @@ mod tests {
                 None,
                 Some("POINT EMPTY"),
                 Some("POINT (1 2)"),
+                Some("POINT (1 2)"),
                 Some("POINT Z (3 4 5)"),
-                Some("POINT (6 7)"),
-                Some("POINT ZM (8 9 10 11)"),
+                Some("POINT M (6 7 8)"),
+                Some("POINT ZM (9 10 11 12)"),
             ],
             &sedona_type,
         );
         let z = create_array!(
             Float64,
-            [Some(9.0), Some(9.0), Some(9.0), Some(9.0), None, Some(9.0)]
+            [
+                Some(9.0),
+                Some(9.0),
+                Some(9.0),
+                None,
+                Some(9.0),
+                Some(9.0),
+                Some(9.0)
+            ]
         );
 
         let expected = create_array(
@@ -380,9 +391,10 @@ mod tests {
                 None,
                 Some("POINT Z EMPTY"),
                 Some("POINT Z (1 2 9)"),
-                Some("POINT Z (3 4 5)"),
                 None,
-                Some("POINT Z (8 9 10)"),
+                Some("POINT Z (3 4 5)"),
+                Some("POINT Z (6 7 9)"),
+                Some("POINT Z (9 10 11)"),
             ],
             &WKB_GEOMETRY,
         );
