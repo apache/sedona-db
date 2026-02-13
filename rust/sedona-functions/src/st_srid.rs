@@ -23,17 +23,17 @@ use arrow_array::{
 use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
-    exec_err, DataFusionError, Result, ScalarValue,
+    DataFusionError, Result, ScalarValue,
 };
 use datafusion_expr::{
     scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::crs::deserialize_crs;
+use sedona_schema::crs::CachedCrsToSRIDMapping;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
-use std::{collections::HashMap, iter::zip, sync::Arc};
+use std::{iter::zip, sync::Arc};
 
 /// ST_Srid() scalar UDF implementation
 ///
@@ -158,7 +158,7 @@ impl SedonaScalarKernel for StSridItemCrs {
 
         let item_array = item_crs_struct_array.column(0);
         let crs_string_array = as_string_view_array(item_crs_struct_array.column(1))?;
-        let mut batch_srids = HashMap::<String, u32>::new();
+        let mut crs_to_srid_mapping = CachedCrsToSRIDMapping::with_capacity(item_array.len());
 
         if let Some(item_nulls) = item_array.nulls() {
             for (is_valid, maybe_crs) in zip(item_nulls, crs_string_array) {
@@ -167,41 +167,18 @@ impl SedonaScalarKernel for StSridItemCrs {
                     continue;
                 }
 
-                append_srid(maybe_crs, &mut batch_srids, &mut builder)?;
+                let srid = crs_to_srid_mapping.get_srid(maybe_crs)?;
+                builder.append_value(srid);
             }
         } else {
             for maybe_crs in crs_string_array {
-                append_srid(maybe_crs, &mut batch_srids, &mut builder)?;
+                let srid = crs_to_srid_mapping.get_srid(maybe_crs)?;
+                builder.append_value(srid);
             }
         }
 
         executor.finish(Arc::new(builder.finish()))
     }
-}
-
-fn append_srid(
-    maybe_crs: Option<&str>,
-    batch_srids: &mut HashMap<String, u32>,
-    builder: &mut UInt32Builder,
-) -> Result<()> {
-    if let Some(crs_str) = maybe_crs {
-        if let Some(srid) = batch_srids.get(crs_str) {
-            builder.append_value(*srid);
-        } else if let Some(crs) = deserialize_crs(crs_str)? {
-            if let Some(srid) = crs.srid()? {
-                batch_srids.insert(crs_str.to_string(), srid);
-                builder.append_value(srid);
-            } else {
-                return exec_err!("Can't extract SRID from item-level CRS '{crs_str}'");
-            }
-        } else {
-            builder.append_value(0);
-        }
-    } else {
-        builder.append_value(0);
-    }
-
-    Ok(())
 }
 
 #[derive(Debug)]

@@ -57,8 +57,6 @@ impl MetadataRef for RasterMetadata {
     }
 }
 
-//
-
 /// Implementation of MetadataRef for Arrow StructArray
 struct MetadataRefImpl<'a> {
     width_array: &'a UInt64Array,
@@ -348,6 +346,14 @@ impl<'a> RasterRefImpl<'a> {
             bands,
         }
     }
+
+    pub fn crs_str_ref(&self) -> Option<&'a str> {
+        if self.crs.is_null(self.bands.raster_index) {
+            None
+        } else {
+            Some(self.crs.value(self.bands.raster_index))
+        }
+    }
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
@@ -358,11 +364,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
 
     #[inline(always)]
     fn crs(&self) -> Option<&str> {
-        if self.crs.is_null(self.bands.raster_index) {
-            None
-        } else {
-            Some(self.crs.value(self.bands.raster_index))
-        }
+        self.crs_str_ref()
     }
 
     #[inline(always)]
