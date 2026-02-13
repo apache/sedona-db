@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::BinaryBuilder, Array, Float64Array};
+use arrow_array::{builder::BinaryBuilder, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
 use datafusion_expr::{
@@ -242,7 +242,9 @@ impl CrsTransform for Force3DTransform {
         &self,
         _coord: &mut (f64, f64),
     ) -> std::result::Result<(), SedonaGeometryError> {
-        sedona_internal_err!("Unexpected call to transform_coord()")
+        Err(SedonaGeometryError::Invalid(
+            "Unexpected call to transform_coord()".to_string(),
+        ))
     }
     fn transform_coord_3d(
         &self,
