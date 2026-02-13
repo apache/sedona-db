@@ -389,7 +389,10 @@ pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()>
 
 /// Do something with the global thread-local PROJ engine, creating it if it has not
 /// already been created.
-pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>>(
+pub(crate) fn with_global_proj_engine<
+    R,
+    F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>,
+>(
     mut func: F,
 ) -> Result<R> {
     PROJ_ENGINE.with(|engine_cell| {
@@ -425,10 +428,6 @@ pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> 
 /// or never set to use all default settings.
 static PROJ_ENGINE_BUILDER: RwLock<Option<ProjCrsEngineBuilder>> =
     RwLock::<Option<ProjCrsEngineBuilder>>::new(None);
-
-thread_local! {
-    static PROJ_CACHE_SIZE: OnceCell<usize> = const { OnceCell::new() };
-}
 
 // CrsTransform backed by PROJ is not thread safe, so we define the cache as thread-local
 // to avoid race conditions.
