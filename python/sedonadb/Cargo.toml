@@ -39,6 +39,7 @@ datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
+env_logger = { workspace = true }
 futures = { workspace = true }
 pyo3 = { version = "0.25.1" }
 sedona = { workspace = true }
