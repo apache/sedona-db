@@ -41,11 +41,16 @@ sedona-expr = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
+sedona-tg = { workspace = true }
+sedona-proj = { workspace = true }
 serde_json = { workspace = true }
+wkb = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+geo-traits = { workspace = true }
 sedona-testing = { workspace = true, features = ["criterion"] }
+sedona-proj = { workspace = true, features = ["proj-sys"] }
 rstest = { workspace = true }
 
 [[bench]]

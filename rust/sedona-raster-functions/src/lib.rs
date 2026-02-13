@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod crs_utils;
 mod executor;
 pub mod register;
 pub mod rs_band_accessors;
@@ -29,5 +30,6 @@ pub mod rs_pixel_functions;
 pub mod rs_rastercoordinate;
 pub mod rs_setsrid;
 pub mod rs_size;
+pub mod rs_spatial_predicates;
 pub mod rs_srid;
 pub mod rs_worldcoordinate;
