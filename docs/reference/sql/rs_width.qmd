@@ -28,4 +28,3 @@ kernels:
 ```sql
 SELECT RS_Width(raster) FROM rasters;
 ```
-

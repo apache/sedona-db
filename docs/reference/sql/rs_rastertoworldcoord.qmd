@@ -33,4 +33,3 @@ kernels:
 ```sql
 SELECT RS_RasterToWorldCoord(raster, 10, 20) FROM rasters;
 ```
-

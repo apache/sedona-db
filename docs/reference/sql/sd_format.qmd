@@ -36,4 +36,3 @@ Returns a formatted representation of the input value. When `options` is provide
 ```sql
 SELECT SD_Format(ST_Point(1.0, 2.0), '{"width_hint": 16}');
 ```
-

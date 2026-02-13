@@ -30,4 +30,3 @@ kernels:
 ```sql
 SELECT SD_Order(geom) FROM my_table;
 ```
-

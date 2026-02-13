@@ -36,4 +36,3 @@ SELECT ST_DistanceSphere(
     ST_GeogFromText('POINT(1 1)')
 );
 ```
-

@@ -41,4 +41,3 @@ SELECT ST_ConcaveHull(
     0.3
 );
 ```
-

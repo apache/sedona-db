@@ -87,4 +87,3 @@ WHERE barrier('priority < 5 OR type = "critical"',
               'priority', priority,
               'type', type);
 ```
-

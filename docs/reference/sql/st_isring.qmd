@@ -25,7 +25,7 @@ kernels:
 
 ## Description
 
-Returns `true` if the LineString is both closed (`ST_IsClosed`) and simple (`ST_IsSimple`). In othe words, the input forms a ring with no self-intersections.
+Returns `true` if the LineString is both closed (`ST_IsClosed`) and simple (`ST_IsSimple`). In other words, the input forms a ring with no self-intersections.
 
 ## Examples
 

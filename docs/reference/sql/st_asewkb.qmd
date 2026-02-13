@@ -32,4 +32,3 @@ EWKB extends WKB to include SRID information in the binary header and is useful 
 ```sql
 SELECT ST_AsEWKB(ST_Point(1.0, 2.0, 4326));
 ```
-

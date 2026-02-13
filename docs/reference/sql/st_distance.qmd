@@ -34,4 +34,3 @@ of the coordinate reference system. For geographic distance calculations, use
 ```sql
 SELECT ST_Distance(ST_Point(0, 0), ST_Point(1, 1));
 ```
-
