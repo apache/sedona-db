@@ -38,6 +38,15 @@ pub struct TableGeoParquetOptions {
     pub validate: bool,
 }
 
+impl TableGeoParquetOptions {
+    pub const TABLE_OPTIONS_KEYS: [&str; 4] = [
+        "format.geoparquet_version",
+        "format.geometry_columns",
+        "format.validate",
+        "format.overwrite_bbox_columns",
+    ];
+}
+
 impl ConfigField for TableGeoParquetOptions {
     fn visit<V: Visit>(&self, v: &mut V, key_prefix: &str, _description: &'static str) {
         // Visit inner TableParquetOptions fields

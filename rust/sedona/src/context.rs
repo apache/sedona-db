@@ -109,8 +109,7 @@ impl SedonaContext {
         );
 
         #[allow(unused_mut)]
-        let mut state_builder = SessionStateBuilder::new()
-            .with_default_features()
+        let mut state_builder = SessionStateBuilder::new_with_default_features()
             .with_runtime_env(runtime_env)
             .with_config(session_config);
 
@@ -557,7 +556,7 @@ mod tests {
     use datafusion::assert_batches_eq;
     use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_schema::{
-        crs::lnglat,
+        crs::{deserialize_crs, lnglat},
         datatypes::{Edges, SedonaType},
         schema::SedonaSchema,
     };
@@ -783,5 +782,41 @@ mod tests {
         )
         .await
         .expect("should succeed because aws and gcs options were stripped");
+    }
+
+    #[tokio::test]
+    async fn format_from_external_table() {
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let example = test_geoparquet("example", "geometry").unwrap();
+        ctx.sql(&format!(
+            r#"
+            CREATE EXTERNAL TABLE test
+            STORED AS PARQUET
+            LOCATION '{example}'
+            OPTIONS ('geometry_columns' '{{"geometry": {{"encoding": "WKB", "crs": "EPSG:3857"}}}}');
+            "#
+        ))
+        .await
+        .unwrap();
+
+        let df = ctx.ctx.table("test").await.unwrap();
+
+        // Check that the logical plan resulting from a read has the correct schema
+        assert_eq!(
+            df.schema().clone().strip_qualifiers().field_names(),
+            ["wkt", "geometry"]
+        );
+
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
+        );
     }
 }

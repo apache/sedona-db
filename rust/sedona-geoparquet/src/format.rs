@@ -103,12 +103,7 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         // options. These are prefixed with `format` when passed by
         // DataFusion SQL. DataFusion takes care of lowercasing these values before
         // they are passed here.
-        for key in [
-            "format.geoparquet_version",
-            "format.geometry_columns",
-            "format.validate",
-            "format.overwrite_bbox_columns",
-        ] {
+        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
             if let Some(value) = format_options_mut.remove(key) {
                 options_mut.set(key.strip_prefix("format.").unwrap(), &value)?;
             }

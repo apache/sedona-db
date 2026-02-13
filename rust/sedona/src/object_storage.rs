@@ -34,6 +34,7 @@ use dirs::home_dir;
 #[cfg(any(feature = "aws", feature = "azure", feature = "gcp", feature = "http"))]
 use object_store::CredentialProvider;
 use object_store::ObjectStore;
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use url::Url;
 
 #[cfg(feature = "aws")]
@@ -819,10 +820,21 @@ pub(crate) async fn register_object_store_and_config_extensions(
 
     // Clone and modify the default table options based on the provided options
     let mut table_options = ctx.ctx.state().default_table_options();
-    if let Some(format) = format {
-        table_options.set_config_format(format);
+    if let Some(ref format) = format {
+        table_options.set_config_format(format.clone());
     }
-    table_options.alter_with_string_hash_map(options)?;
+
+    let mut options = options.clone();
+
+    // If this is an explicitly Parquet configuration, we need to strip GeoParquet
+    // options before calling alter_string_with_hash_map.
+    if let Some(&ConfigFileType::PARQUET) = format.as_ref() {
+        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
+            options.remove(key);
+        }
+    }
+
+    table_options.alter_with_string_hash_map(&options)?;
 
     // Retrieve the appropriate object store based on the scheme, URL, and modified table options
     let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
