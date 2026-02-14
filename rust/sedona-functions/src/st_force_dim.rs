@@ -246,7 +246,7 @@ impl CrsTransform for Force3DTransform {
             "Unexpected call to transform_coord()".to_string(),
         ))
     }
-    fn transform_coord_3d(
+    fn transform_coord_xyz(
         &self,
         coord: &mut (f64, f64, f64),
         input_dims: Dimensions,
