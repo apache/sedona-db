@@ -152,11 +152,11 @@ impl SedonaScalarKernel for RsGeoReferenceTwoArg {
             StringBuilder::with_capacity(executor.num_iterations(), preallocate_bytes);
 
         executor.execute_raster_void(|i, raster_opt| {
-            let format = if format_array.is_null(i) {
-                GeoReferenceFormat::Gdal
-            } else {
-                GeoReferenceFormat::from_str(format_array.value(i))?
-            };
+            if format_array.is_null(i) {
+                builder.append_null();
+                return Ok(());
+            }
+            let format = GeoReferenceFormat::from_str(format_array.value(i))?;
             format_georeference(raster_opt, format, &mut builder)
         })?;
 
@@ -290,7 +290,7 @@ mod tests {
         let formats = Arc::new(StringArray::from(vec![
             Some("GDAL"), // explicit GDAL
             Some("ESRI"), // won't matter since raster 1 is null
-            None,         // null format -> defaults to GDAL
+            None,         // null format -> NULL output
             Some("ESRI"), // explicit ESRI
         ]));
 
@@ -302,8 +302,8 @@ mod tests {
                 Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
                 // null raster
                 None,
-                // null format defaults to GDAL
-                Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
+                // null format -> NULL output
+                None,
                 // explicit ESRI
                 Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1500000000\n4.7000000000"),
         ]));
