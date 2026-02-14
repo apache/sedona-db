@@ -27,12 +27,15 @@ use arrow_ipc::{reader::FileReader, writer::FileWriter};
 use arrow_schema::{DataType, Field, Schema};
 use datafusion_common::{arrow::compute::concat_batches, Column, DataFusionError, ScalarValue};
 use datafusion_pruning::PruningStatistics;
-use las::{raw::Point as RawPoint, Header, Point};
+use las::{Header, Point};
 use object_store::{path::Path, ObjectMeta, ObjectStore, PutPayload};
 
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::laz::{metadata::ChunkMeta, reader::record_decompressor};
+use crate::laz::{
+    metadata::ChunkMeta,
+    reader::{read_point, record_decompressor},
+};
 
 /// Spatial statistics (extent) of LAZ chunks for pruning.
 ///
@@ -261,15 +264,6 @@ async fn extract_chunk_stats(
     chunk_meta: &ChunkMeta,
     header: &Header,
 ) -> Result<[f64; 6], DataFusionError> {
-    // fetch chunk bytes
-    let bytes = store
-        .get_range(&object_meta.location, chunk_meta.byte_range.clone())
-        .await?;
-
-    // setup laz decompressor
-    let mut decompressor =
-        record_decompressor(header, bytes).map_err(|e| DataFusionError::External(Box::new(e)))?;
-
     // statistics
     let mut stats = [
         f64::INFINITY,
@@ -280,18 +274,8 @@ async fn extract_chunk_stats(
         f64::NEG_INFINITY,
     ];
 
-    let out = vec![0; header.point_format().len() as usize];
-    let mut buffer = Cursor::new(out);
-
-    for _ in 0..chunk_meta.num_points {
-        buffer.set_position(0);
-        decompressor.decompress_next(buffer.get_mut())?;
-
-        let point = RawPoint::read_from(&mut buffer, header.point_format())
-            .map(|raw_point| Point::new(raw_point, header.transforms()))
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        stats = [
+    let extend = |stats: &mut [f64; 6], point: Point| {
+        *stats = [
             stats[0].min(point.x),
             stats[1].max(point.x),
             stats[2].min(point.y),
@@ -299,6 +283,34 @@ async fn extract_chunk_stats(
             stats[4].min(point.z),
             stats[5].max(point.z),
         ];
+    };
+
+    // fetch chunk bytes
+    let bytes = store
+        .get_range(&object_meta.location, chunk_meta.byte_range.clone())
+        .await?;
+
+    if header.laz_vlr().is_ok() {
+        // setup laz decompressor
+        let mut decompressor = record_decompressor(header, bytes)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        let out = vec![0; header.point_format().len() as usize];
+        let mut buffer = Cursor::new(out);
+
+        for _ in 0..chunk_meta.num_points {
+            buffer.set_position(0);
+            decompressor.decompress_next(buffer.get_mut())?;
+            let point = read_point(&mut buffer, header)?;
+            extend(&mut stats, point);
+        }
+    } else {
+        let mut buffer = Cursor::new(bytes);
+
+        for _ in 0..chunk_meta.num_points {
+            let point = read_point(&mut buffer, header)?;
+            extend(&mut stats, point);
+        }
     }
 
     Ok(stats)

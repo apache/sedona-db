@@ -151,7 +151,11 @@ impl<'a> LazMetadataReader<'a> {
 
         let header = self.fetch_header().await?;
         let extra_attributes = extra_bytes_attributes(&header)?;
-        let chunk_table = chunk_table(*store, object_meta, &header).await?;
+        let chunk_table = if header.laz_vlr().is_ok() {
+            laz_chunk_table(*store, object_meta, &header).await?
+        } else {
+            las_chunk_table(&header).await?
+        };
         let statistics = if options.collect_statistics {
             Some(
                 chunk_statistics(
@@ -363,19 +367,16 @@ pub(crate) fn extra_bytes_attributes(
     Ok(attributes)
 }
 
-pub(crate) async fn chunk_table(
+async fn laz_chunk_table(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
     header: &Header,
 ) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
+    let laz_vlr = header.laz_vlr()?;
+
     let num_points = header.number_of_points();
     let mut point_offset = 0;
-
-    let vlr_len = header.vlrs().iter().map(|v| v.len(false)).sum::<usize>();
-    let header_size = header.version().header_size() as usize + header.padding().len();
-    let mut byte_offset = (header_size + vlr_len + header.vlr_padding().len()) as u64;
-
-    let laz_vlr = header.laz_vlr()?;
+    let mut byte_offset = offset_to_point_data(header);
 
     let ranges = [
         byte_offset..byte_offset + 8,
@@ -436,6 +437,41 @@ pub(crate) async fn chunk_table(
     }
 
     Ok(chunks)
+}
+
+async fn las_chunk_table(header: &Header) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
+    const CHUNK_SIZE: u64 = 50000;
+
+    let num_points = header.number_of_points();
+    let mut point_offset = 0;
+    let mut byte_offset = offset_to_point_data(header);
+    let record_size = header.point_format().len() as u64;
+
+    let num_chunks = num_points.div_ceil(CHUNK_SIZE);
+    let mut chunks = Vec::with_capacity(num_chunks as usize);
+
+    for _ in 0..num_chunks {
+        let point_count = CHUNK_SIZE.min(num_points - point_offset);
+        let byte_count = point_count * record_size;
+
+        let chunk = ChunkMeta {
+            num_points: point_count,
+            point_offset,
+            byte_range: byte_offset..byte_offset + byte_count,
+        };
+
+        chunks.push(chunk);
+        point_offset += point_count;
+        byte_offset += byte_count;
+    }
+
+    Ok(chunks)
+}
+
+fn offset_to_point_data(header: &Header) -> u64 {
+    let vlr_len = header.vlrs().iter().map(|v| v.len(false)).sum::<usize>();
+    let header_size = header.version().header_size() as usize + header.padding().len();
+    (header_size + vlr_len + header.vlr_padding().len()) as u64
 }
 
 #[cfg(test)]

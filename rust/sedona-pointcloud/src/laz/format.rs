@@ -38,25 +38,42 @@ use crate::{
     options::PointcloudOptions,
 };
 
-const DEFAULT_LAZ_EXTENSION: &str = ".laz";
+#[derive(Debug, Clone, Copy)]
+pub enum Extension {
+    Las,
+    Laz,
+}
+
+impl Extension {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Extension::Las => "las",
+            Extension::Laz => "laz",
+        }
+    }
+}
 
 /// Factory struct used to create [LazFormat]
-#[derive(Default)]
 pub struct LazFormatFactory {
     // inner options for LAZ
     pub options: Option<PointcloudOptions>,
+    extension: Extension,
 }
 
 impl LazFormatFactory {
     /// Creates an instance of [LazFormatFactory]
-    pub fn new() -> Self {
-        Self { options: None }
+    pub fn new(extension: Extension) -> Self {
+        Self {
+            options: None,
+            extension,
+        }
     }
 
     /// Creates an instance of [LazFormatFactory] with customized default options
-    pub fn new_with(options: PointcloudOptions) -> Self {
+    pub fn new_with(options: PointcloudOptions, extension: Extension) -> Self {
         Self {
             options: Some(options),
+            extension,
         }
     }
 }
@@ -80,11 +97,13 @@ impl FileFormatFactory for LazFormatFactory {
             options.set(k, v)?;
         }
 
-        Ok(Arc::new(LazFormat::default().with_options(options)))
+        Ok(Arc::new(
+            LazFormat::new(self.extension).with_options(options),
+        ))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
-        Arc::new(LazFormat::default())
+        Arc::new(LazFormat::new(self.extension))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -94,8 +113,7 @@ impl FileFormatFactory for LazFormatFactory {
 
 impl GetExt for LazFormatFactory {
     fn get_ext(&self) -> String {
-        // Removes the dot, i.e. ".laz" -> "laz"
-        DEFAULT_LAZ_EXTENSION[1..].to_string()
+        self.extension.as_str().to_string()
     }
 }
 
@@ -108,12 +126,20 @@ impl fmt::Debug for LazFormatFactory {
 }
 
 /// The LAZ `FileFormat` implementation
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LazFormat {
     pub options: PointcloudOptions,
+    extension: Extension,
 }
 
 impl LazFormat {
+    pub fn new(extension: Extension) -> Self {
+        Self {
+            options: Default::default(),
+            extension,
+        }
+    }
+
     pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
         self
@@ -127,7 +153,7 @@ impl FileFormat for LazFormat {
     }
 
     fn get_ext(&self) -> String {
-        LazFormatFactory::new().get_ext()
+        LazFormatFactory::new(self.extension).get_ext()
     }
 
     fn get_ext_with_compression(
@@ -228,7 +254,7 @@ impl FileFormat for LazFormat {
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(LazSource::default().with_options(self.options.clone()))
+        Arc::new(LazSource::new(self.extension).with_options(self.options.clone()))
     }
 }
 
@@ -240,10 +266,10 @@ mod test {
     use datafusion_datasource::file_format::FileFormatFactory;
     use las::{point::Format, Builder, Writer};
 
-    use crate::laz::format::{LazFormat, LazFormatFactory};
+    use crate::laz::format::{Extension, LazFormat, LazFormatFactory};
 
     fn setup_context() -> SessionContext {
-        let file_format = Arc::new(LazFormatFactory::new());
+        let file_format = Arc::new(LazFormatFactory::new(Extension::Laz));
 
         let mut state = SessionStateBuilder::new().build();
         state.register_file_format(file_format, true).unwrap();
@@ -254,7 +280,7 @@ mod test {
     #[tokio::test]
     async fn laz_format_factory() {
         let ctx = SessionContext::new();
-        let format_factory = Arc::new(LazFormatFactory::new());
+        let format_factory = Arc::new(LazFormatFactory::new(Extension::Laz));
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();

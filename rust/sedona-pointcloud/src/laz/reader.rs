@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{io::Cursor, ops::Range, sync::Arc};
+use std::{
+    io::{Cursor, Read},
+    ops::Range,
+    sync::Arc,
+};
 
 use arrow_array::RecordBatch;
 use bytes::Bytes;
@@ -103,10 +107,6 @@ impl LazFileReader {
         // fetch bytes
         let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
 
-        // laz decompressor
-        let mut decompressor = record_decompressor(&header, bytes)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
         // record batch builder
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
@@ -116,22 +116,28 @@ impl LazFileReader {
                 self.options.las.extra_bytes,
             );
 
-        // transform
-        let format = header.point_format();
-        let transforms = header.transforms();
-
-        let out = vec![0; format.len() as usize];
-        let mut buffer = Cursor::new(out);
-
-        for _ in 0..chunk_meta.num_points {
-            buffer.set_position(0);
-            decompressor.decompress_next(buffer.get_mut())?;
-
-            let point = RawPoint::read_from(&mut buffer, format)
-                .map(|raw_point| Point::new(raw_point, transforms))
+        // parse points
+        if header.laz_vlr().is_ok() {
+            // laz decompressor
+            let mut decompressor = record_decompressor(&header, bytes)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            builder.append(point);
+            let out = vec![0; header.point_format().len() as usize];
+            let mut buffer = Cursor::new(out);
+
+            for _ in 0..chunk_meta.num_points {
+                buffer.set_position(0);
+                decompressor.decompress_next(buffer.get_mut())?;
+                let point = read_point(&mut buffer, &header)?;
+                builder.append(point);
+            }
+        } else {
+            let mut buffer = Cursor::new(bytes);
+
+            for _ in 0..chunk_meta.num_points {
+                let point = read_point(&mut buffer, &header)?;
+                builder.append(point);
+            }
         }
 
         let struct_array = builder.finish()?;
@@ -179,6 +185,12 @@ pub fn record_decompressor(
     decompressor.set_selection(DecompressionSelection::all());
 
     Ok(decompressor)
+}
+
+pub(crate) fn read_point<R: Read>(buffer: R, header: &Header) -> Result<Point, DataFusionError> {
+    RawPoint::read_from(buffer, header.point_format())
+        .map(|raw_point| Point::new(raw_point, header.transforms()))
+        .map_err(|e| DataFusionError::External(Box::new(e)))
 }
 
 #[cfg(test)]

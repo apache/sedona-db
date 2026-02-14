@@ -29,11 +29,11 @@ use datafusion_physical_plan::{
 use object_store::ObjectStore;
 
 use crate::{
-    laz::{opener::LazOpener, reader::LazFileReaderFactory},
+    laz::{format::Extension, opener::LazOpener, reader::LazFileReaderFactory},
     options::PointcloudOptions,
 };
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct LazSource {
     /// Optional metrics
     metrics: ExecutionPlanMetricsSet,
@@ -47,9 +47,23 @@ pub struct LazSource {
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
     pub(crate) options: PointcloudOptions,
+    pub(crate) extension: Extension,
 }
 
 impl LazSource {
+    pub fn new(extension: Extension) -> Self {
+        Self {
+            metrics: Default::default(),
+            table_schema: Default::default(),
+            predicate: Default::default(),
+            reader_factory: Default::default(),
+            batch_size: Default::default(),
+            projected_statistics: Default::default(),
+            options: Default::default(),
+            extension,
+        }
+    }
+
     pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
         self
@@ -132,7 +146,7 @@ impl FileSource for LazSource {
     }
 
     fn file_type(&self) -> &str {
-        "laz"
+        self.extension.as_str()
     }
 
     fn try_pushdown_filters(
