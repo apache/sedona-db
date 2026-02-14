@@ -436,7 +436,7 @@ pub(crate) enum DAffine {
 }
 
 impl CrsTransform for DAffine {
-    fn transform_coord_3d(
+    fn transform_coord_xyz(
         &self,
         coord: &mut (f64, f64, f64),
         _input_dims: Dimensions,
@@ -632,7 +632,7 @@ mod tests {
         let affine_3d =
             DAffine::DAffine3(glam::DAffine3::from_scale(glam::DVec3::new(2.0, 3.0, 4.0)));
         affine_3d
-            .transform_coord_3d(&mut coord_3d, Dimensions::Xyz)
+            .transform_coord_xyz(&mut coord_3d, Dimensions::Xyz)
             .unwrap();
         assert_eq!(coord_3d, (2.0, 6.0, 12.0));
     }

@@ -232,7 +232,7 @@ impl CrsTransform for Translate {
         Ok(())
     }
 
-    fn transform_coord_3d(
+    fn transform_coord_xyz(
         &self,
         coord: &mut (f64, f64, f64),
         _input_dims: Dimensions,
