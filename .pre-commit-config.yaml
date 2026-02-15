@@ -28,6 +28,8 @@ repos:
         # R snapshot test files may have arbitrary file endings based on test results
         exclude: "_snaps"
       - id: fix-byte-order-marker
+      - id: mixed-line-ending
+        args: [--fix=lf]
       - id: trailing-whitespace
 
   - repo: https://github.com/codespell-project/codespell
