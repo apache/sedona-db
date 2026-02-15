@@ -20,9 +20,7 @@ use std::sync::Arc;
 use arrow_array::{builder::BinaryBuilder, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -248,20 +246,8 @@ pub fn st_force3dm_udf() -> SedonaScalarUDF {
             Arc::new(STForce3DM { is_geography: true }),
         ]),
         Volatility::Immutable,
-        Some(st_force3dm_doc()),
+        None,
     )
-}
-
-fn st_force3dm_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Forces the geometry into a 3DM-dimensional model.",
-        "ST_Force3DM (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("m", "numeric: default M value")
-    .with_sql_example("SELECT ST_Force3DM(ST_GeomFromWKT('POINT (1 2)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -352,21 +338,8 @@ pub fn st_force4d_udf() -> SedonaScalarUDF {
             Arc::new(STForce4D { is_geography: true }),
         ]),
         Volatility::Immutable,
-        Some(st_force4d_doc()),
+        None,
     )
-}
-
-fn st_force4d_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Forces the geometry into a 4-dimensional model.",
-        "ST_Force4D (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("z", "numeric: default Z value")
-    .with_argument("m", "numeric: default M value")
-    .with_sql_example("SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'))")
-    .build()
 }
 
 #[derive(Debug)]

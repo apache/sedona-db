@@ -16,19 +16,32 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Force2D
-description: Force a geometry into a XY coordinate model.
+title: ST_Force3DM
+description: Force a geometry into a XYM coordinate model with an optional M value.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geometry
+    args:
+    - geometry
+    - name: m
+      type: double
 ---
 
 ## Description
 
-Discards any Z and M values present (if any).
+If the geometry already has M values they are preserved; otherwise the optional `m` argument (default 0) is used.
 
 ## Examples
 
 ```sql
-SELECT ST_Force2D(ST_GeomFromWKT('POINT Z (1 2 3)'));
+SELECT ST_Force3DM(ST_GeomFromWKT('POINT (1 2)'), 10.0);
+```
+
+```sql
+SELECT ST_Force3DM(ST_GeomFromWKT('POINT (1 2)'));
+```
+
+```sql
+SELECT ST_Force3DM(ST_GeomFromWKT('POINT M (1 2 3)'), 10.0);
 ```
