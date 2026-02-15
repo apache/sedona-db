@@ -1527,14 +1527,14 @@ def test_st_force_dim(eng, geom, expected_2d, expected_3d):
         (
             "POINT EMPTY",
             5,
-            "POINT ZM (nan nan nan nan)",
-            "POINT ZM (nan nan nan nan)",
+            "POINT M (nan nan nan)",
+            "POINT M (nan nan nan)",
         ),
-        ("POINT (0 1)", 5, "POINT ZM (0 1 0 0)", "POINT ZM (0 1 0 5)"),
-        ("POINT Z (0 1 2)", 5, "POINT ZM (0 1 2 0)", "POINT ZM (0 1 2 5)"),
-        ("POINT M (0 1 3)", 5, "POINT ZM (0 1 0 3)", "POINT ZM (0 1 0 3)"),
-        ("POINT ZM (0 1 2 3)", 5, "POINT ZM (0 1 2 3)", "POINT ZM (0 1 2 3)"),
-        ("POINT (0 1)", None, "POINT ZM (0 1 0 0)", None),
+        ("POINT (0 1)", 5, "POINT M (0 1 0)", "POINT M (0 1 5)"),
+        ("POINT Z (0 1 2)", 5, "POINT M (0 1 0)", "POINT M (0 1 5)"),
+        ("POINT M (0 1 3)", 5, "POINT M (0 1 3)", "POINT M (0 1 3)"),
+        ("POINT ZM (0 1 2 3)", 5, "POINT M (0 1 3)", "POINT M (0 1 3)"),
+        ("POINT (0 1)", None, "POINT M (0 1 0)", None),
     ],
 )
 def test_st_force3dm(eng, geom, m, expected_without_m, expected_with_m):
