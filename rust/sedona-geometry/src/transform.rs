@@ -56,20 +56,52 @@ pub trait CrsEngine: Debug {
 }
 
 /// Trait for transforming coordinates in a geometry from one CRS to another.
+///
+/// - If the transform needs to handle only XY, implement only
+///   `transform_coord()` (Z and M coordinates are returned unmodified)
+/// - If the transform needs to handle XYZ, implement `transform_coord()` and
+///   `transform_coord_xyz()` (M coordinate is ignored)
+/// - If the transform needs to handle XYZM, implement all `transform_*()`
 pub trait CrsTransform: std::fmt::Debug {
+    // Transform a XY coordinate
     fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError>;
 
-    // CrsTransform can optionally handle 3D coordinates. If this method is not implemented,
-    // the Z coordinate is simply ignored.
-    fn transform_coord_3d(
+    // Transform a XYZ coordinate.
+    fn transform_coord_xyz(
         &self,
         coord: &mut (f64, f64, f64),
         _input_dims: Dimensions,
     ) -> Result<(), SedonaGeometryError> {
-        let mut coord_2d = (coord.0, coord.1);
-        self.transform_coord(&mut coord_2d)?;
-        coord.0 = coord_2d.0;
-        coord.1 = coord_2d.1;
+        let mut coord_xy = (coord.0, coord.1);
+        self.transform_coord(&mut coord_xy)?;
+        coord.0 = coord_xy.0;
+        coord.1 = coord_xy.1;
+        Ok(())
+    }
+
+    // Transform a XYM coordinate.
+    fn transform_coord_xym(
+        &self,
+        coord: &mut (f64, f64, f64),
+        _input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        let mut coord_xy = (coord.0, coord.1);
+        self.transform_coord(&mut coord_xy)?;
+        coord.0 = coord_xy.0;
+        coord.1 = coord_xy.1;
+        Ok(())
+    }
+    // Transform a XYZM coordinate.
+    fn transform_coord_xyzm(
+        &self,
+        coord: &mut (f64, f64, f64, f64),
+        input_dims: Dimensions,
+    ) -> Result<(), SedonaGeometryError> {
+        let mut coord_xyz = (coord.0, coord.1, coord.2);
+        self.transform_coord_xyz(&mut coord_xyz, input_dims)?;
+        coord.0 = coord_xyz.0;
+        coord.1 = coord_xyz.1;
+        coord.2 = coord_xyz.2;
         Ok(())
     }
 
@@ -85,12 +117,12 @@ impl CrsTransform for Box<dyn CrsTransform> {
         self.as_ref().transform_coord(coord)
     }
 
-    fn transform_coord_3d(
+    fn transform_coord_xyz(
         &self,
         coord: &mut (f64, f64, f64),
         input_dims: Dimensions,
     ) -> Result<(), SedonaGeometryError> {
-        self.as_ref().transform_coord_3d(coord, input_dims)
+        self.as_ref().transform_coord_xyz(coord, input_dims)
     }
 }
 
@@ -384,19 +416,19 @@ where
                 write_wkb_coord(buf, (xy.0, xy.1))?;
             }
             Dimensions::Xyz => {
-                let mut xyz = fill_or_extract_coord(&coord, input_dims);
-                trans.transform_coord_3d(&mut xyz, input_dims)?;
+                let mut xyz = fill_or_extract_xyz(&coord, input_dims);
+                trans.transform_coord_xyz(&mut xyz, input_dims)?;
                 write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2))?;
             }
             Dimensions::Xym => {
-                let mut xy: (f64, f64) = (coord.x(), coord.y());
-                trans.transform_coord(&mut xy)?;
-                write_wkb_coord(buf, (xy.0, xy.1, coord.nth_or_panic(2)))?;
+                let mut xym: (f64, f64, f64) = fill_or_extract_xym(&coord, input_dims);
+                trans.transform_coord_xym(&mut xym, input_dims)?;
+                write_wkb_coord(buf, (xym.0, xym.1, xym.2))?;
             }
             Dimensions::Xyzm => {
-                let mut xyz = fill_or_extract_coord(&coord, input_dims);
-                trans.transform_coord_3d(&mut xyz, input_dims)?;
-                write_wkb_coord(buf, (xyz.0, xyz.1, xyz.2, coord.nth_or_panic(3)))?;
+                let mut xyzm = fill_or_extract_xyzm(&coord, input_dims);
+                trans.transform_coord_xyzm(&mut xyzm, input_dims)?;
+                write_wkb_coord(buf, (xyzm.0, xyzm.1, xyzm.2, xyzm.3))?;
             }
             _ => {
                 return Err(SedonaGeometryError::Invalid(
@@ -408,7 +440,7 @@ where
     Ok(())
 }
 
-fn fill_or_extract_coord<C>(coord: &C, input_dims: Dimensions) -> (f64, f64, f64)
+fn fill_or_extract_xyz<C>(coord: &C, input_dims: Dimensions) -> (f64, f64, f64)
 where
     C: CoordTrait<T = f64>,
 {
@@ -416,6 +448,36 @@ where
         // If the input doesn't have Z coordinate, fill with 0.
         Dimensions::Xy | Dimensions::Xym | Dimensions::Unknown(_) => (coord.x(), coord.y(), 0.0),
         Dimensions::Xyz | Dimensions::Xyzm => (coord.x(), coord.y(), coord.nth_or_panic(2)),
+    }
+}
+
+fn fill_or_extract_xym<C>(coord: &C, input_dims: Dimensions) -> (f64, f64, f64)
+where
+    C: CoordTrait<T = f64>,
+{
+    match input_dims {
+        // If the input doesn't have M coordinate, fill with 0.
+        Dimensions::Xy | Dimensions::Xyz | Dimensions::Unknown(_) => (coord.x(), coord.y(), 0.0),
+        Dimensions::Xym => (coord.x(), coord.y(), coord.nth_or_panic(2)),
+        Dimensions::Xyzm => (coord.x(), coord.y(), coord.nth_or_panic(3)),
+    }
+}
+
+fn fill_or_extract_xyzm<C>(coord: &C, input_dims: Dimensions) -> (f64, f64, f64, f64)
+where
+    C: CoordTrait<T = f64>,
+{
+    match input_dims {
+        // If the input doesn't have Z or M coordinate, fill with 0.
+        Dimensions::Xy | Dimensions::Unknown(_) => (coord.x(), coord.y(), 0.0, 0.0),
+        Dimensions::Xyz => (coord.x(), coord.y(), coord.nth_or_panic(2), 0.0),
+        Dimensions::Xym => (coord.x(), coord.y(), 0.0, coord.nth_or_panic(2)),
+        Dimensions::Xyzm => (
+            coord.x(),
+            coord.y(),
+            coord.nth_or_panic(2),
+            coord.nth_or_panic(3),
+        ),
     }
 }
 
@@ -437,8 +499,8 @@ mod test {
     }
 
     #[derive(Debug)]
-    struct Mock3DTransform {}
-    impl CrsTransform for Mock3DTransform {
+    struct MockXyzTransform {}
+    impl CrsTransform for MockXyzTransform {
         // This transforms 2D and 3D differently for testing purposes
         fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
             coord.0 += 100.0;
@@ -446,7 +508,7 @@ mod test {
             Ok(())
         }
 
-        fn transform_coord_3d(
+        fn transform_coord_xyz(
             &self,
             coord: &mut (f64, f64, f64),
             _input_dims: Dimensions,
@@ -454,6 +516,73 @@ mod test {
             coord.0 += 10.0;
             coord.1 += 20.0;
             coord.2 += 30.0;
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockXymTransform {}
+    impl CrsTransform for MockXymTransform {
+        // This transforms 2D and 3D differently for testing purposes
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+            coord.0 += 100.0;
+            coord.1 += 200.0;
+            Ok(())
+        }
+
+        fn transform_coord_xym(
+            &self,
+            coord: &mut (f64, f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
+            coord.0 += 10.0;
+            coord.1 += 20.0;
+            coord.2 += 30.0;
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockXyzmTransform {}
+    impl CrsTransform for MockXyzmTransform {
+        // This transforms each dimensionality differently for testing purposes
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+            coord.0 += 100.0;
+            coord.1 += 200.0;
+            Ok(())
+        }
+
+        fn transform_coord_xyz(
+            &self,
+            coord: &mut (f64, f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
+            coord.0 += 10.0;
+            coord.1 += 20.0;
+            coord.2 += 30.0;
+            Ok(())
+        }
+
+        fn transform_coord_xym(
+            &self,
+            coord: &mut (f64, f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
+            coord.0 += 11.0;
+            coord.1 += 22.0;
+            coord.2 += 33.0;
+            Ok(())
+        }
+
+        fn transform_coord_xyzm(
+            &self,
+            coord: &mut (f64, f64, f64, f64),
+            _input_dims: Dimensions,
+        ) -> Result<(), SedonaGeometryError> {
+            coord.0 += 1.0;
+            coord.1 += 2.0;
+            coord.2 += 3.0;
+            coord.3 += 4.0;
             Ok(())
         }
     }
@@ -477,7 +606,15 @@ mod test {
     }
 
     fn test_transform_3d(geom: impl GeometryTrait<T = f64>, expected: &str) {
-        test_transform_inner(geom, expected, Mock3DTransform {})
+        test_transform_inner(geom, expected, MockXyzTransform {})
+    }
+
+    fn test_transform_xym(geom: impl GeometryTrait<T = f64>, expected: &str) {
+        test_transform_inner(geom, expected, MockXymTransform {})
+    }
+
+    fn test_transform_xyzm(geom: impl GeometryTrait<T = f64>, expected: &str) {
+        test_transform_inner(geom, expected, MockXyzmTransform {})
     }
 
     #[test]
@@ -640,6 +777,197 @@ mod test {
         let ls_xyzm_wkt = "LINESTRING ZM(1.0 2.0 3.0 4.0, 5.0 6.0 7.0 8.0)";
         let ls_xyzm: Wkt = Wkt::from_str(ls_xyzm_wkt).unwrap();
         test_transform_3d(ls_xyzm, "LINESTRING ZM(11 22 33 4,15 26 37 8)");
+    }
+
+    #[test]
+    fn test_transform_dimensions_xym() {
+        let ls_xy_wkt = "LINESTRING(1.0 2.0, 3.0 4.0)";
+        let ls_xy: Wkt = Wkt::from_str(ls_xy_wkt).unwrap();
+        test_transform_xym(ls_xy, "LINESTRING(101 202,103 204)");
+
+        let ls_xyz_wkt = "LINESTRING Z(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xyz: Wkt = Wkt::from_str(ls_xyz_wkt).unwrap();
+        test_transform_xym(ls_xyz, "LINESTRING Z(101 202 3,104 205 6)");
+
+        let ls_xym_wkt = "LINESTRING M(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xym: Wkt = Wkt::from_str(ls_xym_wkt).unwrap();
+        test_transform_xym(ls_xym, "LINESTRING M(11 22 33,14 25 36)");
+
+        let ls_xyzm_wkt = "LINESTRING ZM(1.0 2.0 3.0 4.0, 5.0 6.0 7.0 8.0)";
+        let ls_xyzm: Wkt = Wkt::from_str(ls_xyzm_wkt).unwrap();
+        test_transform_xym(ls_xyzm, "LINESTRING ZM(101 202 3 4,105 206 7 8)");
+    }
+
+    #[test]
+    fn test_transform_dimensions_xyzm() {
+        let ls_xy_wkt = "LINESTRING(1.0 2.0, 3.0 4.0)";
+        let ls_xy: Wkt = Wkt::from_str(ls_xy_wkt).unwrap();
+        test_transform_xyzm(ls_xy, "LINESTRING(101 202,103 204)");
+
+        let ls_xyz_wkt = "LINESTRING Z(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xyz: Wkt = Wkt::from_str(ls_xyz_wkt).unwrap();
+        test_transform_xyzm(ls_xyz, "LINESTRING Z(11 22 33,14 25 36)");
+
+        let ls_xym_wkt = "LINESTRING M(1.0 2.0 3.0, 4.0 5.0 6.0)";
+        let ls_xym: Wkt = Wkt::from_str(ls_xym_wkt).unwrap();
+        test_transform_xyzm(ls_xym, "LINESTRING M(12 24 36,15 27 39)");
+
+        let ls_xyzm_wkt = "LINESTRING ZM(1.0 2.0 3.0 4.0, 5.0 6.0 7.0 8.0)";
+        let ls_xyzm: Wkt = Wkt::from_str(ls_xyzm_wkt).unwrap();
+        test_transform_xyzm(ls_xyzm, "LINESTRING ZM(2 4 6 8,6 8 10 12)");
+    }
+
+    #[test]
+    fn test_fill_or_extract_xyz() {
+        let coord_xy = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xyz(&coord_xy, Dimensions::Xy),
+            (1.0, 2.0, 0.0)
+        );
+        assert_eq!(
+            fill_or_extract_xyz(&coord_xy, Dimensions::Unknown(2)),
+            (1.0, 2.0, 0.0)
+        );
+
+        let coord_xyz = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xyz(&coord_xyz, Dimensions::Xyz),
+            (1.0, 2.0, 3.0)
+        );
+
+        let coord_xym = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xyz(&coord_xym, Dimensions::Xym),
+            (1.0, 2.0, 0.0)
+        );
+
+        let coord_xyzm = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xyz(&coord_xyzm, Dimensions::Xyzm),
+            (1.0, 2.0, 3.0)
+        );
+    }
+
+    #[test]
+    fn test_fill_or_extract_xym() {
+        let coord_xy = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xym(&coord_xy, Dimensions::Xy),
+            (1.0, 2.0, 0.0)
+        );
+        assert_eq!(
+            fill_or_extract_xym(&coord_xy, Dimensions::Unknown(2)),
+            (1.0, 2.0, 0.0)
+        );
+
+        let coord_xyz = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xym(&coord_xyz, Dimensions::Xyz),
+            (1.0, 2.0, 0.0)
+        );
+
+        let coord_xym = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xym(&coord_xym, Dimensions::Xym),
+            (1.0, 2.0, 4.0)
+        );
+
+        let coord_xyzm = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xym(&coord_xyzm, Dimensions::Xyzm),
+            (1.0, 2.0, 4.0)
+        );
+    }
+
+    #[test]
+    fn test_fill_or_extract_xyzm() {
+        let coord_xy = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xyzm(&coord_xy, Dimensions::Xy),
+            (1.0, 2.0, 0.0, 0.0)
+        );
+        assert_eq!(
+            fill_or_extract_xyzm(&coord_xy, Dimensions::Unknown(2)),
+            (1.0, 2.0, 0.0, 0.0)
+        );
+
+        let coord_xyz = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: None,
+        };
+        assert_eq!(
+            fill_or_extract_xyzm(&coord_xyz, Dimensions::Xyz),
+            (1.0, 2.0, 3.0, 0.0)
+        );
+
+        let coord_xym = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: None,
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xyzm(&coord_xym, Dimensions::Xym),
+            (1.0, 2.0, 0.0, 4.0)
+        );
+
+        let coord_xyzm = wkt::types::Coord {
+            x: 1.0,
+            y: 2.0,
+            z: Some(3.0),
+            m: Some(4.0),
+        };
+        assert_eq!(
+            fill_or_extract_xyzm(&coord_xyzm, Dimensions::Xyzm),
+            (1.0, 2.0, 3.0, 4.0)
+        );
     }
 
     /// Mock CRS engine for testing caching behavior

@@ -75,19 +75,24 @@ impl FileOpener for LazOpener {
                 PruningPredicate::try_new(physical_expr, schema.clone()).ok()
             });
 
+            let spatial_filter = pruning_predicate
+                .as_ref()
+                .and_then(|p| SpatialFilter::try_from_expr(p.orig_expr()).ok());
+
             // file pruning
             if let Some(pruning_predicate) = &pruning_predicate {
                 // based on spatial filter
-                let spatial_filter = SpatialFilter::try_from_expr(pruning_predicate.orig_expr())?;
-                let bounds = metadata.header.bounds();
-                let bbox = BoundingBox::xyzm(
-                    (bounds.min.x, bounds.max.x),
-                    (bounds.min.y, bounds.max.y),
-                    Some((bounds.min.z, bounds.max.z).into()),
-                    None,
-                );
-                if !spatial_filter.filter_bbox("geometry").intersects(&bbox) {
-                    return Ok(futures::stream::empty().boxed());
+                if let Some(spatial_filter) = &spatial_filter {
+                    let bounds = metadata.header.bounds();
+                    let bbox = BoundingBox::xyzm(
+                        (bounds.min.x, bounds.max.x),
+                        (bounds.min.y, bounds.max.y),
+                        Some((bounds.min.z, bounds.max.z).into()),
+                        None,
+                    );
+                    if !spatial_filter.filter_bbox("geometry").intersects(&bbox) {
+                        return Ok(futures::stream::empty().boxed());
+                    }
                 }
                 // based on file statistics
                 if let Some(statistics) = file.statistics {
@@ -100,23 +105,18 @@ impl FileOpener for LazOpener {
                 }
             }
 
-            // map chunk table
-            let chunk_table: Vec<_> = metadata
-                .chunk_table
-                .iter()
-                .filter(|chunk_meta| {
-                    file.range.as_ref().is_none_or(|range| {
-                        let offset = chunk_meta.byte_range.start;
-                        offset >= range.start as u64 && offset < range.end as u64
-                    })
-                })
-                .cloned()
-                .collect();
+            // chunk pruning filter
+            let chunk_filter_xyz = pruning_predicate.and_then(|predicate| {
+                metadata
+                    .statistics
+                    .as_ref()
+                    .and_then(|stats| predicate.prune(stats).ok())
+            });
 
             let mut row_count = 0;
 
             let stream = async_stream::try_stream! {
-                for chunk_meta in chunk_table.into_iter() {
+                for (i, chunk_meta) in metadata.chunk_table.iter().enumerate() {
                     // limit
                     if let Some(limit) = limit {
                         if row_count >= limit {
@@ -124,8 +124,29 @@ impl FileOpener for LazOpener {
                         }
                     }
 
+                    // byte range
+                    if !file.range.as_ref().is_none_or(|range| {
+                        let offset = chunk_meta.byte_range.start;
+                        offset >= range.start as u64 && offset < range.end as u64
+                    }) {
+                        continue;
+                    }
+
+                    // pruning
+                    if let Some(filter) = chunk_filter_xyz.as_ref() {
+                        if !filter[i] {
+                            continue;
+                        }
+                    }
+                    if let (Some(spatial_filter), Some(stats)) = (spatial_filter.as_ref(), metadata.statistics.as_ref()) {
+                        let bbox = stats.get_bbox(i).unwrap();
+                        if !spatial_filter.filter_bbox("geometry").intersects(&bbox) {
+                            continue;
+                        }
+                    }
+
                     // fetch batch
-                    let record_batch = laz_reader.get_batch(&chunk_meta).await?;
+                    let record_batch = laz_reader.get_batch(chunk_meta).await?;
                     let num_rows = record_batch.num_rows();
                     row_count += num_rows;
 
@@ -147,10 +168,60 @@ impl FileOpener for LazOpener {
                         }
                     }
                 }
-
             };
 
             Ok(Box::pin(stream) as _)
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sedona::context::SedonaContext;
+
+    #[tokio::test]
+    async fn laz_statistics_pruning() {
+        // file with two clusters, one at 0.5 one at 1.0
+        let path = "tests/data/large.laz";
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // ensure no faulty chunk pruning
+        ctx.sql("SET pointcloud.geometry_encoding = 'plain'")
+            .await
+            .unwrap();
+        ctx.sql("SET pointcloud.collect_statistics = 'true'")
+            .await
+            .unwrap();
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE x < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE y < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
+            .await
+            .unwrap();
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE ST_Intersects(geometry, ST_GeomFromText('POLYGON ((0 0, 0.7 0, 0.7 0.7, 0 0.7, 0 0))'))"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
     }
 }

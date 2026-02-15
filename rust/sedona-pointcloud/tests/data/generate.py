@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 from pathlib import Path
 import laspy
 import numpy as np
@@ -33,6 +34,19 @@ DATA_DIR = Path(__file__).resolve().parent
 LAS_VERSIONS = [f"1.{p}" for p in range(5)]  # 1.0 - 1.4
 POINT_FORMAT = list(range(11))  # 0 - 10 (>= 6 for LAS 1.4+)
 
+# Pragmatic choice
+version = LAS_VERSIONS[4]
+point_format = POINT_FORMAT[6]
+
+# Header
+header = laspy.LasHeader(point_format=point_format, version=version)
+header.offsets = np.array([1.0, 1.0, 1.0])
+header.scales = np.array([0.1, 0.1, 0.1])
+
+
+# -----------------------------------------------------------------------------
+# Extra attribute test file with a single point (extra.laz)
+# -----------------------------------------------------------------------------
 DATA_TYPES = [
     "uint8",
     "int8",
@@ -45,15 +59,6 @@ DATA_TYPES = [
     "float32",
     "float64",
 ]
-
-# Pragmatic choice
-version = LAS_VERSIONS[4]
-point_format = POINT_FORMAT[6]
-
-# Header
-header = laspy.LasHeader(point_format=point_format, version=version)
-header.offsets = np.array([1.0, 1.0, 1.0])
-header.scales = np.array([0.1, 0.1, 0.1])
 
 # Extra attributes
 for dt in DATA_TYPES:
@@ -71,8 +76,9 @@ for dt in DATA_TYPES:
     )
 
 # Write laz with one point
-extra_path = DATA_DIR.joinpath("extra.laz")
-with laspy.open(extra_path, mode="w", header=header, do_compress=True) as writer:
+with laspy.open(
+    DATA_DIR.joinpath("extra.laz"), mode="w", header=header, do_compress=True
+) as writer:
     point_record = laspy.ScaleAwarePointRecord.zeros(point_count=1, header=header)
     point_record.x = [0.5]
     point_record.y = [0.5]
@@ -87,5 +93,23 @@ with laspy.open(extra_path, mode="w", header=header, do_compress=True) as writer
 
         name = f"{dt}_nodata"
         point_record[name] = [42]
+
+    writer.write_points(point_record)
+
+
+# -----------------------------------------------------------------------------
+# Large test file to evaluate pruning (large.laz)
+# -----------------------------------------------------------------------------
+with laspy.open(
+    DATA_DIR.joinpath("large.laz"), mode="w", header=header, do_compress=True
+) as writer:
+    N = 100000
+
+    point_record = laspy.ScaleAwarePointRecord.zeros(point_count=N, header=header)
+
+    # create two distinct chunks
+    point_record.x = [0.5] * int(N / 2) + [1] * int(N / 2)
+    point_record.y = [0.5] * int(N / 2) + [1] * int(N / 2)
+    point_record.z = [0.5] * int(N / 2) + [1] * int(N / 2)
 
     writer.write_points(point_record)

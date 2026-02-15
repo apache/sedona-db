@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Force3D
-description: Force a geometry into a 3D coordinate model with an optional Z value.
+description: Force a geometry into a XYZ coordinate model with an optional Z value.
 kernels:
   - returns: geometry
     args: [geometry]

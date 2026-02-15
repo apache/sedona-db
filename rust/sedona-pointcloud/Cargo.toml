@@ -32,6 +32,7 @@ categories.workspace = true
 [dependencies]
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
+arrow-ipc = { workspace = true }
 arrow-schema = { workspace = true }
 async-stream = "0.3.6"
 async-trait = { workspace = true }
@@ -55,5 +56,6 @@ sedona-geometry = { workspace = true }
 
 [dev-dependencies]
 datafusion = { workspace = true, features = ["sql"] }
+sedona = { workspace = true, features = ["pointcloud"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }

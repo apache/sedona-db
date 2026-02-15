@@ -42,7 +42,7 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::provider::ProvideCredentials;
 #[cfg(feature = "aws")]
 use object_store::aws::{AmazonS3Builder, AwsCredential};
-#[cfg(feature = "aws")]
+#[cfg(feature = "gcp")]
 use object_store::gcp::GoogleCloudStorageBuilder;
 
 #[cfg(feature = "azure")]

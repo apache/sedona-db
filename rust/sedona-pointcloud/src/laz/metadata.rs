@@ -36,7 +36,13 @@ use las::{
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::{laz::schema::try_schema_from_header, options::PointcloudOptions};
+use crate::{
+    laz::{
+        schema::try_schema_from_header,
+        statistics::{chunk_statistics, LazStatistics},
+    },
+    options::PointcloudOptions,
+};
 
 /// Laz chunk metadata
 #[derive(Debug, Clone)]
@@ -50,8 +56,9 @@ pub struct ChunkMeta {
 #[derive(Debug, Clone)]
 pub struct LazMetadata {
     pub header: Arc<Header>,
-    pub chunk_table: Vec<ChunkMeta>,
     pub extra_attributes: Arc<Vec<ExtraAttribute>>,
+    pub chunk_table: Vec<ChunkMeta>,
+    pub statistics: Option<LazStatistics>,
 }
 
 impl FileMetadata for LazMetadata {
@@ -68,6 +75,11 @@ impl FileMetadata for LazMetadata {
                 .sum::<usize>()
             + self.chunk_table.capacity() * std::mem::size_of::<ChunkMeta>()
             + self.extra_attributes.capacity() * std::mem::size_of::<ExtraAttribute>()
+            + self
+                .statistics
+                .as_ref()
+                .map(|s| s.values.get_array_memory_size())
+                .unwrap_or_default()
     }
 
     fn extra_info(&self) -> HashMap<String, String> {
@@ -121,7 +133,7 @@ impl<'a> LazMetadataReader<'a> {
             store,
             object_meta,
             file_metadata_cache,
-            options: _,
+            options,
         } = self;
 
         if let Some(las_file_metadata) = file_metadata_cache
@@ -140,11 +152,26 @@ impl<'a> LazMetadataReader<'a> {
         let header = self.fetch_header().await?;
         let extra_attributes = extra_bytes_attributes(&header)?;
         let chunk_table = chunk_table(*store, object_meta, &header).await?;
+        let statistics = if options.collect_statistics {
+            Some(
+                chunk_statistics(
+                    *store,
+                    object_meta,
+                    &chunk_table,
+                    &header,
+                    options.persist_statistics,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
 
         let metadata = Arc::new(LazMetadata {
             header: Arc::new(header),
-            chunk_table,
             extra_attributes: Arc::new(extra_attributes),
+            chunk_table,
+            statistics,
         });
 
         if let Some(file_metadata_cache) = file_metadata_cache {
