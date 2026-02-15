@@ -23,3 +23,4 @@ pub mod options;
 pub mod reader;
 pub mod schema;
 pub mod source;
+pub mod statistics;

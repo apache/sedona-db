@@ -79,6 +79,8 @@ extensions_options! {
     /// Pointcloud configuration options
     pub struct PointcloudOptions {
         pub geometry_encoding: GeometryEncoding, default = GeometryEncoding::default()
+        pub collect_statistics: bool, default = false
+        pub persist_statistics: bool, default = false
         pub las: LasOptions, default = LasOptions::default()
     }
 

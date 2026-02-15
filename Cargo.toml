@@ -68,6 +68,7 @@ arrow = { version = "57.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "57.0.0" }
 arrow-cast = { version = "57.0.0" }
 arrow-data = { version = "57.0.0" }
+arrow-ipc = { version = "57.0.0" }
 arrow-json = { version = "57.0.0" }
 arrow-schema = { version = "57.0.0" }
 arrow-buffer = { version = "57.0.0" }
