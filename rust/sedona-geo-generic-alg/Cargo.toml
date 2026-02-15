@@ -44,7 +44,7 @@ approx = { workspace = true }
 criterion = { workspace = true }
 pretty_env_logger = "0.4"
 rand = { workspace = true }
-rand_distr = "0.5.1"
+rand_distr = "0.6.0"
 geo = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
