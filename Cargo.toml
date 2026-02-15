@@ -100,7 +100,7 @@ futures = "0.3"
 pin-project-lite = "0.2"
 glam = "0.31.0"
 object_store = { version = "0.12.4", default-features = false }
-float_next_after = "1"
+float_next_after = "2"
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 mimalloc = { version = "0.1", default-features = false }
 libmimalloc-sys = { version = "0.1", default-features = false }
