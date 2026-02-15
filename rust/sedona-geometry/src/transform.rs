@@ -458,7 +458,8 @@ where
     match input_dims {
         // If the input doesn't have M coordinate, fill with 0.
         Dimensions::Xy | Dimensions::Xyz | Dimensions::Unknown(_) => (coord.x(), coord.y(), 0.0),
-        Dimensions::Xym | Dimensions::Xyzm => (coord.x(), coord.y(), coord.nth_or_panic(2)),
+        Dimensions::Xym => (coord.x(), coord.y(), coord.nth_or_panic(2)),
+        Dimensions::Xyzm => (coord.x(), coord.y(), coord.nth_or_panic(3)),
     }
 }
 
@@ -914,7 +915,7 @@ mod test {
         };
         assert_eq!(
             fill_or_extract_xym(&coord_xyzm, Dimensions::Xyzm),
-            (1.0, 2.0, 3.0)
+            (1.0, 2.0, 4.0)
         );
     }
 

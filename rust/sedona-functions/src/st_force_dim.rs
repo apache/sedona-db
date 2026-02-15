@@ -335,7 +335,7 @@ struct Force3DMTransform {
 
 impl CrsTransform for Force3DMTransform {
     fn output_dim(&self) -> Option<geo_traits::Dimensions> {
-        Some(geo_traits::Dimensions::Xyzm)
+        Some(geo_traits::Dimensions::Xym)
     }
 
     fn transform_coord(
@@ -347,16 +347,16 @@ impl CrsTransform for Force3DMTransform {
         ))
     }
 
-    fn transform_coord_xyzm(
+    fn transform_coord_xym(
         &self,
-        coord: &mut (f64, f64, f64, f64),
+        coord: &mut (f64, f64, f64),
         input_dims: Dimensions,
     ) -> Result<(), SedonaGeometryError> {
         if matches!(
             input_dims,
             Dimensions::Xy | Dimensions::Xyz | Dimensions::Unknown(_)
         ) {
-            coord.3 = self.m;
+            coord.2 = self.m;
         }
         Ok(())
     }
@@ -647,12 +647,12 @@ mod tests {
         let expected = create_array(
             &[
                 None,
-                Some("POINT ZM EMPTY"),
-                Some("POINT ZM EMPTY"),
-                Some("POINT ZM (1 2 0 0)"),
-                Some("POINT ZM (3 4 5 0)"),
-                Some("POINT ZM (6 7 0 8)"),
-                Some("POINT ZM (9 10 11 12)"),
+                Some("POINT M EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT M (1 2 0)"),
+                Some("POINT M (3 4 0)"),
+                Some("POINT M (6 7 8)"),
+                Some("POINT M (9 10 12)"),
             ],
             &WKB_GEOMETRY,
         );
@@ -697,12 +697,12 @@ mod tests {
         let expected = create_array(
             &[
                 None,
-                Some("POINT ZM EMPTY"),
-                Some("POINT ZM (1 2 0 9)"),
+                Some("POINT M EMPTY"),
+                Some("POINT M (1 2 9)"),
                 None,
-                Some("POINT ZM (3 4 5 9)"),
-                Some("POINT ZM (6 7 0 8)"),
-                Some("POINT ZM (9 10 11 12)"),
+                Some("POINT M (3 4 9)"),
+                Some("POINT M (6 7 8)"),
+                Some("POINT M (9 10 12)"),
             ],
             &WKB_GEOMETRY,
         );
