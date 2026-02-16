@@ -134,17 +134,9 @@ mod sys {
     impl GpuSpatialIndex {
         /// Probes the index with a batch of rectangles and returns matching build and probe indices.
         pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
-            // 1. Create a thread-local context
             let mut ctx = self.inner.create_context()?;
 
-            // 2. Perform the probe using the context
-            ctx.probe(rects.as_ptr() as *const f32, rects.len() as u32)?;
-
-            // 3. Extract results from the context
-            Ok((
-                ctx.get_build_indices_buffer().to_vec(),
-                ctx.get_probe_indices_buffer().to_vec(),
-            ))
+            ctx.probe(rects.as_ptr() as *const f32, rects.len() as u32)
         }
     }
 

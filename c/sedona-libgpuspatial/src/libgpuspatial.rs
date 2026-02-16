@@ -23,8 +23,9 @@ use arrow_array::{Array, ArrayRef};
 use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::DataType;
 use std::convert::TryFrom;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
+use std::slice;
 use std::sync::{Arc, Mutex};
 
 // ----------------------------------------------------------------------
@@ -143,8 +144,6 @@ impl FloatIndex2DBuilder {
             push_build: None,
             finish_building: None,
             probe: None,
-            get_build_indices_buffer: None,
-            get_probe_indices_buffer: None,
             get_last_error: None,
             context_get_last_error: None,
             release: None,
@@ -284,20 +283,35 @@ unsafe impl Send for FloatIndex2DContext {}
 impl FloatIndex2DContext {
     /// Probes the index using the provided thread-local context.
     /// The context is modified to contain the result buffers.
-    pub fn probe(&mut self, buf: *const f32, n_rects: u32) -> Result<(), GpuSpatialError> {
+    pub fn probe(
+        &mut self,
+        buf: *const f32,
+        n_rects: u32,
+    ) -> Result<(Vec<u32>, Vec<u32>), GpuSpatialError> {
+        let mut results: (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+
         if let Some(probe_fn) = self.inner.index.probe {
-            // Get mutable pointer to the index (C API requirement, safe due to internal locking/context usage)
             let index_ptr = &self.inner.index as *const _ as *mut SedonaFloatIndex2D;
+
             unsafe {
-                // Pass the context from the argument
-                if probe_fn(index_ptr, &mut self.context, buf, n_rects) != 0 {
+                let status = probe_fn(
+                    index_ptr,
+                    &mut self.context,
+                    buf,
+                    n_rects,
+                    Some(probe_callback_wrapper), // Pass our static callback
+                    &mut results as *mut _ as *mut c_void, // Pass pointer to 'results' as user_data
+                );
+
+                if status != 0 {
+                    // Try to get the error message from context
                     let error_string =
                         if let Some(get_ctx_err) = self.inner.index.context_get_last_error {
                             CStr::from_ptr(get_ctx_err(&mut self.context))
                                 .to_string_lossy()
                                 .into_owned()
                         } else {
-                            "Unknown context error".to_string()
+                            "Unknown context error during probe".to_string()
                         };
                     return Err(GpuSpatialError::Probe(error_string));
                 }
@@ -305,30 +319,8 @@ impl FloatIndex2DContext {
         } else {
             return Err(GpuSpatialError::Probe("probe function is None".to_string()));
         }
-        Ok(())
-    }
-    fn get_indices_buffer_helper(
-        &mut self,
-        func: Option<unsafe extern "C" fn(*mut SedonaSpatialIndexContext, *mut *mut u32, *mut u32)>,
-    ) -> &[u32] {
-        let f = func.expect("get_indices_buffer function is None");
-        let mut ptr: *mut u32 = std::ptr::null_mut();
-        let mut len: u32 = 0;
-        unsafe {
-            f(&mut self.context, &mut ptr, &mut len);
-            if len > 0 && !ptr.is_null() {
-                return std::slice::from_raw_parts(ptr, len as usize);
-            }
-        }
-        &[]
-    }
 
-    pub fn get_build_indices_buffer(&mut self) -> &[u32] {
-        self.get_indices_buffer_helper(self.inner.index.get_build_indices_buffer)
-    }
-
-    pub fn get_probe_indices_buffer(&mut self) -> &[u32] {
-        self.get_indices_buffer_helper(self.inner.index.get_probe_indices_buffer)
+        Ok(results)
     }
 }
 
@@ -342,6 +334,25 @@ impl Drop for FloatIndex2DContext {
         unsafe {
             destroy_context_fn(&mut self.context);
         }
+    }
+}
+
+unsafe extern "C" fn probe_callback_wrapper(
+    build_indices: *const u32,
+    probe_indices: *const u32,
+    length: u32,
+    user_data: *mut c_void,
+) {
+    // 1. Cast the void* back to a mutable reference to our Rust tuple
+    let (build_out, probe_out) = &mut *(user_data as *mut (Vec<u32>, Vec<u32>));
+
+    // 2. If there is data, copy it into the Rust vectors
+    if length > 0 {
+        let build_slice = slice::from_raw_parts(build_indices, length as usize);
+        let probe_slice = slice::from_raw_parts(probe_indices, length as usize);
+
+        build_out.extend_from_slice(build_slice);
+        probe_out.extend_from_slice(probe_slice);
     }
 }
 

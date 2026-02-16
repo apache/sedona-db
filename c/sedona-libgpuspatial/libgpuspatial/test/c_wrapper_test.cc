@@ -261,19 +261,25 @@ TEST_F(CWrapperTest, InitializeJoiner) {
                            fpoint_t((float)xmax, (float)ymax));
     }
 
-    // Run SUT Probe
+    struct IntersectionIDs {
+      uint32_t* build_indices_ptr;
+      uint32_t* probe_indices_ptr;
+      uint32_t length;
+    };
+    IntersectionIDs intersection_ids{nullptr, nullptr, 0};
+
     SedonaSpatialIndexContext idx_ctx;
     index_.create_context(&idx_ctx);
-    index_.probe(&index_, &idx_ctx, (float*)queries.data(), queries.size());
-
-    // Retrieve SUT Results
-    uint32_t* build_indices_ptr;
-    uint32_t* probe_indices_ptr;
-    uint32_t build_indices_length;
-    uint32_t probe_indices_length;
-
-    index_.get_build_indices_buffer(&idx_ctx, &build_indices_ptr, &build_indices_length);
-    index_.get_probe_indices_buffer(&idx_ctx, &probe_indices_ptr, &probe_indices_length);
+    index_.probe(
+        &index_, &idx_ctx, (float*)queries.data(), queries.size(),
+        [](const uint32_t* build_indices, const uint32_t* probe_indices, uint32_t length,
+           void* user_data) {
+          IntersectionIDs* ids = reinterpret_cast<IntersectionIDs*>(user_data);
+          ids->build_indices_ptr = (uint32_t*)build_indices;
+          ids->probe_indices_ptr = (uint32_t*)probe_indices;
+          ids->length = length;
+        },
+        &intersection_ids);
 
     refiner_.clear(&refiner_);
     ASSERT_EQ(refiner_.push_build(&refiner_, build_array.get()), 0);
@@ -283,13 +289,14 @@ TEST_F(CWrapperTest, InitializeJoiner) {
     ASSERT_EQ(refiner_.refine(
                   &refiner_, probe_array.get(),
                   SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
-                  build_indices_ptr, probe_indices_ptr, build_indices_length, &new_len),
+                  intersection_ids.build_indices_ptr, intersection_ids.probe_indices_ptr,
+                  intersection_ids.length, &new_len),
               0);
 
-    std::vector<uint32_t> sut_build_indices(build_indices_ptr,
-                                            build_indices_ptr + new_len);
-    std::vector<uint32_t> sut_stream_indices(probe_indices_ptr,
-                                             probe_indices_ptr + new_len);
+    std::vector<uint32_t> sut_build_indices(intersection_ids.build_indices_ptr,
+                                            intersection_ids.build_indices_ptr + new_len);
+    std::vector<uint32_t> sut_stream_indices(
+        intersection_ids.probe_indices_ptr, intersection_ids.probe_indices_ptr + new_len);
 
     index_.destroy_context(&idx_ctx);
 

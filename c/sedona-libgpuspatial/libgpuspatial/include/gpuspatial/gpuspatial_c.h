@@ -84,30 +84,23 @@ struct SedonaFloatIndex2D {
    * @return 0 on success, non-zero on failure
    */
   int (*finish_building)(struct SedonaFloatIndex2D* self);
+
   /**
    * Probe the spatial index with the given rectangles, each rectangle is represented by 4
    * floats: [min_x, min_y, max_x, max_y] Points can also be probed by providing [x, y, x,
    * y] but points and rectangles cannot be mixed in one Probe call. The results of the
-   * probe will be stored in the context.
+   * probe will be stored in the context. The callback function will be called for each
+   * batch of results, with the build and probe indices of the candidate pairs in the
+   * batch. The user_data pointer will be passed to the callback
    *
    * @return 0 on success, non-zero on failure
    */
   int (*probe)(struct SedonaFloatIndex2D* self, struct SedonaSpatialIndexContext* context,
-               const float* buf, uint32_t n_rects);
-  /** Get the build indices buffer from the context
-   *
-   * @return A pointer to the buffer and its length
-   */
-  void (*get_build_indices_buffer)(struct SedonaSpatialIndexContext* context,
-                                   uint32_t** build_indices,
-                                   uint32_t* build_indices_length);
-  /** Get the probe indices buffer from the context
-   *
-   * @return A pointer to the buffer and its length
-   */
-  void (*get_probe_indices_buffer)(struct SedonaSpatialIndexContext* context,
-                                   uint32_t** probe_indices,
-                                   uint32_t* probe_indices_length);
+               const float* buf, uint32_t n_rects,
+               void (*callback)(const uint32_t* build_indices,
+                                const uint32_t* probe_indices, uint32_t length,
+                                void* user_data),
+               void* user_data);
   /** Get the last error message from either the index
    *
    * @return A pointer to the error message string

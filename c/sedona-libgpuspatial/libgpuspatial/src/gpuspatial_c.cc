@@ -159,8 +159,6 @@ struct GpuSpatialIndexFloat2DExporter {
     out->push_build = &CPushBuild;
     out->finish_building = &CFinishBuilding;
     out->probe = &CProbe;
-    out->get_build_indices_buffer = &CGetBuildIndicesBuffer;
-    out->get_probe_indices_buffer = &CGetProbeIndicesBuffer;
     out->get_last_error = &CGetLastError;
     out->context_get_last_error = &CContextGetLastError;
     out->release = &CRelease;
@@ -194,12 +192,25 @@ struct GpuSpatialIndexFloat2DExporter {
   }
 
   static int CProbe(self_t* self, SedonaSpatialIndexContext* context, const float* buf,
-                    uint32_t n_rects) {
-    return SafeExecute(static_cast<context_t*>(context->private_data), [&] {
+                    uint32_t n_rects,
+                    void (*callback)(const uint32_t* build_indices,
+                                     const uint32_t* probe_indices, uint32_t length,
+                                     void* user_data),
+                    void* user_data) {
+    // Do not use SafeExecute because this method is thread-safe and we don't want to set
+    // last_error for the whole index if one thread encounters an error
+    try {
       auto* rects = reinterpret_cast<const spatial_index_t::box_t*>(buf);
       auto& buff = static_cast<context_t*>(context->private_data)->payload;
       use_index(self).Probe(rects, n_rects, &buff.build_indices, &buff.probe_indices);
-    });
+      callback(buff.build_indices.data(), buff.probe_indices.data(),
+               buff.build_indices.size(), user_data);
+      return 0;
+    } catch (const std::exception& e) {  // user should call context_get_last_error
+      return EINVAL;
+    } catch (...) {
+      return EINVAL;
+    }
   }
 
   static void CGetBuildIndicesBuffer(struct SedonaSpatialIndexContext* context,
