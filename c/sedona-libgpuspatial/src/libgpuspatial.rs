@@ -26,8 +26,6 @@ use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
-use std::panic::catch_unwind;
-use std::slice;
 use std::sync::Arc;
 
 pub struct GpuSpatialRuntimeWrapper {
@@ -211,7 +209,6 @@ impl FloatIndex2D {
             .index
             .probe
             .ok_or_else(|| GpuSpatialError::Probe("probe function is None".into()))?;
-        let mut results: (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
         let create_context_fn = self.inner.index.create_context;
         let destroy_context_fn = self.inner.index.destroy_context;
         let context_err_fn = self.inner.index.context_get_last_error;
@@ -219,6 +216,10 @@ impl FloatIndex2D {
 
         let mut ctx = SedonaSpatialIndexContext {
             private_data: std::ptr::null_mut(),
+        };
+        let mut state = ProbeState {
+            results: (Vec::new(), Vec::new()),
+            error: None,
         };
 
         unsafe {
@@ -231,8 +232,8 @@ impl FloatIndex2D {
                 &mut ctx,
                 buf,
                 n_rects,
-                Some(probe_callback_wrapper), // Standard static wrapper
-                &mut results as *mut _ as *mut c_void,
+                Some(probe_callback_wrapper),
+                &mut state as *mut _ as *mut c_void,
             );
 
             if status != 0 {
@@ -250,12 +251,19 @@ impl FloatIndex2D {
                 return Err(GpuSpatialError::Probe(error_string));
             }
 
+            if let Some(callback_error) = state.error {
+                if let Some(destroy_ctx) = destroy_context_fn {
+                    destroy_ctx(&mut ctx);
+                }
+                return Err(callback_error);
+            }
+
             if let Some(destroy_ctx) = destroy_context_fn {
                 destroy_ctx(&mut ctx);
             }
         }
 
-        Ok(results)
+        Ok(state.results)
     }
 }
 
@@ -420,7 +428,10 @@ impl Refiner {
 
 // Define the exact signature of the C error-getting function
 type ErrorFn<T> = unsafe extern "C" fn(*mut T) -> *const c_char;
-
+struct ProbeState {
+    results: (Vec<u32>, Vec<u32>),
+    error: Option<GpuSpatialError>,
+}
 /// Helper to handle the common pattern of calling a C function returning an int status,
 /// checking if it failed, and retrieving the error message if so.
 unsafe fn check_ffi_call<T, F, ErrMap>(
@@ -456,22 +467,36 @@ unsafe extern "C" fn probe_callback_wrapper(
     length: u32,
     user_data: *mut c_void,
 ) {
-    // We cannot allow panics to escape to C
-    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (build_out, probe_out) = &mut *(user_data as *mut (Vec<u32>, Vec<u32>));
+    // Cast user_data back to our state struct
+    let state = &mut *(user_data as *mut ProbeState);
 
+    // Short-circuit: If an error already occurred in a previous call,
+    // stop processing to save time and prevent overwriting the error.
+    if state.error.is_some() {
+        return;
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if length > 0 {
-            let build_slice = slice::from_raw_parts(build_indices, length as usize);
-            let probe_slice = slice::from_raw_parts(probe_indices, length as usize);
+            let build_slice = std::slice::from_raw_parts(build_indices, length as usize);
+            let probe_slice = std::slice::from_raw_parts(probe_indices, length as usize);
 
-            build_out.extend_from_slice(build_slice);
-            probe_out.extend_from_slice(probe_slice);
+            state.results.0.extend_from_slice(build_slice);
+            state.results.1.extend_from_slice(probe_slice);
         }
     }));
 
-    if result.is_err() {
-        // Log the error or set an error flag in user_data to check later.
-        // Do NOT panic here.
-        eprintln!("Panic occurred inside probe callback");
+    // If a panic occurred, capture it as an error
+    if let Err(payload) = result {
+        // Try to extract the panic message
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            format!("Panic in callback: {}", s)
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            format!("Panic in callback: {}", s)
+        } else {
+            "Unknown panic in callback".to_string()
+        };
+
+        state.error = Some(GpuSpatialError::Probe(msg));
     }
 }

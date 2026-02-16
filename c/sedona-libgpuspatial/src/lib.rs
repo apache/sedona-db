@@ -224,7 +224,6 @@ mod tests {
     use geo::{BoundingRect, Point, Polygon};
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array_storage;
-    use std::sync::Arc;
     use wkt::TryFromWkt;
 
     #[test]
