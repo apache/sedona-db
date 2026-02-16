@@ -58,8 +58,8 @@ use sedona_geoparquet::{
 };
 #[cfg(feature = "pointcloud")]
 use sedona_pointcloud::{
-    laz::{
-        format::{Extension, LazFormatFactory},
+    las::{
+        format::{Extension, LasFormatFactory},
         options::LasExtraBytes,
     },
     options::{GeometryEncoding, PointcloudOptions},
@@ -127,8 +127,8 @@ impl SedonaContext {
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
         #[cfg(feature = "pointcloud")]
         {
-            state.register_file_format(Arc::new(LazFormatFactory::new(Extension::Laz)), false)?;
-            state.register_file_format(Arc::new(LazFormatFactory::new(Extension::Las)), false)?;
+            state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Laz)), false)?;
+            state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Las)), false)?;
         }
 
         // Enable dynamic file query (i.e., select * from 'filename')

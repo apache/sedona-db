@@ -98,12 +98,12 @@ mod test {
     };
 
     use crate::{
-        laz::format::{Extension, LazFormatFactory},
+        las::format::{Extension, LasFormatFactory},
         options::PointcloudOptions,
     };
 
     fn setup_context() -> SessionContext {
-        let file_format = Arc::new(LazFormatFactory::new(Extension::Laz));
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Laz));
 
         let config = SessionConfig::new().with_option_extension(PointcloudOptions::default());
         let mut state = SessionStateBuilder::new().with_config(config).build();

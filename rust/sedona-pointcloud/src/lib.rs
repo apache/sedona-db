@@ -15,5 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod laz;
+pub mod las;
 pub mod options;

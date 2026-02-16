@@ -29,20 +29,20 @@ use datafusion_physical_plan::{
 use object_store::ObjectStore;
 
 use crate::{
-    laz::{format::Extension, opener::LazOpener, reader::LazFileReaderFactory},
+    las::{format::Extension, opener::LasOpener, reader::LasFileReaderFactory},
     options::PointcloudOptions,
 };
 
 #[derive(Clone, Debug)]
-pub struct LazSource {
+pub struct LasSource {
     /// Optional metrics
     metrics: ExecutionPlanMetricsSet,
     /// The schema of the file.
     pub(crate) table_schema: Option<TableSchema>,
     /// Optional predicate for row filtering during parquet scan
     pub(crate) predicate: Option<Arc<dyn PhysicalExpr>>,
-    /// Laz file reader factory
-    pub(crate) reader_factory: Option<Arc<LazFileReaderFactory>>,
+    /// LAS/LAZ file reader factory
+    pub(crate) reader_factory: Option<Arc<LasFileReaderFactory>>,
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
@@ -50,7 +50,7 @@ pub struct LazSource {
     pub(crate) extension: Extension,
 }
 
-impl LazSource {
+impl LasSource {
     pub fn new(extension: Extension) -> Self {
         Self {
             metrics: Default::default(),
@@ -69,13 +69,13 @@ impl LazSource {
         self
     }
 
-    pub fn with_reader_factory(mut self, reader_factory: Arc<LazFileReaderFactory>) -> Self {
+    pub fn with_reader_factory(mut self, reader_factory: Arc<LasFileReaderFactory>) -> Self {
         self.reader_factory = Some(reader_factory);
         self
     }
 }
 
-impl FileSource for LazSource {
+impl FileSource for LasSource {
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,
@@ -86,17 +86,17 @@ impl FileSource for LazSource {
             .file_column_projection_indices()
             .unwrap_or_else(|| (0..base_config.projected_file_schema().fields().len()).collect());
 
-        let laz_file_reader_factory = self
+        let file_reader_factory = self
             .reader_factory
             .clone()
-            .unwrap_or_else(|| Arc::new(LazFileReaderFactory::new(object_store, None)));
+            .unwrap_or_else(|| Arc::new(LasFileReaderFactory::new(object_store, None)));
 
-        Arc::new(LazOpener {
+        Arc::new(LasOpener {
             projection: Arc::from(projection),
             batch_size: self.batch_size.expect("Must be set"),
             limit: base_config.limit,
             predicate: self.predicate.clone(),
-            laz_file_reader_factory,
+            file_reader_factory,
             options: self.options.clone(),
         })
     }

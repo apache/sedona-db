@@ -36,7 +36,7 @@ use geoarrow_schema::Dimension;
 use las::{Header, Point};
 
 use crate::{
-    laz::{metadata::ExtraAttribute, options::LasExtraBytes, schema::try_schema_from_header},
+    las::{metadata::ExtraAttribute, options::LasExtraBytes, schema::try_schema_from_header},
     options::GeometryEncoding,
 };
 
@@ -516,7 +516,7 @@ mod tests {
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
     use crate::{
-        laz::{options::LasExtraBytes, reader::LazFileReaderFactory},
+        las::{options::LasExtraBytes, reader::LasFileReaderFactory},
         options::PointcloudOptions,
     };
 
@@ -541,15 +541,15 @@ mod tests {
             let location = Path::from_filesystem_path(tmp_path).unwrap();
             let object = store.head(&location).await.unwrap();
 
-            let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
+            let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
                 .create_reader(
                     PartitionedFile::new(location, object.size),
                     PointcloudOptions::default(),
                 )
                 .unwrap();
-            let metadata = laz_file_reader.get_metadata().await.unwrap();
+            let metadata = file_reader.get_metadata().await.unwrap();
 
-            let batch = laz_file_reader
+            let batch = file_reader
                 .get_batch(&metadata.chunk_table[0])
                 .await
                 .unwrap();
@@ -570,20 +570,20 @@ mod tests {
         // file with extra attributes generated with `tests/data/generate.py`
         let extra_path = "tests/data/extra.laz";
 
-        // read batch with `LazFileReader`
+        // read batch with `LasFileReader`
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(extra_path).unwrap();
         let object = store.head(&location).await.unwrap();
 
-        let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
+        let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
             .create_reader(
                 PartitionedFile::new(location, object.size),
                 PointcloudOptions::default().with_las_extra_bytes(LasExtraBytes::Typed),
             )
             .unwrap();
-        let metadata = laz_file_reader.get_metadata().await.unwrap();
+        let metadata = file_reader.get_metadata().await.unwrap();
 
-        let batch = laz_file_reader
+        let batch = file_reader
             .get_batch(&metadata.chunk_table[0])
             .await
             .unwrap();

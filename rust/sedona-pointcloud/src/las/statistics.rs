@@ -32,20 +32,20 @@ use object_store::{path::Path, ObjectMeta, ObjectStore, PutPayload};
 
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::laz::{
+use crate::las::{
     metadata::ChunkMeta,
     reader::{read_point, record_decompressor},
 };
 
-/// Spatial statistics (extent) of LAZ chunks for pruning.
+/// Spatial statistics (extent) of LAS/LAZ chunks for pruning.
 ///
 /// It wraps a `RecordBatch` with x, y, z min and max values and row count per chunk.
 #[derive(Clone, Debug)]
-pub struct LazStatistics {
+pub struct LasStatistics {
     pub values: RecordBatch,
 }
 
-impl LazStatistics {
+impl LasStatistics {
     /// Get the [BoundingBox] of a chunk by index.
     pub fn get_bbox(&self, index: usize) -> Option<BoundingBox> {
         if index >= self.values.num_rows() {
@@ -96,7 +96,7 @@ impl LazStatistics {
     }
 }
 
-impl PruningStatistics for LazStatistics {
+impl PruningStatistics for LasStatistics {
     fn min_values(&self, column: &Column) -> Option<ArrayRef> {
         match column.name.as_str() {
             "x" => self.values.column_by_name("x_min").cloned(),
@@ -168,7 +168,7 @@ impl LasStatisticsBuilder {
         self.row_counts.append_value(row_count);
     }
 
-    pub fn finish(mut self) -> LazStatistics {
+    pub fn finish(mut self) -> LasStatistics {
         let schema = Schema::new([
             Arc::new(Field::new("x_min", DataType::Float64, false)),
             Arc::new(Field::new("x_max", DataType::Float64, false)),
@@ -193,11 +193,11 @@ impl LasStatisticsBuilder {
         )
         .unwrap();
 
-        LazStatistics { values: batch }
+        LasStatistics { values: batch }
     }
 }
 
-/// Extract the [LazStatistics] from a LAZ file in an object store.
+/// Extract the [LasStatistics] from a LAS/LAZ file in an object store.
 ///
 /// This will scan the entire file. To reuse the statistics, they can
 /// optionally be persisted, which creates a sidecar file with a `.stats`
@@ -208,7 +208,7 @@ pub async fn chunk_statistics(
     chunk_table: &[ChunkMeta],
     header: &Header,
     persist: bool,
-) -> Result<LazStatistics, DataFusionError> {
+) -> Result<LasStatistics, DataFusionError> {
     let stats_path = Path::parse(format!("{}.stats", object_meta.location.as_ref()))?;
 
     match store.head(&stats_path).await {
@@ -228,7 +228,7 @@ pub async fn chunk_statistics(
 
             assert_eq!(values.num_rows(), chunk_table.len());
 
-            Ok(LazStatistics { values })
+            Ok(LasStatistics { values })
         }
         Err(object_store::Error::NotFound { path: _, source: _ }) => {
             // extract statistics
@@ -327,18 +327,18 @@ mod tests {
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
     use sedona_geometry::bounding_box::BoundingBox;
 
-    use crate::{laz::metadata::LazMetadataReader, options::PointcloudOptions};
+    use crate::{las::metadata::LasMetadataReader, options::PointcloudOptions};
 
     #[tokio::test]
     async fn chunk_statistics() {
         let path = "tests/data/large.laz";
 
-        // read with `LazMetadataReader`
+        // read with `LasMetadataReader`
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
 
-        let metadata_reader = LazMetadataReader::new(&store, &object_meta);
+        let metadata_reader = LasMetadataReader::new(&store, &object_meta);
         let metadata = metadata_reader.fetch_metadata().await.unwrap();
         assert!(metadata.statistics.is_none());
 
@@ -346,7 +346,7 @@ mod tests {
             collect_statistics: true,
             ..Default::default()
         };
-        let metadata_reader = LazMetadataReader::new(&store, &object_meta).with_options(options);
+        let metadata_reader = LasMetadataReader::new(&store, &object_meta).with_options(options);
         let metadata = metadata_reader.fetch_metadata().await.unwrap();
         let statistics = metadata.statistics.as_ref().unwrap();
         assert_eq!(statistics.num_containers(), 2);
@@ -400,7 +400,7 @@ mod tests {
         writer.write_point(point).unwrap();
         writer.close().unwrap();
 
-        // read with `LazMetadataReader`
+        // read with `LasMetadataReader`
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(&tmp_path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
@@ -410,7 +410,7 @@ mod tests {
             persist_statistics: true,
             ..Default::default()
         };
-        let metadata_reader = LazMetadataReader::new(&store, &object_meta).with_options(options);
+        let metadata_reader = LasMetadataReader::new(&store, &object_meta).with_options(options);
         let metadata = metadata_reader.fetch_metadata().await.unwrap();
 
         assert!(tmp_path.with_extension("laz.stats").exists());

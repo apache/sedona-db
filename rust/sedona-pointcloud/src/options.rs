@@ -23,7 +23,7 @@ use datafusion_common::{
     extensions_options,
 };
 
-use crate::laz::options::{LasExtraBytes, LasOptions};
+use crate::las::options::{LasExtraBytes, LasOptions};
 
 /// Geometry representation
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
