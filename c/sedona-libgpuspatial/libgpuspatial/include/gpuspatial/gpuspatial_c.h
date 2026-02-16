@@ -54,7 +54,7 @@ void GpuSpatialRuntimeCreate(struct GpuSpatialRuntime* runtime);
 
 struct GpuSpatialIndexConfig {
   /** Pointer to an initialized GpuSpatialRuntime struct */
-  struct GpuSpatialRuntime* runtime;
+  const struct GpuSpatialRuntime* runtime;
   /** How many threads will concurrently call Probe method */
   uint32_t concurrency;
 };
@@ -124,7 +124,7 @@ int GpuSpatialIndexFloat2DCreate(struct SedonaFloatIndex2D* index,
 
 struct GpuSpatialRefinerConfig {
   /** Pointer to an initialized GpuSpatialRuntime struct */
-  struct GpuSpatialRuntime* runtime;
+  const struct GpuSpatialRuntime* runtime;
   /** How many threads will concurrently call Probe method */
   uint32_t concurrency;
   /** Whether to compress the BVH structures to save memory */

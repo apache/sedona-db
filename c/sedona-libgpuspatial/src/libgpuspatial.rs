@@ -22,18 +22,18 @@ use crate::predicate::GpuSpatialRelationPredicate;
 use arrow_array::{Array, ArrayRef};
 use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::DataType;
+use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
+use std::panic::catch_unwind;
 use std::slice;
-use std::sync::{Arc, Mutex};
-
-// ----------------------------------------------------------------------
-// Runtime Wrapper
-// ----------------------------------------------------------------------
+use std::sync::Arc;
 
 pub struct GpuSpatialRuntimeWrapper {
-    runtime: GpuSpatialRuntime,
+    runtime: UnsafeCell<GpuSpatialRuntime>,
+    /// Store which device the runtime is created on
+    pub device_id: i32,
 }
 
 impl GpuSpatialRuntimeWrapper {
@@ -81,34 +81,30 @@ impl GpuSpatialRuntimeWrapper {
             return Err(GpuSpatialError::Init("init function is None".to_string()));
         }
 
-        Ok(GpuSpatialRuntimeWrapper { runtime })
+        Ok(GpuSpatialRuntimeWrapper {
+            runtime: UnsafeCell::new(runtime),
+            device_id,
+        })
     }
 }
 
 impl Drop for GpuSpatialRuntimeWrapper {
     fn drop(&mut self) {
-        let release_fn = self.runtime.release.expect("release function is None");
+        let runtime = self.runtime.get_mut();
+        let release_fn = runtime.release.expect("release function is None");
         unsafe {
-            release_fn(&mut self.runtime as *mut _);
+            release_fn(runtime as *mut _);
         }
     }
 }
-
-// ----------------------------------------------------------------------
-// Spatial Index - Internal Wrapper
-// ----------------------------------------------------------------------
 
 /// Internal wrapper that manages the lifecycle of the C `SedonaFloatIndex2D` struct.
 /// It is wrapped in an `Arc` by the public structs to ensure thread safety.
 struct FloatIndex2DWrapper {
     index: SedonaFloatIndex2D,
     // Keep a reference to the RT engine to ensure it lives as long as the index
-    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+    _runtime: Arc<GpuSpatialRuntimeWrapper>,
 }
-
-// The C library is designed for thread safety when used correctly (separate contexts per thread)
-unsafe impl Send for FloatIndex2DWrapper {}
-unsafe impl Sync for FloatIndex2DWrapper {}
 
 impl Drop for FloatIndex2DWrapper {
     fn drop(&mut self) {
@@ -119,22 +115,13 @@ impl Drop for FloatIndex2DWrapper {
     }
 }
 
-// ----------------------------------------------------------------------
-// Spatial Index - Builder
-// ----------------------------------------------------------------------
-
-/// Builder for the Spatial Index. This struct has exclusive ownership
-/// and is not thread-safe (Send but not Sync) because building is a
-/// single-threaded operation.
-pub struct FloatIndex2DBuilder {
+pub struct FloatIndex2D {
     inner: FloatIndex2DWrapper,
 }
 
-unsafe impl Send for FloatIndex2DBuilder {}
-
-impl FloatIndex2DBuilder {
+impl FloatIndex2D {
     pub fn try_new(
-        runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+        runtime: Arc<GpuSpatialRuntimeWrapper>,
         concurrency: u32,
     ) -> Result<Self, GpuSpatialError> {
         let mut index = SedonaFloatIndex2D {
@@ -150,29 +137,18 @@ impl FloatIndex2DBuilder {
             private_data: std::ptr::null_mut(),
         };
 
-        let mut engine_guard = runtime
-            .lock()
-            .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
-
         let config = GpuSpatialIndexConfig {
-            runtime: &mut engine_guard.runtime,
+            runtime: runtime.runtime.get(),
             concurrency,
         };
 
         unsafe {
             if GpuSpatialIndexFloat2DCreate(&mut index, &config) != 0 {
-                let msg = if let Some(get_err) = index.get_last_error {
-                    CStr::from_ptr(get_err(&index as *const _ as *mut _))
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    "Unknown error during Index Create".into()
-                };
-                return Err(GpuSpatialError::Init(msg));
+                return Err(GpuSpatialError::Init("Index Create failed".into()));
             }
         }
 
-        Ok(FloatIndex2DBuilder {
+        Ok(Self {
             inner: FloatIndex2DWrapper {
                 index,
                 _runtime: runtime.clone(),
@@ -181,188 +157,112 @@ impl FloatIndex2DBuilder {
     }
 
     pub fn clear(&mut self) {
-        let clear_fn = self.inner.index.clear.expect("clear function is None");
-        unsafe {
-            clear_fn(&mut self.inner.index as *mut _);
+        if let Some(clear_fn) = self.inner.index.clear {
+            unsafe {
+                clear_fn(&mut self.inner.index as *mut _);
+            }
         }
     }
 
     pub fn push_build(&mut self, buf: *const f32, n_rects: u32) -> Result<(), GpuSpatialError> {
-        if let Some(push_build_fn) = self.inner.index.push_build {
-            let get_last_error = self.inner.index.get_last_error;
-            let index_ptr = &mut self.inner.index as *mut _;
-            unsafe {
-                check_ffi_call(
-                    move || push_build_fn(index_ptr, buf, n_rects),
-                    get_last_error,
-                    index_ptr,
-                    GpuSpatialError::PushBuild,
-                )?;
-            }
-        } else {
-            return Err(GpuSpatialError::PushBuild(
-                "push_build function is None".to_string(),
-            ));
+        let push_fn =
+            self.inner.index.push_build.ok_or_else(|| {
+                GpuSpatialError::PushBuild("push_build function is None".to_string())
+            })?;
+        let get_last_error = self.inner.index.get_last_error;
+        let index_ptr = &mut self.inner.index as *mut SedonaFloatIndex2D;
+
+        unsafe {
+            check_ffi_call(
+                move || push_fn(index_ptr, buf, n_rects),
+                get_last_error,
+                index_ptr,
+                GpuSpatialError::PushBuild,
+            )
         }
-        Ok(())
     }
 
-    /// Consumes the builder and returns a shared, thread-safe index wrapper.
-    pub fn finish_building(mut self) -> Result<SharedFloatIndex2D, GpuSpatialError> {
-        if let Some(finish_building_fn) = self.inner.index.finish_building {
-            // Extract to local vars
-            let get_last_error = self.inner.index.get_last_error;
-            let index_ptr = &mut self.inner.index as *mut _;
+    pub fn finish_building(&mut self) -> Result<(), GpuSpatialError> {
+        let finish_fn = self
+            .inner
+            .index
+            .finish_building
+            .ok_or_else(|| GpuSpatialError::FinishBuild("finish_building missing".into()))?;
+        let get_last_error = self.inner.index.get_last_error;
+        let index_ptr = &mut self.inner.index as *mut SedonaFloatIndex2D;
 
-            unsafe {
-                check_ffi_call(
-                    move || finish_building_fn(index_ptr),
-                    get_last_error,
-                    index_ptr,
-                    GpuSpatialError::FinishBuild,
-                )?;
-            }
-        } else {
-            return Err(GpuSpatialError::FinishBuild(
-                "finish_building function is None".to_string(),
-            ));
+        unsafe {
+            check_ffi_call(
+                move || finish_fn(&mut self.inner.index),
+                get_last_error,
+                index_ptr,
+                GpuSpatialError::FinishBuild,
+            )
         }
-
-        Ok(SharedFloatIndex2D {
-            inner: Arc::new(self.inner),
-        })
     }
-}
 
-// ----------------------------------------------------------------------
-// Spatial Index - Shared Read-Only Index
-// ----------------------------------------------------------------------
+    pub fn probe(
+        &self,
+        buf: *const f32,
+        n_rects: u32,
+    ) -> Result<(Vec<u32>, Vec<u32>), GpuSpatialError> {
+        let probe_fn = self
+            .inner
+            .index
+            .probe
+            .ok_or_else(|| GpuSpatialError::Probe("probe function is None".into()))?;
+        let mut results: (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+        let create_context_fn = self.inner.index.create_context;
+        let destroy_context_fn = self.inner.index.destroy_context;
+        let context_err_fn = self.inner.index.context_get_last_error;
+        let index_ptr = &self.inner.index as *const _ as *mut SedonaFloatIndex2D;
 
-/// Thread-safe wrapper around the built index.
-/// Used to spawn thread-local contexts for probing.
-#[derive(Clone)]
-pub struct SharedFloatIndex2D {
-    inner: Arc<FloatIndex2DWrapper>,
-}
-
-unsafe impl Send for SharedFloatIndex2D {}
-unsafe impl Sync for SharedFloatIndex2D {}
-
-impl SharedFloatIndex2D {
-    pub fn create_context(&self) -> Result<FloatIndex2DContext, GpuSpatialError> {
         let mut ctx = SedonaSpatialIndexContext {
             private_data: std::ptr::null_mut(),
         };
 
-        if let Some(create_context_fn) = self.inner.index.create_context {
-            unsafe {
-                create_context_fn(&mut ctx);
+        unsafe {
+            if let Some(create_ctx) = create_context_fn {
+                create_ctx(&mut ctx);
             }
-        } else {
-            return Err(GpuSpatialError::Init(
-                "create_index function is None".to_string(),
-            ));
-        }
 
-        Ok(FloatIndex2DContext {
-            inner: self.inner.clone(),
-            context: ctx,
-        })
-    }
-}
+            let status = probe_fn(
+                index_ptr,
+                &mut ctx,
+                buf,
+                n_rects,
+                Some(probe_callback_wrapper), // Standard static wrapper
+                &mut results as *mut _ as *mut c_void,
+            );
 
-/// Thread-local context for probing the index.
-/// This struct is Send (can be moved between threads) but NOT Sync.
-pub struct FloatIndex2DContext {
-    inner: Arc<FloatIndex2DWrapper>, // Shared reference to the index wrapper to ensure it lives as long as the context
-    context: SedonaSpatialIndexContext, // The actual C context struct that holds thread-local state and result buffers
-}
+            if status != 0 {
+                let error_string = if let Some(get_ctx_err) = context_err_fn {
+                    CStr::from_ptr(get_ctx_err(&mut ctx))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    "Unknown context error during probe".to_string()
+                };
 
-unsafe impl Send for FloatIndex2DContext {}
-
-impl FloatIndex2DContext {
-    /// Probes the index using the provided thread-local context.
-    /// The context is modified to contain the result buffers.
-    pub fn probe(
-        &mut self,
-        buf: *const f32,
-        n_rects: u32,
-    ) -> Result<(Vec<u32>, Vec<u32>), GpuSpatialError> {
-        let mut results: (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
-
-        if let Some(probe_fn) = self.inner.index.probe {
-            let index_ptr = &self.inner.index as *const _ as *mut SedonaFloatIndex2D;
-
-            unsafe {
-                let status = probe_fn(
-                    index_ptr,
-                    &mut self.context,
-                    buf,
-                    n_rects,
-                    Some(probe_callback_wrapper), // Pass our static callback
-                    &mut results as *mut _ as *mut c_void, // Pass pointer to 'results' as user_data
-                );
-
-                if status != 0 {
-                    // Try to get the error message from context
-                    let error_string =
-                        if let Some(get_ctx_err) = self.inner.index.context_get_last_error {
-                            CStr::from_ptr(get_ctx_err(&mut self.context))
-                                .to_string_lossy()
-                                .into_owned()
-                        } else {
-                            "Unknown context error during probe".to_string()
-                        };
-                    return Err(GpuSpatialError::Probe(error_string));
+                if let Some(destroy_ctx) = destroy_context_fn {
+                    destroy_ctx(&mut ctx);
                 }
+                return Err(GpuSpatialError::Probe(error_string));
             }
-        } else {
-            return Err(GpuSpatialError::Probe("probe function is None".to_string()));
+
+            if let Some(destroy_ctx) = destroy_context_fn {
+                destroy_ctx(&mut ctx);
+            }
         }
 
         Ok(results)
     }
 }
 
-impl Drop for FloatIndex2DContext {
-    fn drop(&mut self) {
-        let destroy_context_fn = self
-            .inner
-            .index
-            .destroy_context
-            .expect("destroy_context function is None");
-        unsafe {
-            destroy_context_fn(&mut self.context);
-        }
-    }
-}
-
-unsafe extern "C" fn probe_callback_wrapper(
-    build_indices: *const u32,
-    probe_indices: *const u32,
-    length: u32,
-    user_data: *mut c_void,
-) {
-    // 1. Cast the void* back to a mutable reference to our Rust tuple
-    let (build_out, probe_out) = &mut *(user_data as *mut (Vec<u32>, Vec<u32>));
-
-    // 2. If there is data, copy it into the Rust vectors
-    if length > 0 {
-        let build_slice = slice::from_raw_parts(build_indices, length as usize);
-        let probe_slice = slice::from_raw_parts(probe_indices, length as usize);
-
-        build_out.extend_from_slice(build_slice);
-        probe_out.extend_from_slice(probe_slice);
-    }
-}
-
 struct RefinerWrapper {
     refiner: SedonaSpatialRefiner,
-    _runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+    _runtime: Arc<GpuSpatialRuntimeWrapper>,
 }
-
-unsafe impl Send for RefinerWrapper {}
-unsafe impl Sync for RefinerWrapper {}
 
 impl Drop for RefinerWrapper {
     fn drop(&mut self) {
@@ -372,14 +272,13 @@ impl Drop for RefinerWrapper {
         }
     }
 }
-
-pub struct GpuSpatialRefinerBuilder {
+pub struct Refiner {
     inner: RefinerWrapper,
 }
 
-impl GpuSpatialRefinerBuilder {
+impl Refiner {
     pub fn try_new(
-        runtime: Arc<Mutex<GpuSpatialRuntimeWrapper>>,
+        runtime: Arc<GpuSpatialRuntimeWrapper>,
         concurrency: u32,
         compress_bvh: bool,
         pipeline_batches: u32,
@@ -395,31 +294,18 @@ impl GpuSpatialRefinerBuilder {
             private_data: std::ptr::null_mut(),
         };
 
-        let mut engine_guard = runtime
-            .lock()
-            .map_err(|_| GpuSpatialError::Init("Failed to acquire mutex lock".to_string()))?;
-
         let config = GpuSpatialRefinerConfig {
-            runtime: &mut engine_guard.runtime,
+            runtime: runtime.runtime.get(),
             concurrency,
             compress_bvh,
             pipeline_batches,
         };
 
         unsafe {
-            if GpuSpatialRefinerCreate(&mut refiner, &config) != 0 {
-                let msg = if let Some(get_err) = refiner.get_last_error {
-                    CStr::from_ptr(get_err(&refiner as *const _ as *mut _))
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    "Unknown error during Refiner Create".into()
-                };
-                return Err(GpuSpatialError::Init(msg));
-            }
+            GpuSpatialRefinerCreate(&mut refiner, &config);
         }
 
-        Ok(GpuSpatialRefinerBuilder {
+        Ok(Self {
             inner: RefinerWrapper {
                 refiner,
                 _runtime: runtime.clone(),
@@ -427,160 +313,107 @@ impl GpuSpatialRefinerBuilder {
         })
     }
 
-    pub fn clear(&mut self) {
-        let clear_fn = self.inner.refiner.clear.expect("clear function is None");
-        unsafe {
-            clear_fn(&mut self.inner.refiner as *mut _);
-        }
-    }
-
     pub fn init_schema(
         &mut self,
-        build_data_type: &DataType,
-        probe_data_type: &DataType,
+        build_dt: &DataType,
+        probe_dt: &DataType,
     ) -> Result<(), GpuSpatialError> {
-        let ffi_build_schema = FFI_ArrowSchema::try_from(build_data_type)?;
-        let ffi_probe_schema = FFI_ArrowSchema::try_from(probe_data_type)?;
+        let build_ffi = FFI_ArrowSchema::try_from(build_dt)?;
+        let probe_ffi = FFI_ArrowSchema::try_from(probe_dt)?;
+        let init_fn = self.inner.refiner.init_schema.unwrap();
+        let get_last_error = self.inner.refiner.get_last_error;
+        let refiner_ptr = &mut self.inner.refiner as *mut SedonaSpatialRefiner;
 
-        if let Some(init_schema_fn) = self.inner.refiner.init_schema {
-            let ffi_build_ptr = &ffi_build_schema as *const _ as *const ArrowSchema;
-            let ffi_probe_ptr = &ffi_probe_schema as *const _ as *const ArrowSchema;
-
-            let get_last_error = self.inner.refiner.get_last_error;
-            let refiner_ptr = &mut self.inner.refiner as *mut _;
-
-            unsafe {
-                check_ffi_call(
-                    move || init_schema_fn(refiner_ptr, ffi_build_ptr, ffi_probe_ptr),
-                    get_last_error,
-                    refiner_ptr,
-                    GpuSpatialError::Init,
-                )?;
-            }
-        } else {
-            return Err(GpuSpatialError::Init(
-                "init_schema function is None".to_string(),
-            ));
+        unsafe {
+            check_ffi_call(
+                || {
+                    init_fn(
+                        &mut self.inner.refiner,
+                        &build_ffi as *const _ as *const _,
+                        &probe_ffi as *const _ as *const _,
+                    )
+                },
+                get_last_error,
+                refiner_ptr,
+                GpuSpatialError::Init,
+            )
         }
-        Ok(())
     }
 
     pub fn push_build(&mut self, array: &ArrayRef) -> Result<(), GpuSpatialError> {
-        let (ffi_array, _ffi_schema) = arrow_array::ffi::to_ffi(&array.to_data())?;
+        let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
+        let push_fn = self.inner.refiner.push_build.unwrap();
+        let get_last_error = self.inner.refiner.get_last_error;
+        let refiner_ptr = &mut self.inner.refiner as *mut SedonaSpatialRefiner;
 
-        if let Some(push_build_fn) = self.inner.refiner.push_build {
-            let ffi_array_ptr = &ffi_array as *const _ as *const ArrowArray;
-
-            let get_last_error = self.inner.refiner.get_last_error;
-            let refiner_ptr = &mut self.inner.refiner as *mut _;
-
-            unsafe {
-                check_ffi_call(
-                    move || push_build_fn(refiner_ptr, ffi_array_ptr),
-                    get_last_error,
-                    refiner_ptr,
-                    GpuSpatialError::PushBuild,
-                )?;
-            }
-        } else {
-            return Err(GpuSpatialError::PushBuild(
-                "push_build function is None".to_string(),
-            ));
+        unsafe {
+            check_ffi_call(
+                || push_fn(&mut self.inner.refiner, &ffi_array as *const _ as *const _),
+                get_last_error,
+                refiner_ptr,
+                GpuSpatialError::PushBuild,
+            )
         }
-        Ok(())
     }
 
-    pub fn finish_building(mut self) -> Result<GpuSpatialRefinerWrapper, GpuSpatialError> {
-        if let Some(finish_building_fn) = self.inner.refiner.finish_building {
-            let get_last_error = self.inner.refiner.get_last_error;
-            let refiner_ptr = &mut self.inner.refiner as *mut _;
-
+    pub fn clear(&mut self) {
+        if let Some(clear_fn) = self.inner.refiner.clear {
             unsafe {
-                check_ffi_call(
-                    move || finish_building_fn(refiner_ptr),
-                    get_last_error,
-                    refiner_ptr,
-                    GpuSpatialError::FinishBuild,
-                )?;
+                clear_fn(&mut self.inner.refiner as *mut _);
             }
-        } else {
-            return Err(GpuSpatialError::FinishBuild(
-                "finish_building function is None".to_string(),
-            ));
         }
-
-        Ok(GpuSpatialRefinerWrapper {
-            inner: Arc::new(self.inner),
-        })
     }
-}
 
-// ----------------------------------------------------------------------
-// Refiner - Shared Read-Only Wrapper
-// ----------------------------------------------------------------------
+    pub fn finish_building(&mut self) -> Result<(), GpuSpatialError> {
+        let finish_fn = self.inner.refiner.finish_building.unwrap();
+        let get_last_error = self.inner.refiner.get_last_error;
+        let refiner_ptr = &mut self.inner.refiner as *mut SedonaSpatialRefiner;
 
-/// Thread-safe wrapper around the built Refiner.
-#[derive(Clone)]
-pub struct GpuSpatialRefinerWrapper {
-    inner: Arc<RefinerWrapper>,
-}
+        unsafe {
+            check_ffi_call(
+                || finish_fn(&mut self.inner.refiner),
+                get_last_error,
+                refiner_ptr,
+                GpuSpatialError::FinishBuild,
+            )
+        }
+    }
 
-unsafe impl Send for GpuSpatialRefinerWrapper {}
-unsafe impl Sync for GpuSpatialRefinerWrapper {}
-
-impl GpuSpatialRefinerWrapper {
     pub fn refine(
         &self,
-        probe_array: &ArrayRef,
+        array: &ArrayRef,
         predicate: GpuSpatialRelationPredicate,
         build_indices: &mut Vec<u32>,
         probe_indices: &mut Vec<u32>,
     ) -> Result<(), GpuSpatialError> {
-        let (ffi_array, _ffi_schema) = arrow_array::ffi::to_ffi(&probe_array.to_data())?;
+        let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
+        let refine_fn = self.inner.refiner.refine.unwrap();
+        let mut new_len: u32 = 0;
 
-        if let Some(refine_fn) = self.inner.refiner.refine {
-            let ffi_array_ptr = &ffi_array as *const _ as *const ArrowArray;
-            let mut new_len: u32 = 0;
-
-            let get_last_error = self.inner.refiner.get_last_error;
-            // Treat the pointer as mutable for the C interface, though logic is const
-            let refiner_ptr = &self.inner.refiner as *const _ as *mut _;
-
-            let build_ptr = build_indices.as_mut_ptr();
-            let probe_ptr = probe_indices.as_mut_ptr();
-            let capacity = build_indices.len() as u32;
-            let new_len_ptr = &mut new_len as *mut u32;
-            let predicate_int = predicate.as_c_uint();
-
-            unsafe {
-                check_ffi_call(
-                    move || {
-                        refine_fn(
-                            refiner_ptr,
-                            ffi_array_ptr as *mut _,
-                            predicate_int,
-                            build_ptr,
-                            probe_ptr,
-                            capacity,
-                            new_len_ptr,
-                        )
-                    },
-                    get_last_error,
-                    refiner_ptr,
-                    GpuSpatialError::Refine,
-                )?;
-            }
-
-            build_indices.truncate(new_len as usize);
-            probe_indices.truncate(new_len as usize);
-        } else {
-            return Err(GpuSpatialError::Refine(
-                "refine function is None".to_string(),
-            ));
+        unsafe {
+            check_ffi_call(
+                || {
+                    refine_fn(
+                        &self.inner.refiner as *const _ as *mut _,
+                        &ffi_array as *const _ as *mut _,
+                        predicate.as_c_uint(),
+                        build_indices.as_mut_ptr(),
+                        probe_indices.as_mut_ptr(),
+                        build_indices.len() as u32,
+                        &mut new_len,
+                    )
+                },
+                self.inner.refiner.get_last_error,
+                &self.inner.refiner as *const _ as *mut _,
+                GpuSpatialError::Refine,
+            )?;
         }
+        build_indices.truncate(new_len as usize);
+        probe_indices.truncate(new_len as usize);
         Ok(())
     }
 }
+
 // ----------------------------------------------------------------------
 // Helper Functions
 // ----------------------------------------------------------------------
@@ -615,4 +448,30 @@ where
         return Err(err_mapper(error_string));
     }
     Ok(())
+}
+
+unsafe extern "C" fn probe_callback_wrapper(
+    build_indices: *const u32,
+    probe_indices: *const u32,
+    length: u32,
+    user_data: *mut c_void,
+) {
+    // We cannot allow panics to escape to C
+    let result = catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (build_out, probe_out) = &mut *(user_data as *mut (Vec<u32>, Vec<u32>));
+
+        if length > 0 {
+            let build_slice = slice::from_raw_parts(build_indices, length as usize);
+            let probe_slice = slice::from_raw_parts(probe_indices, length as usize);
+
+            build_out.extend_from_slice(build_slice);
+            probe_out.extend_from_slice(probe_slice);
+        }
+    }));
+
+    if result.is_err() {
+        // Log the error or set an error flag in user_data to check later.
+        // Do NOT panic here.
+        eprintln!("Panic occurred inside probe callback");
+    }
 }
