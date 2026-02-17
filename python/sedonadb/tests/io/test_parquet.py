@@ -332,6 +332,29 @@ def test_write_geoparquet_options(geoarrow_data):
         metadata = parquet.read_metadata(tmp_parquet)
         assert metadata.row_group(0).num_rows == 1024
 
+        # Set via keyword arg and ensure that value is respected
+        con.sql(
+            "SET datafusion.execution.parquet.max_row_group_size = 1000000"
+        ).execute()
+        con.create_data_frame(gdf).to_parquet(
+            tmp_parquet,
+            max_row_group_size=1024,
+        )
+
+        gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
+        geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
+
+        metadata = parquet.read_metadata(tmp_parquet)
+        assert metadata.row_group(0).num_rows == 1024
+
+        # Ensure compression is respected
+        size_with_default_compression = tmp_parquet.stat().st_size
+        con.create_data_frame(gdf).to_parquet(
+            tmp_parquet,
+            compression="uncompressed",
+        )
+        assert tmp_parquet.stat().st_size > (size_with_default_compression * 2)
+
 
 def test_write_geoparquet_1_1(con, geoarrow_data):
     # Checks GeoParquet 1.1 support specifically

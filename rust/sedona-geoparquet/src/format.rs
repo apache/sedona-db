@@ -24,7 +24,7 @@ use std::{
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
-    config::ConfigOptions,
+    config::{ConfigField, ConfigOptions},
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
@@ -97,8 +97,16 @@ impl FileFormatFactory for GeoParquetFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         let mut options_mut = self.options.clone().unwrap_or_default();
         let mut format_options_mut = format_options.clone();
-        if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
-            options_mut.geoparquet_version = version_string.parse()?;
+
+        // Remove GeoParquet-specific options that will cause an error if passed
+        // to inner.create() and ensure they are reflected by the GeoParquet
+        // options. These are prefixed with `format` when passed by
+        // DataFusion SQL. DataFusion takes care of lowercasing these values before
+        // they are passed here.
+        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
+            if let Some(value) = format_options_mut.remove(key) {
+                options_mut.set(key.strip_prefix("format.").unwrap(), &value)?;
+            }
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
@@ -215,7 +223,7 @@ impl FileFormat for GeoParquetFormat {
         for metadata in &metadatas {
             let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
                 metadata,
-                self.options.geometry_columns.as_ref(),
+                self.options.geometry_columns.inner(),
             )?;
 
             match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
@@ -605,7 +613,7 @@ mod test {
     use datafusion_physical_expr::PhysicalExpr;
 
     use rstest::rstest;
-    use sedona_schema::crs::lnglat;
+    use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
@@ -614,7 +622,7 @@ mod test {
     use super::*;
 
     fn setup_context() -> SessionContext {
-        let mut state = SessionStateBuilder::new().build();
+        let mut state = SessionStateBuilder::new_with_default_features().build();
         state
             .register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)
             .unwrap();
@@ -747,6 +755,42 @@ mod test {
         assert_eq!(
             err.message(),
             "failed to resolve schema: file_does_not_exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn format_from_external_table() {
+        let ctx = setup_context();
+        let example = test_geoparquet("example", "geometry").unwrap();
+        ctx.sql(&format!(
+            r#"
+            CREATE EXTERNAL TABLE test
+            STORED AS PARQUET
+            LOCATION '{example}'
+            OPTIONS ('geometry_columns' '{{"geometry": {{"encoding": "WKB", "crs": "EPSG:3857"}}}}');
+            "#
+        ))
+        .await
+        .unwrap();
+
+        let df = ctx.table("test").await.unwrap();
+
+        // Check that the logical plan resulting from a read has the correct schema
+        assert_eq!(
+            df.schema().clone().strip_qualifiers().field_names(),
+            ["wkt", "geometry"]
+        );
+
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
         );
     }
 

@@ -17,13 +17,13 @@
 
 use std::{collections::HashMap, str::FromStr};
 
-use datafusion::config::TableParquetOptions;
-use datafusion_common::{plan_err, DataFusionError};
+use datafusion::config::{ConfigField, TableParquetOptions, Visit};
+use datafusion_common::{plan_err, DataFusionError, Result};
 
 use crate::metadata::GeoParquetColumnMetadata;
 
 /// [TableParquetOptions] wrapper with GeoParquet-specific options
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TableGeoParquetOptions {
     /// Inner [TableParquetOptions]
     pub inner: TableParquetOptions,
@@ -33,14 +33,76 @@ pub struct TableGeoParquetOptions {
     /// bounding box columns.
     pub overwrite_bbox_columns: bool,
     /// Optional geometry column metadata overrides for schema inference.
-    pub geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
+    pub geometry_columns: GeometryColumns,
     /// Validate geometry column contents against metadata when reading.
     pub validate: bool,
 }
 
 impl TableGeoParquetOptions {
-    pub fn new() -> Self {
-        Self::default()
+    /// Special-cased TableOptions names
+    ///
+    /// When the TableGeoParquet options is being constructed from a place
+    /// where DataFusion internals are interacting with a TableOptions instance,
+    /// these are the option names that get created (e.g. OPTIONS ('validate' true))
+    /// becomes a string key of format.validate). There are several places that we
+    /// need to intercept these before they are used to update the TableOptions.
+    pub const TABLE_OPTIONS_KEYS: [&str; 4] = [
+        "format.geoparquet_version",
+        "format.geometry_columns",
+        "format.validate",
+        "format.overwrite_bbox_columns",
+    ];
+}
+
+impl ConfigField for TableGeoParquetOptions {
+    fn visit<V: Visit>(&self, v: &mut V, key_prefix: &str, _description: &'static str) {
+        // Visit inner TableParquetOptions fields
+        self.inner.visit(v, key_prefix, "");
+
+        // Visit GeoParquet-specific fields
+        self.geoparquet_version.visit(
+            v,
+            &format!("{key_prefix}.geoparquet_version"),
+            "GeoParquet version to use when writing",
+        );
+        self.overwrite_bbox_columns.visit(
+            v,
+            &format!("{key_prefix}.overwrite_bbox_columns"),
+            "Overwrite existing bounding box columns when writing GeoParquet 1.1",
+        );
+        self.geometry_columns.visit(
+            v,
+            &format!("{key_prefix}.geometry_columns"),
+            "Optional geometry column metadata overrides for schema inference",
+        );
+        self.validate.visit(
+            v,
+            &format!("{key_prefix}.validate"),
+            "Validate geometry column contents against metadata when reading",
+        );
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        // Try GeoParquet-specific keys first
+        match key {
+            "geoparquet_version" => {
+                self.geoparquet_version.set(key, value)?;
+            }
+            "overwrite_bbox_columns" => {
+                self.overwrite_bbox_columns.set(key, value)?;
+            }
+            "geometry_columns" => {
+                self.geometry_columns.set(key, value)?;
+            }
+            "validate" => {
+                self.validate.set(key, value)?;
+            }
+            // Forward all other keys to inner TableParquetOptions
+            _ => {
+                self.inner.set(key, value)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -54,7 +116,7 @@ impl From<TableParquetOptions> for TableGeoParquetOptions {
 }
 
 /// The GeoParquet Version to write for output with spatial columns
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum GeoParquetVersion {
     /// Write GeoParquet 1.0 metadata
     ///
@@ -100,5 +162,86 @@ impl FromStr for GeoParquetVersion {
                 "Unexpected GeoParquet version string (expected '1.0', '1.1', '2.0', or 'none')"
             ),
         }
+    }
+}
+
+impl ConfigField for GeoParquetVersion {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        let value = match self {
+            GeoParquetVersion::V1_0 => "1.0",
+            GeoParquetVersion::V1_1 => "1.1",
+            GeoParquetVersion::V2_0 => "2.0",
+            GeoParquetVersion::Omitted => "none",
+        };
+        v.some(key, value, description);
+    }
+
+    fn set(&mut self, _key: &str, value: &str) -> Result<()> {
+        *self = value.parse()?;
+        Ok(())
+    }
+}
+
+/// Wrapper for geometry column metadata configuration
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GeometryColumns {
+    columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
+}
+
+impl GeometryColumns {
+    /// Create empty geometry columns
+    pub fn new() -> Self {
+        Self { columns: None }
+    }
+
+    /// Create from a HashMap
+    pub fn from_map(columns: HashMap<String, GeoParquetColumnMetadata>) -> Self {
+        Self {
+            columns: Some(columns),
+        }
+    }
+
+    /// Get the inner HashMap
+    pub fn inner(&self) -> Option<&HashMap<String, GeoParquetColumnMetadata>> {
+        self.columns.as_ref()
+    }
+
+    /// Set from JSON string
+    pub fn from_json(json: &str) -> Result<Self> {
+        let columns: HashMap<String, GeoParquetColumnMetadata> = serde_json::from_str(json)
+            .map_err(|e| {
+                DataFusionError::Configuration(format!("geometry_columns must be valid JSON: {e}"))
+            })?;
+        Ok(Self {
+            columns: Some(columns),
+        })
+    }
+
+    /// Convert to JSON string
+    pub fn to_json(&self) -> Result<String> {
+        match &self.columns {
+            Some(cols) => serde_json::to_string(cols).map_err(|e| {
+                DataFusionError::Configuration(format!("Failed to serialize geometry_columns: {e}"))
+            }),
+            None => Ok(String::new()),
+        }
+    }
+}
+
+impl ConfigField for GeometryColumns {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        match self.to_json() {
+            Ok(json) if !json.is_empty() => v.some(key, json, description),
+            _ => {}
+        }
+    }
+
+    fn set(&mut self, _key: &str, value: &str) -> Result<()> {
+        if value.is_empty() {
+            self.columns = None;
+        } else {
+            *self = Self::from_json(value)?;
+        }
+        Ok(())
     }
 }

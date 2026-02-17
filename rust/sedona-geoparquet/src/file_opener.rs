@@ -128,7 +128,7 @@ impl FileOpener for GeoParquetFileOpener {
 
             let maybe_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
                 &parquet_metadata,
-                self_clone.options.geometry_columns.as_ref(),
+                self_clone.options.geometry_columns.inner(),
             )?;
 
             if self_clone.enable_pruning {

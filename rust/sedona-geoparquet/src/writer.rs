@@ -516,6 +516,7 @@ fn append_float_bbox(
 #[cfg(test)]
 mod test {
     use std::iter::zip;
+    use std::path::Path;
 
     use arrow_array::{create_array, Array, RecordBatch};
     use datafusion::datasource::file_format::format_as_file_type;
@@ -545,7 +546,7 @@ mod test {
         SessionContext::new_with_state(state).enable_url_table()
     }
 
-    async fn test_dataframe_roundtrip(ctx: SessionContext, src: DataFrame) {
+    async fn test_dataframe_roundtrip(ctx: &SessionContext, src: DataFrame) {
         let df_batches = src.clone().collect().await.unwrap();
         test_write_dataframe(
             ctx,
@@ -558,8 +559,18 @@ mod test {
         .unwrap()
     }
 
+    async fn test_write_dataframe_sql(
+        ctx: &SessionContext,
+        sql: &str,
+        tmp_parquet: &Path,
+        expected_batches: Vec<RecordBatch>,
+    ) -> Result<()> {
+        ctx.sql(sql).await?.collect().await?;
+        test_write_dataframe_common(ctx, tmp_parquet, expected_batches).await
+    }
+
     async fn test_write_dataframe(
-        ctx: SessionContext,
+        ctx: &SessionContext,
         src: DataFrame,
         expected_batches: Vec<RecordBatch>,
         options: TableGeoParquetOptions,
@@ -585,6 +596,14 @@ mod test {
 
         DataFrame::new(ctx.state(), plan).collect().await?;
 
+        test_write_dataframe_common(ctx, &tmp_parquet, expected_batches).await
+    }
+
+    async fn test_write_dataframe_common(
+        ctx: &SessionContext,
+        tmp_parquet: &Path,
+        expected_batches: Vec<RecordBatch>,
+    ) -> Result<()> {
         let df_parquet_batches = ctx
             .table(tmp_parquet.to_string_lossy().to_string())
             .await
@@ -624,8 +643,17 @@ mod test {
         assert_eq!(df_parquet_sedona_types, df_sedona_types);
 
         // Check batches without metadata
-        for (df_parquet_batch, df_batch) in zip(df_parquet_batches, expected_batches) {
-            assert_eq!(df_parquet_batch.columns(), df_batch.columns())
+        for (i, (df_parquet_batch, df_batch)) in
+            zip(df_parquet_batches, expected_batches).enumerate()
+        {
+            for (j, (df_parquet_column, df_batch_column)) in
+                zip(df_parquet_batch.columns(), df_batch.columns()).enumerate()
+            {
+                assert_eq!(
+                    df_parquet_column, df_batch_column,
+                    "Batch {i} column {j} did not match"
+                );
+            }
         }
 
         Ok(())
@@ -644,7 +672,7 @@ mod test {
             .select(vec![col("wkt")])
             .unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
@@ -653,7 +681,7 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
@@ -662,24 +690,19 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df).await;
     }
 
     #[tokio::test]
     async fn geoparquet_1_1_basic() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
-        let df = ctx
-            .table(&example)
-            .await
-            .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
-            .unwrap();
+        let df = ctx.table(&example).await.unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
-        options.geoparquet_version = GeoParquetVersion::V1_1;
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            ..Default::default()
+        };
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
@@ -695,9 +718,29 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        // Check that we can do this from a DataFrame
+        test_write_dataframe(&ctx, df, df_batches_with_bbox.clone(), options, vec![])
             .await
             .unwrap();
+
+        // Check that we can do this from SQL too
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        test_write_dataframe_sql(
+            &ctx,
+            &format!(
+                r#"COPY (
+                    SELECT * FROM '{example}'
+                   ) TO '{}'
+                   OPTIONS (GEOPARQUET_VERSION '1.1')
+                "#,
+                tmp_parquet.display()
+            ),
+            &tmp_parquet,
+            df_batches_with_bbox,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -710,10 +753,6 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
-            .unwrap()
             .select(vec![
                 col("wkt"),
                 col("geometry").alias("geom"),
@@ -723,8 +762,10 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
-        options.geoparquet_version = GeoParquetVersion::V1_1;
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            ..Default::default()
+        };
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
@@ -744,7 +785,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
@@ -760,18 +801,16 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals lose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
-            .unwrap()
             .select(vec![
                 lit("this is definitely not a bbox").alias("bbox"),
                 col("geometry"),
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
-        options.geoparquet_version = GeoParquetVersion::V1_1;
+        let mut options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            ..Default::default()
+        };
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
@@ -788,7 +827,7 @@ mod test {
 
         // Without setting overwrite_bbox_columns = true, this should error
         let err = test_write_dataframe(
-            ctx.clone(),
+            &ctx,
             df.clone(),
             df_batches_with_bbox.clone(),
             options.clone(),
@@ -801,7 +840,7 @@ mod test {
             .starts_with("Can't overwrite GeoParquet 1.1 bbox column 'bbox'"));
 
         options.overwrite_bbox_columns = true;
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
@@ -814,10 +853,6 @@ mod test {
             .table(&example)
             .await
             .unwrap()
-            // DataFusion internals loose the nullability we assigned to the bbox
-            // and without this line the test fails.
-            .filter(Expr::IsNotNull(col("geometry").into()))
-            .unwrap()
             .select(vec![
                 lit("some_partition").alias("part"),
                 col("wkt"),
@@ -825,8 +860,10 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
-        options.geoparquet_version = GeoParquetVersion::V1_1;
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            ..Default::default()
+        };
 
         let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
 
@@ -847,7 +884,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec!["part".into()])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec!["part".into()])
             .await
             .unwrap();
     }
@@ -886,8 +923,10 @@ mod test {
             ])
             .unwrap();
 
-        let mut options = TableGeoParquetOptions::new();
-        options.geoparquet_version = GeoParquetVersion::V1_1;
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            ..Default::default()
+        };
 
         let df_batches_with_bbox = df
             .clone()
@@ -901,7 +940,7 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(ctx, df, df_batches_with_bbox, options, vec![])
+        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
     }
