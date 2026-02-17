@@ -424,7 +424,7 @@ class DataFrame:
         driver: Optional[str] = None,
         geometry_type: Optional[str] = None,
         geometry_name: Optional[str] = None,
-        crs: Optional[str],
+        crs: Optional[str] = None,
         append: bool = False,
         **kwargs,
     ):
