@@ -204,7 +204,9 @@ def test_write_ogr_no_geometry(con):
 
 def test_write_ogr_many_batches(con):
     # Check with a non-trivial number of batches
-    con.funcs.table.sd_random_geometry("MultiLineString", 50000).to_view("pyogrio_test")
+    con.funcs.table.sd_random_geometry("MultiLineString", 50000, seed=4837).to_view(
+        "pyogrio_test"
+    )
     df = con.sql(
         "SELECT id, ST_SetCrs(geometry, 'EPSG:4326') AS geometry FROM pyogrio_test"
     )
