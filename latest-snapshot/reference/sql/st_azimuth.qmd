@@ -23,6 +23,11 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns the azimuth (angle) from the first point to the second point, measured in
+**radians** clockwise from north. Returns NULL if either input is not a point.
+
 ## Examples
 
 ```sql

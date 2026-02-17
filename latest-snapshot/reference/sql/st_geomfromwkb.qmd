@@ -17,19 +17,43 @@
 # under the License.
 
 title: ST_GeomFromWKB
-description: Construct a Geometry from WKB.
+description: Construct a Geometry from Well-Known Binary (WKB).
 kernels:
   - returns: geometry
     args:
     - name: wkb
       type: binary
+  - returns: geometry
+    args:
+    - name: wkb
+      type: binary
+    - name: srid
+      type: crs
 ---
+
+## Description
+
+Parses a WKB binary value and returns a geometry. The input is validated by
+default. An optional SRID or CRS can be provided as a second argument.
 
 ## Examples
 
 ```sql
--- Creates a POINT(1 2) geometry from its WKB representation
-SELECT ST_AsText(
-    ST_GeomFromWKB(decode('0101000000000000000000F03F0000000000000040', 'hex'))
+SELECT ST_GeomFromWKB(
+  decode('0101000000000000000000F03F0000000000000040', 'hex')
+);
+```
+
+```sql
+SELECT ST_GeomFromWKB(
+  decode('0101000000000000000000F03F0000000000000040', 'hex'),
+  4326
+);
+```
+
+```sql
+SELECT ST_GeomFromWKB(
+  decode('0101000000000000000000F03F0000000000000040', 'hex'),
+  'OGC:CRS27'
 );
 ```

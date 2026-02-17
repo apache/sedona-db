@@ -23,8 +23,22 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns the inherent dimension of the geometry:
+
+- 0 for points or multipoints
+- 1 for linestring or multilinestrings
+- 2 for polygons or multipolygons
+
+For geometry collections, returns the largest dimension among the components.
+
 ## Examples
 
 ```sql
 SELECT ST_Dimension(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+```
+
+```sql
+SELECT ST_Dimension(ST_Point(1.0, 2.0));
 ```

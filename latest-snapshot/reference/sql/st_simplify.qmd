@@ -26,8 +26,17 @@ kernels:
       type: double
 ---
 
+## Description
+
+Simplifies a geometry using the Douglas-Peucker algorithm. The `tolerance` parameter controls the degree of simplification: higher values produce simpler geometries. This function may produce invalid geometries; use `ST_SimplifyPreserveTopology` when validity must be maintained.
+
 ## Examples
 
 ```sql
-SELECT ST_Simplify(ST_GeomFromWKT('POLYGON((8 25, 28 22, 28 20, 15 11, 33 3, 56 30, 46 33,46 34, 47 44, 35 36, 45 33, 43 19, 29 21, 29 22,35 26, 24 39, 8 25))'), 10);
+SELECT ST_Simplify(
+    ST_GeomFromWKT('POLYGON((8 25, 28 22, 28 20, 15 11, 33 3, 56 30, 46 33,
+        46 34, 47 44, 35 36, 45 33, 43 19, 29 21, 29 22,
+        35 26, 24 39, 8 25))'),
+    10
+);
 ```

@@ -23,6 +23,10 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns NULL for non-point geometries or NULL input.
+
 ## Examples
 
 ```sql

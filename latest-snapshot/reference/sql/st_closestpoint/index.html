@@ -1422,26 +1422,27 @@
 <p>Returns the 2-dimensional point on geom1 that is closest to geom2.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_ClosestPoint</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">geography</span><span class="w"> </span><span class="n">ST_ClosestPoint</span><span class="p">(</span><span class="n">geogA</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="n">geogB</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
+<li><strong>geogA</strong> (geography): Input geography</li>
+<li><strong>geogB</strong> (geography): Input geography</li>
 <li><strong>geomA</strong> (geometry): Input geometry</li>
 <li><strong>geomB</strong> (geometry): Input geometry</li>
 </ul>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_AsText</span><span class="p">(</span>
-<span class="w">  </span><span class="n">ST_ClosestPoint</span><span class="p">(</span>
-<span class="w">    </span><span class="n">ST_GeogFromText</span><span class="p">(</span><span class="s1">'POINT(-118.4 34.0)'</span><span class="p">),</span><span class="w">  </span><span class="c1">-- Santa Monica</span>
-<span class="w">    </span><span class="n">ST_GeogFromText</span><span class="p">(</span><span class="s1">'LINESTRING(-118.5 34.1, -118.3 33.9, -118.2 33.8)'</span><span class="p">)</span><span class="w">  </span><span class="c1">-- LA coastline</span>
-<span class="w">  </span><span class="p">)</span>
-<span class="p">)</span><span class="w"> </span><span class="k">As</span><span class="w"> </span><span class="n">ptwkt</span><span class="p">;</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_ClosestPoint</span><span class="p">(</span>
+<span class="w">    </span><span class="n">ST_GeogFromText</span><span class="p">(</span><span class="s1">'LINESTRING(0 0, 10 10)'</span><span class="p">),</span>
+<span class="w">    </span><span class="n">ST_GeogPoint</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────┐
-│                     ptwkt                    │
-│                     utf8                     │
-╞══════════════════════════════════════════════╡
-│ POINT(-118.40000000000002 34.00000000000001) │
-└──────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_closestpoint(st_geogfromtext(Utf8("LINESTRING(0 0, 10 10)")),st_geogpoint │
+│                             (Int64(5),Int64(0)))…                            │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ POINT(2.466474353124253 2.5021583528406395)                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
@@ -1463,7 +1464,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 17, 2026 16:53:45 UTC">February 17, 2026 16:53:45</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 17, 2026 21:59:29 UTC">February 17, 2026 21:59:29</span>
   </span>
 
     

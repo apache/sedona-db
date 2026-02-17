@@ -26,5 +26,9 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_HasZ(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+SELECT ST_HasZ(ST_GeomFromWKT('POINT Z (1 2 3)'));
+```
+
+```sql
+SELECT ST_HasZ(ST_GeomFromWKT('POINT (1 2)'));
 ```

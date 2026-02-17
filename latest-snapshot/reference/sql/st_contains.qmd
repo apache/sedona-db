@@ -23,11 +23,15 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if no points of B lie outside A and at least one point of B lies inside A.
+
 ## Examples
 
 ```sql
 SELECT ST_Contains(
-    ST_Point(0.25, 0.25),
-    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
+    ST_Point(0.25, 0.25)
 ) AS val;
 ```

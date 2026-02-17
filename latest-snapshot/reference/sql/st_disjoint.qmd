@@ -23,8 +23,15 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if the two geometries do not share any points. This is the inverse of `ST_Intersects`.
+
 ## Examples
 
 ```sql
-SELECT ST_Disjoint(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+SELECT ST_Disjoint(
+    ST_Point(0.25, 0.25),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
 ```

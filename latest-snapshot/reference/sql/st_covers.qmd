@@ -23,8 +23,16 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if no point in geometry B is outside geometry A. Similar to
+`ST_Contains` but does not require interior intersection.
+
 ## Examples
 
 ```sql
-SELECT ST_Covers(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+SELECT ST_Covers(
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
+    ST_Point(0.25, 0.25)
+) AS val;
 ```

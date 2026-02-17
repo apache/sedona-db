@@ -23,8 +23,14 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns the total number of coordinate points in the geometry, counting all vertices across all components.
+
 ## Examples
 
 ```sql
-SELECT ST_NPoints(ST_GeomFromText('LINESTRING(77.29 29.07,77.42 29.26,77.27 29.31,77.29 29.07)'));
+SELECT ST_NPoints(
+  ST_GeomFromText('LINESTRING (1 2, 3 4, 5 6)')
+);
 ```

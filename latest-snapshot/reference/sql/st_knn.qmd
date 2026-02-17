@@ -21,13 +21,23 @@ description: Return true if geomA finds k nearest neighbors from geomB.
 kernels:
   - returns: boolean
     args:
-    - geometry
-    - geometry
+    - name: geomA
+      type: geometry
+      description: The geometry around which to search.
+    - name: geomb
+      type: geometry
+      description: Column containing candidate geometries.
     - name: k
       type: integer
+      description: The number of nearest neighbours to return.
     - name: use_spheroid
       type: boolean
+      description: true to use spherical distance, false for Euclidean
 ---
+
+## Description
+
+`ST_KNN` is used in a join condition to find the k nearest neighbors of one geometry from another set of geometries. The actual k-nearest neighbors logic is handled by the spatial join execution engine: the function itself is a stub that simply defines the expected signature.
 
 ## Examples
 
