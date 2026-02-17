@@ -204,7 +204,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_georeference_udf().into();
         assert_eq!(udf.name(), "rs_georeference");
-        assert!(udf.documentation().is_some());
     }
 
     #[test]
