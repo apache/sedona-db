@@ -434,7 +434,7 @@ class DataFrame:
         implementation provided by the pyogrio package. This is the same backend
         used by GeoPandas and this function is a light wrapper around
         `pyogrio.raw.write_arrow()` that fills in default values using
-        information available to the DataFrame (e.g., geometry colum and CRS).
+        information available to the DataFrame (e.g., geometry column and CRS).
 
         Args:
             path: An output path or `BytesIO` output buffer.
@@ -450,6 +450,21 @@ class DataFrame:
             crs: An optional string overriding the CRS of `geometry_name`.
             append: Use `True` to append to the file for drivers that support
                 appending.
+            kwargs: Extra arguments passed to `pyogrio.raw.write_arrow()`.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> sd.sql("SELECT ST_Point(0, 1, 3857)").to_pyogrio(f"{td.name}/tmp.fgb")
+            >>> sd.read_pyogrio(f"{td.name}/tmp.fgb").show()
+            ┌──────────────┐
+            │ wkb_geometry │
+            │   geometry   │
+            ╞══════════════╡
+            │ POINT(0 1)   │
+            └──────────────┘
         """
         if geometry_name is None:
             geometry_name = self._impl.primary_geometry_column()
