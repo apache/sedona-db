@@ -41,6 +41,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_convexhull::rs_convexhull_udf,
         crate::rs_envelope::rs_envelope_udf,
         crate::rs_example::rs_example_udf,
+        crate::rs_georeference::rs_georeference_udf,
         crate::rs_geotransform::rs_rotation_udf,
         crate::rs_geotransform::rs_scalex_udf,
         crate::rs_geotransform::rs_scaley_udf,
