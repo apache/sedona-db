@@ -74,8 +74,6 @@ class SedonaContext:
         Once created, runtime options are frozen.
         """
         if self.__impl is None:
-            self.options._runtime_frozen = True
-
             # Build a dict[str, str] of non-None runtime options
             opts = {}
             if self.options.memory_limit is not None:
@@ -89,7 +87,11 @@ class SedonaContext:
                     self.options.unspillable_reserve_ratio
                 )
 
-            self.__impl = InternalContext(opts)
+            # Create the context first, then freeze options. If creation
+            # fails the user can still correct options and retry.
+            impl = InternalContext(opts)
+            self.__impl = impl
+            self.options._runtime_frozen = True
         return self.__impl
 
     def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:

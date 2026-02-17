@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import os
 from typing import Literal, Optional, Union
 
 
@@ -151,9 +152,18 @@ class Options:
         return self._temp_dir
 
     @temp_dir.setter
-    def temp_dir(self, value: Optional[str]) -> None:
+    def temp_dir(self, value: "Optional[Union[str, os.PathLike[str]]]") -> None:
         self._check_runtime_mutable("temp_dir")
-        self._temp_dir = value
+        if value is None:
+            self._temp_dir = None
+        elif isinstance(value, os.PathLike):
+            self._temp_dir = os.fspath(value)
+        elif isinstance(value, str):
+            self._temp_dir = value
+        else:
+            raise TypeError(
+                f"temp_dir must be a str, PathLike, or None, got {type(value).__name__}"
+            )
 
     @property
     def memory_pool_type(self) -> str:
@@ -193,7 +203,16 @@ class Options:
     @unspillable_reserve_ratio.setter
     def unspillable_reserve_ratio(self, value: Optional[float]) -> None:
         self._check_runtime_mutable("unspillable_reserve_ratio")
-        if value is not None and not (0.0 <= value <= 1.0):
+        if value is None:
+            self._unspillable_reserve_ratio = None
+            return
+        if not isinstance(value, (int, float)):
+            raise TypeError(
+                "unspillable_reserve_ratio must be a number between 0.0 and 1.0 "
+                f"or None, got {type(value).__name__}"
+            )
+        value = float(value)
+        if not (0.0 <= value <= 1.0):
             raise ValueError(
                 f"unspillable_reserve_ratio must be between 0.0 and 1.0, got {value}"
             )
