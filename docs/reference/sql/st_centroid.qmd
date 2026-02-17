@@ -26,5 +26,7 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Centroid(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')));
+SELECT ST_Centroid(
+  ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+);
 ```

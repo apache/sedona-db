@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_schema::DataType;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -30,25 +30,8 @@ pub fn st_length_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        Some(st_length_doc()),
+        None,
     )
-}
-
-fn st_length_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the length of geom. \
-         This function only supports LineString, MultiLineString, and GeometryCollections \
-         containing linear geometries. Use ST_Perimeter for polygons.\
-        ",
-        "ST_Length (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example(
-        "SELECT ST_Length(ST_GeomFromWKT('LINESTRING(38 16,38 50,65 50,66 16,38 16)'))",
-    )
-    .with_related_udf("ST_Perimeter")
-    .build()
 }
 
 #[cfg(test)]
@@ -61,6 +44,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_length_udf().into();
         assert_eq!(udf.name(), "st_length");
-        assert!(udf.documentation().is_some())
     }
 }

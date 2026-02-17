@@ -1,0 +1,89 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: barrier
+description: >
+    Creates an optimization barrier that prevents filter pushdown by evaluating
+    boolean expressions at runtime.
+kernels:
+  - returns: boolean
+    args:
+    - name: expression
+      type: string
+    - name: col_name
+      type: string
+    - name: col_value
+      type: any
+---
+
+## Description
+
+`barrier()` evaluates a boolean expression string at runtime using bound column
+values, and is marked as volatile to prevent the query optimizer from reordering
+or pushing filters past it.
+
+The first argument is a boolean expression string. After that, arguments come in
+pairs of `(column_name, column_value)` that bind variables used in the
+expression.
+
+### Supported expression syntax
+
+- **Comparison operators**: `=`, `==`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
+- **Logical operators**: `AND` / `and`, `OR` / `or`
+- **Literal types**: integers, floats, single- or double-quoted strings, `true`, `false`, `null`
+- Unrecognized expressions evaluate to `false`
+- `NULL` comparisons evaluate to `false`
+
+### When to use
+
+Use `barrier()` when you need a predicate to be evaluated **after** a join or
+scan rather than being pushed down by the optimizer. This is useful when the
+predicate depends on values that are only available at a specific stage of
+query execution.
+
+## Examples
+
+Filter rows using bound column values:
+
+```sql
+SELECT *
+FROM (VALUES (150, 'active'), (50, 'active'), (200, 'closed')) AS orders(amount, status)
+WHERE barrier('amount > 100 AND status = "active"',
+              'amount', amount,
+              'status', status);
+```
+
+Combine multiple conditions with different data types:
+
+```sql
+SELECT *
+FROM (VALUES (29.99, 'electronics'), (9.99, 'books'), (49.99, 'electronics')) AS products(price, category)
+WHERE barrier('price > 19.99 AND category = "electronics"',
+              'price', price,
+              'category', category);
+```
+
+Use `OR` logic:
+
+```sql
+SELECT *
+FROM (VALUES (3, 'info'), (7, 'critical'), (10, 'warning')) AS events(priority, type)
+WHERE barrier('priority < 5 OR type = "critical"',
+              'priority', priority,
+              'type', type);
+```

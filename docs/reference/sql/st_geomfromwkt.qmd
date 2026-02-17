@@ -17,16 +17,36 @@
 # under the License.
 
 title: ST_GeomFromWKT
-description: Construct a Geometry from WKT.
+description: Construct a Geometry from Well-Known Text (WKT).
 kernels:
   - returns: geometry
     args:
     - name: wkt
       type: string
+  - returns: geometry
+    args:
+    - name: wkt
+      type: string
+    - name: srid
+      type: crs
 ---
+
+## Description
+
+An optional SRID or CRS can be provided as a second argument to set the spatial reference.
 
 ## Examples
 
 ```sql
 SELECT ST_AsText(ST_GeomFromWKT('POINT (30 10)'));
+```
+
+With an SRID:
+
+```sql
+SELECT ST_GeomFromWKT('POINT (30 10)', 4326);
+```
+
+```sql
+SELECT ST_GeomFromWKT('POINT (30 10)', 'OGC:CRS27');
 ```

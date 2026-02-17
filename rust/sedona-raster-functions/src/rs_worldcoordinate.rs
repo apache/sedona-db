@@ -21,9 +21,7 @@ use arrow_array::builder::{BinaryBuilder, Float64Builder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int64_array;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_schema::datatypes::Edges;
@@ -37,7 +35,7 @@ pub fn rs_rastertoworldcoordy_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoordy",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::Y })],
         Volatility::Immutable,
-        Some(rs_rastertoworldcoordy_doc()),
+        None,
     )
 }
 
@@ -49,7 +47,7 @@ pub fn rs_rastertoworldcoordx_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoordx",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::X })],
         Volatility::Immutable,
-        Some(rs_rastertoworldcoordx_doc()),
+        None,
     )
 }
 
@@ -61,47 +59,8 @@ pub fn rs_rastertoworldcoord_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoord",
         vec![Arc::new(RsCoordinatePoint {})],
         Volatility::Immutable,
-        Some(rs_rastertoworldcoord_doc()),
+        None,
     )
-}
-
-fn rs_rastertoworldcoordy_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the upper left Y coordinate of the given row and column of the given raster geometric units of the geo-referenced raster. If any out of bounds values are given, the Y coordinate of the assumed point considering existing raster pixel size and skew values will be returned.".to_string(),
-        "RS_RasterToWorldCoordY(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Integer: Column x into the raster")
-    .with_argument("y", "Integer: Row y into the raster")
-    .with_sql_example("SELECT RS_RasterToWorldCoordY(RS_Example(), 0, 0)".to_string())
-    .build()
-}
-
-fn rs_rastertoworldcoordx_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the upper left X coordinate of the given row and column of the given raster geometric units of the geo-referenced raster. If any out of bounds values are given, the X coordinate of the assumed point considering existing raster pixel size and skew values will be returned.".to_string(),
-        "RS_RasterToWorldCoordX(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Integer: Column x into the raster")
-    .with_argument("y", "Integer: Row y into the raster")
-    .with_sql_example("SELECT RS_RasterToWorldCoordX(RS_Example(), 0, 0)".to_string())
-    .build()
-}
-
-fn rs_rastertoworldcoord_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the upper left X and Y coordinates of the given row and column of the given raster geometric units of the geo-referenced raster as a Point geometry. If any out of bounds values are given, the X and Y coordinates of the assumed point considering existing raster pixel size and skew values will be returned.".to_string(),
-        "RS_RasterToWorldCoord(raster: Raster, x: Integer, y: Integer)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Integer: Column x into the raster")
-    .with_argument("y", "Integer: Row y into the raster")
-    .with_sql_example("SELECT RS_RasterToWorldCoord(RS_Example(), 0, 0)".to_string())
-    .build()
 }
 
 #[derive(Debug, Clone)]
@@ -245,15 +204,12 @@ mod tests {
     fn udf_docs() {
         let udf: ScalarUDF = rs_rastertoworldcoordy_udf().into();
         assert_eq!(udf.name(), "rs_rastertoworldcoordy");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_rastertoworldcoordx_udf().into();
         assert_eq!(udf.name(), "rs_rastertoworldcoordx");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_rastertoworldcoord_udf().into();
         assert_eq!(udf.name(), "rs_rastertoworldcoord");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

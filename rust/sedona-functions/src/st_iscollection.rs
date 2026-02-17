@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -37,19 +37,8 @@ pub fn st_iscollection_udf() -> SedonaScalarUDF {
         "st_iscollection",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsCollection {})]),
         Volatility::Immutable,
-        Some(st_iscollection_doc()),
+        None,
     )
-}
-
-fn st_iscollection_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return true if the geometry is a collection",
-        "ST_IsCollection (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_IsCollection(ST_GeomFromWKT('LINESTRING(0 0, 1 1, 0 1, 0 0)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -120,7 +109,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_iscollection_udf().into();
         assert_eq!(udf.name(), "st_iscollection");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

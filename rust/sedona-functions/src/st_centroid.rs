@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
@@ -26,19 +26,8 @@ pub fn st_centroid_udf() -> SedonaScalarUDF {
         "st_centroid",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        Some(st_centroid_doc()),
+        None,
     )
-}
-
-fn st_centroid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the centroid of geom",
-        "ST_Centroid (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_Centroid(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'))")
-    .build()
 }
 
 #[cfg(test)]
@@ -51,6 +40,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_centroid_udf().into();
         assert_eq!(udf.name(), "st_centroid");
-        assert!(udf.documentation().is_some())
     }
 }

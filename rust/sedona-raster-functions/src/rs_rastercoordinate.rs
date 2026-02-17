@@ -21,9 +21,7 @@ use arrow_array::builder::{BinaryBuilder, Int64Builder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::affine_transformation::to_raster_coordinate;
 use sedona_schema::datatypes::Edges;
@@ -37,7 +35,7 @@ pub fn rs_worldtorastercoordy_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoordy",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::Y })],
         Volatility::Immutable,
-        Some(rs_worldtorastercoordy_doc()),
+        None,
     )
 }
 
@@ -49,7 +47,7 @@ pub fn rs_worldtorastercoordx_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoordx",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::X })],
         Volatility::Immutable,
-        Some(rs_worldtorastercoordx_doc()),
+        None,
     )
 }
 
@@ -61,49 +59,8 @@ pub fn rs_worldtorastercoord_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoord",
         vec![Arc::new(RsCoordinatePoint {})],
         Volatility::Immutable,
-        Some(rs_worldtorastercoord_doc()),
+        None,
     )
-}
-
-fn rs_worldtorastercoordx_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the X coordinate of the grid coordinate of the given world coordinates as an integer.".to_string(),
-        "RS_WorldToRasterCoord(raster: Raster, x: Float, y: Float)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Float: World x coordinate")
-    .with_argument("y", "Float: World y coordinate")
-    .with_sql_example("SELECT RS_WorldToRasterCoordX(RS_Example(), 34.865965, -111.812498)".to_string())
-    .build()
-}
-
-fn rs_worldtorastercoordy_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the Y coordinate of the grid coordinate of the given world coordinates as an integer.".to_string(),
-        "RS_WorldToRasterCoord(raster: Raster, x: Float, y: Float)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Float: World x coordinate")
-    .with_argument("y", "Float: World y coordinate")
-    .with_sql_example("SELECT RS_WorldToRasterCoordY(RS_Example(), 34.865965, -111.812498)".to_string())
-    .build()
-}
-
-fn rs_worldtorastercoord_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the grid coordinate of the given world coordinates as a Point.".to_string(),
-        "RS_WorldToRasterCoord(raster: Raster, x: Float, y: Float)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("x", "Float: World x coordinate")
-    .with_argument("y", "Float: World y coordinate")
-    .with_sql_example(
-        "SELECT RS_WorldToRasterCoord(RS_Example(), 34.865965, -111.812498)".to_string(),
-    )
-    .build()
 }
 
 #[derive(Debug, Clone)]
@@ -247,15 +204,12 @@ mod tests {
     fn udf_docs() {
         let udf: ScalarUDF = rs_worldtorastercoordy_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoordy");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_worldtorastercoordx_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoordx");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_worldtorastercoord_udf().into();
         assert_eq!(udf.name(), "rs_worldtorastercoord");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

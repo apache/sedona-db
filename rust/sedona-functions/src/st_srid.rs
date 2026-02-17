@@ -25,9 +25,7 @@ use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
     DataFusionError, Result, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::crs::CachedCrsToSRIDMapping;
@@ -43,7 +41,7 @@ pub fn st_srid_udf() -> SedonaScalarUDF {
         "st_srid",
         vec![Arc::new(StSridItemCrs {}), Arc::new(StSrid {})],
         Volatility::Immutable,
-        Some(st_srid_doc()),
+        None,
     )
 }
 
@@ -55,30 +53,8 @@ pub fn st_crs_udf() -> SedonaScalarUDF {
         "st_crs",
         vec![Arc::new(StCrsItemCrs {}), Arc::new(StCrs {})],
         Volatility::Immutable,
-        Some(st_crs_doc()),
+        None,
     )
-}
-
-fn st_srid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the spatial reference system identifier (SRID) of the geometry.",
-        "ST_SRID (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_SRID(polygon)".to_string())
-    .build()
-}
-
-fn st_crs_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the coordinate reference system (CRS) of the geometry.",
-        "ST_CRS (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_CRS(polygon)".to_string())
-    .build()
 }
 
 #[derive(Debug)]
@@ -302,11 +278,9 @@ mod test {
     fn udf_metadata() {
         let udf: ScalarUDF = st_srid_udf().into();
         assert_eq!(udf.name(), "st_srid");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = st_crs_udf().into();
         assert_eq!(udf.name(), "st_crs");
-        assert!(udf.documentation().is_some())
     }
 
     #[test]

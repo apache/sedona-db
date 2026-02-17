@@ -23,8 +23,14 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns the smallest convex polygon that encloses all points in the input geometry.
+
 ## Examples
 
 ```sql
-SELECT ST_ConvexHull(ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))'));
+SELECT ST_ConvexHull(
+  ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))')
+);
 ```

@@ -17,9 +17,7 @@
 use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -47,24 +45,8 @@ pub fn st_scale_udf() -> SedonaScalarUDF {
             Arc::new(STScale { is_3d: false }),
         ]),
         Volatility::Immutable,
-        Some(st_scale_doc()),
+        None,
     )
-}
-
-fn st_scale_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Scales the geometry to a new size by multiplying the ordinates with the corresponding scaling factors",
-        "ST_Scale (geom: Geometry, scaleX: Double, scaleY: Double, scaleZ: Double)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("scaleX", "scaling factor for X")
-    .with_argument("scaleY", "scaling factor for Y")
-    .with_argument("scaleZ", "scaling factor for Z")
-    .with_sql_example(
-        "SELECT ST_Scale(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), 1, 2, 3)",
-    )
-    .build()
 }
 
 #[derive(Debug)]
@@ -153,7 +135,7 @@ mod tests {
     fn udf_metadata() {
         let st_scale_udf: ScalarUDF = st_scale_udf().into();
         assert_eq!(st_scale_udf.name(), "st_scale");
-        assert!(st_scale_udf.documentation().is_some());
+        assert!(st_scale_udf.documentation().is_none());
     }
 
     #[rstest]

@@ -19,9 +19,7 @@ use std::{collections::HashMap, sync::Arc};
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{exec_err, Result, ScalarValue};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 
@@ -33,43 +31,8 @@ pub fn barrier_udf() -> SedonaScalarUDF {
         "barrier",
         vec![Arc::new(Barrier)],
         Volatility::Volatile, // Mark as volatile to prevent optimization
-        Some(barrier_doc()),
+        None,
     )
-}
-
-fn barrier_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Creates an optimization barrier to prevent filter pushdown by evaluating boolean expressions at runtime",
-        "barrier(expression: string, col_name1: string, col_value1: any, ...)",
-    )
-        .with_argument("expression", "string: Boolean expression to evaluate at runtime")
-        .with_argument("col_name", "string: Column name referenced in the expression")
-        .with_argument("col_value", "any: Actual column value to substitute for col_name")
-        .with_sql_example(r#"-- Without barrier: optimizer may push down or reorder predicates
-SELECT * FROM orders WHERE amount > 100 AND status = 'active';
-
--- With barrier: forces the predicate to be evaluated exactly where specified
--- The barrier function dynamically evaluates 'amount > 100 AND status = "active"'
--- by substituting the actual column values at runtime
-SELECT * FROM orders
-WHERE barrier('amount > 100 AND status = "active"',
-              'amount', amount,     -- substitutes 'amount' with actual amount value
-              'status', status);    -- substitutes 'status' with actual status value
-
--- Useful for controlling evaluation order in complex queries:
--- Without barrier: optimizer might evaluate predicates in any order
-SELECT * FROM customers c
-JOIN orders o ON c.id = o.customer_id
-WHERE c.region = 'US' AND o.total > 1000;
-
--- With barrier: ensures the join predicate is evaluated after the join
-SELECT * FROM customers c
-JOIN orders o ON c.id = o.customer_id
-WHERE barrier('c_region = "US" AND o_total > 1000',
-              'c_region', c.region,
-              'o_total', o.total);"#)
-        .build()
 }
 
 #[derive(Debug)]
@@ -393,7 +356,6 @@ mod tests {
     fn test_barrier_basic() {
         let udf: ScalarUDF = barrier_udf().into();
         assert_eq!(udf.name(), "barrier");
-        assert!(udf.documentation().is_some());
     }
 
     /// Type alias for test case tuple to reduce complexity

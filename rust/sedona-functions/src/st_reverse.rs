@@ -21,7 +21,7 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -49,19 +49,8 @@ pub fn st_reverse_udf() -> SedonaScalarUDF {
         "st_reverse",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STReverse)]),
         Volatility::Immutable,
-        Some(st_reverse_doc()),
+        None,
     )
-}
-
-fn st_reverse_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Can be used on any geometry and reverses the order of the vertices.",
-        "ST_Reverse (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_AsText(ST_Reverse('POLYGON ((2 2, 2 3, 3 3, 3 2, 2 2))'))")
-    .build()
 }
 
 #[derive(Debug)]

@@ -23,8 +23,16 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if no point in geometry A is outside geometry B. Inverse of
+`ST_Covers`: `ST_CoveredBy(A, B)` is equivalent to `ST_Covers(B, A)`.
+
 ## Examples
 
 ```sql
-SELECT ST_CoveredBy(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+SELECT ST_CoveredBy(
+    ST_Point(0.25, 0.25),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
+);
 ```

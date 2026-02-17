@@ -17,9 +17,7 @@
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, exec_err};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, PointTrait};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -39,22 +37,8 @@ pub fn st_azimuth_udf() -> SedonaScalarUDF {
         "st_azimuth",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAzimuth {})]),
         Volatility::Immutable,
-        Some(st_azimuth_doc()),
+        None,
     )
-}
-
-fn st_azimuth_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the azimuth (a clockwise angle measured from north) in radians from geomA to geomB",
-        "ST_Azimuth (A: Geometry, B: Geometry)",
-    )
-    .with_argument("geomA", "geometry: Start point geometry")
-    .with_argument("geomB", "geometry: End point geometry")
-    .with_sql_example(
-        "SELECT degrees(ST_Azimuth(ST_Point(0, 0), ST_Point(1, 1)))",
-    )
-    .build()
 }
 
 #[derive(Debug)]
@@ -145,7 +129,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_azimuth_udf().into();
         assert_eq!(udf.name(), "st_azimuth");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

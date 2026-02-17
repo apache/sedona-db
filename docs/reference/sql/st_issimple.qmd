@@ -23,8 +23,15 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns `true` if the geometry has no anomalous geometric points such as
+self-intersections or self-tangency.
+
 ## Examples
 
 ```sql
-SELECT ST_IsSimple(ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'));
+SELECT ST_IsSimple(
+  ST_GeomFromWKT('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))')
+);
 ```

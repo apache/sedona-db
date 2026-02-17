@@ -24,9 +24,7 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     exec_err, HashSet, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -58,19 +56,8 @@ pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
             Arc::new(STCollectAggr { is_geography: true }),
         ]),
         Volatility::Immutable,
-        Some(st_collect_agg_doc()),
+        None,
     )
-}
-
-fn st_collect_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the entire envelope boundary of all geometries in geom",
-        "ST_Collect_Agg (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_Collect_Agg(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -327,7 +314,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_collect_agg_udf().into();
         assert_eq!(udf.name(), "st_collect_agg");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

@@ -20,9 +20,7 @@ use crate::executor::RasterExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::affine_transformation::rotation;
 use sedona_raster::traits::RasterRef;
@@ -39,7 +37,7 @@ pub fn rs_upperleftx_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::UpperLeftX,
         })],
         Volatility::Immutable,
-        Some(rs_upperleftx_doc()),
+        None,
     )
 }
 
@@ -54,7 +52,7 @@ pub fn rs_upperlefty_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::UpperLeftY,
         })],
         Volatility::Immutable,
-        Some(rs_upperlefty_doc()),
+        None,
     )
 }
 
@@ -69,7 +67,7 @@ pub fn rs_scalex_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::ScaleX,
         })],
         Volatility::Immutable,
-        Some(rs_scalex_doc()),
+        None,
     )
 }
 
@@ -84,7 +82,7 @@ pub fn rs_scaley_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::ScaleY,
         })],
         Volatility::Immutable,
-        Some(rs_scaley_doc()),
+        None,
     )
 }
 
@@ -99,7 +97,7 @@ pub fn rs_skewx_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::SkewX,
         })],
         Volatility::Immutable,
-        Some(rs_skewx_doc()),
+        None,
     )
 }
 
@@ -114,7 +112,7 @@ pub fn rs_skewy_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::SkewY,
         })],
         Volatility::Immutable,
-        Some(rs_skewy_doc()),
+        None,
     )
 }
 
@@ -129,85 +127,8 @@ pub fn rs_rotation_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::Rotation,
         })],
         Volatility::Immutable,
-        Some(rs_rotation_doc()),
+        None,
     )
-}
-
-fn rs_upperleftx_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the X coordinate of the upper-left corner of the raster.".to_string(),
-        "RS_UpperLeftX(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_UpperLeftX(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_upperlefty_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the Y coordinate of the upper-left corner of the raster.".to_string(),
-        "RS_UpperLeftY(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_UpperLeftY(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_scalex_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the pixel width of the raster in CRS units.".to_string(),
-        "RS_ScaleX(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_ScaleX(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_scaley_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the pixel height of the raster in CRS units.".to_string(),
-        "RS_ScaleY(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_ScaleY(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_skewx_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the X skew or rotation parameter.".to_string(),
-        "RS_SkewX(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_SkewX(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_skewy_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the Y skew or rotation parameter.".to_string(),
-        "RS_SkewY(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_SkewY(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_rotation_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the uniform rotation of the raster in radians.".to_string(),
-        "RS_Rotation(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Rotation(RS_Example())".to_string())
-    .build()
 }
 
 #[derive(Debug, Clone)]
@@ -289,31 +210,24 @@ mod tests {
     fn udf_info() {
         let udf: ScalarUDF = rs_rotation_udf().into();
         assert_eq!(udf.name(), "rs_rotation");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_scalex_udf().into();
         assert_eq!(udf.name(), "rs_scalex");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_scaley_udf().into();
         assert_eq!(udf.name(), "rs_scaley");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_skewx_udf().into();
         assert_eq!(udf.name(), "rs_skewx");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_skewy_udf().into();
         assert_eq!(udf.name(), "rs_skewy");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_upperleftx_udf().into();
         assert_eq!(udf.name(), "rs_upperleftx");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_upperlefty_udf().into();
         assert_eq!(udf.name(), "rs_upperlefty");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

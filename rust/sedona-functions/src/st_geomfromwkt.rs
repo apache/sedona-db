@@ -22,9 +22,7 @@ use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::Result;
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::scalar::ScalarValue;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -54,7 +52,7 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
         "st_geomfromwkt",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-        Some(doc("ST_GeomFromWKT", "Geometry")),
+        None,
     );
     udf.with_aliases(vec![
         "st_geomfromtext".to_string(),
@@ -73,28 +71,9 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
             out_type: WKB_GEOGRAPHY,
         })],
         Volatility::Immutable,
-        Some(doc("ST_GeogFromWKT", "Geography")),
+        None,
     );
     udf.with_aliases(vec!["st_geogfromtext".to_string()])
-}
-
-fn doc(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!("Construct a {out_type_name} from WKT"),
-        format!("{name} (Wkt: String)"),
-    )
-    .with_argument(
-        "WKT",
-        format!(
-            "string: Well-known text representation of the {}",
-            out_type_name.to_lowercase()
-        ),
-    )
-    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
-    .with_sql_example(format!("SELECT {name}('POINT(40.7128 -74.0060)')"))
-    .with_related_udf("ST_AsText")
-    .build()
 }
 
 #[derive(Debug)]
@@ -155,23 +134,11 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
 ///
 /// An implementation of EWKT reading using GeoRust's wkt crate.
 pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
-    let doc = Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Construct a Geometry from EWKT",
-        "ST_GeomFromEWKT (Ewkt: String)",
-    )
-    .with_argument(
-        "EWKT",
-        "string: Extended well-known text representation of the geometry",
-    )
-    .with_sql_example("SELECT ST_GeomFromEWKT('SRID=4326;POINT(40.7128 -74.0060)')")
-    .build();
-
     SedonaScalarUDF::new(
         "st_geomfromewkt",
         vec![Arc::new(STGeoFromEWKT {})],
         Volatility::Immutable,
-        Some(doc),
+        None,
     )
 }
 
@@ -295,11 +262,11 @@ mod tests {
     fn udf_metadata() {
         let geog_from_wkt: ScalarUDF = st_geogfromwkt_udf().into();
         assert_eq!(geog_from_wkt.name(), "st_geogfromwkt");
-        assert!(geog_from_wkt.documentation().is_some());
+        assert!(geog_from_wkt.documentation().is_none());
 
         let geom_from_wkt: ScalarUDF = st_geomfromwkt_udf().into();
         assert_eq!(geom_from_wkt.name(), "st_geomfromwkt");
-        assert!(geom_from_wkt.documentation().is_some());
+        assert!(geom_from_wkt.documentation().is_none());
     }
 
     #[rstest]

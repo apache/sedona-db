@@ -17,9 +17,7 @@
 use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -47,31 +45,8 @@ pub fn st_affine_udf() -> SedonaScalarUDF {
             Arc::new(STAffine { is_3d: false }),
         ]),
         Volatility::Immutable,
-        Some(st_affine_doc()),
+        None,
     )
-}
-
-fn st_affine_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Apply an affine transformation to the given geometry.",
-        "ST_Affine (geom: Geometry, a: Double, b: Double, c: Double, d: Double, e: Double, f: Double, g: Double, h: Double, i: Double, xOff: Double, yOff: Double, zOff: Double)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_argument("a", "a component of the affine matrix")
-    .with_argument("b", "a component of the affine matrix")
-    .with_argument("c", "a component of the affine matrix")
-    .with_argument("d", "a component of the affine matrix")
-    .with_argument("e", "a component of the affine matrix")
-    .with_argument("f", "a component of the affine matrix")
-    .with_argument("g", "a component of the affine matrix")
-    .with_argument("h", "a component of the affine matrix")
-    .with_argument("i", "a component of the affine matrix")
-    .with_argument("xOff", "X offset")
-    .with_argument("yOff", "Y offset")
-    .with_argument("zOff", "Z offset")
-    .with_sql_example("SELECT ST_Affine(ST_GeomFromText('POLYGON Z ((1 0 1, 1 1 1, 2 2 2, 1 0 1))'), 1, 2, 4, 1, 1, 2, 3, 2, 5, 4, 8, 3)")
-    .build()
 }
 
 #[derive(Debug)]
@@ -174,7 +149,7 @@ mod tests {
     fn udf_metadata() {
         let st_affine_udf: ScalarUDF = st_affine_udf().into();
         assert_eq!(st_affine_udf.name(), "st_affine");
-        assert!(st_affine_udf.documentation().is_some());
+        assert!(st_affine_udf.documentation().is_none());
     }
 
     #[rstest]

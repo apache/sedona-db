@@ -20,9 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -43,7 +41,7 @@ pub fn st_x_udf() -> SedonaScalarUDF {
         "st_x",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "x" })]),
         Volatility::Immutable,
-        Some(st_xy_doc("x")),
+        None,
     )
 }
 
@@ -55,7 +53,7 @@ pub fn st_y_udf() -> SedonaScalarUDF {
         "st_y",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "y" })]),
         Volatility::Immutable,
-        Some(st_xy_doc("y")),
+        None,
     )
 }
 
@@ -67,7 +65,7 @@ pub fn st_z_udf() -> SedonaScalarUDF {
         "st_z",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "z" })]),
         Volatility::Immutable,
-        Some(st_xy_doc("z")),
+        None,
     )
 }
 
@@ -79,25 +77,8 @@ pub fn st_m_udf() -> SedonaScalarUDF {
         "st_m",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "m" })]),
         Volatility::Immutable,
-        Some(st_xy_doc("m")),
+        None,
     )
-}
-
-fn st_xy_doc(dim: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Return the {} component of a point geometry or geography",
-            dim.to_uppercase()
-        ),
-        format!("ST_{}(A: Point)", dim.to_uppercase()),
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example(format!(
-        "SELECT ST_{}(ST_Point(1.0, 2.0))",
-        dim.to_uppercase()
-    ))
-    .build()
 }
 
 #[derive(Debug)]
@@ -250,19 +231,19 @@ mod tests {
     fn udf_metadata() {
         let udf_x: ScalarUDF = st_x_udf().into();
         assert_eq!(udf_x.name(), "st_x");
-        assert!(udf_x.documentation().is_some());
+        assert!(udf_x.documentation().is_none());
 
         let udf_y: ScalarUDF = st_y_udf().into();
         assert_eq!(udf_y.name(), "st_y");
-        assert!(udf_y.documentation().is_some());
+        assert!(udf_y.documentation().is_none());
 
         let udf_z: ScalarUDF = st_z_udf().into();
         assert_eq!(udf_z.name(), "st_z");
-        assert!(udf_z.documentation().is_some());
+        assert!(udf_z.documentation().is_none());
 
         let udf_m: ScalarUDF = st_m_udf().into();
         assert_eq!(udf_m.name(), "st_m");
-        assert!(udf_m.documentation().is_some());
+        assert!(udf_m.documentation().is_none());
     }
 
     #[rstest]

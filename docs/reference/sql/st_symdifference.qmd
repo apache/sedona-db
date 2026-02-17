@@ -26,5 +26,8 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_SymDifference(ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'), ST_GeomFromWKT('POLYGON((1 0, 3 0, 3 2, 1 2, 1 0))'));
+SELECT ST_SymDifference(
+    ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),
+    ST_GeomFromWKT('POLYGON((1 0, 3 0, 3 2, 1 2, 1 0))')
+);
 ```

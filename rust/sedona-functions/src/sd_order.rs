@@ -16,9 +16,7 @@
 // under the License.
 
 use datafusion_common::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use std::{fmt::Debug, sync::Arc};
@@ -35,19 +33,8 @@ pub fn sd_order_udf() -> SedonaScalarUDF {
         "sd_order",
         vec![Arc::new(SDOrderDefault {})],
         Volatility::Immutable,
-        Some(sd_order_doc()),
+        None,
     )
-}
-
-fn sd_order_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return an arbitrary value that may be used to sort the input.",
-        "SD_Order (value: Any)",
-    )
-    .with_argument("value", "Any: An arbitrary value")
-    .with_sql_example("SELECT SD_Order()")
-    .build()
 }
 
 /// Default implementation that returns its input (i.e., by default, just
@@ -88,7 +75,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = sd_order_udf().into();
         assert_eq!(udf.name(), "sd_order");
-        assert!(udf.documentation().is_some())
     }
 
     #[rstest]

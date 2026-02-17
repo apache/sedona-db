@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_schema::DataType;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -30,20 +30,8 @@ pub fn st_asgeojson_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Utf8),
         ),
         Volatility::Immutable,
-        Some(st_asgeojson_doc()),
+        None,
     )
-}
-
-fn st_asgeojson_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the GeoJSON representation of a geometry",
-        "ST_AsGeoJSON (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_AsGeoJSON(ST_Point(1.0, 2.0))")
-    .with_related_udf("ST_GeomFromGeoJSON")
-    .build()
 }
 
 #[cfg(test)]
@@ -56,6 +44,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_asgeojson_udf().into();
         assert_eq!(udf.name(), "st_asgeojson");
-        assert!(udf.documentation().is_some())
     }
 }

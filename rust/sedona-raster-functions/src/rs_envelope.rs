@@ -21,9 +21,7 @@ use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_common::ScalarValue;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::write_wkb_polygon;
@@ -40,19 +38,8 @@ pub fn rs_envelope_udf() -> SedonaScalarUDF {
         "rs_envelope",
         vec![Arc::new(RsEnvelope {})],
         Volatility::Immutable,
-        Some(rs_envelope_doc()),
+        None,
     )
-}
-
-fn rs_envelope_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the envelope of the raster as a Geometry.".to_string(),
-        "RS_Envelope(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_Envelope(RS_Example())".to_string())
-    .build()
 }
 
 #[derive(Debug)]
@@ -166,7 +153,6 @@ mod tests {
     fn udf_docs() {
         let udf: ScalarUDF = rs_envelope_udf().into();
         assert_eq!(udf.name(), "rs_envelope");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

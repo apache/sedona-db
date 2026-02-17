@@ -16,9 +16,7 @@
 // under the License.
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -48,19 +46,8 @@ pub fn st_start_point_udf() -> SedonaScalarUDF {
         "st_startpoint",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(true))]),
         Volatility::Immutable,
-        Some(st_start_point_doc()),
+        None,
     )
-}
-
-fn st_start_point_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the start point of a geometry. Returns NULL if the geometry is empty.",
-        "ST_StartPoint (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_StartPoint(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'))")
-    .build()
 }
 
 /// ST_EndPoint() scalar UDF
@@ -71,19 +58,8 @@ pub fn st_end_point_udf() -> SedonaScalarUDF {
         "st_endpoint",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(false))]),
         Volatility::Immutable,
-        Some(st_end_point_doc()),
+        None,
     )
-}
-
-fn st_end_point_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the end point of a LINESTRING geometry. Returns NULL if the geometry is empty or not a LINESTRING.",
-        "ST_EndPoint (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_EndPoint(ST_GeomFromWKT('LINESTRING(0 1, 2 3, 4 5)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -208,11 +184,11 @@ mod tests {
     fn udf_metadata() {
         let st_start_point_udf: ScalarUDF = st_start_point_udf().into();
         assert_eq!(st_start_point_udf.name(), "st_startpoint");
-        assert!(st_start_point_udf.documentation().is_some());
+        assert!(st_start_point_udf.documentation().is_none());
 
         let st_end_point_udf: ScalarUDF = st_end_point_udf().into();
         assert_eq!(st_end_point_udf.name(), "st_endpoint");
-        assert!(st_end_point_udf.documentation().is_some());
+        assert!(st_end_point_udf.documentation().is_none());
     }
 
     #[rstest]

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use geo_traits::GeometryCollectionTrait;
 use geo_traits::{
     to_geo::{ToGeoLineString, ToGeoMultiLineString},
@@ -40,19 +40,8 @@ pub fn st_isclosed_udf() -> SedonaScalarUDF {
         "st_isclosed",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsClosed {})]),
         Volatility::Immutable,
-        Some(st_is_closed_doc()),
+        None,
     )
-}
-
-fn st_is_closed_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return true if the geometry is closed",
-        "ST_IsClosed (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example("SELECT ST_IsClosed(ST_GeomFromWKT('LINESTRING(0 0, 1 1, 0 1, 0 0)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -140,7 +129,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_isclosed_udf().into();
         assert_eq!(udf.name(), "st_isclosed");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

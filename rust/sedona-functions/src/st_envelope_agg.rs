@@ -24,10 +24,7 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, Accumulator, ColumnarValue, Documentation, EmitTo,
-    GroupsAccumulator, Volatility,
-};
+use datafusion_expr::{Accumulator, ColumnarValue, EmitTo, GroupsAccumulator, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
@@ -51,19 +48,8 @@ pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
         "st_envelope_agg",
         ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(STEnvelopeAgg {})]),
         Volatility::Immutable,
-        Some(st_envelope_agg_doc()),
+        None,
     )
-}
-
-fn st_envelope_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the entire envelope boundary of all geometries in geom",
-        "ST_Envelope_Agg (geom: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("SELECT ST_Envelope_Agg(ST_GeomFromWKT('MULTIPOINT (0 1, 10 11)'))")
-    .build()
 }
 
 #[derive(Debug)]
@@ -361,7 +347,6 @@ mod test {
     fn udf_metadata() {
         let udf: AggregateUDF = st_envelope_agg_udf().into();
         assert_eq!(udf.name(), "st_envelope_agg");
-        assert!(udf.documentation().is_some());
     }
 
     #[rstest]

@@ -26,9 +26,7 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     internal_err, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -42,30 +40,8 @@ pub fn sd_format_udf() -> SedonaScalarUDF {
         "sd_format",
         vec![Arc::new(SDFormatDefault {})],
         Volatility::Immutable,
-        Some(sd_format_doc()),
+        None,
     )
-}
-
-fn sd_format_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return a version of value suitable for formatting/display with
-         the options provided. This is used to inject custom behaviour for a
-         SedonaType specifically for formatting values.",
-        "SD_Format (value: Any, [options: String])",
-    )
-    .with_argument("value", "Any: Any input value")
-    .with_argument(
-        "options",
-        "
-    String: JSON-encoded options. The following options are currently supported:
-
-    - width_hint (numeric): The approximate width of the output. The value provided will
-      typically be an overestimate and the value may be further abrevidated by
-      the renderer. This value is purely a hint and may be ignored.",
-    )
-    .with_sql_example("SELECT SD_Format(ST_Point(1.0, 2.0, '{}'))")
-    .build()
 }
 
 /// Default implementation that returns its input (i.e., by default, just
@@ -406,7 +382,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = sd_format_udf().into();
         assert_eq!(udf.name(), "sd_format");
-        assert!(udf.documentation().is_some())
     }
 
     #[rstest]

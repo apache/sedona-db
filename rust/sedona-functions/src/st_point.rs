@@ -21,9 +21,7 @@ use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::scalar::ScalarValue;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
@@ -46,7 +44,7 @@ pub fn st_point_udf() -> SedonaScalarUDF {
         "st_point",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-        Some(doc("ST_Point", "Geometry")),
+        None,
     )
 }
 
@@ -64,24 +62,8 @@ pub fn st_geogpoint_udf() -> SedonaScalarUDF {
         "st_geogpoint",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-        Some(doc("st_geogpoint", "Geography")),
+        None,
     )
-}
-
-fn doc(name: &str, out_type_name: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Construct a Point {} from X and Y",
-            out_type_name.to_lowercase()
-        ),
-        format!("{name} (x: Double, y: Double)"),
-    )
-    .with_argument("x", "double: X value")
-    .with_argument("y", "double: Y value")
-    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
-    .with_sql_example(format!("{name}(-64.36, 45.09)"))
-    .build()
 }
 
 #[derive(Debug)]
@@ -179,11 +161,11 @@ mod tests {
     fn udf_metadata() {
         let geom_from_point: ScalarUDF = st_point_udf().into();
         assert_eq!(geom_from_point.name(), "st_point");
-        assert!(geom_from_point.documentation().is_some());
+        assert!(geom_from_point.documentation().is_none());
 
         let geog_from_point: ScalarUDF = st_geogpoint_udf().into();
         assert_eq!(geog_from_point.name(), "st_geogpoint");
-        assert!(geog_from_point.documentation().is_some());
+        assert!(geog_from_point.documentation().is_none());
     }
 
     #[rstest]

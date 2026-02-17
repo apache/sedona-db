@@ -14,31 +14,31 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 
 /// ST_Intersection() scalar UDF stub
 pub fn st_intersection_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Intersection", "Intersection")
+    overlay_stub_udf("ST_Intersection")
 }
 
 /// ST_Union() scalar UDF stub
 pub fn st_union_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Union", "Union")
+    overlay_stub_udf("ST_Union")
 }
 
 /// ST_Difference() scalar UDF stub
 pub fn st_difference_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_Difference", "Difference")
+    overlay_stub_udf("ST_Difference")
 }
 
 /// ST_SymDifference() scalar UDF stub
 pub fn st_sym_difference_udf() -> SedonaScalarUDF {
-    overlay_stub_udf("ST_SymDifference", "Symmetric difference")
+    overlay_stub_udf("ST_SymDifference")
 }
 
-pub fn overlay_stub_udf(name: &str, action: &str) -> SedonaScalarUDF {
+pub fn overlay_stub_udf(name: &str) -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
         &name.to_lowercase(),
         ArgMatcher::new(
@@ -49,20 +49,8 @@ pub fn overlay_stub_udf(name: &str, action: &str) -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        Some(overlay_doc(name, action)),
+        None,
     )
-}
-
-fn overlay_doc(name: &str, action: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!("{action} between geomA and geomB"),
-        format!("{name} (A: Geometry, B: Geometry)")
-    )
-    .with_argument("geomA", "geometry: Input geometry or geography")
-    .with_argument("geomB", "geometry: Input geometry or geography")
-    .with_sql_example(format!("SELECT {name}(ST_GeomFromText('POLYGON ((1 1, 11 1, 1 11, 0 0))'), ST_GeomFromText('POLYGON ((0 0, 10 0, 0 10, 0 0))')) AS val"))
-    .build()
 }
 
 #[cfg(test)]
@@ -75,6 +63,5 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_intersection_udf().into();
         assert_eq!(udf.name(), "st_intersection");
-        assert!(udf.documentation().is_some())
     }
 }

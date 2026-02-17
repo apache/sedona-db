@@ -20,9 +20,7 @@ use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, DataFusionError};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -36,7 +34,7 @@ pub fn st_hasz_udf() -> SedonaScalarUDF {
         "st_hasz",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "z" })]),
         Volatility::Immutable,
-        Some(st_geometry_type_doc("z")),
+        None,
     )
 }
 
@@ -45,25 +43,8 @@ pub fn st_hasm_udf() -> SedonaScalarUDF {
         "st_hasm",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "m" })]),
         Volatility::Immutable,
-        Some(st_geometry_type_doc("m")),
+        None,
     )
-}
-
-fn st_geometry_type_doc(dim: &str) -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        format!(
-            "Return true if the geometry has a {} dimension",
-            dim.to_uppercase()
-        ),
-        format!("ST_Has{} (A: Geometry)", dim.to_uppercase()),
-    )
-    .with_argument("geom", "geometry: Input geometry")
-    .with_sql_example(format!(
-        "SELECT ST_Has{}(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'))",
-        dim.to_uppercase()
-    ))
-    .build()
 }
 
 #[derive(Debug)]
@@ -158,11 +139,9 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = st_hasz_udf().into();
         assert_eq!(udf.name(), "st_hasz");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = st_hasm_udf().into();
         assert_eq!(udf.name(), "st_hasm");
-        assert!(udf.documentation().is_some())
     }
 
     #[rstest]
