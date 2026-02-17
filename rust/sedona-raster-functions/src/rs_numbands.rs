@@ -35,7 +35,6 @@ pub fn rs_numbands_udf() -> SedonaScalarUDF {
         "rs_numbands",
         vec![Arc::new(RsNumBands {})],
         Volatility::Immutable,
-        Some(rs_numbands_doc()),
     )
 }
 

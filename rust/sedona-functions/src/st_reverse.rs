@@ -49,7 +49,6 @@ pub fn st_reverse_udf() -> SedonaScalarUDF {
         "st_reverse",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STReverse)]),
         Volatility::Immutable,
-        None,
     )
 }
 

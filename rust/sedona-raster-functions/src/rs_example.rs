@@ -39,7 +39,6 @@ pub fn rs_example_udf() -> SedonaScalarUDF {
         "rs_example",
         vec![Arc::new(RsExample {})],
         Volatility::Immutable,
-        None,
     )
 }
 

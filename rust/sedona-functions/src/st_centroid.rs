@@ -26,7 +26,6 @@ pub fn st_centroid_udf() -> SedonaScalarUDF {
         "st_centroid",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        None,
     )
 }
 

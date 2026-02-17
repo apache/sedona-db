@@ -33,7 +33,6 @@ pub fn st_asbinary_udf() -> SedonaScalarUDF {
         "st_asbinary",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAsBinary {})]),
         Volatility::Immutable,
-        None,
     );
     udf.with_aliases(vec!["st_aswkb".to_string()])
 }

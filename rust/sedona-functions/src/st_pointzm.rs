@@ -55,7 +55,6 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyz,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -70,7 +69,6 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xym,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -85,7 +83,6 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyzm,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 

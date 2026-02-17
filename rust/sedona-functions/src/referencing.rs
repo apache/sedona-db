@@ -31,7 +31,6 @@ pub fn st_line_locate_point_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -44,7 +43,6 @@ pub fn st_line_interpolate_point_udf() -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

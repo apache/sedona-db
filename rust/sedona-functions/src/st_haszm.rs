@@ -34,7 +34,6 @@ pub fn st_hasz_udf() -> SedonaScalarUDF {
         "st_hasz",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "z" })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -43,7 +42,6 @@ pub fn st_hasm_udf() -> SedonaScalarUDF {
         "st_hasm",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STHasZm { dim: "m" })]),
         Volatility::Immutable,
-        None,
     )
 }
 

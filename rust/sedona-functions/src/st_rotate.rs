@@ -44,7 +44,6 @@ pub fn st_rotate_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Z,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -58,7 +57,6 @@ pub fn st_rotate_x_udf() -> SedonaScalarUDF {
             axis: RotateAxis::X,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -72,7 +70,6 @@ pub fn st_rotate_y_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Y,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 

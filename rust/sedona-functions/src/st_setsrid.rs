@@ -55,7 +55,6 @@ pub fn st_set_srid_with_engine_udf(
         "st_setsrid",
         vec![Arc::new(STSetSRID { engine })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -71,7 +70,6 @@ pub fn st_set_crs_with_engine_udf(
         "st_setcrs",
         vec![Arc::new(STSetCRS { engine })],
         Volatility::Immutable,
-        None,
     )
 }
 

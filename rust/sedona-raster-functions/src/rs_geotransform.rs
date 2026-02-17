@@ -37,7 +37,6 @@ pub fn rs_upperleftx_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::UpperLeftX,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -52,7 +51,6 @@ pub fn rs_upperlefty_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::UpperLeftY,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -67,7 +65,6 @@ pub fn rs_scalex_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::ScaleX,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -82,7 +79,6 @@ pub fn rs_scaley_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::ScaleY,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -97,7 +93,6 @@ pub fn rs_skewx_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::SkewX,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -112,7 +107,6 @@ pub fn rs_skewy_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::SkewY,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -127,7 +121,6 @@ pub fn rs_rotation_udf() -> SedonaScalarUDF {
             param: GeoTransformParam::Rotation,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 

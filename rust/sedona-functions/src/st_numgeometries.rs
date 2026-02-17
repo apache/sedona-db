@@ -37,7 +37,6 @@ pub fn st_numgeometries_udf() -> SedonaScalarUDF {
         "st_numgeometries",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNumGeometries {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

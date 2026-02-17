@@ -61,8 +61,7 @@ pub fn sedona_scalar_udf<'py>(
     };
 
     let scalar_kernel = sedona_scalar_kernel(py, py_input_types, py_return_type, py_invoke_batch)?;
-    let sedona_scalar_udf =
-        SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility, None);
+    let sedona_scalar_udf = SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility);
 
     Ok(PySedonaScalarUdf {
         inner: sedona_scalar_udf,

@@ -40,7 +40,6 @@ pub fn sd_format_udf() -> SedonaScalarUDF {
         "sd_format",
         vec![Arc::new(SDFormatDefault {})],
         Volatility::Immutable,
-        None,
     )
 }
 

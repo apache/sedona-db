@@ -70,7 +70,6 @@ pub struct SedonaAggregateUDF {
     name: String,
     signature: Signature,
     kernels: Vec<SedonaAccumulatorRef>,
-    documentation: Option<Documentation>,
 }
 
 impl PartialEq for SedonaAggregateUDF {
@@ -93,14 +92,12 @@ impl SedonaAggregateUDF {
         name: &str,
         kernels: impl IntoSedonaAccumulatorRefs,
         volatility: Volatility,
-        documentation: Option<Documentation>,
     ) -> Self {
         let signature = Signature::user_defined(volatility);
         Self {
             name: name.to_string(),
             signature,
             kernels: kernels.into_sedona_accumulator_refs(),
-            documentation,
         }
     }
 
@@ -111,14 +108,9 @@ impl SedonaAggregateUDF {
     /// expected that the actual functionality will be registered from one or more
     /// independent crates (e.g., ST_Union_Agg(), which may be implemented in
     /// sedona-geo or sedona-geography).
-    pub fn new_stub(
-        name: &str,
-        arg_matcher: ArgMatcher,
-        volatility: Volatility,
-        documentation: Option<Documentation>,
-    ) -> Self {
+    pub fn new_stub(name: &str, arg_matcher: ArgMatcher, volatility: Volatility) -> Self {
         let stub_kernel = StubAccumulator::new(name.to_string(), arg_matcher);
-        Self::new(name, stub_kernel, volatility, documentation)
+        Self::new(name, stub_kernel, volatility)
     }
 
     /// Add a new kernel to an Aggregate UDF
@@ -226,7 +218,7 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
     }
 
     fn documentation(&self) -> Option<&Documentation> {
-        self.documentation.as_ref()
+        None
     }
 }
 
@@ -317,7 +309,6 @@ mod test {
             "empty",
             Vec::<SedonaAccumulatorRef>::new(),
             Volatility::Immutable,
-            None,
         );
         assert_eq!(udf.name(), "empty");
         let err = udf.return_field(&[]).unwrap_err();
@@ -340,7 +331,6 @@ mod test {
             "stubby",
             ArgMatcher::new(vec![], SedonaType::Arrow(DataType::Boolean)),
             Volatility::Immutable,
-            None,
         );
 
         // We registered the stub with zero arguments, so when we call it

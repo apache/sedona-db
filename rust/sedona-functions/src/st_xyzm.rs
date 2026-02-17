@@ -41,7 +41,6 @@ pub fn st_x_udf() -> SedonaScalarUDF {
         "st_x",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "x" })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -53,7 +52,6 @@ pub fn st_y_udf() -> SedonaScalarUDF {
         "st_y",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "y" })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -65,7 +63,6 @@ pub fn st_z_udf() -> SedonaScalarUDF {
         "st_z",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "z" })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -77,7 +74,6 @@ pub fn st_m_udf() -> SedonaScalarUDF {
         "st_m",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "m" })]),
         Volatility::Immutable,
-        None,
     )
 }
 

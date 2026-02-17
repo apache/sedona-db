@@ -26,7 +26,6 @@ pub fn st_line_merge_udf() -> SedonaScalarUDF {
         "st_linemerge",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        None,
     )
 }
 

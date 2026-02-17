@@ -170,12 +170,7 @@ mod tests {
             Arc::new(|_, _| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(None)))),
         );
 
-        let udf = SedonaScalarUDF::new(
-            "simple_udf",
-            vec![kernel.clone()],
-            Volatility::Immutable,
-            None,
-        );
+        let udf = SedonaScalarUDF::new("simple_udf", vec![kernel.clone()], Volatility::Immutable);
 
         functions.insert_scalar_udf(udf);
         assert_eq!(functions.scalar_udfs().collect::<Vec<_>>().len(), 1);
@@ -201,7 +196,7 @@ mod tests {
             Arc::new(|_, _| Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)))),
         );
 
-        let udf2 = SedonaScalarUDF::new("simple_udf2", vec![kernel2], Volatility::Immutable, None);
+        let udf2 = SedonaScalarUDF::new("simple_udf2", vec![kernel2], Volatility::Immutable);
         let mut functions2 = FunctionSet::new();
         functions2.insert_scalar_udf(udf2);
         functions.merge(functions2);
@@ -252,7 +247,6 @@ mod tests {
             "simple_udaf",
             Vec::<SedonaAccumulatorRef>::new(),
             Volatility::Immutable,
-            None,
         );
         let kernel = TestAccumulator {};
 
@@ -278,7 +272,6 @@ mod tests {
             "simple_udaf2",
             vec![Arc::new(kernel.clone())],
             Volatility::Immutable,
-            None,
         );
         let mut functions2 = FunctionSet::new();
         functions2.insert_aggregate_udf(udaf2);

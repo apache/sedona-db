@@ -47,7 +47,6 @@ pub fn st_translate_udf() -> SedonaScalarUDF {
             Arc::new(STTranslate { is_3d: false }),
         ]),
         Volatility::Immutable,
-        None,
     )
 }
 

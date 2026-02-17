@@ -50,7 +50,6 @@ pub fn st_makeline_udf() -> SedonaScalarUDF {
             }),
         ]),
         Volatility::Immutable,
-        None,
     )
 }
 

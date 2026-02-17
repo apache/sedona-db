@@ -31,24 +31,14 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 ///
 /// Extract the SRID (Spatial Reference ID) of the raster
 pub fn rs_srid_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "rs_srid",
-        vec![Arc::new(RsSrid {})],
-        Volatility::Immutable,
-        None,
-    )
+    SedonaScalarUDF::new("rs_srid", vec![Arc::new(RsSrid {})], Volatility::Immutable)
 }
 
 /// RS_CRS() scalar UDF implementation
 ///
 /// Extract the CRS (Coordinate Reference System) of the raster
 pub fn rs_crs_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "rs_crs",
-        vec![Arc::new(RsCrs {})],
-        Volatility::Immutable,
-        None,
-    )
+    SedonaScalarUDF::new("rs_crs", vec![Arc::new(RsCrs {})], Volatility::Immutable)
 }
 
 #[derive(Debug)]

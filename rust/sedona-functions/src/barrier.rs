@@ -31,7 +31,6 @@ pub fn barrier_udf() -> SedonaScalarUDF {
         "barrier",
         vec![Arc::new(Barrier)],
         Volatility::Volatile, // Mark as volatile to prevent optimization
-        None,
     )
 }
 

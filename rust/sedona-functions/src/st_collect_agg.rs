@@ -56,7 +56,6 @@ pub fn st_collect_agg_udf() -> SedonaAggregateUDF {
             Arc::new(STCollectAggr { is_geography: true }),
         ]),
         Volatility::Immutable,
-        None,
     )
 }
 

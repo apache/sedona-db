@@ -33,7 +33,6 @@ pub fn sd_order_udf() -> SedonaScalarUDF {
         "sd_order",
         vec![Arc::new(SDOrderDefault {})],
         Volatility::Immutable,
-        None,
     )
 }
 

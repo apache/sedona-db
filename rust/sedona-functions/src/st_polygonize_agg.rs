@@ -28,7 +28,6 @@ pub fn st_polygonize_agg_udf() -> SedonaAggregateUDF {
         "st_polygonize_agg",
         ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
         Volatility::Immutable,
-        None,
     )
 }
 

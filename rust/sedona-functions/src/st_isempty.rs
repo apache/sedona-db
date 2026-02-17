@@ -34,7 +34,6 @@ pub fn st_isempty_udf() -> SedonaScalarUDF {
         "st_isempty",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsEmpty {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

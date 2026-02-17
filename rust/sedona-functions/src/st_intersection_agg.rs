@@ -34,7 +34,6 @@ pub fn st_intersection_agg_udf() -> SedonaAggregateUDF {
             SedonaType::Wkb(Edges::Planar, None),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

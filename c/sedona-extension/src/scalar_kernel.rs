@@ -695,12 +695,8 @@ mod test {
 
         let array_value = create_array(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
 
-        let udf_native = SedonaScalarUDF::new(
-            "simple_udf",
-            vec![kernel.clone()],
-            Volatility::Immutable,
-            None,
-        );
+        let udf_native =
+            SedonaScalarUDF::new("simple_udf", vec![kernel.clone()], Volatility::Immutable);
 
         let tester = ScalarUdfTester::new(udf_native.into(), vec![WKB_GEOMETRY]);
         tester.assert_return_type(WKB_GEOMETRY);
@@ -721,7 +717,6 @@ mod test {
             "simple_udf_from_ffi",
             vec![Arc::new(imported_kernel)],
             Volatility::Immutable,
-            None,
         );
 
         let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);
@@ -776,7 +771,6 @@ mod test {
             "simple_udf_from_ffi",
             vec![Arc::new(imported_kernel)],
             Volatility::Immutable,
-            None,
         );
 
         let ffi_tester = ScalarUdfTester::new(
@@ -831,7 +825,6 @@ mod test {
             "simple_udf_from_ffi",
             vec![Arc::new(imported_kernel)],
             Volatility::Immutable,
-            None,
         );
 
         let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);
@@ -855,7 +848,6 @@ mod test {
             "simple_udf_from_ffi",
             vec![Arc::new(imported_kernel)],
             Volatility::Immutable,
-            None,
         );
 
         let ffi_tester = ScalarUdfTester::new(udf_from_ffi.clone().into(), vec![WKB_GEOMETRY]);

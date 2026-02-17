@@ -42,7 +42,6 @@ pub fn st_geomfromewkb_udf() -> SedonaScalarUDF {
         "st_geomfromewkb",
         vec![Arc::new(STGeomFromEWKB {})],
         Volatility::Immutable,
-        None,
     )
 }
 

@@ -50,7 +50,6 @@ pub fn st_points_udf() -> SedonaScalarUDF {
         "st_points",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STPoints)]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -108,7 +107,6 @@ pub fn st_npoints_udf() -> SedonaScalarUDF {
         "st_npoints",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
-        None,
     )
 }
 

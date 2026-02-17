@@ -37,7 +37,6 @@ pub fn st_azimuth_udf() -> SedonaScalarUDF {
         "st_azimuth",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAzimuth {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

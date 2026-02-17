@@ -30,7 +30,6 @@ pub fn st_length_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

@@ -41,7 +41,6 @@ pub fn st_xmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -53,7 +52,6 @@ pub fn st_xmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -65,7 +63,6 @@ pub fn st_ymin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -77,7 +74,6 @@ pub fn st_ymax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -89,7 +85,6 @@ pub fn st_zmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -101,7 +96,6 @@ pub fn st_zmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -113,7 +107,6 @@ pub fn st_mmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -125,7 +118,6 @@ pub fn st_mmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-        None,
     )
 }
 
