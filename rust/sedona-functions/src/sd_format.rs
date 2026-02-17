@@ -31,8 +31,7 @@ use datafusion_expr::{
 };
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::StorageType;
+use sedona_raster::display::RasterDisplay;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// SD_Format() scalar UDF implementation
@@ -381,29 +380,9 @@ fn raster_value_to_formatted_value(
                 }
 
                 let raster = raster_array.get(i)?;
-                let metadata = raster.metadata();
-                let bands = raster.bands();
-
-                let has_outdb_band = bands.iter().any(|band| {
-                    matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef))
-                });
-
                 let mut limited_output =
                     LimitedSizeOutput::new(&mut builder, maybe_width_hint.unwrap_or(usize::MAX));
-                let _ = write!(
-                    limited_output,
-                    "Raster[w={}, h={}, ul=({:.6}, {:.6}), scale=({:.6}, {:.6}), skew=({:.6}, {:.6}), bands={}, outdb={}]",
-                    metadata.width(),
-                    metadata.height(),
-                    metadata.upper_left_x(),
-                    metadata.upper_left_y(),
-                    metadata.scale_x(),
-                    metadata.scale_y(),
-                    metadata.skew_x(),
-                    metadata.skew_y(),
-                    bands.len(),
-                    has_outdb_band
-                );
+                let _ = write!(limited_output, "{}", RasterDisplay(&raster));
                 builder.append_value("");
             }
 
@@ -637,13 +616,18 @@ mod tests {
         let result = tester.invoke_array(Arc::new(raster_array.clone())).unwrap();
         let formatted = result.as_string::<i32>();
 
-        // Index 0: valid raster
-        let full_output = "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]";
-        assert_eq!(formatted.value(0), full_output);
+        // Index 0: valid raster (no skew)
+        assert_eq!(
+            formatted.value(0),
+            "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84"
+        );
         // Index 1: null raster should produce null output
         assert!(formatted.is_null(1));
-        // Index 2: valid raster
-        assert!(formatted.value(2).starts_with("Raster[w=3, h=4"));
+        // Index 2: valid raster (with skew)
+        assert_eq!(
+            formatted.value(2),
+            "RASTER [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+        );
     }
 
     #[test]
@@ -656,12 +640,12 @@ mod tests {
         let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
         let formatted = result.as_string::<i32>();
 
-        // Index 0: valid raster
-        assert!(formatted.value(0).starts_with("Raster[w=1, h=2"));
+        // Index 0: valid raster (no skew)
+        assert!(formatted.value(0).starts_with("RASTER [1x2/"));
         // Index 1: null raster should produce null output
         assert!(formatted.is_null(1));
-        // Index 2: valid raster
-        assert!(formatted.value(2).starts_with("Raster[w=3, h=4"));
+        // Index 2: valid raster (with skew)
+        assert!(formatted.value(2).starts_with("RASTER [3x4/"));
     }
 
     #[test]
@@ -677,8 +661,8 @@ mod tests {
         let formatted = result.as_string::<i32>();
 
         // With a small width_hint, output should be truncated
-        let full_output = "Raster[w=1, h=2, ul=(1.000000, 2.000000), scale=(0.100000, -0.200000), skew=(0.000000, 0.000000), bands=1, outdb=false]";
-        assert!(formatted.value(0).starts_with("Raster["));
+        let full_output = "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84";
+        assert!(formatted.value(0).starts_with("RASTER ["));
         assert!(formatted.value(0).len() < full_output.len());
     }
 
