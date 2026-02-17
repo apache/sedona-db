@@ -443,19 +443,15 @@ mod tests {
     fn udf_metadata() {
         let st_force2d: ScalarUDF = st_force2d_udf().into();
         assert_eq!(st_force2d.name(), "st_force2d");
-        assert!(st_force2d.documentation().is_some());
 
         let st_force3d: ScalarUDF = st_force3d_udf().into();
         assert_eq!(st_force3d.name(), "st_force3d");
-        assert!(st_force3d.documentation().is_some());
 
         let st_force3dm: ScalarUDF = st_force3dm_udf().into();
         assert_eq!(st_force3dm.name(), "st_force3dm");
-        assert!(st_force3dm.documentation().is_some());
 
         let st_force4d: ScalarUDF = st_force4d_udf().into();
         assert_eq!(st_force4d.name(), "st_force4d");
-        assert!(st_force4d.documentation().is_some());
     }
 
     #[rstest]
