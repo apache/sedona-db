@@ -25,4 +25,5 @@ mod sys {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+#[cfg(gpu_available)]
 pub use sys::*;
