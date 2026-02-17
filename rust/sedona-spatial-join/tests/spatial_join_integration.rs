@@ -144,7 +144,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     session_config = add_sedona_option_extension(session_config);
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
-        state_builder = register_planner(state_builder);
+        state_builder = register_planner(state_builder)?;
         let opts = session_config
             .options_mut()
             .extensions
@@ -1393,7 +1393,7 @@ async fn test_knn_join_include_tie_breakers(
 /// into the build side subtree.
 ///
 /// If `PushDownFilter` incorrectly pushes `R.id > 5` below the spatial join, the set of objects
-/// considered for KNN changes, yielding wrong nearest-neighbor results.
+/// considered for the KNN search changes, yielding wrong nearest-neighbor results.
 #[tokio::test]
 async fn test_knn_join_object_side_filter_not_pushed_down() -> Result<()> {
     let sql = "SELECT L.id, R.id \
@@ -1460,7 +1460,8 @@ fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 
 /// Create a session context with two small tables for filter-pushdown tests.
 ///
-/// L(id INT, x DOUBLE) and R(id INT, x DOUBLE) each with 10 rows.
+/// L(id INT, x DOUBLE) and R(id INT, x DOUBLE) are all empty, this is just for exercising the
+/// plan optimizer and physical planner.
 /// Geometry is constructed in SQL via ST_Point so no geometry column exists on the table itself.
 async fn plan_for_filter_pushdown_test(sql: &str) -> Result<Arc<dyn ExecutionPlan>> {
     let schema = Arc::new(Schema::new(vec![

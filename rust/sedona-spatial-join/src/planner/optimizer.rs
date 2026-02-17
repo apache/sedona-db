@@ -27,6 +27,7 @@ use datafusion_expr::logical_plan::Extension;
 use datafusion_expr::{BinaryExpr, Expr, Operator};
 use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
 use sedona_common::option::SedonaOptions;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 /// Register the logical spatial join optimizer rules.
 ///
@@ -43,7 +44,7 @@ use sedona_common::option::SedonaOptions;
 ///   benefit from filter pushdown before being converted to extension nodes.
 pub(crate) fn register_spatial_join_logical_optimizer(
     mut session_state_builder: SessionStateBuilder,
-) -> SessionStateBuilder {
+) -> Result<SessionStateBuilder> {
     let optimizer = session_state_builder
         .optimizer()
         .get_or_insert_with(Optimizer::new);
@@ -53,7 +54,11 @@ pub(crate) fn register_spatial_join_logical_optimizer(
         .rules
         .iter()
         .position(|r| r.name() == "push_down_filter")
-        .expect("PushDownFilter rule not found in default optimizer rules");
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!(
+                "PushDownFilter rule not found in default optimizer rules"
+            )
+        })?;
 
     // Insert KNN-specific rules BEFORE PushDownFilter.
     // MergeSpatialFilterIntoJoin must come first because it creates the Join(filter=...)
@@ -68,7 +73,7 @@ pub(crate) fn register_spatial_join_logical_optimizer(
     // Append SpatialJoinLogicalRewrite at the end so non-KNN joins benefit from filter pushdown.
     optimizer.rules.push(Arc::new(SpatialJoinLogicalRewrite));
 
-    session_state_builder
+    Ok(session_state_builder)
 }
 
 /// Early optimizer rule that converts KNN joins to `SpatialJoinPlanNode` extension nodes
@@ -133,7 +138,7 @@ impl OptimizerRule for KnnJoinEarlyRewrite {
 /// This rule runs *after* `PushDownFilter` so that non-KNN spatial joins benefit from
 /// filter pushdown before being converted to extension nodes.
 ///
-/// KNN joins are skipped here because they are already handled by `KnnJoinEarlyRewrite`.
+/// KNN joins are skipped here because they are already handled by [[KnnJoinEarlyRewrite]].
 #[derive(Default, Debug)]
 struct SpatialJoinLogicalRewrite;
 
@@ -177,10 +182,16 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             return Ok(Transformed::no(plan));
         }
 
-        // Join with with equi-join condition and spatial join condition. Only handle it
-        // when the join condition contains ST_KNN. KNN join is not a regular join and
-        // ST_KNN is also not a regular predicate. It must be handled by our spatial join exec.
-        if !join.on.is_empty() && !spatial_predicate_names.contains("st_knn") {
+        if spatial_predicate_names.contains("st_knn") {
+            // KNN joins should have already been rewritten by KnnJoinEarlyRewrite, so we shouldn't
+            // see them here.
+            return sedona_internal_err!(
+                "Found KNN predicate in SpatialJoinLogicalRewrite, which should have been handled by KnnJoinEarlyRewrite");
+        }
+
+        // Join with with equi-join condition should be planned as a regular HashJoin
+        // or SortMergeJoin.
+        if !join.on.is_empty() {
             return Ok(Transformed::no(plan));
         }
 
@@ -194,7 +205,11 @@ fn rewrite_join_to_spatial_join_plan_node(join: &Join) -> Result<Transformed<Log
     let filter = join
         .filter
         .as_ref()
-        .expect("join filter must be present")
+        .ok_or_else(|| {
+            datafusion_common::DataFusionError::Internal(
+                "join filter must be present for spatial join rewrite".to_string(),
+            )
+        })?
         .clone();
 
     let eq_op = if join.null_equality == NullEquality::NullEqualsNothing {
