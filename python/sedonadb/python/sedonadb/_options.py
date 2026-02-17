@@ -17,6 +17,8 @@
 import os
 from typing import Literal, Optional, Union
 
+from sedonadb.utility import sedona  # noqa: F401
+
 
 class Options:
     """Global SedonaDB options
