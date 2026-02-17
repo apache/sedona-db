@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
@@ -414,6 +415,67 @@ class DataFrame:
             single_file_output,
             geoparquet_version,
             overwrite_bbox_columns,
+        )
+
+    def to_pyogrio(
+        self,
+        path: Union[str, Path, io.BytesIO],
+        *,
+        driver: Optional[str] = None,
+        geometry_type: Optional[str] = None,
+        geometry_name: Optional[str] = None,
+        crs: Optional[str],
+        append: bool = False,
+        **kwargs,
+    ):
+        """Write using GDAL/OGR via pyogrio
+
+        Writes this DataFrame batchwise to a file using GDAL/OGR using the
+        implementation provided by the pyogrio package. This is the same backend
+        used by GeoPandas and this function is a light wrapper around
+        `pyogrio.raw.write_arrow()` that fills in default values using
+        information available to the DataFrame (e.g., geometry colum and CRS).
+
+        Args:
+            path: An output path or `BytesIO` output buffer.
+            driver: An explicit GDAL OGR driver. Usually inferred from `path` but
+                must be provided if path is a `BytesIO`. Not all drivers support
+                writing to `BytesIO`.
+            geometry_type: A GeoJSON-style geometry type or `None` to provide an
+                inferred default value (which may be `"Unknown"`). This is required
+                to write some types of output (e.g. Shapefiles) and may provide
+                files that are more efficiently read.
+            geometry_name: The column to write as the primary geometry column. If
+                `None`, the name of the geometry column will be inferred.
+            crs: An optional string overriding the CRS of `geometry_name`.
+            append: Use `True` to append to the file for drivers that support
+                appending.
+        """
+        if geometry_name is None:
+            geometry_name = self._impl.primary_geometry_column()
+
+        if crs is None:
+            crs = self.schema.field(geometry_name).type.crs.to_json()
+
+        if geometry_type is None:
+            # This is required for pyogrio.raw.write_arrow(). We could try harder
+            # to infer this because some drivers need this information.
+            geometry_type = "Unknown"
+
+        # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/raw.py#L755-L897
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/_io.pyx#L2858-L2980
+        import pyogrio.raw
+
+        pyogrio.raw.write_arrow(
+            self,
+            path,
+            driver=driver,
+            geometry_type=geometry_type,
+            geometry_name=geometry_name,
+            crs=crs,
+            append=append,
+            **kwargs,
         )
 
     def show(
