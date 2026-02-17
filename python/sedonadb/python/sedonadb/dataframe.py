@@ -469,7 +469,7 @@ class DataFrame:
         if geometry_name is None:
             geometry_name = self._impl.primary_geometry_column()
 
-        if crs is None:
+        if crs is None and geometry_name is not None:
             inferred_crs = self.schema.field(geometry_name).type.crs
             crs = None if inferred_crs is None else inferred_crs.to_json()
 

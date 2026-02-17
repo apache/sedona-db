@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
 import tempfile
 from pathlib import Path
 
@@ -173,6 +174,32 @@ def test_write_ogr(con):
         geopandas.testing.assert_geodataframe_equal(
             geopandas.read_file(f"{td}/foofy.fgb"), expected
         )
+
+
+def test_write_ogr_buffer(con):
+    buf = io.BytesIO()
+    df = con.sql("SELECT ST_Point(0, 1, 3857)")
+    expected = geopandas.GeoDataFrame(
+        {"geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"], crs=3857)}
+    )
+
+    df.to_pyogrio(buf, driver="FlatGeoBuf")
+    geopandas.testing.assert_geodataframe_equal(
+        geopandas.read_file(buf.getvalue(), driver="FlatGeoBuf"), expected
+    )
+
+    # Ensure reasonable error if driver is not specified
+    with pytest.raises(ValueError, match="driver must be provided"):
+        df.to_pyogrio(buf)
+
+
+def test_write_ogr_no_geometry(con):
+    with tempfile.TemporaryDirectory() as td:
+        df = con.sql("SELECT 'one' as one")
+        expected = pd.DataFrame({"one": ["one"]})
+
+        df.to_pyogrio(f"{td}/foofy.csv")
+        pd.testing.assert_frame_equal(pd.read_csv(f"{td}/foofy.csv"), expected)
 
 
 def test_write_ogr_many_batches(con):
