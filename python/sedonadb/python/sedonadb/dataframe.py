@@ -426,7 +426,7 @@ class DataFrame:
         geometry_name: Optional[str] = None,
         crs: Optional[str] = None,
         append: bool = False,
-        **kwargs,
+        **kwargs: Dict[str, Any],
     ):
         """Write using GDAL/OGR via pyogrio
 
