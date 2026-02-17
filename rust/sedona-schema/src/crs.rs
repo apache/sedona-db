@@ -157,6 +157,108 @@ impl CachedCrsToSRIDMapping {
     }
 }
 
+/// Batch-local cache for converting integer SRIDs to CRS strings.
+///
+/// Maps SRID integers to their CRS string representation with caching to avoid
+/// repeated validation/deserialization of the same SRID within a batch:
+/// - `0` → `None` (no CRS)
+/// - `4326` → `Some("OGC:CRS84")`
+/// - other → `Some("EPSG:{srid}")`, validated once via the caller-provided closure
+#[derive(Default)]
+pub struct CachedSRIDToCrs {
+    cache: HashMap<i64, Option<String>>,
+}
+
+impl CachedSRIDToCrs {
+    /// Create a new CachedSRIDToCrs with an empty cache.
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Create a new CachedSRIDToCrs with a pre-allocated cache.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Get the CRS string for a given SRID, using the cache to avoid repeated validation.
+    pub fn get_crs(&mut self, srid: i64) -> Result<Option<String>> {
+        if let Some(cached) = self.cache.get(&srid) {
+            return Ok(cached.clone());
+        }
+
+        let result = if srid == 0 {
+            None
+        } else if srid == 4326 {
+            Some("OGC:CRS84".to_string())
+        } else {
+            let auth_code = format!("EPSG:{srid}");
+            Some(auth_code)
+        };
+
+        self.cache.insert(srid, result.clone());
+        Ok(result)
+    }
+}
+
+/// Batch-local cache for normalizing CRS strings to their abbreviated form.
+///
+/// Maps CRS input strings to their abbreviated `authority:code` representation
+/// with caching to avoid repeated deserialization of the same CRS string within a batch:
+/// - `"0"` or `""` → `None` (no CRS)
+/// - other → deserialized and abbreviated to `authority:code` if possible
+#[derive(Default)]
+pub struct CachedCrsNormalization {
+    cache: HashMap<String, Option<String>>,
+}
+
+impl CachedCrsNormalization {
+    /// Create a new CachedCrsNormalization with an empty cache.
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Create a new CachedCrsNormalization with a pre-allocated cache.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Normalize a CRS string, using the cache to avoid repeated deserialization.
+    ///
+    /// Returns the abbreviated `authority:code` form if available, otherwise the
+    /// original string. Returns `None` for `"0"`, `""`, or CRS strings that
+    /// deserialize to `None`.
+    pub fn normalize(&mut self, crs_str: &str) -> Result<Option<String>> {
+        if crs_str == "0" || crs_str.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(cached) = self.cache.get(crs_str) {
+            return Ok(cached.clone());
+        }
+
+        let result = if let Some(crs) = deserialize_crs(crs_str)? {
+            if let Some(auth_code) = crs.to_authority_code()? {
+                Some(auth_code)
+            } else {
+                Some(crs_str.to_string())
+            }
+        } else {
+            None
+        };
+
+        self.cache.insert(crs_str.to_string(), result.clone());
+        Ok(result)
+    }
+}
+
 /// Longitude/latitude CRS (WGS84)
 ///
 /// A [`Crs`] that matches EPSG:4326 or OGC:CRS84.

@@ -24,6 +24,7 @@ pub mod rs_georeference;
 pub mod rs_geotransform;
 pub mod rs_numbands;
 pub mod rs_rastercoordinate;
+pub mod rs_setsrid;
 pub mod rs_size;
 pub mod rs_srid;
 pub mod rs_worldcoordinate;
