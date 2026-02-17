@@ -20,9 +20,7 @@ use crate::executor::RasterExecutor;
 use arrow_array::builder::UInt32Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -36,17 +34,6 @@ pub fn rs_numbands_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsNumBands {})],
         Volatility::Immutable,
     )
-}
-
-fn rs_numbands_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the number of bands in the raster.".to_string(),
-        "RS_NumBands(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_NumBands(RS_Example())".to_string())
-    .build()
 }
 
 #[derive(Debug)]
@@ -100,7 +87,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_numbands_udf().into();
         assert_eq!(udf.name(), "rs_numbands");
-        assert!(udf.documentation().is_some());
     }
 
     #[test]
