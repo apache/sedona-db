@@ -481,9 +481,12 @@ class DataFrame:
         if isinstance(path, Path):
             path = str(path)
 
+        if isinstance(path, io.BytesIO) and driver is None:
+            raise ValueError("driver must be provided when path is a BytesIO")
+
         # There may be more endings worth special-casing here but zipped FlatGeoBuf
         # is particularly useful and isn't automatically recognized
-        if driver is None and path.endswith(".fgb.zip"):
+        if driver is None and isinstance(path, str) and path.endswith(".fgb.zip"):
             driver = "FlatGeoBuf"
 
         # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
