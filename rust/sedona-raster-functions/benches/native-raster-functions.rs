@@ -55,6 +55,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(0, 63), Int32(0, 63)),
     );
     benchmark::scalar(c, &f, "native-raster", "rs_rotation", Raster(64, 64));
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_setcrs",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), String("EPSG:3857".to_string())),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_setsrid",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), Int32(3857, 3858)),
+    );
     benchmark::scalar(c, &f, "native-raster", "rs_scalex", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_scaley", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_skewx", Raster(64, 64));
