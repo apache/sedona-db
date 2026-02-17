@@ -209,7 +209,7 @@ fn replace_raster_crs(
             let new_struct = swap_crs_column(raster_struct, new_crs)?;
 
             let input_nulls = input_nulls.map(|nulls| {
-                if nulls.len() == 1 && nulls.len() != num_rows {
+                if nulls.len() == 1 && num_rows != 1 {
                     if nulls.is_valid(0) {
                         NullBuffer::new_valid(num_rows)
                     } else {
