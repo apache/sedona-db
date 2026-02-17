@@ -165,6 +165,15 @@ def test_write_ogr(con):
             geopandas.read_file(f"{td}/foofy.fgb.zip"), expected
         )
 
+        # Ensure inferred CRS that is None works
+        con.sql("SELECT ST_Point(0, 1)").to_pyogrio(f"{td}/foofy.fgb")
+        expected = geopandas.GeoDataFrame(
+            {"geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"])}
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            geopandas.read_file(f"{td}/foofy.fgb"), expected
+        )
+
 
 def test_write_ogr_many_batches(con):
     # Check with a non-trivial number of batches
