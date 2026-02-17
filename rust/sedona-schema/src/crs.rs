@@ -18,7 +18,6 @@ use datafusion_common::{
     exec_err, plan_datafusion_err, plan_err, DataFusionError, HashMap, Result,
 };
 use lru::LruCache;
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 use std::num::NonZeroUsize;
@@ -109,14 +108,9 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
 }
 
 /// Translating CRS into integer SRID with a cache to avoid expensive CRS deserialization.
+#[derive(Default)]
 pub struct CachedCrsToSRIDMapping {
-    cache: HashMap<Cow<'static, str>, u32>,
-}
-
-impl Default for CachedCrsToSRIDMapping {
-    fn default() -> Self {
-        Self::new()
-    }
+    cache: HashMap<String, u32>,
 }
 
 impl CachedCrsToSRIDMapping {
@@ -143,7 +137,7 @@ impl CachedCrsToSRIDMapping {
                 Ok(*srid)
             } else if let Some(crs) = deserialize_crs(crs_str)? {
                 if let Some(srid) = crs.srid()? {
-                    self.cache.insert(Cow::Owned(crs_str.to_string()), srid);
+                    self.cache.insert(crs_str.to_string(), srid);
                     Ok(srid)
                 } else {
                     exec_err!("Can't extract SRID from item-level CRS '{crs_str}'")
