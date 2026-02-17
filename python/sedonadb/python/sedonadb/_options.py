@@ -74,6 +74,13 @@ class Options:
         # runtime options become read-only.
         self._runtime_frozen = False
 
+    def freeze_runtime(self) -> None:
+        """Mark runtime options as read-only.
+
+        Called after the internal context has been successfully created.
+        """
+        self._runtime_frozen = True
+
     def _check_runtime_mutable(self, name: str) -> None:
         if self._runtime_frozen:
             raise RuntimeError(

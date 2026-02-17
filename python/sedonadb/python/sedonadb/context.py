@@ -91,7 +91,7 @@ class SedonaContext:
             # fails the user can still correct options and retry.
             impl = InternalContext(opts)
             self.__impl = impl
-            self.options._runtime_frozen = True
+            self.options.freeze_runtime()
         return self.__impl
 
     def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
