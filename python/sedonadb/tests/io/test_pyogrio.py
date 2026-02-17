@@ -138,3 +138,44 @@ def test_read_ogr_file_not_found(con):
             sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"
         ):
             con.read_pyogrio(Path(td) / "file_does_not_exist")
+
+
+def test_write_ogr(con):
+    with tempfile.TemporaryDirectory() as td:
+        # Basic write with defaults
+        df = con.sql("SELECT ST_Point(0, 1, 3857)")
+        expected = geopandas.GeoDataFrame(
+            {"geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"], crs=3857)}
+        )
+
+        df.to_pyogrio(f"{td}/foofy.fgb")
+        geopandas.testing.assert_geodataframe_equal(
+            geopandas.read_file(f"{td}/foofy.fgb"), expected
+        )
+
+        # Ensure Path input works
+        df.to_pyogrio(Path(f"{td}/foofy.fgb"))
+        geopandas.testing.assert_geodataframe_equal(
+            geopandas.read_file(f"{td}/foofy.fgb"), expected
+        )
+
+        # Ensure zipped FlatGeoBuf doesn't require specifying the driver
+        df.to_pyogrio(Path(f"{td}/foofy.fgb.zip"))
+        geopandas.testing.assert_geodataframe_equal(
+            geopandas.read_file(f"{td}/foofy.fgb.zip"), expected
+        )
+
+
+def test_write_ogr_many_batches(con):
+    # Check with a non-trivial number of batches
+    con.funcs.table.sd_random_geometry("MultiLineString", 50000).to_view("pyogrio_test")
+    df = con.sql(
+        "SELECT id, ST_SetCrs(geometry, 'EPSG:4326') AS geometry FROM pyogrio_test"
+    )
+    expected = df.to_pandas()
+
+    with tempfile.TemporaryDirectory() as td:
+        df.to_pyogrio(f"{td}/foofy.gpkg")
+        geopandas.testing.assert_geodataframe_equal(
+            geopandas.read_file(f"{td}/foofy.gpkg"), expected
+        )

@@ -470,12 +470,21 @@ class DataFrame:
             geometry_name = self._impl.primary_geometry_column()
 
         if crs is None:
-            crs = self.schema.field(geometry_name).type.crs.to_json()
+            inferred_crs = self.schema.field(geometry_name).type.crs
+            crs = None if inferred_crs is None else inferred_crs.to_json()
 
         if geometry_type is None:
             # This is required for pyogrio.raw.write_arrow(). We could try harder
             # to infer this because some drivers need this information.
             geometry_type = "Unknown"
+
+        if isinstance(path, Path):
+            path = str(path)
+
+        # There may be more endings worth special-casing here but zipped FlatGeoBuf
+        # is particularly useful and isn't automatically recognized
+        if driver is None and path.endswith(".fgb.zip"):
+            driver = "FlatGeoBuf"
 
         # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
         # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/raw.py#L755-L897
