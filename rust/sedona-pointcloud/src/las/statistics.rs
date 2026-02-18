@@ -331,51 +331,52 @@ mod tests {
 
     #[tokio::test]
     async fn chunk_statistics() {
-        let path = "tests/data/large.laz";
+        for path in ["tests/data/large.las", "tests/data/large.laz"] {
+            // read with `LasMetadataReader`
+            let store = LocalFileSystem::new();
+            let location = Path::from_filesystem_path(path).unwrap();
+            let object_meta = store.head(&location).await.unwrap();
 
-        // read with `LasMetadataReader`
-        let store = LocalFileSystem::new();
-        let location = Path::from_filesystem_path(path).unwrap();
-        let object_meta = store.head(&location).await.unwrap();
+            let metadata_reader = LasMetadataReader::new(&store, &object_meta);
+            let metadata = metadata_reader.fetch_metadata().await.unwrap();
+            assert!(metadata.statistics.is_none());
 
-        let metadata_reader = LasMetadataReader::new(&store, &object_meta);
-        let metadata = metadata_reader.fetch_metadata().await.unwrap();
-        assert!(metadata.statistics.is_none());
-
-        let options = PointcloudOptions {
-            collect_statistics: true,
-            ..Default::default()
-        };
-        let metadata_reader = LasMetadataReader::new(&store, &object_meta).with_options(options);
-        let metadata = metadata_reader.fetch_metadata().await.unwrap();
-        let statistics = metadata.statistics.as_ref().unwrap();
-        assert_eq!(statistics.num_containers(), 2);
-        assert_eq!(
-            statistics
-                .row_counts(&Column::from_name(""))
-                .unwrap()
-                .as_primitive::<UInt64Type>()
-                .value(0),
-            50000
-        );
-        assert_eq!(
-            statistics.get_bbox(0),
-            Some(BoundingBox::xyzm(
-                (0.5, 0.5),
-                (0.5, 0.5),
-                Some((0.5, 0.5).into()),
-                None
-            ))
-        );
-        assert_eq!(
-            statistics.get_bbox(1),
-            Some(BoundingBox::xyzm(
-                (1.0, 1.0),
-                (1.0, 1.0),
-                Some((1.0, 1.0).into()),
-                None
-            ))
-        );
+            let options = PointcloudOptions {
+                collect_statistics: true,
+                ..Default::default()
+            };
+            let metadata_reader =
+                LasMetadataReader::new(&store, &object_meta).with_options(options);
+            let metadata = metadata_reader.fetch_metadata().await.unwrap();
+            let statistics = metadata.statistics.as_ref().unwrap();
+            assert_eq!(statistics.num_containers(), 2);
+            assert_eq!(
+                statistics
+                    .row_counts(&Column::from_name(""))
+                    .unwrap()
+                    .as_primitive::<UInt64Type>()
+                    .value(0),
+                50000
+            );
+            assert_eq!(
+                statistics.get_bbox(0),
+                Some(BoundingBox::xyzm(
+                    (0.5, 0.5),
+                    (0.5, 0.5),
+                    Some((0.5, 0.5).into()),
+                    None
+                ))
+            );
+            assert_eq!(
+                statistics.get_bbox(1),
+                Some(BoundingBox::xyzm(
+                    (1.0, 1.0),
+                    (1.0, 1.0),
+                    Some((1.0, 1.0).into()),
+                    None
+                ))
+            );
+        }
     }
 
     #[tokio::test]

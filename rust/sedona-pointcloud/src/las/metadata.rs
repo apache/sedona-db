@@ -241,7 +241,7 @@ impl<'a> LasMetadataReader<'a> {
     }
 }
 
-pub(crate) async fn fetch_header(
+async fn fetch_header(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
 ) -> Result<Header, Box<dyn Error + Send + Sync>> {
@@ -304,7 +304,8 @@ pub struct ExtraAttribute {
     pub offset: Option<f64>,
 }
 
-pub(crate) fn extra_bytes_attributes(
+/// Extract [ExtraAttribute]s from [Header]
+fn extra_bytes_attributes(
     header: &Header,
 ) -> Result<Vec<ExtraAttribute>, Box<dyn Error + Send + Sync>> {
     let mut attributes = Vec::new();

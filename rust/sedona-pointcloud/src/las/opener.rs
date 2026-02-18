@@ -180,6 +180,52 @@ mod tests {
     use sedona::context::SedonaContext;
 
     #[tokio::test]
+    async fn las_statistics_pruning() {
+        // file with two clusters, one at 0.5 one at 1.0
+        let path = "tests/data/large.las";
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // ensure no faulty chunk pruning
+        ctx.sql("SET pointcloud.geometry_encoding = 'plain'")
+            .await
+            .unwrap();
+        ctx.sql("SET pointcloud.collect_statistics = 'true'")
+            .await
+            .unwrap();
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE x < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE y < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
+            .await
+            .unwrap();
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE ST_Intersects(geometry, ST_GeomFromText('POLYGON ((0 0, 0.7 0, 0.7 0.7, 0 0.7, 0 0))'))"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+    }
+
+    #[tokio::test]
     async fn laz_statistics_pruning() {
         // file with two clusters, one at 0.5 one at 1.0
         let path = "tests/data/large.laz";

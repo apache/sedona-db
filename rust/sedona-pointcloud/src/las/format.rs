@@ -270,16 +270,26 @@ mod test {
     use crate::las::format::{Extension, LasFormat, LasFormatFactory};
 
     fn setup_context() -> SessionContext {
-        let file_format = Arc::new(LasFormatFactory::new(Extension::Laz));
-
         let mut state = SessionStateBuilder::new().build();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Las));
+        state.register_file_format(file_format, true).unwrap();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Laz));
         state.register_file_format(file_format, true).unwrap();
 
         SessionContext::new_with_state(state).enable_url_table()
     }
 
     #[tokio::test]
-    async fn laz_format_factory() {
+    async fn format_factory() {
+        let ctx = SessionContext::new();
+        let format_factory = Arc::new(LasFormatFactory::new(Extension::Las));
+        let dyn_format = format_factory
+            .create(&ctx.state(), &HashMap::new())
+            .unwrap();
+        assert!(dyn_format.as_any().downcast_ref::<LasFormat>().is_some());
+
         let ctx = SessionContext::new();
         let format_factory = Arc::new(LasFormatFactory::new(Extension::Laz));
         let dyn_format = format_factory
@@ -290,6 +300,15 @@ mod test {
 
     #[tokio::test]
     async fn projection() {
+        let ctx = setup_context();
+
+        let df = ctx
+            .sql("SELECT x, y, z FROM 'tests/data/extra.las'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 3);
+
         let ctx = setup_context();
         let df = ctx
             .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
