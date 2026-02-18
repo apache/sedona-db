@@ -58,7 +58,6 @@ class SedonaContext:
         >>> sd = sedona.db.connect()
         >>> sd.options.memory_limit = "4gb"
         >>> sd.options.memory_pool_type = "fair"
-        >>> sd.options.temp_dir = "/tmp/sedona-spill"
     """
 
     def __init__(self):
