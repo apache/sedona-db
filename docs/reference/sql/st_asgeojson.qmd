@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_AsGeoJSON
-description: Return the GeoJSON representation of a geometry.
+description: Returns the GeoJSON representation of a geometry.
 kernels:
   - returns: string
     args: [geometry]

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_IsSimple
-description: Test if geometry's only self-intersections are at boundary points.
+description: Tests if geometry's only self-intersections are at boundary points.
 kernels:
   - returns: boolean
     args: [geometry]

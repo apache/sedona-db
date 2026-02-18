@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeometryType
-description: Return the type of a geometry.
+description: Returns the type of a geometry.
 kernels:
   - returns: string
     args: [geometry]

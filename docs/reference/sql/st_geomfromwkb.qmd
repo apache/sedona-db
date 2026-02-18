@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromWKB
-description: Construct a Geometry from Well-Known Binary (WKB).
+description: Constructs a Geometry from Well-Known Binary (WKB).
 kernels:
   - returns: geometry
     args:

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_ConcaveHull
-description: Return a concave hull enclosing the input geometry.
+description: Returns a concave hull enclosing the input geometry.
 kernels:
   - returns: geometry
     args:

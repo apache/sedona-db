@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Affine
-description: Apply an affine transformation to a geometry.
+description: Applies an affine transformation to a geometry.
 kernels:
   - returns: geometry
     args:

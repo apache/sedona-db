@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_Width
-description: Return the width of a raster in pixels.
+description: Returns the width of a raster in pixels.
 kernels:
   - returns: bigint
     args: [raster]

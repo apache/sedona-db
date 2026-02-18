@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeogFromWKB
-description: Construct a Geography from WKB Binary.
+description: Constructs a Geography from WKB Binary.
 kernels:
   - returns: geography
     args:

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Equals
-description: Return true if geomA equals geomB.
+description: Returns true if geomA equals geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

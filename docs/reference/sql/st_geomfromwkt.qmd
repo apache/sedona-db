@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromWKT
-description: Construct a Geometry from Well-Known Text (WKT).
+description: Constructs a Geometry from Well-Known Text (WKT).
 kernels:
   - returns: geometry
     args:

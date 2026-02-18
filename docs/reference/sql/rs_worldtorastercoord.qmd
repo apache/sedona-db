@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_WorldToRasterCoord
-description: Convert world coordinates to raster coordinates as a point.
+description: Converts world coordinates to raster coordinates as a point.
 kernels:
   - returns: geometry
     args:

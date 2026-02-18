@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_HasM
-description: Return true if the geometry has a M dimension.
+description: Returns true if the geometry has a M dimension.
 kernels:
   - returns: boolean
     args: [geometry]

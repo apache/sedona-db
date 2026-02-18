@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Intersection_Agg
-description: Return the cumulative intersection of all geometries in the input.
+description: Returns the cumulative intersection of all geometries in the input.
 kernels:
   - returns: geometry
     args: [geometry]

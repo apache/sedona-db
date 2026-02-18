@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_SkewY
-description: Return the Y skew (rotation) parameter of a raster.
+description: Returns the Y skew (rotation) parameter of a raster.
 kernels:
   - returns: double
     args: [raster]

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Touches
-description: Return true if A touches B.
+description: Returns true if A touches B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

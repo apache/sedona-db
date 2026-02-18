@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Analyze_Agg
-description: Compute the statistics of geometries for the input geometry.
+description: Computes the statistics of geometries for the input geometry.
 kernels:
   - returns: struct
     args: [geometry]

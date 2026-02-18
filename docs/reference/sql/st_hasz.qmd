@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_HasZ
-description: Return true if the geometry has a Z dimension.
+description: Returns true if the geometry has a Z dimension.
 kernels:
   - returns: boolean
     args: [geometry]

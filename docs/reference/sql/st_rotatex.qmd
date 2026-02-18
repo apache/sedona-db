@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_RotateX
-description: Rotate a geometry around the X axis by an angle in radians.
+description: Rotates a geometry around the X axis by an angle in radians.
 kernels:
   - returns: geometry
     args:

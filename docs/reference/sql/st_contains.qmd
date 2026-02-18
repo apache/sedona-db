@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Contains
-description: Return true if geomA contains geomB.
+description: Returns true if geomA contains geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

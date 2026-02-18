@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Intersection
-description: Compute the intersection of two geometries or geographies.
+description: Computes the intersection of two geometries or geographies.
 kernels:
   - returns: geometry
     args: [geometry, geometry]

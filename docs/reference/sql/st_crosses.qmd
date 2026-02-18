@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Crosses
-description: Return true if A crosses B.
+description: Returns true if A crosses B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
