@@ -23,9 +23,7 @@ use arrow_schema::DataType;
 use datafusion_common::cast::{as_int64_array, as_string_view_array};
 use datafusion_common::error::Result;
 use datafusion_common::{exec_err, DataFusionError, ScalarValue};
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::crs::{CachedCrsNormalization, CachedSRIDToCrs};
@@ -45,7 +43,6 @@ pub fn rs_set_srid_with_engine_udf(
         "rs_setsrid",
         vec![Arc::new(RsSetSrid { engine })],
         Volatility::Immutable,
-        Some(rs_set_srid_doc()),
     )
 }
 
@@ -61,7 +58,6 @@ pub fn rs_set_crs_with_engine_udf(
         "rs_setcrs",
         vec![Arc::new(RsSetCrs { engine })],
         Volatility::Immutable,
-        Some(rs_set_crs_doc()),
     )
 }
 
@@ -77,33 +73,6 @@ pub fn rs_set_srid_udf() -> SedonaScalarUDF {
 /// See [rs_set_crs_with_engine_udf] for a validating version of this function
 pub fn rs_set_crs_udf() -> SedonaScalarUDF {
     rs_set_crs_with_engine_udf(None)
-}
-
-fn rs_set_srid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Set the spatial reference system identifier (SRID) of the raster".to_string(),
-        "RS_SetSRID(raster: Raster, srid: Integer)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument("srid", "Integer: EPSG code to set (e.g., 4326)")
-    .with_sql_example("SELECT RS_SetSRID(RS_Example(), 3857)".to_string())
-    .build()
-}
-
-fn rs_set_crs_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Set the coordinate reference system (CRS) of the raster".to_string(),
-        "RS_SetCRS(raster: Raster, crs: String)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_argument(
-        "crs",
-        "String: Coordinate reference system identifier (e.g., 'OGC:CRS84', 'EPSG:4326')",
-    )
-    .with_sql_example("SELECT RS_SetCRS(RS_Example(), 'EPSG:3857')".to_string())
-    .build()
 }
 
 // ---------------------------------------------------------------------------
@@ -407,11 +376,9 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_set_srid_udf().into();
         assert_eq!(udf.name(), "rs_setsrid");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_set_crs_udf().into();
         assert_eq!(udf.name(), "rs_setcrs");
-        assert!(udf.documentation().is_some());
     }
 
     #[test]
