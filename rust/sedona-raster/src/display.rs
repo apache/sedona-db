@@ -86,10 +86,10 @@ impl fmt::Display for RasterDisplay<'_> {
             .iter()
             .any(|band| matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef)));
 
-        // Write: RASTER [WxH/nbands] @ [xmin ymin xmax ymax]
+        // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
         write!(
             f,
-            "RASTER [{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
+            "[{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
         )?;
 
         // Conditionally append skew info when the raster is rotated/skewed
