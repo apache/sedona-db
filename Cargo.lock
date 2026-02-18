@@ -5440,9 +5440,19 @@ dependencies = [
 name = "sedona-libgpuspatial"
 version = "0.3.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "bindgen",
  "cmake",
+ "geo",
+ "geo-types",
+ "sedona-expr",
+ "sedona-geos",
+ "sedona-schema",
+ "sedona-testing",
+ "thiserror 2.0.17",
  "which",
+ "wkt 0.14.0",
 ]
 
 [[package]]

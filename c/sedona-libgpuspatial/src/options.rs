@@ -15,15 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-#![allow(clippy::type_complexity)]
-
-mod sys {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+/// Options for GPU-accelerated index and refiner.
+pub struct GpuSpatialOptions {
+    /// Whether to use CUDA memory pool for allocations
+    pub cuda_use_memory_pool: bool,
+    /// Ratio of initial memory pool size to total GPU memory, between 0 and 100
+    pub cuda_memory_pool_init_percent: i32,
+    /// How many threads will concurrently use the library
+    pub concurrency: u32,
+    /// The device id to use
+    pub device_id: i32,
+    /// Whether to build a compressed BVH, which can reduce memory usage, but may increase build time
+    pub compress_bvh: bool,
+    /// The number of batches for pipelined refinement that overlaps the WKB loading and refinement. Setting 1 effectively disables pipelining.
+    pub pipeline_batches: u32,
 }
-
-#[cfg(gpu_available)]
-pub use sys::*;
