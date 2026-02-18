@@ -35,7 +35,6 @@ pub fn rs_width_udf() -> SedonaScalarUDF {
             size_type: SizeType::Width,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -49,7 +48,6 @@ pub fn rs_height_udf() -> SedonaScalarUDF {
             size_type: SizeType::Height,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 

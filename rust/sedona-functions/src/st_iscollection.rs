@@ -37,7 +37,6 @@ pub fn st_iscollection_udf() -> SedonaScalarUDF {
         "st_iscollection",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsCollection {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

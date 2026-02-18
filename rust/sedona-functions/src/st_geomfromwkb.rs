@@ -40,7 +40,6 @@ pub fn st_geomfromwkb_udf() -> SedonaScalarUDF {
         "st_geomfromwkb",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -55,7 +54,6 @@ pub fn st_geomfromwkbunchecked_udf() -> SedonaScalarUDF {
             out_type: WKB_VIEW_GEOMETRY,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -70,7 +68,6 @@ pub fn st_geogfromwkb_udf() -> SedonaScalarUDF {
             out_type: WKB_VIEW_GEOGRAPHY,
         })],
         Volatility::Immutable,
-        None,
     )
 }
 

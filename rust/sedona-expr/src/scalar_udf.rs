@@ -70,7 +70,6 @@ pub struct SedonaScalarUDF {
     name: String,
     signature: Signature,
     kernels: Vec<ScalarKernelRef>,
-    documentation: Option<Documentation>,
     aliases: Vec<String>,
 }
 
@@ -185,14 +184,12 @@ impl SedonaScalarUDF {
         name: &str,
         kernels: Vec<ScalarKernelRef>,
         volatility: Volatility,
-        documentation: Option<Documentation>,
     ) -> SedonaScalarUDF {
         let signature = Signature::user_defined(volatility);
         Self {
             name: name.to_string(),
             signature,
             kernels,
-            documentation,
             aliases: vec![],
         }
     }
@@ -203,7 +200,6 @@ impl SedonaScalarUDF {
             name: self.name,
             signature: self.signature,
             kernels: self.kernels,
-            documentation: self.documentation,
             aliases,
         }
     }
@@ -214,12 +210,7 @@ impl SedonaScalarUDF {
     /// arguments. This is useful to create stub functions when it is expected that the
     /// actual functionality will be registered from one or more independent crates
     /// (e.g., ST_Intersects(), which may be implemented in sedona-geo or sedona-geography).
-    pub fn new_stub(
-        name: &str,
-        arg_matcher: ArgMatcher,
-        volatility: Volatility,
-        documentation: Option<Documentation>,
-    ) -> Self {
+    pub fn new_stub(name: &str, arg_matcher: ArgMatcher, volatility: Volatility) -> Self {
         let name_string = name.to_string();
         let stub_kernel = SimpleSedonaScalarKernel::new_ref(
             arg_matcher,
@@ -228,7 +219,7 @@ impl SedonaScalarUDF {
             }),
         );
 
-        Self::new(name, vec![stub_kernel], volatility, documentation)
+        Self::new(name, vec![stub_kernel], volatility)
     }
 
     /// Create a SedonaScalarUDF from a single kernel
@@ -240,7 +231,6 @@ impl SedonaScalarUDF {
             name,
             kernels.into_scalar_kernel_refs(),
             Volatility::Immutable,
-            None,
         )
     }
 
@@ -284,7 +274,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
     }
 
     fn documentation(&self) -> Option<&Documentation> {
-        self.documentation.as_ref()
+        None
     }
 
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
@@ -355,7 +345,7 @@ mod tests {
     #[test]
     fn udf_empty() -> Result<()> {
         // UDF with no implementations
-        let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable, None);
+        let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable);
         assert_eq!(udf.name(), "empty");
         assert_eq!(udf.coerce_types(&[])?, vec![]);
 
@@ -397,7 +387,6 @@ mod tests {
             "simple_udf",
             vec![kernel_geo, kernel_arrow],
             Volatility::Immutable,
-            None,
         );
 
         // Calling with a geo type should return a Null type
@@ -443,7 +432,6 @@ mod tests {
             "stubby",
             ArgMatcher::new(vec![], SedonaType::Arrow(DataType::Boolean)),
             Volatility::Immutable,
-            None,
         );
         let tester = ScalarUdfTester::new(stub.into(), vec![]);
         tester.assert_return_type(DataType::Boolean);
@@ -465,7 +453,6 @@ mod tests {
                 SedonaType::Arrow(DataType::Boolean),
             ),
             Volatility::Immutable,
-            None,
         );
 
         // None CRS to None CRS is OK
@@ -498,7 +485,6 @@ mod tests {
                 WKB_GEOMETRY,
             ),
             Volatility::Immutable,
-            None,
         );
 
         let tester = ScalarUdfTester::new(

@@ -30,7 +30,6 @@ pub fn st_buffer_udf() -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

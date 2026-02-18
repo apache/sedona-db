@@ -45,7 +45,6 @@ pub fn st_scale_udf() -> SedonaScalarUDF {
             Arc::new(STScale { is_3d: false }),
         ]),
         Volatility::Immutable,
-        None,
     )
 }
 

@@ -45,7 +45,6 @@ pub fn st_flipcoordinates_udf() -> SedonaScalarUDF {
         "st_flipcoordinates",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STFlipCoordinates {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

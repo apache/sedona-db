@@ -35,7 +35,6 @@ pub fn rs_rastertoworldcoordy_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoordy",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::Y })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -47,7 +46,6 @@ pub fn rs_rastertoworldcoordx_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoordx",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::X })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -59,7 +57,6 @@ pub fn rs_rastertoworldcoord_udf() -> SedonaScalarUDF {
         "rs_rastertoworldcoord",
         vec![Arc::new(RsCoordinatePoint {})],
         Volatility::Immutable,
-        None,
     )
 }
 

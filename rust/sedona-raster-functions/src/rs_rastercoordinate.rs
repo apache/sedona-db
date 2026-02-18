@@ -35,7 +35,6 @@ pub fn rs_worldtorastercoordy_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoordy",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::Y })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -47,7 +46,6 @@ pub fn rs_worldtorastercoordx_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoordx",
         vec![Arc::new(RsCoordinateMapper { coord: Coord::X })],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -59,7 +57,6 @@ pub fn rs_worldtorastercoord_udf() -> SedonaScalarUDF {
         "rs_worldtorastercoord",
         vec![Arc::new(RsCoordinatePoint {})],
         Volatility::Immutable,
-        None,
     )
 }
 

@@ -41,7 +41,6 @@ pub fn st_srid_udf() -> SedonaScalarUDF {
         "st_srid",
         vec![Arc::new(StSridItemCrs {}), Arc::new(StSrid {})],
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -53,7 +52,6 @@ pub fn st_crs_udf() -> SedonaScalarUDF {
         "st_crs",
         vec![Arc::new(StCrsItemCrs {}), Arc::new(StCrs {})],
         Volatility::Immutable,
-        None,
     )
 }
 

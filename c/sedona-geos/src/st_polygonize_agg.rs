@@ -227,7 +227,6 @@ mod tests {
             "st_polygonize_agg",
             st_polygonize_agg_impl(),
             datafusion_expr::Volatility::Immutable,
-            None,
         )
     }
 

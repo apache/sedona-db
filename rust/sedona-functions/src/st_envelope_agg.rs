@@ -48,7 +48,6 @@ pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
         "st_envelope_agg",
         ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(STEnvelopeAgg {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

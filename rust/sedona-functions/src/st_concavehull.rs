@@ -29,7 +29,6 @@ pub fn st_concavehull_udf() -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

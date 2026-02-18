@@ -38,7 +38,6 @@ pub fn rs_envelope_udf() -> SedonaScalarUDF {
         "rs_envelope",
         vec![Arc::new(RsEnvelope {})],
         Volatility::Immutable,
-        None,
     )
 }
 

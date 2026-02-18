@@ -53,7 +53,6 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
         "st_analyze_agg",
         ItemCrsSedonaAccumulator::wrap_impl(STAnalyzeAgg {}),
         Volatility::Immutable,
-        None,
     )
 }
 /// ST_Analyze_Agg() implementation

@@ -49,7 +49,6 @@ pub fn overlay_stub_udf(name: &str) -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

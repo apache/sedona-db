@@ -30,7 +30,6 @@ pub fn st_asgeojson_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Utf8),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

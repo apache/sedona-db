@@ -40,7 +40,6 @@ pub fn rs_convexhull_udf() -> SedonaScalarUDF {
         "rs_convexhull",
         vec![Arc::new(RsConvexHull {})],
         Volatility::Immutable,
-        None,
     )
 }
 

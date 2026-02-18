@@ -396,7 +396,6 @@ fn geoparquet_bbox_udf() -> SedonaScalarUDF {
         "geoparquet_bbox",
         vec![Arc::new(GeoParquetBbox {})],
         Volatility::Immutable,
-        None,
     )
 }
 

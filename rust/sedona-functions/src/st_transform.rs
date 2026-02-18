@@ -39,7 +39,6 @@ pub fn st_transform_udf() -> SedonaScalarUDF {
             WKB_GEOMETRY,
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

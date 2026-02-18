@@ -77,7 +77,6 @@ pub fn st_knn_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 
@@ -92,7 +91,6 @@ pub fn predicate_stub_udf(name: &str) -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

@@ -40,7 +40,6 @@ pub fn st_interiorringn_udf() -> SedonaScalarUDF {
         "st_interiorringn",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STInteriorRingN)]),
         datafusion_expr::Volatility::Immutable,
-        None,
     )
 }
 

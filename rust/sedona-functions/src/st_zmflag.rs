@@ -35,7 +35,6 @@ pub fn st_zmflag_udf() -> SedonaScalarUDF {
         "st_zmflag",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STZmFlag {})]),
         Volatility::Immutable,
-        None,
     )
 }
 

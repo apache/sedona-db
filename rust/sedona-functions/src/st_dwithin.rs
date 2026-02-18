@@ -32,7 +32,6 @@ pub fn st_dwithin_udf() -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Boolean),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 

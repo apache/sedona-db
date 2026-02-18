@@ -60,7 +60,6 @@ pub fn distance_stub_udf(name: &str) -> SedonaScalarUDF {
             SedonaType::Arrow(DataType::Float64),
         ),
         Volatility::Immutable,
-        None,
     )
 }
 
