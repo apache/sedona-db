@@ -151,10 +151,10 @@ impl CachedCrsToSRIDMapping {
     }
 }
 
-/// Batch-local cache for converting integer SRIDs to CRS strings.
+/// Cache for converting integer SRIDs to CRS strings.
 ///
 /// Maps SRID integers to their CRS string representation with caching to avoid
-/// repeated validation/deserialization of the same SRID within a batch:
+/// repeated validation/deserialization of the same SRID:
 /// - `0` → `None` (no CRS)
 /// - `4326` → `Some("OGC:CRS84")`
 /// - other → `Some("EPSG:{srid}")`, validated once via the caller-provided closure
@@ -198,10 +198,10 @@ impl CachedSRIDToCrs {
     }
 }
 
-/// Batch-local cache for normalizing CRS strings to their abbreviated form.
+/// Cache for normalizing CRS strings to their abbreviated form.
 ///
 /// Maps CRS input strings to their abbreviated `authority:code` representation
-/// with caching to avoid repeated deserialization of the same CRS string within a batch:
+/// with caching to avoid repeated deserialization of the same CRS string:
 /// - `"0"` or `""` → `None` (no CRS)
 /// - other → deserialized and abbreviated to `authority:code` if possible
 #[derive(Default)]
