@@ -488,7 +488,7 @@ mod test {
 
     #[rstest]
     fn basic_analyze_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -530,7 +530,7 @@ mod test {
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
-        let mut udaf = st_analyze_agg_udf();
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -569,7 +569,7 @@ mod test {
 
     #[rstest]
     fn analyze_polygon(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -610,7 +610,7 @@ mod test {
     fn analyze_mixed_geometries(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_analyze_agg_udf();
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -651,7 +651,7 @@ mod test {
 
     #[rstest]
     fn analyze_empty_input(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 

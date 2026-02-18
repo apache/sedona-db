@@ -142,9 +142,6 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_analyze_agg::st_analyze_agg_udf,
         crate::st_collect_agg::st_collect_agg_udf,
         crate::st_envelope_agg::st_envelope_agg_udf,
-        crate::st_intersection_agg::st_intersection_agg_udf,
-        crate::st_polygonize_agg::st_polygonize_agg_udf,
-        crate::st_union_agg::st_union_agg_udf,
     );
 
     function_set
