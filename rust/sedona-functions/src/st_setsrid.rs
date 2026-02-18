@@ -14,10 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
     builder::{BinaryBuilder, NullBufferBuilder},
@@ -41,7 +38,11 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    crs::{deserialize_crs, CachedCrsNormalization, CachedSRIDToCrs},
+    datatypes::SedonaType,
+    matchers::ArgMatcher,
+};
 
 /// ST_SetSRID() scalar UDF implementation
 ///
@@ -473,8 +474,7 @@ fn normalize_crs_array(
         | DataType::UInt16
         | DataType::UInt32
         | DataType::UInt64 => {
-            // Local cache to avoid re-validating inputs
-            let mut known_valid = HashSet::new();
+            let mut srid_to_crs = CachedSRIDToCrs::new();
 
             let int_value = crs_value.cast_to(&DataType::Int64, None)?;
             let int_array_ref = ColumnarValue::values_to_arrays(&[int_value])?;
@@ -483,18 +483,10 @@ fn normalize_crs_array(
                 .iter()
                 .map(|maybe_srid| -> Result<Option<String>> {
                     if let Some(srid) = maybe_srid {
-                        if srid == 0 {
+                        let Some(auth_code) = srid_to_crs.get_crs(srid)? else {
                             return Ok(None);
-                        } else if srid == 4326 {
-                            return Ok(Some("OGC:CRS84".to_string()));
-                        }
-
-                        let auth_code = format!("EPSG:{srid}");
-                        if !known_valid.contains(&srid) {
-                            validate_crs(&auth_code, maybe_engine)?;
-                            known_valid.insert(srid);
-                        }
-
+                        };
+                        validate_crs(&auth_code, maybe_engine)?;
                         Ok(Some(auth_code))
                     } else {
                         Ok(None)
@@ -505,7 +497,7 @@ fn normalize_crs_array(
             Ok(Arc::new(utf8_view_array))
         }
         _ => {
-            let mut known_abbreviated = HashMap::<String, String>::new();
+            let mut crs_norm = CachedCrsNormalization::new();
 
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
@@ -514,25 +506,7 @@ fn normalize_crs_array(
                 .iter()
                 .map(|maybe_crs| -> Result<Option<String>> {
                     if let Some(crs_str) = maybe_crs {
-                        if crs_str == "0" {
-                            return Ok(None);
-                        }
-
-                        if let Some(abbreviated_crs) = known_abbreviated.get(crs_str) {
-                            Ok(Some(abbreviated_crs.clone()))
-                        } else if let Some(crs) = deserialize_crs(crs_str)? {
-                            let abbreviated_crs =
-                                if let Some(auth_code) = crs.to_authority_code()? {
-                                    auth_code
-                                } else {
-                                    crs_str.to_string()
-                                };
-
-                            known_abbreviated.insert(crs.to_string(), abbreviated_crs.clone());
-                            Ok(Some(abbreviated_crs))
-                        } else {
-                            Ok(None)
-                        }
+                        crs_norm.normalize(crs_str)
                     } else {
                         Ok(None)
                     }

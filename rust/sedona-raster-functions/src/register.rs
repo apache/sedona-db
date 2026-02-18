@@ -55,6 +55,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_rastercoordinate::rs_worldtorastercoordy_udf,
         crate::rs_size::rs_height_udf,
         crate::rs_size::rs_width_udf,
+        crate::rs_setsrid::rs_set_crs_udf,
+        crate::rs_setsrid::rs_set_srid_udf,
         crate::rs_srid::rs_crs_udf,
         crate::rs_srid::rs_srid_udf,
         crate::rs_worldcoordinate::rs_rastertoworldcoord_udf,
