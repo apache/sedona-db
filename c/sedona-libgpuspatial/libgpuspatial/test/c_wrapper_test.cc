@@ -278,6 +278,7 @@ TEST_F(CWrapperTest, InitializeJoiner) {
           ids->build_indices_ptr = (uint32_t*)build_indices;
           ids->probe_indices_ptr = (uint32_t*)probe_indices;
           ids->length = length;
+          return 0;
         },
         &intersection_ids);
 

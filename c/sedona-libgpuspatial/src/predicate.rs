@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
+#[cfg(gpu_available)]
 use std::os::raw::c_uint;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
