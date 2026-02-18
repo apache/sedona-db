@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Within
-description: Return true if A is completely inside B.
+description: Returns true if A is completely inside B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

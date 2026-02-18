@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_RasterToWorldCoord
-description: Convert raster pixel coordinates to world coordinates as a point.
+description: Converts raster pixel coordinates to world coordinates as a point.
 kernels:
   - returns: geometry
     args:

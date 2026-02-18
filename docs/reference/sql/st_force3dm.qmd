@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Force3DM
-description: Force a geometry into a XYM coordinate model with an optional M value.
+description: Forces a geometry into a XYM coordinate model with an optional M value.
 kernels:
   - returns: geometry
     args: [geometry]

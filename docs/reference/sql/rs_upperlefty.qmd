@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_UpperLeftY
-description: Return the upper-left Y coordinate of a raster.
+description: Returns the upper-left Y coordinate of a raster.
 kernels:
   - returns: double
     args: [raster]

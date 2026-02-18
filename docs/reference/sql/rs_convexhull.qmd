@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_ConvexHull
-description: Return the convex hull geometry of a raster.
+description: Returns the convex hull geometry of a raster.
 kernels:
   - returns: geometry
     args: [raster]

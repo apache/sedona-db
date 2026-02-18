@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_WorldToRasterCoordX
-description: Convert world coordinates to raster X coordinate.
+description: Converts world coordinates to raster X coordinate.
 kernels:
   - returns: integer
     args:

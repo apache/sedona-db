@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Intersects
-description: Return true if geomA intersects geomB.
+description: Returns true if geomA intersects geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

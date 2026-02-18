@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Point
-description: Construct a Point Geometry from X and Y.
+description: Constructs a Point Geometry from X and Y.
 kernels:
   - returns: geometry
     args:

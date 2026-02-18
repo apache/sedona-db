@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_IsRing
-description: Return true if a linestring is ST_IsClosed and ST_IsSimple.
+description: Returns true if a linestring is ST_IsClosed and ST_IsSimple.
 kernels:
   - returns: boolean
     args: [geometry]

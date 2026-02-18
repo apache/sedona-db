@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Force2D
-description: Force a geometry into a XY coordinate model.
+description: Forces a geometry into a XY coordinate model.
 kernels:
   - returns: geometry
     args: [geometry]

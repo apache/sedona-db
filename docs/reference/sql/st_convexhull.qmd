@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_ConvexHull
-description: Return the Convex Hull of polygon A.
+description: Returns the Convex Hull of polygon A.
 kernels:
   - returns: geometry
     args: [geometry]

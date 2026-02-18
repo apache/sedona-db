@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_RasterToWorldCoordY
-description: Convert raster pixel coordinates to world Y coordinate.
+description: Converts raster pixel coordinates to world Y coordinate.
 kernels:
   - returns: double
     args:

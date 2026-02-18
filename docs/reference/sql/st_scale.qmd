@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Scale
-description: Scale a geometry by multiplying ordinates with scale factors.
+description: Scales a geometry by multiplying ordinates with scale factors.
 kernels:
   - returns: geometry
     args:

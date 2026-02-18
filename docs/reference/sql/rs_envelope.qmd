@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_Envelope
-description: Return the envelope (bounding box) of a raster as a geometry.
+description: Returns the envelope (bounding box) of a raster as a geometry.
 kernels:
   - returns: geometry
     args: [raster]

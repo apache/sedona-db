@@ -17,7 +17,7 @@
 # under the License.
 
 title: SD_Order
-description: Return a value suitable for ordering or sorting.
+description: Returns a value suitable for ordering or sorting.
 kernels:
   - returns: any
     args:

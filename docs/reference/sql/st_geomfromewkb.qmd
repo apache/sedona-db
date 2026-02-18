@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromEWKB
-description: Construct a geometry from Extended Well-Known Binary (EWKB).
+description: Constructs a geometry from Extended Well-Known Binary (EWKB).
 kernels:
   - returns: geometry
     args:

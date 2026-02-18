@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_CoveredBy
-description: Return true if geomA is covered by geomB.
+description: Returns true if geomA is covered by geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

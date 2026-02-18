@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_KNN
-description: Return true if geomA finds k nearest neighbors from geomB.
+description: Returns true if geomA finds k nearest neighbors from geomB.
 kernels:
   - returns: boolean
     args:
