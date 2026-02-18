@@ -81,7 +81,15 @@
          <lastmod>2026-02-18</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_georeference/</loc>
+         <lastmod>2026-02-18</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_height/</loc>
+         <lastmod>2026-02-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_numbands/</loc>
          <lastmod>2026-02-18</lastmod>
     </url>
     <url>

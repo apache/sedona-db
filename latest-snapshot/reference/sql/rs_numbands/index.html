@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_setcrs/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_numbands/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_SetCRS - Apache Sedona</title>
+        <title>RS_NumBands - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_setcrs" class="md-skip">
+        <a href="#rs_numbands" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_SetCRS
+              RS_NumBands
             
           </span>
             </div>
@@ -1383,17 +1383,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#description" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Description
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1421,7 +1410,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_setcrs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_numbands.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1429,32 +1418,24 @@
   
 
 
-<h1 id="st_setcrs">ST_SetCRS<a class="headerlink" href="#st_setcrs" title="Permanent link">¶</a></h1>
-<p>Sets the Coordinate Reference System (CRS) for a geometry.</p>
+<h1 id="rs_numbands">RS_NumBands<a class="headerlink" href="#rs_numbands" title="Permanent link">¶</a></h1>
+<p>Returns the number of bands in the raster.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_SetCRS</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">target_crs</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">)</span>
-<span class="n">geography</span><span class="w"> </span><span class="n">ST_SetCRS</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="n">target_crs</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">uint32</span><span class="w"> </span><span class="n">RS_NumBands</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geog</strong> (geography): Input geography</li>
-<li><strong>target_crs</strong> (string)</li>
-<li><strong>geom</strong> (geometry): Input geometry</li>
+<li><strong>rast</strong> (raster): Input raster</li>
 </ul>
-<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Sets a CRS to a geometry/geography. This is metadata-only - no
-coordinates are transformed.</p>
-<p>This is different from ST_Transform which actually transforms
-coordinates.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_SetCRS</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="o">-</span><span class="mi">122</span><span class="p">.</span><span class="mi">35</span><span class="p">,</span><span class="w"> </span><span class="mi">47</span><span class="p">.</span><span class="mi">65</span><span class="p">),</span><span class="w"> </span><span class="s1">'EPSG:4269'</span><span class="p">);</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_NumBands</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">());</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────────────────────────────────────────┐
-│ st_setcrs(st_point(Float64(-122.35),Float64(47.65)),Utf8("EPSG:4269")) │
-│                                geometry                                │
-╞════════════════════════════════════════════════════════════════════════╡
-│ POINT(-122.35 47.65)                                                   │
-└────────────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌───────────────────────────┐
+│ rs_numbands(rs_example()) │
+│           uint32          │
+╞═══════════════════════════╡
+│                         3 │
+└───────────────────────────┘
 </code></pre></div>
 
 
