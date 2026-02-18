@@ -59,24 +59,13 @@ INNER JOIN
     ON ST_KNN(cities_l.geometry, cities_r.geometry, 5, false)
 ```
 
-## Optimization Barrier
+## KNN Join Behavior
 
-Use the `barrier` function to prevent filter pushdown and control predicate evaluation order in complex spatial joins. This function creates an optimization barrier by evaluating boolean expressions at runtime.
+### No Filter Pushdown
 
-The `barrier` function takes a boolean expression as a string, followed by pairs of variable names and their values that will be substituted into the expression:
+KNN joins do not perform filter pushdown optimizations. All `WHERE` clause predicates are evaluated after the K nearest neighbor candidates have been selected, never pushed into the input tables. This ensures the K nearest neighbors are always determined from the full, unfiltered dataset.
 
-```sql
-barrier(expression, var_name1, var_value1, var_name2, var_value2, ...)
-```
-
-The placement of filters relative to KNN joins changes the semantic meaning of the query:
-
-- **Filter before KNN**: First filters the data, then finds K nearest neighbors from the filtered subset. This answers "What are the K nearest high-rated restaurants?"
-- **Filter after KNN**: First finds K nearest neighbors from all data, then filters those results. This answers "Of the K nearest restaurants, which ones are high-rated?"
-
-### Example
-
-Find the 3 nearest restaurants for each luxury hotel, and then filter the results to only show pairs where the restaurant is also high-rated.
+For example, in the following query, `r.rating > 4.0` is applied *after* finding the 3 nearest restaurants for each hotel — it does not reduce the set of candidate restaurants before the KNN search:
 
 ```sql
 SELECT
@@ -89,9 +78,11 @@ INNER JOIN
     restaurants AS r
     ON ST_KNN(h.geometry, r.geometry, 3, false)
 WHERE
-    barrier('rating > 4.0 AND stars >= 4',
-            'rating', r.rating,
-            'stars', h.stars)
+    r.rating > 4.0
 ```
 
-With the barrier function, this query first finds the 3 nearest restaurants to each hotel (regardless of rating), then filters to keep only those pairs where the restaurant has rating > 4.0 and the hotel has stars >= 4. Without the barrier, an optimizer might push the filters down, changing the query to first filter for high-rated restaurants and luxury hotels, then find the 3 nearest among those filtered sets.
+This means the result may contain fewer than 3 restaurants per hotel if some of the nearest neighbors do not pass the filter.
+
+### ST_KNN Predicate Precedence
+
+When `ST_KNN` is combined with other predicates via `AND`, `ST_KNN` always takes precedence. It is extracted first to determine the KNN candidates, and the remaining predicates are applied as post-filters on the join output.
