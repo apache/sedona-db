@@ -19,7 +19,8 @@ use std::io::Write;
 use byteorder::{LittleEndian, WriteBytesExt};
 use datafusion_common::{error::Result, DataFusionError};
 use geo_traits::Dimensions;
-use geos::{Geom, Geometry, GeometryTypes};
+use geos::{CoordType, Geom, Geometry, GeometryTypes};
+use sedona_common::sedona_internal_err;
 use sedona_geometry::wkb_factory::{
     write_wkb_geometrycollection_header, write_wkb_linestring_header,
     write_wkb_multilinestring_header, write_wkb_multipoint_header, write_wkb_multipolygon_header,
@@ -265,8 +266,16 @@ fn write_coord_seq(
     dim: Dimensions,
     writer: &mut impl Write,
 ) -> Result<()> {
+    let coord_type = match dim {
+        Dimensions::Xy => CoordType::XY,
+        Dimensions::Xyz => CoordType::XYZ,
+        Dimensions::Xym => CoordType::XYM,
+        Dimensions::Xyzm => CoordType::XYZM,
+        _ => return sedona_internal_err!("Unexpecte dimensions {dim:?}"),
+    };
+
     let coords = coord_seq
-        .as_buffer(Some(dim.size()))
+        .as_buffer(Some(coord_type))
         .map_err(|e| DataFusionError::Execution(format!("Failed to get coord seq buffer: {e}")))?;
 
     // Cast Vec<f64> to &[u8] so we can write the bytes directly to the writer buffer
@@ -337,6 +346,13 @@ mod tests {
         test_wkb_round_trip("LINESTRING Z (0 0 0, 1 1 1)");
         test_wkb_round_trip("LINESTRING Z (0 0 0, 1 1 1, 2 2 2)");
         test_wkb_round_trip("LINESTRING Z (0 0 10, 1 1 11, 2 2 12)");
+    }
+
+    #[test]
+    fn test_write_linestring_xym() {
+        test_wkb_round_trip("LINESTRING M (0 0 0, 1 1 1)");
+        test_wkb_round_trip("LINESTRING M (0 0 0, 1 1 1, 2 2 2)");
+        test_wkb_round_trip("LINESTRING M (0 0 10, 1 1 11, 2 2 12)");
     }
 
     #[test]
