@@ -21,7 +21,7 @@ use std::{
 
 use arrow_array::{
     builder::{BinaryBuilder, NullBufferBuilder},
-    ArrayRef, StringViewArray,
+    new_null_array, ArrayRef, StringViewArray,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -120,18 +120,13 @@ impl SedonaScalarKernel for STSetSRID {
         let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
-        let item_crs_matcher = ArgMatcher::is_item_crs();
-        if item_crs_matcher.match_type(return_type) {
-            let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
-            make_item_crs(
-                &item_type,
-                item_arg,
-                &ColumnarValue::Array(normalized_crs_value),
-                crs_input_nulls(&args[1]),
-            )
-        } else {
-            Ok(item_arg)
-        }
+        invoke_set_crs(
+            &item_type,
+            item_arg,
+            &args[1],
+            return_type,
+            self.engine.as_ref(),
+        )
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -180,18 +175,13 @@ impl SedonaScalarKernel for STSetCRS {
         let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
-        let item_crs_matcher = ArgMatcher::is_item_crs();
-        if item_crs_matcher.match_type(return_type) {
-            let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
-            make_item_crs(
-                &item_type,
-                item_arg,
-                &ColumnarValue::Array(normalized_crs_value),
-                crs_input_nulls(&args[1]),
-            )
-        } else {
-            Ok(item_arg)
-        }
+        invoke_set_crs(
+            &item_type,
+            item_arg,
+            &args[1],
+            return_type,
+            self.engine.as_ref(),
+        )
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -206,6 +196,45 @@ impl SedonaScalarKernel for STSetCRS {
         _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+    }
+}
+
+/// Shared invoke logic for both STSetSRID and STSetCRS.
+///
+/// When the SRID/CRS is a column (array), builds an `item_crs` struct with per-row CRS.
+/// When the SRID/CRS is a scalar, the CRS is already baked into the return type and the
+/// geometry is returned as-is. If the scalar SRID/CRS is NULL, the result is NULL per
+/// standard SQL NULL propagation semantics.
+fn invoke_set_crs(
+    item_type: &SedonaType,
+    item_arg: ColumnarValue,
+    crs_arg: &ColumnarValue,
+    return_type: &SedonaType,
+    maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
+) -> Result<ColumnarValue> {
+    let item_crs_matcher = ArgMatcher::is_item_crs();
+    if item_crs_matcher.match_type(return_type) {
+        let normalized_crs_value = normalize_crs_array(crs_arg, maybe_engine)?;
+        make_item_crs(
+            item_type,
+            item_arg,
+            &ColumnarValue::Array(normalized_crs_value),
+            crs_input_nulls(crs_arg),
+        )
+    } else if matches!(crs_arg, ColumnarValue::Scalar(sv) if sv.is_null()) {
+        // Scalar NULL SRID/CRS: propagate NULL per SQL NULL semantics.
+        let storage_type = return_type.storage_type();
+        match &item_arg {
+            ColumnarValue::Array(array) => Ok(ColumnarValue::Array(new_null_array(
+                storage_type,
+                array.len(),
+            ))),
+            ColumnarValue::Scalar(_) => {
+                Ok(ColumnarValue::Scalar(ScalarValue::try_from(storage_type)?))
+            }
+        }
+    } else {
+        Ok(item_arg)
     }
 }
 
@@ -598,7 +627,7 @@ mod test {
         assert_eq!(return_type, WKB_GEOMETRY);
         assert_value_equal(&result, &geom_arg);
 
-        // Call with a null srid (should *not* set the output crs)
+        // Call with a null srid (result should be NULL per SQL NULL propagation)
         let (return_type, result) = call_udf(
             &udf,
             geom_arg.clone(),
@@ -607,7 +636,8 @@ mod test {
         )
         .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
-        assert_value_equal(&result, &geom_arg);
+        let null_geom = create_scalar_value(None, &WKB_GEOMETRY);
+        assert_value_equal(&result, &null_geom);
     }
 
     #[test]
@@ -633,7 +663,7 @@ mod test {
         assert_eq!(return_type, wkb_lnglat);
         assert_value_equal(&result, &geom_lnglat);
 
-        // Call with a null scalar destination (should *not* set the output crs)
+        // Call with a null scalar destination (result should be NULL per SQL NULL propagation)
         let (return_type, result) = call_udf(
             &udf,
             geom_arg.clone(),
@@ -642,7 +672,8 @@ mod test {
         )
         .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
-        assert_value_equal(&result, &geom_arg);
+        let null_geom = create_scalar_value(None, &WKB_GEOMETRY);
+        assert_value_equal(&result, &null_geom);
 
         // Ensure that an engine can reject a CRS if the UDF was constructed with one
         let udf_with_validation: ScalarUDF =
