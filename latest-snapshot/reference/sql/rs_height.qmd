@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_Height
-description: Return the height of a raster in pixels.
+description: Returns the height of a raster in pixels.
 kernels:
   - returns: bigint
     args: [raster]

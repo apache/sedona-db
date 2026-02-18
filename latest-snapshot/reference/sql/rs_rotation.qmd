@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_Rotation
-description: Return the raster rotation in radians based on skew parameters.
+description: Returns the raster rotation in radians based on skew parameters.
 kernels:
   - returns: double
     args: [raster]

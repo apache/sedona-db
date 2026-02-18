@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_PointN
-description: Return the Nth point in a linestring.
+description: Returns the Nth point in a linestring.
 kernels:
   - returns: geometry
     args:

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Covers
-description: Return true if geomA covers geomB.
+description: Returns true if geomA covers geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

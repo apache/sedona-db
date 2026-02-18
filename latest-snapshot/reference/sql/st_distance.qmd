@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Distance
-description: Return the distance between two geometries or geographies.
+description: Returns the distance between two geometries or geographies.
 kernels:
   - returns: double
     args: [geometry, geometry]

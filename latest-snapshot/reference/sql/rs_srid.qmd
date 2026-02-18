@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_SRID
-description: Return the SRID of a raster.
+description: Returns the SRID of a raster.
 kernels:
   - returns: integer
     args: [raster]

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Dimension
-description: Return the dimension of the geometry.
+description: Returns the dimension of the geometry.
 kernels:
   - returns: integer
     args: [geometry]

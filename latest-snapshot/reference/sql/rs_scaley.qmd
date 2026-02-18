@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_ScaleY
-description: Return the pixel height (scale Y) of a raster.
+description: Returns the pixel height (scale Y) of a raster.
 kernels:
   - returns: double
     args: [raster]

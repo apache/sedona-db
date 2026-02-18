@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Reverse
-description: Return the geometry with vertex order reversed.
+description: Returns the geometry with vertex order reversed.
 kernels:
   - returns: geometry
     args: [geometry]

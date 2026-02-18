@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_ScaleX
-description: Return the pixel width (scale X) of a raster.
+description: Returns the pixel width (scale X) of a raster.
 kernels:
   - returns: double
     args: [raster]

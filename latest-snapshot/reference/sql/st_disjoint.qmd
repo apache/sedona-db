@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Disjoint
-description: Return true if geomA is disjoint from geomB.
+description: Returns true if geomA is disjoint from geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

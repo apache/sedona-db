@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeometryN
-description: Return the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
+description: Returns the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
 kernels:
   - returns: geometry
     args:

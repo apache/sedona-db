@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeomFromEWKT
-description: Construct a geometry from Extended Well-Known Text (EWKT).
+description: Constructs a geometry from Extended Well-Known Text (EWKT).
 kernels:
   - returns: geometry
     args:

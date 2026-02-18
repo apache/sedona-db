@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Overlaps
-description: Return true if A overlaps B.
+description: Returns true if A overlaps B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]

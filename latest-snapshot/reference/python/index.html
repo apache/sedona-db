@@ -2263,6 +2263,10 @@
 <p>This object keeps track of state such as registered functions,
 registered tables, and available memory. This is similar to a
 Spark SessionContext or a database connection.</p>
+<p>Runtime configuration (memory limits, spill directory, pool type) can
+be set via <code>options</code> before executing the first query.  Once the
+first query runs, the internal execution context is created and
+runtime options become read-only.</p>
 <p>Examples:</p>
 <div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">sedona</span>.<span class="nv">db</span>.<span class="k">connect</span><span class="ss">()</span>
 <span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span>.<span class="nv">options</span>.<span class="nv">interactive</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">True</span>
@@ -2273,6 +2277,12 @@ Spark SessionContext or a database connection.</p>
 ╞═══════╡
 │<span class="w">     </span><span class="mi">1</span><span class="w"> </span>│
 └───────┘
+</code></pre></div>
+
+<p>Configuring memory limits:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">sd</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sedona</span><span class="p">.</span><span class="nx">db</span><span class="p">.</span><span class="nx">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">sd</span><span class="p">.</span><span class="nx">options</span><span class="p">.</span><span class="nx">memory_limit</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"4gb"</span>
+<span class="o">&gt;&gt;</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">sd</span><span class="p">.</span><span class="nx">options</span><span class="p">.</span><span class="nx">memory_pool_type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"fair"</span>
 </code></pre></div>
 
 
@@ -2950,6 +2960,14 @@ been called, subsequent configuration has no effect.</p>
     <div class="doc doc-contents ">
 
         <p>Create a new <a class="autorefs autorefs-internal" title="SedonaContext" href="#sedonadb.context.SedonaContext">SedonaContext</a></p>
+<p>Runtime configuration (memory limits, spill directory, pool type)
+can be set via <code>options</code> on the returned context before executing
+the first query::</p>
+<div class="codehilite"><pre><span></span><code><span class="nx">sd</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sedona</span><span class="p">.</span><span class="nx">db</span><span class="p">.</span><span class="nx">connect</span><span class="p">()</span>
+<span class="nx">sd</span><span class="p">.</span><span class="nx">options</span><span class="p">.</span><span class="nx">memory_limit</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"4gb"</span>
+<span class="nx">sd</span><span class="p">.</span><span class="nx">options</span><span class="p">.</span><span class="nx">memory_pool_type</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"fair"</span>
+<span class="nx">sd</span><span class="p">.</span><span class="nx">options</span><span class="p">.</span><span class="nx">temp_dir</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"/tmp/sedona-spill"</span>
+</code></pre></div>
 
 
     </div>

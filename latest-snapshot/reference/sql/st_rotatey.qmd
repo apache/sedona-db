@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_RotateY
-description: Rotate a geometry around the Y axis by an angle in radians.
+description: Rotates a geometry around the Y axis by an angle in radians.
 kernels:
   - returns: geometry
     args:

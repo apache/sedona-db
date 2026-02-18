@@ -7669,13 +7669,13 @@
 
 <h1 id="sql-function-reference">SQL Function Reference<a class="headerlink" href="#sql-function-reference" title="Permanent link">¶</a></h1>
 <h2 id="st_affine"><a href="st_affine/">ST_Affine</a><a class="headerlink" href="#st_affine" title="Permanent link">¶</a></h2>
-<p>Apply an affine transformation to a geometry.</p>
+<p>Applies an affine transformation to a geometry.</p>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Affine</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">xOff</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">yOff</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_Affine</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="k">c</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="k">g</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">xOff</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">yOff</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">zOff</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_analyze_agg"><a href="st_analyze_agg/">ST_Analyze_Agg</a><a class="headerlink" href="#st_analyze_agg" title="Permanent link">¶</a></h2>
-<p>Compute the statistics of geometries for the input geometry.</p>
+<p>Computes the statistics of geometries for the input geometry.</p>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">struct</span><span class="w"> </span><span class="n">ST_Analyze_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7690,12 +7690,12 @@
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_AsBinary</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_asewkb"><a href="st_asewkb/">ST_AsEWKB</a><a class="headerlink" href="#st_asewkb" title="Permanent link">¶</a></h2>
-<p>Return the EWKB representation of a geometry or geography.</p>
+<p>Returns the EWKB representation of a geometry or geography.</p>
 <h3 id="usage_4">Usage<a class="headerlink" href="#usage_4" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">binary</span><span class="w"> </span><span class="n">ST_AsEWKB</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_asgeojson"><a href="st_asgeojson/">ST_AsGeoJSON</a><a class="headerlink" href="#st_asgeojson" title="Permanent link">¶</a></h2>
-<p>Return the GeoJSON representation of a geometry.</p>
+<p>Returns the GeoJSON representation of a geometry.</p>
 <h3 id="usage_5">Usage<a class="headerlink" href="#usage_5" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">string</span><span class="w"> </span><span class="n">ST_AsGeoJSON</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7741,32 +7741,32 @@ collection.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Collect_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_concavehull"><a href="st_concavehull/">ST_ConcaveHull</a><a class="headerlink" href="#st_concavehull" title="Permanent link">¶</a></h2>
-<p>Return a concave hull enclosing the input geometry.</p>
+<p>Returns a concave hull enclosing the input geometry.</p>
 <h3 id="usage_13">Usage<a class="headerlink" href="#usage_13" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_ConcaveHull</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">pct_convex</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_contains"><a href="st_contains/">ST_Contains</a><a class="headerlink" href="#st_contains" title="Permanent link">¶</a></h2>
-<p>Return true if geomA contains geomB.</p>
+<p>Returns true if geomA contains geomB.</p>
 <h3 id="usage_14">Usage<a class="headerlink" href="#usage_14" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Contains</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_convexhull"><a href="st_convexhull/">ST_ConvexHull</a><a class="headerlink" href="#st_convexhull" title="Permanent link">¶</a></h2>
-<p>Return the Convex Hull of polygon A.</p>
+<p>Returns the Convex Hull of polygon A.</p>
 <h3 id="usage_15">Usage<a class="headerlink" href="#usage_15" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_ConvexHull</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_coveredby"><a href="st_coveredby/">ST_CoveredBy</a><a class="headerlink" href="#st_coveredby" title="Permanent link">¶</a></h2>
-<p>Return true if geomA is covered by geomB.</p>
+<p>Returns true if geomA is covered by geomB.</p>
 <h3 id="usage_16">Usage<a class="headerlink" href="#usage_16" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_CoveredBy</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_covers"><a href="st_covers/">ST_Covers</a><a class="headerlink" href="#st_covers" title="Permanent link">¶</a></h2>
-<p>Return true if geomA covers geomB.</p>
+<p>Returns true if geomA covers geomB.</p>
 <h3 id="usage_17">Usage<a class="headerlink" href="#usage_17" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Covers</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_crosses"><a href="st_crosses/">ST_Crosses</a><a class="headerlink" href="#st_crosses" title="Permanent link">¶</a></h2>
-<p>Return true if A crosses B.</p>
+<p>Returns true if A crosses B.</p>
 <h3 id="usage_18">Usage<a class="headerlink" href="#usage_18" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Crosses</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7782,17 +7782,17 @@ geometry or geography object.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Difference</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_dimension"><a href="st_dimension/">ST_Dimension</a><a class="headerlink" href="#st_dimension" title="Permanent link">¶</a></h2>
-<p>Return the dimension of the geometry.</p>
+<p>Returns the dimension of the geometry.</p>
 <h3 id="usage_21">Usage<a class="headerlink" href="#usage_21" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">integer</span><span class="w"> </span><span class="n">ST_Dimension</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_disjoint"><a href="st_disjoint/">ST_Disjoint</a><a class="headerlink" href="#st_disjoint" title="Permanent link">¶</a></h2>
-<p>Return true if geomA is disjoint from geomB.</p>
+<p>Returns true if geomA is disjoint from geomB.</p>
 <h3 id="usage_22">Usage<a class="headerlink" href="#usage_22" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Disjoint</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_distance"><a href="st_distance/">ST_Distance</a><a class="headerlink" href="#st_distance" title="Permanent link">¶</a></h2>
-<p>Return the distance between two geometries or geographies.</p>
+<p>Returns the distance between two geometries or geographies.</p>
 <h3 id="usage_23">Usage<a class="headerlink" href="#usage_23" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">ST_Distance</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7824,7 +7824,7 @@ other.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Envelope_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_equals"><a href="st_equals/">ST_Equals</a><a class="headerlink" href="#st_equals" title="Permanent link">¶</a></h2>
-<p>Return true if geomA equals geomB.</p>
+<p>Returns true if geomA equals geomB.</p>
 <h3 id="usage_29">Usage<a class="headerlink" href="#usage_29" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Equals</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7836,24 +7836,24 @@ swapped.</p>
 <span class="n">geography</span><span class="w"> </span><span class="n">ST_FlipCoordinates</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_force2d"><a href="st_force2d/">ST_Force2D</a><a class="headerlink" href="#st_force2d" title="Permanent link">¶</a></h2>
-<p>Force a geometry into a XY coordinate model.</p>
+<p>Forces a geometry into a XY coordinate model.</p>
 <h3 id="usage_31">Usage<a class="headerlink" href="#usage_31" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force2D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_force3d"><a href="st_force3d/">ST_Force3D</a><a class="headerlink" href="#st_force3d" title="Permanent link">¶</a></h2>
-<p>Force a geometry into a XYZ coordinate model with an optional Z value.</p>
+<p>Forces a geometry into a XYZ coordinate model with an optional Z value.</p>
 <h3 id="usage_32">Usage<a class="headerlink" href="#usage_32" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force3D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force3D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">z</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_force3dm"><a href="st_force3dm/">ST_Force3DM</a><a class="headerlink" href="#st_force3dm" title="Permanent link">¶</a></h2>
-<p>Force a geometry into a XYM coordinate model with an optional M value.</p>
+<p>Forces a geometry into a XYM coordinate model with an optional M value.</p>
 <h3 id="usage_33">Usage<a class="headerlink" href="#usage_33" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force3DM</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force3DM</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_force4d"><a href="st_force4d/">ST_Force4D</a><a class="headerlink" href="#st_force4d" title="Permanent link">¶</a></h2>
-<p>Force a geometry into a XYZM coordinate model with optional Z and M
+<p>Forces a geometry into a XYZM coordinate model with optional Z and M
 values.</p>
 <h3 id="usage_34">Usage<a class="headerlink" href="#usage_34" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force4D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
@@ -7861,12 +7861,12 @@ values.</p>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force4D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">z</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geogfromwkb"><a href="st_geogfromwkb/">ST_GeogFromWKB</a><a class="headerlink" href="#st_geogfromwkb" title="Permanent link">¶</a></h2>
-<p>Construct a Geography from WKB Binary.</p>
+<p>Constructs a Geography from WKB Binary.</p>
 <h3 id="usage_35">Usage<a class="headerlink" href="#usage_35" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geography</span><span class="w"> </span><span class="n">ST_GeogFromWKB</span><span class="p">(</span><span class="n">wkb</span><span class="p">:</span><span class="w"> </span><span class="nb">binary</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geogfromwkt"><a href="st_geogfromwkt/">ST_GeogFromWKT</a><a class="headerlink" href="#st_geogfromwkt" title="Permanent link">¶</a></h2>
-<p>Construct a Geography from WKT.</p>
+<p>Constructs a Geography from WKT.</p>
 <h3 id="usage_36">Usage<a class="headerlink" href="#usage_36" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geography</span><span class="w"> </span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="n">wkt</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">)</span>
 <span class="n">geography</span><span class="w"> </span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="n">wkt</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">srid</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
@@ -7877,61 +7877,62 @@ values.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geography</span><span class="w"> </span><span class="n">ST_GeogPoint</span><span class="p">(</span><span class="n">longitude</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">latitude</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geometryn"><a href="st_geometryn/">ST_GeometryN</a><a class="headerlink" href="#st_geometryn" title="Permanent link">¶</a></h2>
-<p>Return the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION,
-(MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.</p>
+<p>Returns the 0-based Nth geometry if the geometry is a
+GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or
+(MULTI)POLYGON.</p>
 <h3 id="usage_38">Usage<a class="headerlink" href="#usage_38" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeometryN</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geometrytype"><a href="st_geometrytype/">ST_GeometryType</a><a class="headerlink" href="#st_geometrytype" title="Permanent link">¶</a></h2>
-<p>Return the type of a geometry.</p>
+<p>Returns the type of a geometry.</p>
 <h3 id="usage_39">Usage<a class="headerlink" href="#usage_39" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">string</span><span class="w"> </span><span class="n">ST_GeometryType</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geomfromewkb"><a href="st_geomfromewkb/">ST_GeomFromEWKB</a><a class="headerlink" href="#st_geomfromewkb" title="Permanent link">¶</a></h2>
-<p>Construct a geometry from Extended Well-Known Binary (EWKB).</p>
+<p>Constructs a geometry from Extended Well-Known Binary (EWKB).</p>
 <h3 id="usage_40">Usage<a class="headerlink" href="#usage_40" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromEWKB</span><span class="p">(</span><span class="n">ewkb</span><span class="p">:</span><span class="w"> </span><span class="nb">binary</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geomfromewkt"><a href="st_geomfromewkt/">ST_GeomFromEWKT</a><a class="headerlink" href="#st_geomfromewkt" title="Permanent link">¶</a></h2>
-<p>Construct a geometry from Extended Well-Known Text (EWKT).</p>
+<p>Constructs a geometry from Extended Well-Known Text (EWKT).</p>
 <h3 id="usage_41">Usage<a class="headerlink" href="#usage_41" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromEWKT</span><span class="p">(</span><span class="n">ewkt</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geomfromwkb"><a href="st_geomfromwkb/">ST_GeomFromWKB</a><a class="headerlink" href="#st_geomfromwkb" title="Permanent link">¶</a></h2>
-<p>Construct a Geometry from Well-Known Binary (WKB).</p>
+<p>Constructs a Geometry from Well-Known Binary (WKB).</p>
 <h3 id="usage_42">Usage<a class="headerlink" href="#usage_42" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromWKB</span><span class="p">(</span><span class="n">wkb</span><span class="p">:</span><span class="w"> </span><span class="nb">binary</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromWKB</span><span class="p">(</span><span class="n">wkb</span><span class="p">:</span><span class="w"> </span><span class="nb">binary</span><span class="p">,</span><span class="w"> </span><span class="n">srid</span><span class="p">:</span><span class="w"> </span><span class="n">crs</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_geomfromwkt"><a href="st_geomfromwkt/">ST_GeomFromWKT</a><a class="headerlink" href="#st_geomfromwkt" title="Permanent link">¶</a></h2>
-<p>Construct a Geometry from Well-Known Text (WKT).</p>
+<p>Constructs a Geometry from Well-Known Text (WKT).</p>
 <h3 id="usage_43">Usage<a class="headerlink" href="#usage_43" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="n">wkt</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="n">wkt</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">srid</span><span class="p">:</span><span class="w"> </span><span class="n">crs</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_hasm"><a href="st_hasm/">ST_HasM</a><a class="headerlink" href="#st_hasm" title="Permanent link">¶</a></h2>
-<p>Return true if the geometry has a M dimension.</p>
+<p>Returns true if the geometry has a M dimension.</p>
 <h3 id="usage_44">Usage<a class="headerlink" href="#usage_44" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_HasM</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_hasz"><a href="st_hasz/">ST_HasZ</a><a class="headerlink" href="#st_hasz" title="Permanent link">¶</a></h2>
-<p>Return true if the geometry has a Z dimension.</p>
+<p>Returns true if the geometry has a Z dimension.</p>
 <h3 id="usage_45">Usage<a class="headerlink" href="#usage_45" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_HasZ</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_intersection"><a href="st_intersection/">ST_Intersection</a><a class="headerlink" href="#st_intersection" title="Permanent link">¶</a></h2>
-<p>Compute the intersection of two geometries or geographies.</p>
+<p>Computes the intersection of two geometries or geographies.</p>
 <h3 id="usage_46">Usage<a class="headerlink" href="#usage_46" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 <span class="n">geography</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geogA</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="n">geogB</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_intersection_agg"><a href="st_intersection_agg/">ST_Intersection_Agg</a><a class="headerlink" href="#st_intersection_agg" title="Permanent link">¶</a></h2>
-<p>Return the cumulative intersection of all geometries in the input.</p>
+<p>Returns the cumulative intersection of all geometries in the input.</p>
 <h3 id="usage_47">Usage<a class="headerlink" href="#usage_47" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Intersection_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_intersects"><a href="st_intersects/">ST_Intersects</a><a class="headerlink" href="#st_intersects" title="Permanent link">¶</a></h2>
-<p>Return true if geomA intersects geomB.</p>
+<p>Returns true if geomA intersects geomB.</p>
 <h3 id="usage_48">Usage<a class="headerlink" href="#usage_48" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Intersects</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7947,17 +7948,17 @@ type.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_IsCollection</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_isempty"><a href="st_isempty/">ST_IsEmpty</a><a class="headerlink" href="#st_isempty" title="Permanent link">¶</a></h2>
-<p>Return true if the geometry is empty.</p>
+<p>Returns true if the geometry is empty.</p>
 <h3 id="usage_51">Usage<a class="headerlink" href="#usage_51" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_IsEmpty</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_isring"><a href="st_isring/">ST_IsRing</a><a class="headerlink" href="#st_isring" title="Permanent link">¶</a></h2>
-<p>Return true if a linestring is ST_IsClosed and ST_IsSimple.</p>
+<p>Returns true if a linestring is ST_IsClosed and ST_IsSimple.</p>
 <h3 id="usage_52">Usage<a class="headerlink" href="#usage_52" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_IsRing</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_issimple"><a href="st_issimple/">ST_IsSimple</a><a class="headerlink" href="#st_issimple" title="Permanent link">¶</a></h2>
-<p>Test if geometry’s only self-intersections are at boundary points.</p>
+<p>Tests if geometry’s only self-intersections are at boundary points.</p>
 <h3 id="usage_53">Usage<a class="headerlink" href="#usage_53" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_IsSimple</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -7973,7 +7974,7 @@ according to the OGC standard.</p>
 <div class="highlight"><pre><span></span><code><span class="n">string</span><span class="w"> </span><span class="n">ST_IsValidReason</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_knn"><a href="st_knn/">ST_KNN</a><a class="headerlink" href="#st_knn" title="Permanent link">¶</a></h2>
-<p>Return true if geomA finds k nearest neighbors from geomB.</p>
+<p>Returns true if geomA finds k nearest neighbors from geomB.</p>
 <h3 id="usage_56">Usage<a class="headerlink" href="#usage_56" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomb</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">k</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">use_spheroid</span><span class="p">:</span><span class="w"> </span><span class="nb">boolean</span><span class="p">)</span>
 </code></pre></div>
@@ -8010,8 +8011,7 @@ of its total length.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_MakeLine</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_makevalid"><a href="st_makevalid/">ST_MakeValid</a><a class="headerlink" href="#st_makevalid" title="Permanent link">¶</a></h2>
-<p>Given an invalid geometry, create a valid representation of the
-geometry.</p>
+<p>Creates a valid representation of an invalid geometry.</p>
 <h3 id="usage_63">Usage<a class="headerlink" href="#usage_63" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_MakeValid</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_MakeValid</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">keepCollapsed</span><span class="p">:</span><span class="w"> </span><span class="nb">boolean</span><span class="p">)</span>
@@ -8044,7 +8044,7 @@ input geometry.</p>
 <div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">ST_MMin</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_npoints"><a href="st_npoints/">ST_NPoints</a><a class="headerlink" href="#st_npoints" title="Permanent link">¶</a></h2>
-<p>Return the number of points of the geometry.</p>
+<p>Returns the number of points of the geometry.</p>
 <h3 id="usage_69">Usage<a class="headerlink" href="#usage_69" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">integer</span><span class="w"> </span><span class="n">ST_NPoints</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -8054,7 +8054,7 @@ input geometry.</p>
 <div class="highlight"><pre><span></span><code><span class="nb">integer</span><span class="w"> </span><span class="n">ST_NumGeometries</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_overlaps"><a href="st_overlaps/">ST_Overlaps</a><a class="headerlink" href="#st_overlaps" title="Permanent link">¶</a></h2>
-<p>Return true if A overlaps B.</p>
+<p>Returns true if A overlaps B.</p>
 <h3 id="usage_71">Usage<a class="headerlink" href="#usage_71" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Overlaps</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -8064,7 +8064,7 @@ input geometry.</p>
 <div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">ST_Perimeter</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_point"><a href="st_point/">ST_Point</a><a class="headerlink" href="#st_point" title="Permanent link">¶</a></h2>
-<p>Construct a Point Geometry from X and Y.</p>
+<p>Constructs a Point Geometry from X and Y.</p>
 <h3 id="usage_73">Usage<a class="headerlink" href="#usage_73" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="n">x</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">srid</span><span class="p">:</span><span class="w"> </span><span class="n">crs</span><span class="p">)</span>
 </code></pre></div>
@@ -8075,7 +8075,7 @@ values.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_PointM</span><span class="p">(</span><span class="n">x</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_pointn"><a href="st_pointn/">ST_PointN</a><a class="headerlink" href="#st_pointn" title="Permanent link">¶</a></h2>
-<p>Return the Nth point in a linestring.</p>
+<p>Returns the Nth point in a linestring.</p>
 <h3 id="usage_75">Usage<a class="headerlink" href="#usage_75" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_PointN</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
 </code></pre></div>
@@ -8108,28 +8108,28 @@ representing the edges of a polygon.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Polygonize_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_reverse"><a href="st_reverse/">ST_Reverse</a><a class="headerlink" href="#st_reverse" title="Permanent link">¶</a></h2>
-<p>Return the geometry with vertex order reversed.</p>
+<p>Returns the geometry with vertex order reversed.</p>
 <h3 id="usage_81">Usage<a class="headerlink" href="#usage_81" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Reverse</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_rotate"><a href="st_rotate/">ST_Rotate</a><a class="headerlink" href="#st_rotate" title="Permanent link">¶</a></h2>
-<p>Rotate a geometry counter-clockwise around the Z axis by an angle in
+<p>Rotates a geometry counter-clockwise around the Z axis by an angle in
 radians.</p>
 <h3 id="usage_82">Usage<a class="headerlink" href="#usage_82" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Rotate</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">rot</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_rotatex"><a href="st_rotatex/">ST_RotateX</a><a class="headerlink" href="#st_rotatex" title="Permanent link">¶</a></h2>
-<p>Rotate a geometry around the X axis by an angle in radians.</p>
+<p>Rotates a geometry around the X axis by an angle in radians.</p>
 <h3 id="usage_83">Usage<a class="headerlink" href="#usage_83" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_RotateX</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">rot</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_rotatey"><a href="st_rotatey/">ST_RotateY</a><a class="headerlink" href="#st_rotatey" title="Permanent link">¶</a></h2>
-<p>Rotate a geometry around the Y axis by an angle in radians.</p>
+<p>Rotates a geometry around the Y axis by an angle in radians.</p>
 <h3 id="usage_84">Usage<a class="headerlink" href="#usage_84" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_RotateY</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">rot</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_scale"><a href="st_scale/">ST_Scale</a><a class="headerlink" href="#st_scale" title="Permanent link">¶</a></h2>
-<p>Scale a geometry by multiplying ordinates with scale factors.</p>
+<p>Scales a geometry by multiplying ordinates with scale factors.</p>
 <h3 id="usage_85">Usage<a class="headerlink" href="#usage_85" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Scale</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">scaleX</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">scaleY</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 <span class="n">geometry</span><span class="w"> </span><span class="n">ST_Scale</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">scaleX</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">scaleY</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">scaleZ</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
@@ -8177,7 +8177,7 @@ same topology.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_SymDifference</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_touches"><a href="st_touches/">ST_Touches</a><a class="headerlink" href="#st_touches" title="Permanent link">¶</a></h2>
-<p>Return true if A touches B.</p>
+<p>Returns true if A touches B.</p>
 <h3 id="usage_94">Usage<a class="headerlink" href="#usage_94" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Touches</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -8211,7 +8211,7 @@ geometries.</p>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Union_Agg</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="st_within"><a href="st_within/">ST_Within</a><a class="headerlink" href="#st_within" title="Permanent link">¶</a></h2>
-<p>Return true if A is completely inside B.</p>
+<p>Returns true if A is completely inside B.</p>
 <h3 id="usage_100">Usage<a class="headerlink" href="#usage_100" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="nb">boolean</span><span class="w"> </span><span class="n">ST_Within</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
@@ -8286,7 +8286,7 @@ geometry.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 18, 2026 14:34:40 UTC">February 18, 2026 14:34:40</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 18, 2026 15:09:45 UTC">February 18, 2026 15:09:45</span>
   </span>
 
     

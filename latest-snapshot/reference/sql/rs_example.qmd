@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_Example
-description: Create a simple example raster for testing and demos.
+description: Creates a simple example raster for testing and demos.
 kernels:
   - returns: raster
     args: []

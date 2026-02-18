@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_AsEWKB
-description: Return the EWKB representation of a geometry or geography.
+description: Returns the EWKB representation of a geometry or geography.
 kernels:
   - returns: binary
     args: [geometry]

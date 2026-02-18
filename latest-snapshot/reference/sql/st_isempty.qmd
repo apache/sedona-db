@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_IsEmpty
-description: Return true if the geometry is empty.
+description: Returns true if the geometry is empty.
 kernels:
   - returns: boolean
     args: [geometry]

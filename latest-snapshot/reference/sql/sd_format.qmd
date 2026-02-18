@@ -17,7 +17,7 @@
 # under the License.
 
 title: SD_Format
-description: Format values for display with optional JSON options.
+description: Formats values for display with optional JSON options.
 kernels:
   - returns: any
     args:
