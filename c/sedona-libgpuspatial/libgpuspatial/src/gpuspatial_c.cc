@@ -193,22 +193,25 @@ struct GpuSpatialIndexFloat2DExporter {
 
   static int CProbe(self_t* self, SedonaSpatialIndexContext* context, const float* buf,
                     uint32_t n_rects,
-                    void (*callback)(const uint32_t* build_indices,
-                                     const uint32_t* probe_indices, uint32_t length,
-                                     void* user_data),
+                    int (*callback)(const uint32_t* build_indices,
+                                    const uint32_t* probe_indices, uint32_t length,
+                                    void* user_data),
                     void* user_data) {
+    auto* p_ctx = static_cast<context_t*>(context->private_data);
     // Do not use SafeExecute because this method is thread-safe and we don't want to set
     // last_error for the whole index if one thread encounters an error
     try {
       auto* rects = reinterpret_cast<const spatial_index_t::box_t*>(buf);
-      auto& buff = static_cast<context_t*>(context->private_data)->payload;
+      auto& buff = p_ctx->payload;
       use_index(self).Probe(rects, n_rects, &buff.build_indices, &buff.probe_indices);
-      callback(buff.build_indices.data(), buff.probe_indices.data(),
-               buff.build_indices.size(), user_data);
-      return 0;
+
+      return callback(buff.build_indices.data(), buff.probe_indices.data(),
+                      buff.build_indices.size(), user_data);
     } catch (const std::exception& e) {  // user should call context_get_last_error
+      p_ctx->last_error = std::string(e.what());
       return EINVAL;
     } catch (...) {
+      p_ctx->last_error = "Unknown internal error";
       return EINVAL;
     }
   }

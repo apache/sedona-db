@@ -71,10 +71,10 @@ struct SedonaFloatIndex2D {
   void (*create_context)(struct SedonaSpatialIndexContext* context);
   /** Destroy a previously created context */
   void (*destroy_context)(struct SedonaSpatialIndexContext* context);
-  /** Push rectangles for building the spatial index, each rectangle is represented by 4
-   * floats: [min_x, min_y, max_x, max_y].
+  /** Push rectangles for building the spatial index.
+   * @param buf each rectangle is represented by 4 floats: [min_x, min_y, max_x, max_y].
    * Points can also be indexed by providing degenerated rectangles [x, y, x, y].
-   *
+   * @param n_rects The number of rectangles in the buffer
    * @return 0 on success, non-zero on failure
    */
   int (*push_build)(struct SedonaFloatIndex2D* self, const float* buf, uint32_t n_rects);
@@ -84,22 +84,27 @@ struct SedonaFloatIndex2D {
    * @return 0 on success, non-zero on failure
    */
   int (*finish_building)(struct SedonaFloatIndex2D* self);
-
   /**
-   * Probe the spatial index with the given rectangles, each rectangle is represented by 4
-   * floats: [min_x, min_y, max_x, max_y] Points can also be probed by providing [x, y, x,
-   * y] but points and rectangles cannot be mixed in one Probe call. The results of the
-   * probe will be stored in the context. The callback function will be called for each
-   * batch of results, with the build and probe indices of the candidate pairs in the
-   * batch. The user_data pointer will be passed to the callback
+   * Probe the spatial index with the given rectangles.
+   * @param buf The buffer of rectangles to probe, stored in the same format as the build
+   * rectangles.
+   * @param n_rects The number of rectangles in the probe buffer.
+   * @param callback The callback function to call for each batch of results.
+   * The callback should return 0 to continue receiving results, or non-zero to stop the
+   * probe early. The callback will be called with arrays of build and probe indices
+   * corresponding to candidate pairs of rectangles that intersect.
+   * The user-provided callback is required to return a value that will be further passed
+   * to the probe function to indicate whether there's an error during the callback
+   * execution.
+   * @param user_data The user_data pointer will be passed to the callback
    *
    * @return 0 on success, non-zero on failure
    */
   int (*probe)(struct SedonaFloatIndex2D* self, struct SedonaSpatialIndexContext* context,
                const float* buf, uint32_t n_rects,
-               void (*callback)(const uint32_t* build_indices,
-                                const uint32_t* probe_indices, uint32_t length,
-                                void* user_data),
+               int (*callback)(const uint32_t* build_indices,
+                               const uint32_t* probe_indices, uint32_t length,
+                               void* user_data),
                void* user_data);
   /** Get the last error message from either the index
    *

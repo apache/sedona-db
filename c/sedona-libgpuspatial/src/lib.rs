@@ -94,40 +94,56 @@ mod sys {
         }
     }
 
+    /// A GPU-accelerated spatial index for 2D rectangles in FP32.
+    /// Once built, the index is immutable and can be safely shared across threads for read-only probe operations.
     pub struct GpuSpatialIndex {
         inner: libgpuspatial::FloatIndex2D,
     }
 
     impl GpuSpatialIndex {
+        /// Creates a new GPU spatial index with the specified options.
+        /// This initializes the GPU runtime if it hasn't been initialized yet.
         pub fn try_new(options: &GpuSpatialOptions) -> Result<Self> {
             let ctx = SpatialContext::try_new(options)?;
             let inner = libgpuspatial::FloatIndex2D::try_new(ctx.runtime, options.concurrency)?;
             Ok(Self { inner })
         }
 
+        /// Clears any previously inserted data from the builder, allowing it to be reused for building a new index.
         pub fn clear(&mut self) {
             self.inner.clear()
         }
 
+        /// Inserts a batch of bounding boxes into the index.
+        /// Each rectangle is represented as a `Rect<f32>` with minimum and maximum x and y coordinates.
+        /// This method accumulates these rectangles until `finish_building` is called to finalize the index.
+        /// The method can be called multiple times to insert data in batches before finalizing.
         pub fn push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
             // Re-interpreting Rect<f32> as flat f32 array (xmin, ymin, xmax, ymax)
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.push_build(raw_ptr, rects.len() as u32)
         }
 
+        /// Finalizes the building process and returns an immutable spatial index that can be probed.
         pub fn finish_building(&mut self) -> Result<()> {
             self.inner.finish_building()
         }
 
+        /// Probes the spatial index with a batch of rectangles and returns pairs of matching indices from the build and probe sets.
         pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.probe(raw_ptr, rects.len() as u32)
         }
     }
+
+    /// A GPU-accelerated spatial refiner that can perform various spatial relation tests (e.g., Intersects, Contains) between two sets of geometries.
     pub struct GpuSpatialRefiner {
         inner: libgpuspatial::Refiner,
     }
+
     impl GpuSpatialRefiner {
+        /// Creates a new GPU spatial refiner with the specified options.
+        /// This initializes the GPU runtime if it hasn't been initialized yet.
         pub fn try_new(options: &GpuSpatialOptions) -> Result<Self> {
             let ctx = SpatialContext::try_new(options)?;
             let inner = libgpuspatial::Refiner::try_new(
@@ -139,22 +155,34 @@ mod sys {
             Ok(Self { inner })
         }
 
+        /// Initializes the schema for the refiner based on the data types of the build and probe geometries.
+        /// This allows the refiner to understand how to interpret the geometry data for both sets.
         pub fn init_schema(&mut self, build: &DataType, probe: &DataType) -> Result<()> {
             self.inner.init_schema(build, probe)
         }
 
+        /// Clears any previously inserted data from the refiner, allowing it to be reused for building a new set of geometries.
         pub fn clear(&mut self) {
             self.inner.clear()
         }
 
+        /// Inserts a batch of geometries into the refiner for the build side.
+        /// The geometries are provided as an Arrow array reference, and the refiner will process them according to the initialized schema.
+        /// This method accumulates these geometries until `finish_building` is called to finalize the refiner.
         pub fn push_build(&mut self, array: &arrow_array::ArrayRef) -> Result<()> {
             self.inner.push_build(array)
         }
 
+        /// Finalizes the building process and prepares the refiner for refinement operations.
+        /// After this call, the refiner is ready to perform spatial relation tests against probe geometries.
         pub fn finish_building(&mut self) -> Result<()> {
             self.inner.finish_building()
         }
 
+        /// Refines the candidate pairs of geometries based on the specified spatial relation predicate.
+        /// The probe geometries are provided as an Arrow array reference,
+        /// and the method updates the provided vectors of build and probe indices to
+        /// include only those pairs that satisfy the spatial relation predicate.
         pub fn refine(
             &self,
             probe: &arrow_array::ArrayRef,
@@ -298,6 +326,7 @@ mod tests {
         refiner
             .init_schema(polygons.data_type(), points.data_type())
             .unwrap();
+
         refiner.push_build(&polygons).unwrap();
 
         // 3. Finish (Consumes Builder -> Returns Refiner)

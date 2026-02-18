@@ -18,6 +18,7 @@ use arrow_schema::ArrowError;
 use std::fmt;
 use thiserror::Error;
 
+/// Errors that can occur during GPU spatial operations.
 #[derive(Error, Debug)]
 pub enum GpuSpatialError {
     Arrow(ArrowError),
