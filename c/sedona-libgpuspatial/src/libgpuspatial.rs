@@ -35,6 +35,9 @@ pub struct GpuSpatialRuntimeWrapper {
     pub device_id: i32,
 }
 
+unsafe impl Send for GpuSpatialRuntimeWrapper {}
+unsafe impl Sync for GpuSpatialRuntimeWrapper {}
+
 impl GpuSpatialRuntimeWrapper {
     /// Creates a new `GpuSpatialRuntimeWrapper` instance by initializing the underlying C struct with the provided configuration. It returns a `GpuSpatialError` if initialization fails.
     /// # Arguments

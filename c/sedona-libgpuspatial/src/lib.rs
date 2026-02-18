@@ -39,10 +39,6 @@ mod sys {
 
     pub type Result<T> = std::result::Result<T, GpuSpatialError>;
 
-    // Global Runtime State
-    unsafe impl Send for GpuSpatialRuntimeWrapper {}
-    unsafe impl Sync for GpuSpatialRuntimeWrapper {}
-
     static GLOBAL_GPUSPATIAL_RUNTIME: Mutex<Option<Arc<GpuSpatialRuntimeWrapper>>> =
         Mutex::new(None);
     /// Handles initialization of the GPU runtime.
