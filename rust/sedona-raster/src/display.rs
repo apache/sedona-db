@@ -27,30 +27,30 @@ use sedona_schema::raster::StorageType;
 ///
 /// Non-skewed rasters:
 /// ```text
-/// RASTER [WxH/nbands] @ [xmin ymin xmax ymax] / CRS
+/// [WxH/nbands] @ [xmin ymin xmax ymax] / CRS
 /// ```
 ///
 /// Skewed rasters (includes skew parameters):
 /// ```text
-/// RASTER [WxH/nbands] @ [xmin ymin xmax ymax] skew=(skew_x, skew_y) / CRS
+/// [WxH/nbands] @ [xmin ymin xmax ymax] skew=(skew_x, skew_y) / CRS
 /// ```
 ///
 /// With outdb bands:
 /// ```text
-/// RASTER [WxH/nbands] @ [xmin ymin xmax ymax] / CRS <outdb>
+/// [WxH/nbands] @ [xmin ymin xmax ymax] / CRS <outdb>
 /// ```
 ///
 /// Without CRS:
 /// ```text
-/// RASTER [WxH/nbands] @ [xmin ymin xmax ymax]
+/// [WxH/nbands] @ [xmin ymin xmax ymax]
 /// ```
 ///
 /// # Examples
 ///
 /// ```text
-/// RASTER [64x32/3] @ [43.08 79.07 171.08 143.07] / OGC:CRS84
-/// RASTER [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / EPSG:2193
-/// RASTER [10x10/1] @ [0 0 10 10] / OGC:CRS84 <outdb>
+/// [64x32/3] @ [43.08 79.07 171.08 143.07] / OGC:CRS84
+/// [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / EPSG:2193
+/// [10x10/1] @ [0 0 10 10] / OGC:CRS84 <outdb>
 /// ```
 pub struct RasterDisplay<'a>(pub &'a dyn RasterRef);
 
@@ -129,7 +129,7 @@ mod tests {
         let raster = raster_array.get(0).unwrap();
 
         let display = format!("{}", RasterDisplay(&raster));
-        assert_eq!(display, "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+        assert_eq!(display, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
     }
 
     #[test]
@@ -144,7 +144,7 @@ mod tests {
         let display = format!("{}", RasterDisplay(&raster));
         assert_eq!(
             display,
-            "RASTER [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
         );
     }
 
@@ -158,6 +158,6 @@ mod tests {
         let mut buf = String::new();
         use std::fmt::Write;
         write!(buf, "{}", RasterDisplay(&raster)).unwrap();
-        assert_eq!(buf, "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+        assert_eq!(buf, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
     }
 }

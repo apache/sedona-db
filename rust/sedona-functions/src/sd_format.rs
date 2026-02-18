@@ -617,16 +617,13 @@ mod tests {
         let formatted = result.as_string::<i32>();
 
         // Index 0: valid raster (no skew)
-        assert_eq!(
-            formatted.value(0),
-            "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84"
-        );
+        assert_eq!(formatted.value(0), "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
         // Index 1: null raster should produce null output
         assert!(formatted.is_null(1));
         // Index 2: valid raster (with skew)
         assert_eq!(
             formatted.value(2),
-            "RASTER [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
         );
     }
 
@@ -641,11 +638,11 @@ mod tests {
         let formatted = result.as_string::<i32>();
 
         // Index 0: valid raster (no skew)
-        assert!(formatted.value(0).starts_with("RASTER [1x2/"));
+        assert!(formatted.value(0).starts_with("[1x2/"));
         // Index 1: null raster should produce null output
         assert!(formatted.is_null(1));
         // Index 2: valid raster (with skew)
-        assert!(formatted.value(2).starts_with("RASTER [3x4/"));
+        assert!(formatted.value(2).starts_with("[3x4/"));
     }
 
     #[test]
@@ -661,8 +658,8 @@ mod tests {
         let formatted = result.as_string::<i32>();
 
         // With a small width_hint, output should be truncated
-        let full_output = "RASTER [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84";
-        assert!(formatted.value(0).starts_with("RASTER ["));
+        let full_output = "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84";
+        assert!(formatted.value(0).starts_with("["));
         assert!(formatted.value(0).len() < full_output.len());
     }
 
