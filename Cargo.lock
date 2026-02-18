@@ -5264,6 +5264,7 @@ dependencies = [
  "sedona-common",
  "sedona-expr",
  "sedona-geometry",
+ "sedona-raster",
  "sedona-schema",
  "sedona-testing",
  "serde_json",
