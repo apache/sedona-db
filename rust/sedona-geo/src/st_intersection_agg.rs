@@ -222,7 +222,7 @@ impl Accumulator for IntersectionAccumulator {
 mod test {
     use super::*;
     use rstest::rstest;
-    use sedona_functions::st_intersection_agg::st_intersection_agg_udf;
+    use sedona_expr::aggregate_udf::SedonaAggregateUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::{assert_scalar_equal, assert_scalar_equal_wkb_geometry_topologically},
@@ -232,8 +232,7 @@ mod test {
 
     #[rstest]
     fn polygon_polygon_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_intersection_agg_udf();
-        udaf.add_kernel(st_intersection_agg_impl());
+        let udaf = SedonaAggregateUDF::from_impl("st_union", st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
@@ -297,8 +296,7 @@ mod test {
     fn polygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_intersection_agg_udf();
-        udaf.add_kernel(st_intersection_agg_impl());
+        let udaf = SedonaAggregateUDF::from_impl("st_union", st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -345,8 +343,7 @@ mod test {
     fn multipolygon_multipolygon_cases(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_intersection_agg_udf();
-        udaf.add_kernel(st_intersection_agg_impl());
+        let udaf = SedonaAggregateUDF::from_impl("st_union", st_intersection_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -400,8 +397,7 @@ mod test {
     fn udf_invoke_item_crs() {
         let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
 
-        let mut udaf = st_intersection_agg_udf();
-        udaf.add_kernel(st_intersection_agg_impl());
+        let udaf = SedonaAggregateUDF::from_impl("st_union", st_intersection_agg_impl());
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
 

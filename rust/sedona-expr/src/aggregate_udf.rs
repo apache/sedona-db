@@ -101,6 +101,11 @@ impl SedonaAggregateUDF {
         }
     }
 
+    /// Create a new immutable SedonaAggregateUDF
+    pub fn from_impl(name: &str, kernels: impl IntoSedonaAccumulatorRefs) -> Self {
+        Self::new(name, kernels, Volatility::Immutable)
+    }
+
     /// Create a new stub aggregate function
     ///
     /// Creates a new aggregate function that calculates a return type but fails when
