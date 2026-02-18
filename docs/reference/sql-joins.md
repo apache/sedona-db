@@ -63,7 +63,7 @@ INNER JOIN
 
 ### No Filter Pushdown
 
-KNN joins do not perform filter pushdown optimizations. All `WHERE` clause predicates are evaluated after the K nearest neighbor candidates have been selected, never pushed into the input tables. This ensures the K nearest neighbors are always determined from the full, unfiltered dataset.
+KNN joins currently do not perform filter pushdown optimizations. All `WHERE` clause predicates are evaluated after the K nearest neighbor candidates have been selected, never pushed into the input tables. This ensures the K nearest neighbors are always determined from the full, unfiltered dataset.
 
 For example, in the following query, `r.rating > 4.0` is applied *after* finding the 3 nearest restaurants for each hotel — it does not reduce the set of candidate restaurants before the KNN search:
 
@@ -83,6 +83,27 @@ WHERE
 
 This means the result may contain fewer than 3 restaurants per hotel if some of the nearest neighbors do not pass the filter.
 
+Note that pushing filters on the **query side** (the first argument of `ST_KNN`) down to the input table is a valid optimization — it reduces the number of probe rows without affecting which objects are considered as KNN candidates. For instance, `WHERE h.stars >= 4` could safely be pushed below the join to scan only luxury hotels. This optimization is not yet implemented but may be added in a future release.
+
 ### ST_KNN Predicate Precedence
 
 When `ST_KNN` is combined with other predicates via `AND`, `ST_KNN` always takes precedence. It is extracted first to determine the KNN candidates, and the remaining predicates are applied as post-filters on the join output.
+
+For example, the following two queries produce the same results:
+
+```sql
+-- ST_KNN in ON clause combined with another predicate via AND
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+INNER JOIN restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false) AND r.rating > 4.0
+
+-- Equivalent: ST_KNN in ON clause, other predicate in WHERE
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+INNER JOIN restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false)
+WHERE r.rating > 4.0
+```
+
+In both cases, `ST_KNN` determines the 3 nearest restaurants first, then `r.rating > 4.0` filters the results.
