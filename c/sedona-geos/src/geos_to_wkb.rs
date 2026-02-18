@@ -271,7 +271,7 @@ fn write_coord_seq(
         Dimensions::Xyz => CoordType::XYZ,
         Dimensions::Xym => CoordType::XYM,
         Dimensions::Xyzm => CoordType::XYZM,
-        _ => return sedona_internal_err!("Unexpecte dimensions {dim:?}"),
+        _ => return sedona_internal_err!("Unexpected dimensions {dim:?}"),
     };
 
     let coords = coord_seq
