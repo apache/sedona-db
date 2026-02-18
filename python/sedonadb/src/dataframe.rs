@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -189,11 +189,23 @@ impl InternalDataFrame {
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
+        // We need to special-case geometry columns until we have a logical optimizer rule or
+        // sorting for user-defined types is supported.
+        let geometry_column_indices = self.inner.schema().geometry_column_indices()?;
+        let geometry_column_names = geometry_column_indices
+            .iter()
+            .map(|i| self.inner.schema().field(*i).name().as_str())
+            .collect::<HashSet<&str>>();
         let sort_by_expr = sort_by
             .into_iter()
             .map(|name| {
-                let column = Expr::Column(Column::new_unqualified(name));
-                SortExpr::new(column, true, false)
+                let column = Expr::Column(Column::new_unqualified(name.clone()));
+                if geometry_column_names.contains(name.as_str()) {
+                    todo!()
+                } else {
+                    SortExpr::new(column, true, false)
+                }
+
             })
             .collect::<Vec<_>>();
 
