@@ -19,6 +19,7 @@ use std::{collections::HashMap, sync::Arc};
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
+use sedona::context_builder::SedonaContextBuilder;
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -39,7 +40,8 @@ pub struct InternalContext {
 #[pymethods]
 impl InternalContext {
     #[new]
-    fn new(py: Python) -> Result<Self, PySedonaError> {
+    #[pyo3(signature = (options=HashMap::new()))]
+    fn new(py: Python, options: HashMap<String, String>) -> Result<Self, PySedonaError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -47,7 +49,10 @@ impl InternalContext {
                 PySedonaError::SedonaPython(format!("Failed to build multithreaded runtime: {e}"))
             })?;
 
-        let inner = wait_for_future(py, &runtime, SedonaContext::new_local_interactive())??;
+        let builder = SedonaContextBuilder::from_options(&options)
+            .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
+
+        let inner = wait_for_future(py, &runtime, builder.build())??;
 
         Ok(Self {
             inner,

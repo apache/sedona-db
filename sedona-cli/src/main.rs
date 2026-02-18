@@ -15,18 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::collections::HashMap;
 use std::env;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::{Arc, LazyLock};
 
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryPool, TrackConsumersPool};
-use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use sedona::context::SedonaContext;
-use sedona::memory_pool::{SedonaFairSpillPool, DEFAULT_UNSPILLABLE_RESERVE_RATIO};
+use sedona::context_builder::SedonaContextBuilder;
+use sedona::memory_pool::DEFAULT_UNSPILLABLE_RESERVE_RATIO;
 use sedona::pool_type::PoolType;
 use sedona_cli::{
     exec,
@@ -163,27 +158,13 @@ async fn main_inner() -> Result<()> {
         env::set_current_dir(p).unwrap();
     };
 
-    let mut rt_builder = RuntimeEnvBuilder::new();
-    // set memory pool size
+    let mut builder = SedonaContextBuilder::new()
+        .with_pool_type(args.mem_pool_type.clone())
+        .with_unspillable_reserve_ratio(args.unspillable_reserve_ratio)?;
     if let Some(memory_limit) = args.memory_limit {
-        // set memory pool type
-        let track_capacity = NonZeroUsize::new(10).expect("track capacity must be non-zero");
-        let pool: Arc<dyn MemoryPool> = match args.mem_pool_type {
-            PoolType::Fair => Arc::new(TrackConsumersPool::new(
-                SedonaFairSpillPool::new(memory_limit, args.unspillable_reserve_ratio),
-                track_capacity,
-            )),
-            PoolType::Greedy => Arc::new(TrackConsumersPool::new(
-                GreedyMemoryPool::new(memory_limit),
-                track_capacity,
-            )),
-        };
-
-        rt_builder = rt_builder.with_memory_pool(pool)
+        builder = builder.with_memory_limit(memory_limit);
     }
-    let runtime_env = rt_builder.build_arc()?;
-
-    let ctx = SedonaContext::new_local_interactive_with_runtime_env(runtime_env).await?;
+    let ctx = builder.build().await?;
 
     let mut print_options = PrintOptions {
         format: args.format,
@@ -238,69 +219,8 @@ fn parse_command(command: &str) -> Result<String, String> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ByteUnit {
-    Byte,
-    KiB,
-    MiB,
-    GiB,
-    TiB,
-}
-
-impl ByteUnit {
-    fn multiplier(&self) -> u64 {
-        match self {
-            ByteUnit::Byte => 1,
-            ByteUnit::KiB => 1 << 10,
-            ByteUnit::MiB => 1 << 20,
-            ByteUnit::GiB => 1 << 30,
-            ByteUnit::TiB => 1 << 40,
-        }
-    }
-}
-
-fn parse_size_string(size: &str, label: &str) -> Result<usize, String> {
-    static BYTE_SUFFIXES: LazyLock<HashMap<&'static str, ByteUnit>> = LazyLock::new(|| {
-        let mut m = HashMap::new();
-        m.insert("b", ByteUnit::Byte);
-        m.insert("k", ByteUnit::KiB);
-        m.insert("kb", ByteUnit::KiB);
-        m.insert("m", ByteUnit::MiB);
-        m.insert("mb", ByteUnit::MiB);
-        m.insert("g", ByteUnit::GiB);
-        m.insert("gb", ByteUnit::GiB);
-        m.insert("t", ByteUnit::TiB);
-        m.insert("tb", ByteUnit::TiB);
-        m
-    });
-
-    static SUFFIX_REGEX: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^([0-9.]+)\s*([a-z]+)?$").unwrap());
-
-    let lower = size.to_lowercase();
-    if let Some(caps) = SUFFIX_REGEX.captures(&lower) {
-        let num_str = caps.get(1).unwrap().as_str();
-        let num = num_str
-            .parse::<f64>()
-            .map_err(|_| format!("Invalid numeric value in {label} '{size}'"))?;
-
-        let suffix = caps.get(2).map(|m| m.as_str()).unwrap_or("b");
-        let unit = BYTE_SUFFIXES
-            .get(suffix)
-            .ok_or_else(|| format!("Invalid {label} '{size}'"))?;
-        let total_bytes = num * unit.multiplier() as f64;
-        if !total_bytes.is_finite() || total_bytes > usize::MAX as f64 {
-            return Err(format!("{label} '{size}' is too large"));
-        }
-
-        Ok(total_bytes as usize)
-    } else {
-        Err(format!("Invalid {label} '{size}'"))
-    }
-}
-
 pub fn extract_memory_pool_size(size: &str) -> Result<usize, String> {
-    parse_size_string(size, "memory pool size")
+    sedona::size_parser::parse_size_string(size).map_err(|e| e.to_string())
 }
 
 fn validate_unspillable_reserve_ratio(s: &str) -> Result<f64, String> {
@@ -313,74 +233,4 @@ fn validate_unspillable_reserve_ratio(s: &str) -> Result<f64, String> {
         ));
     }
     Ok(value)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn assert_conversion(input: &str, expected: Result<usize, String>) {
-        let result = extract_memory_pool_size(input);
-        match expected {
-            Ok(v) => assert_eq!(result.unwrap(), v),
-            Err(e) => assert_eq!(result.unwrap_err(), e),
-        }
-    }
-
-    #[test]
-    fn memory_pool_size() -> Result<(), String> {
-        // Test basic sizes without suffix, assumed to be bytes
-        assert_conversion("5", Ok(5));
-        assert_conversion("100", Ok(100));
-
-        // Test various units
-        assert_conversion("5b", Ok(5));
-        assert_conversion("4k", Ok(4 * 1024));
-        assert_conversion("4kb", Ok(4 * 1024));
-        assert_conversion("20m", Ok(20 * 1024 * 1024));
-        assert_conversion("20mb", Ok(20 * 1024 * 1024));
-        assert_conversion("2g", Ok(2 * 1024 * 1024 * 1024));
-        assert_conversion("2gb", Ok(2 * 1024 * 1024 * 1024));
-        assert_conversion("3t", Ok(3 * 1024 * 1024 * 1024 * 1024));
-        assert_conversion("4tb", Ok(4 * 1024 * 1024 * 1024 * 1024));
-
-        // Test case insensitivity
-        assert_conversion("4K", Ok(4 * 1024));
-        assert_conversion("4KB", Ok(4 * 1024));
-        assert_conversion("20M", Ok(20 * 1024 * 1024));
-        assert_conversion("20MB", Ok(20 * 1024 * 1024));
-        assert_conversion("2G", Ok(2 * 1024 * 1024 * 1024));
-        assert_conversion("2GB", Ok(2 * 1024 * 1024 * 1024));
-        assert_conversion("2T", Ok(2 * 1024 * 1024 * 1024 * 1024));
-
-        // Test decimal values
-        assert_conversion("1.5g", Ok((1.5 * 1024.0 * 1024.0 * 1024.0) as usize));
-        assert_conversion("0.5m", Ok((0.5 * 1024.0 * 1024.0) as usize));
-        assert_conversion("9.5 gb", Ok((9.5 * 1024.0 * 1024.0 * 1024.0) as usize));
-
-        // Test with spaces between number and suffix
-        assert_conversion("4 k", Ok(4 * 1024));
-        assert_conversion("20 mb", Ok(20 * 1024 * 1024));
-
-        // Test invalid input
-        assert_conversion(
-            "invalid",
-            Err("Invalid memory pool size 'invalid'".to_string()),
-        );
-        assert_conversion("4kbx", Err("Invalid memory pool size '4kbx'".to_string()));
-        assert_conversion("-20mb", Err("Invalid memory pool size '-20mb'".to_string()));
-        assert_conversion("-100", Err("Invalid memory pool size '-100'".to_string()));
-        assert_conversion(
-            "12k12k",
-            Err("Invalid memory pool size '12k12k'".to_string()),
-        );
-
-        // Test overflow
-        assert_conversion(
-            "99999999t",
-            Err("memory pool size '99999999t' is too large".to_string()),
-        );
-
-        Ok(())
-    }
 }

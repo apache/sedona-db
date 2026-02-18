@@ -32,7 +32,7 @@ float_next_after = { workspace = true }
 geo-traits = { workspace = true }
 geo-types = { workspace = true, features = ["approx", "use-rstar_0_12"] }
 sedona-geo-traits-ext = { workspace = true }
-log = "0.4.11"
+log = { workspace = true }
 num-traits = { workspace = true }
 robust = "1.1.0"
 rstar = "0.12.0"

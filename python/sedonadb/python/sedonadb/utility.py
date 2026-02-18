@@ -19,7 +19,7 @@
 class Sedona:
     """Mock sedona Python module
 
-    The Apache Sedaona Python ecosystem is centered around the apache-sedona Python
+    The Apache Sedona Python ecosystem is centered around the apache-sedona Python
     package which provides the `sedona` modules. To decouple the maintenance and
     provide fine-grained dependency control for projects that need it, sedonadb
     is distributed as a standalone package. This mock `sedona` module lets us write
