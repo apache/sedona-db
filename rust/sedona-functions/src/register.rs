@@ -149,22 +149,3 @@ pub fn default_function_set() -> FunctionSet {
 
     function_set
 }
-
-/// Functions whose implementations are registered independently
-///
-/// These functions are included in the default function set; however,
-/// it is useful to expose them individually for testing in crates that
-/// implement them.
-pub mod stubs {
-    pub use crate::overlay::*;
-    pub use crate::predicates::*;
-    pub use crate::referencing::*;
-    pub use crate::st_area::st_area_udf;
-    pub use crate::st_azimuth::st_azimuth_udf;
-    pub use crate::st_centroid::st_centroid_udf;
-    pub use crate::st_length::st_length_udf;
-    pub use crate::st_perimeter::st_perimeter_udf;
-    pub use crate::st_setsrid::st_set_crs_with_engine_udf;
-    pub use crate::st_setsrid::st_set_srid_with_engine_udf;
-    pub use crate::st_transform::st_transform_udf;
-}
