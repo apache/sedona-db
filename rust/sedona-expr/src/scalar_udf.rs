@@ -417,7 +417,7 @@ mod tests {
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
                 SedonaType::Arrow(DataType::Boolean),
             ),
-            Arc::new(|_arg_types, args| Ok(args[0].clone())),
+            Arc::new(|_arg_types, _args| unreachable!("Should not be executed")),
         );
         let predicate_stub = SedonaScalarUDF::from_impl("foofy", predicate_stub_impl);
 

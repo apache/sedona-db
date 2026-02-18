@@ -115,10 +115,8 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_impl(
-            "st_line_interpolate_point",
-            st_line_interpolate_point_impl(),
-        );
+        let udf =
+            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type, SedonaType::Arrow(DataType::Float64)],

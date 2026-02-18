@@ -25,11 +25,8 @@ use datafusion::{
     execution::SessionStateBuilder,
     prelude::{SessionConfig, SessionContext},
 };
+use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion_common::Result;
-use datafusion_common::{
-    plan_err,
-    tree_node::{TreeNode, TreeNodeRecursion},
-};
 use datafusion_expr::{ColumnarValue, JoinType};
 use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
@@ -526,7 +523,7 @@ async fn test_geography_join_is_not_optimized() -> Result<()> {
             vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
             SedonaType::Arrow(DataType::Boolean),
         ),
-        Arc::new(|_arg_types, _args| plan_err!("execution!")),
+        Arc::new(|_arg_types, _args| unreachable!("Should not be executed")),
     );
     let st_intersects_udf = SedonaScalarUDF::from_impl("st_intersects", stub_impl);
     ctx.register_udf(st_intersects_udf.into());

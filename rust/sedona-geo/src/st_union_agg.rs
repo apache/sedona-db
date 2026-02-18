@@ -226,7 +226,7 @@ mod test {
 
     #[rstest]
     fn polygon_polygon_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udaf = SedonaAggregateUDF::from_impl("st_union", st_union_agg_impl());
+        let udaf = SedonaAggregateUDF::from_impl("st_union_agg", st_union_agg_impl());
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
