@@ -208,7 +208,11 @@ def test_write_ogr_many_batches(con):
         "pyogrio_test"
     )
     df = con.sql(
-        "SELECT id, ST_SetCrs(geometry, 'EPSG:4326') AS geometry FROM pyogrio_test"
+        """
+        SELECT id, ST_SetCrs(geometry, 'EPSG:4326') AS geometry
+        FROM pyogrio_test
+        ORDER BY id
+        """
     )
     expected = df.to_pandas()
 
