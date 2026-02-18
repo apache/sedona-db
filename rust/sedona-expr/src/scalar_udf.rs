@@ -204,24 +204,6 @@ impl SedonaScalarUDF {
         }
     }
 
-    /// Create a new stub function
-    ///
-    /// Creates a new function that calculates a return type but fails when invoked with
-    /// arguments. This is useful to create stub functions when it is expected that the
-    /// actual functionality will be registered from one or more independent crates
-    /// (e.g., ST_Intersects(), which may be implemented in sedona-geo or sedona-geography).
-    pub fn new_stub(name: &str, arg_matcher: ArgMatcher, volatility: Volatility) -> Self {
-        let name_string = name.to_string();
-        let stub_kernel = SimpleSedonaScalarKernel::new_ref(
-            arg_matcher,
-            Arc::new(move |arg_types, _| {
-                not_impl_err!("Implementation for {name_string}({arg_types:?}) was not registered")
-            }),
-        );
-
-        Self::new(name, vec![stub_kernel], volatility)
-    }
-
     /// Create a SedonaScalarUDF from a single kernel
     ///
     /// This constructor creates a [Volatility::Immutable] function with no documentation
@@ -331,6 +313,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 
 #[cfg(test)]
 mod tests {
+
     use datafusion_common::{scalar::ScalarValue, DFSchema};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -427,33 +410,16 @@ mod tests {
     }
 
     #[test]
-    fn stub() {
-        let stub = SedonaScalarUDF::new_stub(
-            "stubby",
-            ArgMatcher::new(vec![], SedonaType::Arrow(DataType::Boolean)),
-            Volatility::Immutable,
-        );
-        let tester = ScalarUdfTester::new(stub.into(), vec![]);
-        tester.assert_return_type(DataType::Boolean);
-
-        let err = tester.invoke_arrays(vec![]).unwrap_err();
-        assert_eq!(
-            err.message(),
-            "Implementation for stubby([]) was not registered"
-        );
-    }
-
-    #[test]
     fn crs_propagation() {
         let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
-        let predicate_stub = SedonaScalarUDF::new_stub(
-            "stubby",
+        let predicate_stub_impl = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
                 SedonaType::Arrow(DataType::Boolean),
             ),
-            Volatility::Immutable,
+            Arc::new(|_arg_types, args| Ok(args[0].clone())),
         );
+        let predicate_stub = SedonaScalarUDF::from_impl("foofy", predicate_stub_impl);
 
         // None CRS to None CRS is OK
         let tester = ScalarUdfTester::new(
@@ -478,14 +444,14 @@ mod tests {
         assert!(err.message().starts_with("Mismatched CRS arguments"));
 
         // When geometry is output, it should match the crses of the inputs
-        let geom_out_stub = SedonaScalarUDF::new_stub(
-            "stubby",
+        let geom_out_impl = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
                 WKB_GEOMETRY,
             ),
-            Volatility::Immutable,
+            Arc::new(|_arg_types, args| Ok(args[0].clone())),
         );
+        let geom_out_stub = SedonaScalarUDF::from_impl("foofy", geom_out_impl);
 
         let tester = ScalarUdfTester::new(
             geom_out_stub.clone().into(),
