@@ -21,7 +21,7 @@
 
 > Note: Before running this notebook, ensure that you have installed SedonaDB: `pip install "apache-sedona[db]"`
 
-This notebook demonstrates how to query and analyze the [Overture Maps](https://overturemaps.org/) dataset using SedonaDB. 
+This notebook demonstrates how to query and analyze the [Overture Maps](https://overturemaps.org/) dataset using SedonaDB.
 
 The notebook explains how to:
 
@@ -293,4 +293,3 @@ sd.view("buildings_nyc").show(5)
     ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
     │ 31e8353c-7d5b-4b20-94e… ┆ 21.294815063476562 ┆            ┆            ┆ POINT(-74.197113787905… │
     └─────────────────────────┴────────────────────┴────────────┴────────────┴─────────────────────────┘
-
