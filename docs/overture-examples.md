@@ -189,7 +189,7 @@ sd.view("divisions_ns").show(5)
 
 ## Overture buildings table
 
-The [Overture buildings table](https://docs.overturemaps.org/guides/buildings/) is one of the largest tables provided by the Overture Maps Foundation. The workflow is similar to the division table or any remote table; however, the buildings table presents several unique challeneges.
+The [Overture buildings table](https://docs.overturemaps.org/guides/buildings/) is one of the largest tables provided by the Overture Maps Foundation. The workflow is similar to the division table or any remote table; however, the buildings table presents several unique challenges.
 
 First, the metadata size for all files in the buildings table is very large. SedonaDB caches remote metadata to avoid repeated download; however, the default cache size is too small. For repeated queries against the buildings table, ensure that the cache size is increased and/or `.to_view()` is used to cache the schema.
 
