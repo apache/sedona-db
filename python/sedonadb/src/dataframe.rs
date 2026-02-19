@@ -196,6 +196,12 @@ impl InternalDataFrame {
             .iter()
             .map(|i| self.inner.schema().field(*i).name().as_str())
             .collect::<HashSet<&str>>();
+
+        #[cfg(feature = "s2geography")]
+        let has_geography = true;
+        #[cfg(not(feature = "s2geography"))]
+        let has_geography = false;
+
         let sort_by_expr = sort_by
             .into_iter()
             .map(|name| {
@@ -204,31 +210,26 @@ impl InternalDataFrame {
                     // Create the call sd_order(column). If we're ordering by geometry but don't have
                     // the required feature for high quality sort output, give an error. This is mostly
                     // an issue when using maturin develop because geography is not a default feature.
-                    #[cfg(feature = "s2geography")]
-                    let has_geography = true;
-                    #[cfg(not(feature = "s2geography"))]
-                    let has_geography = false;
-
                     if has_geography {
-                    let order_udf_opt: Option<ScalarUDF> = ctx
-                        .inner
-                        .functions
-                        .scalar_udf("sd_order")
-                        .map(|udf_opt| udf_opt.clone().into());
-                    if let Some(order_udf) = order_udf_opt {
-                        Ok(SortExpr::new(order_udf.call(vec![column]), true, false))
+                        let order_udf_opt: Option<ScalarUDF> = ctx
+                            .inner
+                            .functions
+                            .scalar_udf("sd_order")
+                            .map(|udf_opt| udf_opt.clone().into());
+                        if let Some(order_udf) = order_udf_opt {
+                            Ok(SortExpr::new(order_udf.call(vec![column]), true, false))
+                        } else {
+                            Err(PySedonaError::SedonaPython(
+                                "Can't order by geometry field when sd_order() is not available"
+                                    .to_string(),
+                            ))
+                        }
                     } else {
                         Err(PySedonaError::SedonaPython(
-                            "Can't order by geometry field when sd_order() is not available"
-                                .to_string(),
-                        ))
+                                "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
+                                    .to_string(),
+                            ))
                     }
-                } else {
-                    Err(PySedonaError::SedonaPython(
-                            "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
-                                .to_string(),
-                        ))
-                }
                 } else {
                     Ok(SortExpr::new(column, true, false))
                 }

@@ -365,7 +365,7 @@ def test_write_sort_by_geometry(con):
     ).to_view("pts", overwrite=True)
     df = con.sql("SELECT id, ST_SetSRID(geometry, 4326) AS geometry FROM pts")
 
-    # Write sorted and unsorted output and ensure
+    # Write sorted and unsorted output and ensure we have improved the locality
     with tempfile.TemporaryDirectory() as td:
         df.to_parquet(Path(td) / "unsorted.parquet")
         df.to_parquet(Path(td) / "sorted.parquet", sort_by="geometry")
