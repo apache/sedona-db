@@ -25,9 +25,10 @@ use arrow_schema::Schema;
 use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
-    JoinSide,
+    Column as LogicalColumn, JoinSide,
 };
-use datafusion_common::{HashMap, Result};
+use datafusion_common::{DFSchema, HashMap, Result};
+use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
@@ -587,6 +588,61 @@ pub(crate) fn is_spatial_predicate_supported(
             Ok(is_geometry_type_supported(left, left_schema)?
                 && is_geometry_type_supported(right, right_schema)?)
         }
+    }
+}
+
+/// Which side of the join is the query (probe) side for KNN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KNNJoinQuerySide {
+    Left,
+    Right,
+}
+
+/// Find the query side of a KNN join by examining the first argument of the `ST_KNN` call
+/// in the join filter expression.
+///
+/// The first argument of `ST_KNN(query_geom, object_geom, k, use_spheroid)` identifies the
+/// query side. We collect all column references from that argument and check which child's
+/// schema they belong to.
+pub(crate) fn find_knn_query_side(
+    filter_expr: &Expr,
+    left_schema: &DFSchema,
+    right_schema: &DFSchema,
+) -> Option<KNNJoinQuerySide> {
+    let knn_call = find_st_knn_call(filter_expr)?;
+
+    // The first argument is the query geometry expression
+    let query_geom_expr = knn_call.args.first()?;
+
+    // Collect all column references from the query geometry argument
+    let col_refs: HashSet<&LogicalColumn> = query_geom_expr.column_refs();
+
+    if col_refs.is_empty() {
+        return None;
+    }
+
+    let all_in_left = col_refs.iter().all(|col| left_schema.has_column(col));
+    let all_in_right = col_refs.iter().all(|col| right_schema.has_column(col));
+
+    match (all_in_left, all_in_right) {
+        (true, false) => Some(KNNJoinQuerySide::Left),
+        (false, true) => Some(KNNJoinQuerySide::Right),
+        _ => None, // Ambiguous or references both sides
+    }
+}
+
+/// Recursively find the `ST_KNN` scalar function call in an expression tree.
+///
+/// Searches through `AND` binary expressions to find the `ST_KNN` function call.
+pub(crate) fn find_st_knn_call(expr: &Expr) -> Option<&ScalarFunction> {
+    match expr {
+        Expr::ScalarFunction(func) if func.func.name().eq_ignore_ascii_case("st_knn") => Some(func),
+        Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr { left, right, op })
+            if *op == Operator::And =>
+        {
+            find_st_knn_call(left).or_else(|| find_st_knn_call(right))
+        }
+        _ => None,
     }
 }
 
@@ -2308,5 +2364,197 @@ mod tests {
         });
         let names = collect_spatial_predicate_names(&non_spatial_and);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_find_st_knn_call_simple() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        let result = find_st_knn_call(&expr);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_nested_in_and() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        // ST_KNN(...) AND l.id > 5
+        let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(knn_expr),
+            op: Operator::And,
+            right: Box::new(col("l.id").gt(lit(5))),
+        });
+
+        let result = find_st_knn_call(&and_expr);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_deeply_nested() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        // (l.id > 5 AND r.id > 3) AND ST_KNN(...)
+        let inner_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(col("l.id").gt(lit(5))),
+            op: Operator::And,
+            right: Box::new(col("r.id").gt(lit(3))),
+        });
+        let outer_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(inner_and),
+            op: Operator::And,
+            right: Box::new(knn_expr),
+        });
+
+        let result = find_st_knn_call(&outer_and);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_returns_none_for_non_knn() {
+        let st_intersects_udf = create_dummy_st_intersects_udf();
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_intersects_udf,
+            args: vec![col("l.geom"), col("r.geom")],
+        });
+
+        assert!(find_st_knn_call(&expr).is_none());
+    }
+
+    #[test]
+    fn test_find_st_knn_call_returns_none_for_non_and_binary() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        // ST_KNN(...) OR l.id > 5 — should NOT descend into OR
+        let or_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(knn_expr),
+            op: Operator::Or,
+            right: Box::new(col("l.id").gt(lit(5))),
+        });
+
+        assert!(find_st_knn_call(&or_expr).is_none());
+    }
+
+    /// Helper: build a DFSchema with the given qualified table name and column names.
+    fn make_df_schema(table: &str, columns: &[(&str, DataType)]) -> DFSchema {
+        use arrow::datatypes::{Field, Schema};
+        use datafusion_common::TableReference;
+
+        let fields: Vec<Field> = columns
+            .iter()
+            .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+            .collect();
+        let schema = Schema::new(fields);
+        DFSchema::try_from_qualified_schema(TableReference::bare(table), &schema).unwrap()
+    }
+
+    #[test]
+    fn test_find_knn_query_side_left() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // ST_KNN(l.geom, r.geom, 5, false)  →  query side = left
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Left));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_right() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // ST_KNN(r.geom, l.geom, 5, false)  →  query side = right
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("r.geom"), col("l.geom"), lit(5i32), lit(false)],
+        });
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Right));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_nested_in_and() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        // l.id = r.id AND ST_KNN(l.geom, r.geom, 5, false)
+        let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(col("l.id").eq(col("r.id"))),
+            op: Operator::And,
+            right: Box::new(knn_expr),
+        });
+
+        let result = find_knn_query_side(&and_expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Left));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_no_knn_returns_none() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        // Non-KNN expression
+        let expr = col("l.id").eq(col("r.id"));
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_knn_query_side_literal_first_arg_returns_none() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // First argument is a literal, not a column reference
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: st_knn_udf,
+            args: vec![lit(42), col("r.geom"), lit(5i32), lit(false)],
+        });
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, None);
     }
 }
