@@ -944,28 +944,11 @@
   
 </li>
         
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#optimization-barrier" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Optimization Barrier
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Optimization Barrier">
-      <ul class="md-nav__list">
-        
           <li class="md-nav__item">
-  <a href="#example_2" class="md-nav__link">
+  <a href="#knn-join-caveats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example
+        KNN Join Caveats
       
     </span>
   </a>
@@ -1561,28 +1544,11 @@
   
 </li>
         
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#optimization-barrier" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Optimization Barrier
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Optimization Barrier">
-      <ul class="md-nav__list">
-        
           <li class="md-nav__item">
-  <a href="#example_2" class="md-nav__link">
+  <a href="#knn-join-caveats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example
+        KNN Join Caveats
       
     </span>
   </a>
@@ -1637,7 +1603,7 @@
   specific language governing permissions and limitations
   under the License.
 --><h1 id="spatial-joins">Spatial Joins<a class="headerlink" href="#spatial-joins" title="Permanent link">¶</a></h1>
-<p>You can perform spatial joins using standard SQL <code>INNER JOIN</code> syntax. The join condition is defined in the <code>ON</code> clause using a spatial function that specifies the relationship between the geometries of the two tables.</p>
+<p>You can perform spatial joins using standard SQL <code>JOIN</code> syntax. The join condition is defined in the <code>ON</code> clause using a spatial function that specifies the relationship between the geometries of the two tables.</p>
 <h2 id="general-spatial-join">General Spatial Join<a class="headerlink" href="#general-spatial-join" title="Permanent link">¶</a></h2>
 <p>Use functions like <code>ST_Contains</code>, <code>ST_Intersects</code>, or <code>ST_Within</code> to join tables based on their spatial relationship.</p>
 <h3 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¶</a></h3>
@@ -1664,18 +1630,10 @@
 <span class="w">    </span><span class="n">cities</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">cities_r</span>
 <span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">cities_l</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">cities_r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="optimization-barrier">Optimization Barrier<a class="headerlink" href="#optimization-barrier" title="Permanent link">¶</a></h2>
-<p>Use the <code>barrier</code> function to prevent filter pushdown and control predicate evaluation order in complex spatial joins. This function creates an optimization barrier by evaluating boolean expressions at runtime.</p>
-<p>The <code>barrier</code> function takes a boolean expression as a string, followed by pairs of variable names and their values that will be substituted into the expression:</p>
-<div class="highlight"><pre><span></span><code><span class="n">barrier</span><span class="p">(</span><span class="n">expression</span><span class="p">,</span><span class="w"> </span><span class="n">var_name1</span><span class="p">,</span><span class="w"> </span><span class="n">var_value1</span><span class="p">,</span><span class="w"> </span><span class="n">var_name2</span><span class="p">,</span><span class="w"> </span><span class="n">var_value2</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
-</code></pre></div>
-<p>The placement of filters relative to KNN joins changes the semantic meaning of the query:</p>
-<ul>
-<li><strong>Filter before KNN</strong>: First filters the data, then finds K nearest neighbors from the filtered subset. This answers "What are the K nearest high-rated restaurants?"</li>
-<li><strong>Filter after KNN</strong>: First finds K nearest neighbors from all data, then filters those results. This answers "Of the K nearest restaurants, which ones are high-rated?"</li>
-</ul>
-<h3 id="example_2">Example<a class="headerlink" href="#example_2" title="Permanent link">¶</a></h3>
-<p>Find the 3 nearest restaurants for each luxury hotel, and then filter the results to only show pairs where the restaurant is also high-rated.</p>
+<h3 id="knn-join-caveats">KNN Join Caveats<a class="headerlink" href="#knn-join-caveats" title="Permanent link">¶</a></h3>
+<h4 id="no-filter-pushdown">No Filter Pushdown<a class="headerlink" href="#no-filter-pushdown" title="Permanent link">¶</a></h4>
+<p>KNN joins currently do not perform filter pushdown optimizations. All <code>WHERE</code> clause predicates are evaluated after the K nearest neighbor candidates have been selected, never pushed into the input tables. This ensures the K nearest neighbors are always determined from the full, unfiltered dataset.</p>
+<p>For example, in the following query, <code>r.rating &gt; 4.0</code> is applied <em>after</em> finding the 3 nearest restaurants for each hotel — it does not reduce the set of candidate restaurants before the KNN search:</p>
 <div class="highlight"><pre><span></span><code><span class="k">SELECT</span>
 <span class="w">    </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span>
 <span class="w">    </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span><span class="p">,</span>
@@ -1686,11 +1644,69 @@
 <span class="w">    </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
 <span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
 <span class="k">WHERE</span>
-<span class="w">    </span><span class="n">barrier</span><span class="p">(</span><span class="s1">'rating &gt; 4.0 AND stars &gt;= 4'</span><span class="p">,</span>
-<span class="w">            </span><span class="s1">'rating'</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="p">,</span>
-<span class="w">            </span><span class="s1">'stars'</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">stars</span><span class="p">)</span>
+<span class="w">    </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">4</span><span class="p">.</span><span class="mi">0</span>
 </code></pre></div>
-<p>With the barrier function, this query first finds the 3 nearest restaurants to each hotel (regardless of rating), then filters to keep only those pairs where the restaurant has rating &gt; 4.0 and the hotel has stars &gt;= 4. Without the barrier, an optimizer might push the filters down, changing the query to first filter for high-rated restaurants and luxury hotels, then find the 3 nearest among those filtered sets.</p>
+<p>This means the result may contain fewer than 3 restaurants per hotel if some of the nearest neighbors do not pass the filter.</p>
+<h4 id="manually-pushing-down-query-side-filters">Manually Pushing Down Query-Side Filters<a class="headerlink" href="#manually-pushing-down-query-side-filters" title="Permanent link">¶</a></h4>
+<p>Pushing filters on the <strong>query side</strong> (the first argument of <code>ST_KNN</code>) down to the input table is a valid optimization — it reduces the number of probe rows without affecting which objects are considered as KNN candidates. This optimization is not yet performed automatically, but you can achieve the same effect manually using a subquery or a CTE.</p>
+<p>For instance, suppose you only want the 3 nearest restaurants for luxury hotels (<code>stars &gt;= 4</code>). Writing the filter in the <code>WHERE</code> clause does <strong>not</strong> push it down — it becomes a post-filter applied after the KNN join over <em>all</em> hotels:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="n">hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+<span class="k">WHERE</span>
+<span class="w">    </span><span class="n">h</span><span class="p">.</span><span class="n">stars</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">4</span>
+</code></pre></div>
+<p>The physical plan confirms the filter sits <em>above</em> the join:</p>
+<div class="highlight"><pre><span></span><code>FilterExec: stars &gt;= 4
+  SpatialJoinExec: join_type=Inner, on=ST_KNN(geometry, geometry, 3, false)
+    ...hotels...        ← all hotels are scanned
+    ...restaurants...
+</code></pre></div>
+<p>To push the filter below the join, wrap the query-side table in a subquery:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">hotels</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">stars</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+</code></pre></div>
+<p>Or equivalently, using a CTE:</p>
+<div class="highlight"><pre><span></span><code><span class="k">WITH</span><span class="w"> </span><span class="n">luxury_hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">hotels</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">stars</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">4</span>
+<span class="p">)</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span>
+<span class="k">FROM</span>
+<span class="w">    </span><span class="n">luxury_hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span>
+<span class="w">    </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+</code></pre></div>
+<p>Now the physical plan shows the filter <em>below</em> the join, inside the left (query-side) input:</p>
+<div class="highlight"><pre><span></span><code>SpatialJoinExec: join_type=Inner, on=ST_KNN(geometry, geometry, 3, false)
+  FilterExec: stars &gt;= 4
+    ...hotels...        ← only luxury hotels are scanned
+  ...restaurants...
+</code></pre></div>
+<p>With this approach, only hotels with <code>stars &gt;= 4</code> are used as query points, and the 3 nearest restaurants are found for each of those luxury hotels.</p>
+<h4 id="st_knn-predicate-precedence">ST_KNN Predicate Precedence<a class="headerlink" href="#st_knn-predicate-precedence" title="Permanent link">¶</a></h4>
+<p>When <code>ST_KNN</code> is combined with other predicates via <code>AND</code>, <code>ST_KNN</code> always takes precedence. It is extracted first to determine the KNN candidates, and the remaining predicates are applied as post-filters on the join output.</p>
+<p>For example, the following two queries produce the same results:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">-- ST_KNN in ON clause combined with another predicate via AND</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">JOIN</span><span class="w"> </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">4</span><span class="p">.</span><span class="mi">0</span>
+
+<span class="c1">-- Equivalent: ST_KNN in ON clause, other predicate in WHERE</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">hotel</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">restaurant</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">hotels</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">h</span>
+<span class="k">JOIN</span><span class="w"> </span><span class="n">restaurants</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">r</span>
+<span class="w">    </span><span class="k">ON</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">rating</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">4</span><span class="p">.</span><span class="mi">0</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">ST_KNN</span><span class="p">(</span><span class="n">h</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+</code></pre></div>
+<p>In both cases, <code>ST_KNN</code> determines the 3 nearest restaurants first, then <code>r.rating &gt; 4.0</code> filters the results.</p>
 
 
 
@@ -1711,7 +1727,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 23, 2025 03:55:58 UTC">September 23, 2025 03:55:58</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 19, 2026 14:54:55 UTC">February 19, 2026 14:54:55</span>
   </span>
 
     
