@@ -16,7 +16,6 @@
 // under the License.
 
 mod executor;
-pub mod raster_utils;
 pub mod register;
 pub mod rs_band_accessors;
 pub mod rs_bandpath;
