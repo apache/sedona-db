@@ -27,6 +27,7 @@ use datafusion_common::{
     exec_err, Result,
 };
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
+use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::metrics::{
     ExecutionPlanMetricsSet, MetricBuilder, MetricType, MetricValue, PruningMetrics,
@@ -111,6 +112,7 @@ pub(crate) struct GeoParquetFileOpener {
     pub enable_pruning: bool,
     pub metrics: GeoParquetFileOpenerMetrics,
     pub options: TableGeoParquetOptions,
+    pub metadata_cache: Option<Arc<dyn FileMetadataCache>>,
 }
 
 impl FileOpener for GeoParquetFileOpener {
@@ -121,6 +123,7 @@ impl FileOpener for GeoParquetFileOpener {
             let parquet_metadata =
                 DFParquetMetadata::new(&self_clone.object_store, &file.object_meta)
                     .with_metadata_size_hint(self_clone.metadata_size_hint)
+                    .with_file_metadata_cache(self_clone.metadata_cache)
                     .fetch_metadata()
                     .await?;
 

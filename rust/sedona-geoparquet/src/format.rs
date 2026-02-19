@@ -312,7 +312,7 @@ impl FileFormat for GeoParquetFormat {
 
     async fn create_physical_plan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         config: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // A copy of ParquetSource::create_physical_plan() that ensures the underlying
@@ -336,7 +336,8 @@ impl FileFormat for GeoParquetFormat {
             source = source.with_metadata_size_hint(metadata_size_hint)
         }
 
-        // let metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+        let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+        source.metadata_cache = Some(file_metadata_cache.clone());
         // let store = state
         //     .runtime_env()
         //     .object_store(config.object_store_url.clone())?;
@@ -543,6 +544,7 @@ impl FileSource for GeoParquetFileSource {
             // inner's metrics as the ExecutionPlan-global metrics
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
             options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
         })
     }
 
@@ -561,6 +563,7 @@ impl FileSource for GeoParquetFileSource {
                     None,
                 )?;
                 updated_inner.options = self.options.clone();
+                updated_inner.metadata_cache = self.metadata_cache.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),
@@ -578,6 +581,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -588,6 +592,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -598,6 +603,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -608,6 +614,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
