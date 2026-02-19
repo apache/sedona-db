@@ -81,6 +81,7 @@ extensions_options! {
         pub geometry_encoding: GeometryEncoding, default = GeometryEncoding::default()
         pub collect_statistics: bool, default = false
         pub persist_statistics: bool, default = false
+        pub round_robin_partitioning: bool, default = false
         pub las: LasOptions, default = LasOptions::default()
     }
 
