@@ -20,6 +20,7 @@ use arrow_schema::SchemaRef;
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
+use std::sync::Arc;
 
 use datafusion_common::{utils::proxy::VecAllocExt, Result};
 use datafusion_expr::JoinType;
@@ -28,9 +29,10 @@ use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
 use parking_lot::Mutex;
 use std::sync::atomic::AtomicUsize;
 
+use crate::index::spatial_index::SpatialIndexRef;
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
-    index::{knn_adapter::KnnComponents, spatial_index::SpatialIndex},
+    index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
     operand_evaluator::create_operand_evaluator,
     refine::create_refiner,
     spatial_predicate::SpatialPredicate,
@@ -243,14 +245,14 @@ impl SpatialIndexBuilder {
     }
 
     /// Finish building and return the completed SpatialIndex.
-    pub fn finish(mut self) -> Result<SpatialIndex> {
+    pub fn finish(mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
-            return Ok(SpatialIndex::empty(
+            return Ok(Arc::new(DefaultSpatialIndex::empty(
                 self.spatial_predicate,
                 self.schema,
                 self.options,
                 AtomicUsize::new(self.probe_threads_count),
-            ));
+            )));
         }
 
         let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
@@ -292,19 +294,19 @@ impl SpatialIndexBuilder {
             "Estimated memory used by spatial index: {}",
             self.memory_used
         );
-        Ok(SpatialIndex {
-            schema: self.schema,
-            options: self.options,
+        Ok(Arc::new(DefaultSpatialIndex::new(
+            self.schema,
+            self.options,
             evaluator,
             refiner,
             rtree,
-            data_id_to_batch_pos: batch_pos_vec,
-            indexed_batches: self.indexed_batches,
+            self.indexed_batches,
+            batch_pos_vec,
             geom_idx_vec,
             visited_build_side,
-            probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
-            knn_components: knn_components_opt,
-        })
+            AtomicUsize::new(self.probe_threads_count),
+            knn_components_opt,
+        )))
     }
 
     pub async fn add_stream(
