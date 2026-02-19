@@ -2885,9 +2885,8 @@ dependencies = [
 
 [[package]]
 name = "geos"
-version = "11.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b236fab6ae800ae29f31e473433e0fd61a07dacdab29644b5e6fd69c835921b9"
+version = "11.0.1"
+source = "git+https://github.com/georust/geos?rev=23e9fd50275ba93688a74dd3767fa0a7bcd906aa#23e9fd50275ba93688a74dd3767fa0a7bcd906aa"
 dependencies = [
  "geo-types",
  "geos-sys",
@@ -2897,9 +2896,8 @@ dependencies = [
 
 [[package]]
 name = "geos-sys"
-version = "2.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "582778505a1ec6d017d0382e947eb592b5f623479b6f1b1f2adf506934e84f89"
+version = "2.0.9"
+source = "git+https://github.com/georust/geos?rev=23e9fd50275ba93688a74dd3767fa0a7bcd906aa#23e9fd50275ba93688a74dd3767fa0a7bcd906aa"
 dependencies = [
  "libc",
  "pkg-config",
