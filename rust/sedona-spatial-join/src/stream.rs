@@ -42,7 +42,8 @@ use std::sync::Arc;
 use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::{partitioned_index_provider::PartitionedIndexProvider};
+use crate::index::partitioned_index_provider::PartitionedIndexProvider;
+use crate::index::spatial_index::SpatialIndexRef;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::partitioning::SpatialPartition;
 use crate::prepare::SpatialJoinComponents;
@@ -59,7 +60,6 @@ use crate::utils::once_fut::{OnceAsync, OnceFut};
 use arrow::array::RecordBatch;
 use arrow::datatypes::{Schema, SchemaRef};
 use sedona_common::option::SpatialJoinOptions;
-use crate::index::spatial_index::SpatialIndexRef;
 
 /// Stream for producing spatial join result batches.
 pub(crate) struct SpatialJoinStream {
