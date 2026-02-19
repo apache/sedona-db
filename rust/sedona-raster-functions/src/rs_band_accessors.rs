@@ -19,105 +19,17 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::executor::RasterExecutor;
+use crate::raster_utils::validate_band_index;
 use arrow_array::builder::{BooleanBuilder, Float64Builder, StringBuilder};
 use arrow_array::{cast::AsArray, types::Int32Type, Array};
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_err, DataFusionError};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Map a BandDataType to the Java-compatible pixel type name.
-fn band_data_type_name(dt: &BandDataType) -> &'static str {
-    match dt {
-        BandDataType::UInt8 => "UNSIGNED_8BITS",
-        BandDataType::UInt16 => "UNSIGNED_16BITS",
-        BandDataType::Int16 => "SIGNED_16BITS",
-        BandDataType::Int32 => "SIGNED_32BITS",
-        BandDataType::Float32 => "REAL_32BITS",
-        BandDataType::Float64 => "REAL_64BITS",
-        // Extra types present in Rust but not in the Java Sedona
-        BandDataType::UInt32 => "UNSIGNED_32BITS",
-        BandDataType::UInt64 => "UNSIGNED_64BITS",
-        BandDataType::Int64 => "SIGNED_64BITS",
-        BandDataType::Int8 => "SIGNED_8BITS",
-    }
-}
-
-/// Byte size of a single pixel for the given band data type.
-fn data_type_byte_size(data_type: &BandDataType) -> usize {
-    match data_type {
-        BandDataType::UInt8 | BandDataType::Int8 => 1,
-        BandDataType::UInt16 | BandDataType::Int16 => 2,
-        BandDataType::UInt32 | BandDataType::Int32 | BandDataType::Float32 => 4,
-        BandDataType::UInt64 | BandDataType::Int64 | BandDataType::Float64 => 8,
-    }
-}
-
-/// Convert raw nodata bytes to f64 for the given band data type.
-fn bytes_to_f64(bytes: &[u8], band_type: &BandDataType) -> Result<f64> {
-    macro_rules! read_le_f64 {
-        ($t:ty, $n:expr) => {{
-            let arr: [u8; $n] = bytes.try_into().map_err(|_| {
-                DataFusionError::Execution(format!(
-                    "Invalid byte slice length for type {}, expected: {}, actual: {}",
-                    stringify!($t),
-                    $n,
-                    bytes.len()
-                ))
-            })?;
-            Ok(<$t>::from_le_bytes(arr) as f64)
-        }};
-    }
-
-    match band_type {
-        BandDataType::UInt8 => {
-            if bytes.len() != 1 {
-                return Err(DataFusionError::Execution(format!(
-                    "Invalid byte length for UInt8: expected 1, got {}",
-                    bytes.len()
-                )));
-            }
-            Ok(bytes[0] as f64)
-        }
-        BandDataType::Int8 => {
-            if bytes.len() != 1 {
-                return Err(DataFusionError::Execution(format!(
-                    "Invalid byte length for Int8: expected 1, got {}",
-                    bytes.len()
-                )));
-            }
-            Ok(bytes[0] as i8 as f64)
-        }
-        BandDataType::UInt16 => read_le_f64!(u16, 2),
-        BandDataType::Int16 => read_le_f64!(i16, 2),
-        BandDataType::UInt32 => read_le_f64!(u32, 4),
-        BandDataType::Int32 => read_le_f64!(i32, 4),
-        BandDataType::UInt64 => read_le_f64!(u64, 8),
-        BandDataType::Int64 => read_le_f64!(i64, 8),
-        BandDataType::Float32 => read_le_f64!(f32, 4),
-        BandDataType::Float64 => read_le_f64!(f64, 8),
-    }
-}
-
-/// Validate and return a (1-based) band index, erroring if out of range.
-fn validate_band_index(band_index: i32, num_bands: usize) -> Result<()> {
-    if band_index < 1 || band_index as usize > num_bands {
-        return exec_err!(
-            "Provided band index {} is not in the range [1, {}]",
-            band_index,
-            num_bands
-        );
-    }
-    Ok(())
-}
 
 // ===========================================================================
 // RS_BandPixelType
@@ -218,7 +130,7 @@ fn get_pixel_type(
             validate_band_index(band_index, num_bands)?;
             let band = raster.bands().band(band_index as usize)?;
             let dt = band.metadata().data_type()?;
-            builder.append_value(band_data_type_name(&dt));
+            builder.append_value(dt.pixel_type_name());
             Ok(())
         }
     }
@@ -322,15 +234,9 @@ fn get_nodata_value(
             validate_band_index(band_index, num_bands)?;
             let band = raster.bands().band(band_index as usize)?;
             let band_meta = band.metadata();
-            match band_meta.nodata_value() {
-                None => {
-                    builder.append_null();
-                }
-                Some(nodata_bytes) => {
-                    let dt = band_meta.data_type()?;
-                    let val = bytes_to_f64(nodata_bytes, &dt)?;
-                    builder.append_value(val);
-                }
+            match band_meta.nodata_value_as_f64()? {
+                None => builder.append_null(),
+                Some(val) => builder.append_value(val),
             }
             Ok(())
         }
@@ -451,7 +357,7 @@ fn get_is_nodata(
             }
 
             let dt = band_meta.data_type()?;
-            let pixel_size = data_type_byte_size(&dt);
+            let pixel_size = dt.byte_size();
             let data = band.data();
 
             // Check every pixel against the nodata bytes
@@ -474,6 +380,7 @@ mod tests {
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
