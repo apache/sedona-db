@@ -159,7 +159,7 @@ impl FileSource for LasSource {
         output_ordering: Option<LexOrdering>,
         config: &FileScanConfig,
     ) -> Result<Option<FileScanConfig>, DataFusionError> {
-        if false | output_ordering.is_none() & self.options.round_robin_partitioning {
+        if output_ordering.is_none() & self.options.round_robin_partitioning {
             // Custom round robin repartitioning
             let mut config = config.clone();
             config.file_groups = config

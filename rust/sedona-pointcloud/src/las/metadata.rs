@@ -153,6 +153,7 @@ impl<'a> LasMetadataReader<'a> {
                     &chunk_table,
                     &header,
                     options.persist_statistics,
+                    options.parallel_statistics_extraction,
                 )
                 .await?,
             )
@@ -366,9 +367,9 @@ pub async fn fetch_chunk_table(
     header: &Header,
 ) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
     if header.laz_vlr().is_ok() {
-        laz_chunk_table(store, object_meta, &header).await
+        laz_chunk_table(store, object_meta, header).await
     } else {
-        las_chunk_table(&header).await
+        las_chunk_table(header).await
     }
 }
 

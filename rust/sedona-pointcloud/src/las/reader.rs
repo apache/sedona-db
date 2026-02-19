@@ -187,7 +187,7 @@ pub fn record_decompressor(
     Ok(decompressor)
 }
 
-pub(crate) fn read_point<R: Read>(buffer: R, header: &Header) -> Result<Point, DataFusionError> {
+fn read_point<R: Read>(buffer: R, header: &Header) -> Result<Point, DataFusionError> {
     RawPoint::read_from(buffer, header.point_format())
         .map(|raw_point| Point::new(raw_point, header.transforms()))
         .map_err(|e| DataFusionError::External(Box::new(e)))
