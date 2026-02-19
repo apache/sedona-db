@@ -356,6 +356,35 @@ def test_write_geoparquet_options(geoarrow_data):
         assert tmp_parquet.stat().st_size > (size_with_default_compression * 2)
 
 
+def test_write_sort_by_geometry(con):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Ordering currently requires build with feature s2geography")
+
+    con.funcs.table.sd_random_geometry(
+        "Point", 10000, seed=948, bounds=[-50, -50, 50, 50]
+    ).to_view("pts", overwrite=True)
+    df = con.sql("SELECT id, ST_SetSRID(geometry, 4326) AS geometry FROM pts")
+
+    # Write sorted and unsorted output and ensure
+    with tempfile.TemporaryDirectory() as td:
+        df.to_parquet(Path(td) / "unsorted.parquet")
+        df.to_parquet(Path(td) / "sorted.parquet", sort_by="geometry")
+
+        gdf_unsorted = geopandas.read_parquet(Path(td) / "unsorted.parquet").to_crs(
+            3857
+        )
+        gdf_sorted = geopandas.read_parquet(Path(td) / "sorted.parquet").to_crs(3857)
+
+        neighbour_distance_unsorted = gdf_unsorted.geometry.distance(
+            gdf_unsorted.geometry.shift(1)
+        ).median()
+        neighbour_distance_sorted = gdf_sorted.geometry.distance(
+            gdf_sorted.geometry.shift(1)
+        ).median()
+
+        assert neighbour_distance_sorted < (neighbour_distance_unsorted / 20)
+
+
 def test_write_geoparquet_1_1(con, geoarrow_data):
     # Checks GeoParquet 1.1 support specifically
     path = geoarrow_data / "ns-water" / "files" / "ns-water_water-junc_geo.parquet"
