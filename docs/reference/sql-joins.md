@@ -19,7 +19,7 @@
 
 # Spatial Joins
 
-You can perform spatial joins using standard SQL `INNER JOIN` syntax. The join condition is defined in the `ON` clause using a spatial function that specifies the relationship between the geometries of the two tables.
+You can perform spatial joins using standard SQL `JOIN` syntax. The join condition is defined in the `ON` clause using a spatial function that specifies the relationship between the geometries of the two tables.
 
 ## General Spatial Join
 
@@ -59,24 +59,13 @@ INNER JOIN
     ON ST_KNN(cities_l.geometry, cities_r.geometry, 5, false)
 ```
 
-## Optimization Barrier
+### KNN Join Caveats
 
-Use the `barrier` function to prevent filter pushdown and control predicate evaluation order in complex spatial joins. This function creates an optimization barrier by evaluating boolean expressions at runtime.
+#### No Filter Pushdown
 
-The `barrier` function takes a boolean expression as a string, followed by pairs of variable names and their values that will be substituted into the expression:
+KNN joins currently do not perform filter pushdown optimizations. All `WHERE` clause predicates are evaluated after the K nearest neighbor candidates have been selected, never pushed into the input tables. This ensures the K nearest neighbors are always determined from the full, unfiltered dataset.
 
-```sql
-barrier(expression, var_name1, var_value1, var_name2, var_value2, ...)
-```
-
-The placement of filters relative to KNN joins changes the semantic meaning of the query:
-
-- **Filter before KNN**: First filters the data, then finds K nearest neighbors from the filtered subset. This answers "What are the K nearest high-rated restaurants?"
-- **Filter after KNN**: First finds K nearest neighbors from all data, then filters those results. This answers "Of the K nearest restaurants, which ones are high-rated?"
-
-### Example
-
-Find the 3 nearest restaurants for each luxury hotel, and then filter the results to only show pairs where the restaurant is also high-rated.
+For example, in the following query, `r.rating > 4.0` is applied *after* finding the 3 nearest restaurants for each hotel — it does not reduce the set of candidate restaurants before the KNN search:
 
 ```sql
 SELECT
@@ -89,9 +78,91 @@ INNER JOIN
     restaurants AS r
     ON ST_KNN(h.geometry, r.geometry, 3, false)
 WHERE
-    barrier('rating > 4.0 AND stars >= 4',
-            'rating', r.rating,
-            'stars', h.stars)
+    r.rating > 4.0
 ```
 
-With the barrier function, this query first finds the 3 nearest restaurants to each hotel (regardless of rating), then filters to keep only those pairs where the restaurant has rating > 4.0 and the hotel has stars >= 4. Without the barrier, an optimizer might push the filters down, changing the query to first filter for high-rated restaurants and luxury hotels, then find the 3 nearest among those filtered sets.
+This means the result may contain fewer than 3 restaurants per hotel if some of the nearest neighbors do not pass the filter.
+
+#### Manually Pushing Down Query-Side Filters
+
+Pushing filters on the **query side** (the first argument of `ST_KNN`) down to the input table is a valid optimization — it reduces the number of probe rows without affecting which objects are considered as KNN candidates. This optimization is not yet performed automatically, but you can achieve the same effect manually using a subquery or a CTE.
+
+For instance, suppose you only want the 3 nearest restaurants for luxury hotels (`stars >= 4`). Writing the filter in the `WHERE` clause does **not** push it down — it becomes a post-filter applied after the KNN join over *all* hotels:
+
+```sql
+SELECT h.name AS hotel, r.name AS restaurant, r.rating
+FROM
+    hotels AS h
+INNER JOIN
+    restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false)
+WHERE
+    h.stars >= 4
+```
+
+The physical plan confirms the filter sits *above* the join:
+
+```
+FilterExec: stars >= 4
+  SpatialJoinExec: join_type=Inner, on=ST_KNN(geometry, geometry, 3, false)
+    ...hotels...        ← all hotels are scanned
+    ...restaurants...
+```
+
+To push the filter below the join, wrap the query-side table in a subquery:
+
+```sql
+SELECT h.name AS hotel, r.name AS restaurant, r.rating
+FROM
+    (SELECT * FROM hotels WHERE stars >= 4) AS h
+INNER JOIN
+    restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false)
+```
+
+Or equivalently, using a CTE:
+
+```sql
+WITH luxury_hotels AS (
+    SELECT * FROM hotels WHERE stars >= 4
+)
+SELECT h.name AS hotel, r.name AS restaurant, r.rating
+FROM
+    luxury_hotels AS h
+INNER JOIN
+    restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false)
+```
+
+Now the physical plan shows the filter *below* the join, inside the left (query-side) input:
+
+```
+SpatialJoinExec: join_type=Inner, on=ST_KNN(geometry, geometry, 3, false)
+  FilterExec: stars >= 4
+    ...hotels...        ← only luxury hotels are scanned
+  ...restaurants...
+```
+
+With this approach, only hotels with `stars >= 4` are used as query points, and the 3 nearest restaurants are found for each of those luxury hotels.
+
+#### ST_KNN Predicate Precedence
+
+When `ST_KNN` is combined with other predicates via `AND`, `ST_KNN` always takes precedence. It is extracted first to determine the KNN candidates, and the remaining predicates are applied as post-filters on the join output.
+
+For example, the following two queries produce the same results:
+
+```sql
+-- ST_KNN in ON clause combined with another predicate via AND
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+JOIN restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false) AND r.rating > 4.0
+
+-- Equivalent: ST_KNN in ON clause, other predicate in WHERE
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+JOIN restaurants AS r
+    ON r.rating > 4.0 AND ST_KNN(h.geometry, r.geometry, 3, false)
+```
+
+In both cases, `ST_KNN` determines the 3 nearest restaurants first, then `r.rating > 4.0` filters the results.
