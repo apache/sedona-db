@@ -16,6 +16,7 @@
 // under the License.
 
 mod executor;
+pub mod raster_utils;
 pub mod register;
 pub mod rs_convexhull;
 pub mod rs_envelope;
