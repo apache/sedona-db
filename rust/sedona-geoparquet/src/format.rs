@@ -338,12 +338,6 @@ impl FileFormat for GeoParquetFormat {
 
         let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
         source.metadata_cache = Some(file_metadata_cache.clone());
-        // let store = state
-        //     .runtime_env()
-        //     .object_store(config.object_store_url.clone())?;
-        // let laz_reader_factory = Arc::new(GeoParquetFormatFactory::new(store, Some(metadata_cache)));
-        // let source = source.with_reader_factory(laz_reader_factory);
-
         let conf = FileScanConfigBuilder::from(config)
             .with_source(Arc::new(source))
             .build();
