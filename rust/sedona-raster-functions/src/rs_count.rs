@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::vec;
 
 use crate::executor::RasterExecutor;
+use crate::raster_utils::validate_band_index;
 use arrow_array::builder::Int64Builder;
 use arrow_array::{cast::AsArray, types::Int32Type, Array, BooleanArray};
 use arrow_schema::DataType;
@@ -27,18 +28,8 @@ use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-
-/// Byte size of a single pixel for the given band data type.
-fn data_type_byte_size(data_type: &BandDataType) -> usize {
-    match data_type {
-        BandDataType::UInt8 | BandDataType::Int8 => 1,
-        BandDataType::UInt16 | BandDataType::Int16 => 2,
-        BandDataType::UInt32 | BandDataType::Int32 | BandDataType::Float32 => 4,
-        BandDataType::UInt64 | BandDataType::Int64 | BandDataType::Float64 => 8,
-    }
-}
 
 /// RS_Count() scalar UDF implementation
 ///
@@ -197,13 +188,7 @@ fn count_pixels(
         }
         Some(raster) => {
             let num_bands = raster.bands().len();
-            if band_index < 1 || band_index as usize > num_bands {
-                return exec_err!(
-                    "Provided band index {} is not in the range [1, {}]",
-                    band_index,
-                    num_bands
-                );
-            }
+            validate_band_index(band_index, num_bands)?;
 
             let total_pixels = raster.metadata().width() as i64 * raster.metadata().height() as i64;
 
@@ -227,7 +212,7 @@ fn count_pixels(
             }
 
             let dt = band_meta.data_type()?;
-            let pixel_size = data_type_byte_size(&dt);
+            let pixel_size = dt.byte_size();
             let data = band.data();
 
             let nodata_count = data
@@ -248,6 +233,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
