@@ -29,14 +29,11 @@ use tokio::sync::mpsc;
 
 use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
 use crate::index::spatial_index::SpatialIndexRef;
-use crate::index::BuildPartition;
+use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
-use crate::{
-    index::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
-    partitioning::SpatialPartition,
-    spatial_predicate::SpatialPredicate,
-};
+use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
 
 pub(crate) struct PartitionedIndexProvider {
     schema: SchemaRef,
@@ -270,7 +267,7 @@ impl PartitionedIndexProvider {
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = SpatialIndexBuilder::new(
+        let mut index_builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -292,7 +289,7 @@ impl PartitionedIndexProvider {
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = SpatialIndexBuilder::new(
+        let mut index_builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),

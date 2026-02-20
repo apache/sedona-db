@@ -705,13 +705,14 @@ impl SpatialIndex for DefaultSpatialIndex {
 #[cfg(test)]
 mod tests {
     use crate::{
-        index::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         operand_evaluator::EvaluatedGeometryArray,
         spatial_predicate::{KNNPredicate, RelationPredicate, SpatialRelationType},
     };
 
     use super::*;
     use crate::index::spatial_index::SpatialIndexRef;
+    use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+    use crate::index::DefaultSpatialIndexBuilder;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;
@@ -737,7 +738,7 @@ mod tests {
             SpatialRelationType::Intersects,
         ));
 
-        let builder = SpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -774,7 +775,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -829,7 +830,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -929,7 +930,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1028,7 +1029,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1128,7 +1129,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1219,7 +1220,7 @@ mod tests {
             JoinSide::Left,
         ));
 
-        let builder = SpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1279,7 +1280,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1398,7 +1399,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1485,7 +1486,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1565,7 +1566,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1691,7 +1692,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1760,7 +1761,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = SpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema,
             spatial_predicate,
             options,

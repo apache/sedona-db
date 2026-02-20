@@ -22,13 +22,14 @@ mod knn_adapter;
 pub(crate) mod memory_plan;
 pub(crate) mod partitioned_index_provider;
 pub(crate) mod spatial_index;
+pub(crate) mod spatial_index_builder;
 
 pub(crate) use build_side_collector::{
     BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
 };
 pub(crate) use spatial_index::SpatialIndex;
 
-pub use default_spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+pub use default_spatial_index_builder::DefaultSpatialIndexBuilder;
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query
