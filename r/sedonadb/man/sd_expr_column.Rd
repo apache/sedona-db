@@ -41,7 +41,7 @@ as_sd_expr(x, factory = sd_expr_factory())
 
 is_sd_expr(x)
 
-sd_expr_factory()
+sd_expr_factory(ctx = NULL)
 }
 \arguments{
 \item{column_name}{A column name}
@@ -65,6 +65,8 @@ R function names (e.g., \code{>}, \code{<}, \code{+}, \code{-}).}
 from the context associated with \code{factory}.}
 
 \item{alias}{An alias to apply to \code{expr}.}
+
+\item{ctx}{A SedonaDB context or NULL to use the default context.}
 }
 \value{
 An object of class SedonaDBExpr

@@ -101,6 +101,11 @@ SEXP savvy_InternalContext_deregister_table__impl(SEXP self__,
   return handle_result(res);
 }
 
+SEXP savvy_InternalContext_list_functions__impl(SEXP self__) {
+  SEXP res = savvy_InternalContext_list_functions__ffi(self__);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalContext_new__impl(void) {
   SEXP res = savvy_InternalContext_new__ffi();
   return handle_result(res);
@@ -304,6 +309,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalContext_data_frame_from_table_provider__impl, 2},
     {"savvy_InternalContext_deregister_table__impl",
      (DL_FUNC)&savvy_InternalContext_deregister_table__impl, 2},
+    {"savvy_InternalContext_list_functions__impl",
+     (DL_FUNC)&savvy_InternalContext_list_functions__impl, 1},
     {"savvy_InternalContext_new__impl",
      (DL_FUNC)&savvy_InternalContext_new__impl, 0},
     {"savvy_InternalContext_read_parquet__impl",

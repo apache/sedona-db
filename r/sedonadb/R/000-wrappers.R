@@ -107,6 +107,12 @@ NULL
   }
 }
 
+`InternalContext_list_functions` <- function(self) {
+  function() {
+    .Call(savvy_InternalContext_list_functions__impl, `self`)
+  }
+}
+
 `InternalContext_read_parquet` <- function(self) {
   function(`paths`) {
     .savvy_wrap_InternalDataFrame(.Call(
@@ -157,6 +163,7 @@ NULL
     ptr
   )
   e$`deregister_table` <- `InternalContext_deregister_table`(ptr)
+  e$`list_functions` <- `InternalContext_list_functions`(ptr)
   e$`read_parquet` <- `InternalContext_read_parquet`(ptr)
   e$`register_scalar_udf` <- `InternalContext_register_scalar_udf`(ptr)
   e$`scalar_udf_xptr` <- `InternalContext_scalar_udf_xptr`(ptr)

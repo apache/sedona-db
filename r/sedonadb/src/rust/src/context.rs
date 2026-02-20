@@ -20,7 +20,7 @@ use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::udf::FFI_ScalarUDF;
-use savvy::{savvy, savvy_err, IntoExtPtrSexp, Result};
+use savvy::{IntoExtPtrSexp, OwnedStringSexp, Result, savvy, savvy_err};
 
 use sedona::{context::SedonaContext, record_batch_reader_provider::RecordBatchReaderProvider};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
@@ -121,6 +121,16 @@ impl InternalContext {
     pub fn deregister_table(&self, table_ref: &str) -> savvy::Result<()> {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
+    }
+
+    pub fn list_functions(&self) -> savvy::Result<savvy::Sexp> {
+        let mut fn_names = Vec::new();
+        let state = self.inner.ctx.state();
+        fn_names.extend(state.scalar_functions().keys());
+        fn_names.extend(state.aggregate_functions().keys());
+
+        let fn_names_sexp = OwnedStringSexp::try_from(fn_names.as_slice())?;
+        fn_names_sexp.into()
     }
 
     pub fn scalar_udf_xptr(&self, name: &str) -> savvy::Result<savvy::Sexp> {

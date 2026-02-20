@@ -30,6 +30,7 @@
 #' @param lhs,rhs Arguments to a binary expression
 #' @param factory A [sd_expr_factory()]. This factory wraps a SedonaDB context
 #'   and is used to resolve scalar functions and/or retrieve options.
+#' @param ctx A SedonaDB context or NULL to use the default context.
 #'
 #' @returns An object of class SedonaDBExpr
 #' @export
@@ -122,8 +123,12 @@ is_sd_expr <- function(x) {
 
 #' @rdname sd_expr_column
 #' @export
-sd_expr_factory <- function() {
-  SedonaDBExprFactory$new(ctx())
+sd_expr_factory <- function(ctx = NULL) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
+  SedonaDBExprFactory$new(ctx)
 }
 
 #' @export
@@ -133,6 +138,30 @@ print.SedonaDBExpr <- function(x, ...) {
   cat("\n")
   invisible(x)
 }
+
+#' SedonaDB Functions
+#'
+#' This object is an escape hatch for calling SedonaDB/DataFusion functions
+#' directly for translations that are not yet registered or are otherwise
+#' misbehaving.
+#'
+#' @export .fns
+.fns <- structure(list(), class = "sedonadb_fns")
+
+# For IDE autocomplete
+#' @export
+names.sedonadb_fns <- function(x) {
+  ctx <- ctx()
+  ctx$list_functions()
+}
+
+# nolint start: object_name_linter
+#' @importFrom utils .DollarNames
+#' @export
+.DollarNames.sedonadb_fns <- function(x, pattern = "") {
+  grep(pattern, names(x), value = TRUE)
+}
+# nolint end
 
 #' Evaluate an R expression into a SedonaDB expression
 #'
@@ -161,6 +190,13 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
 
 sd_eval_expr_inner <- function(expr, expr_ctx) {
   if (rlang::is_call(expr)) {
+    # Special syntax for the escape hatch of "just call a DataFusion function" is
+    # the expression .fns$datafusion_fn_name(arg1, arg2)
+    if (rlang::is_call(expr[[1]], "$") && rlang::is_symbol(expr[[1]][[2]], ".fns")) {
+      fn_key <- as.character(expr[[1]][[3]])
+      return(sd_eval_datafusion_fn(fn_key, expr, expr_ctx))
+    }
+
     # Extract `pkg::fun` or `fun` if this is a usual call (e.g., not
     # something fancy like `fun()()`)
     call_name <- rlang::call_name(expr)
@@ -177,6 +213,12 @@ sd_eval_expr_inner <- function(expr, expr_ctx) {
   } else {
     sd_eval_default(expr, expr_ctx)
   }
+}
+
+sd_eval_datafusion_fn <- function(fn_key, expr, expr_ctx) {
+  # Evaluate arguments all the way into expressions
+  evaluated_args <- lapply(expr[-1], sd_eval_expr, expr_ctx = expr_ctx)
+  sd_expr_scalar_function(fn_key, evaluated_args, factory = expr_ctx$factory)
 }
 
 sd_eval_translation <- function(fn_key, expr, expr_ctx) {
@@ -210,10 +252,12 @@ sd_eval_default <- function(expr, expr_ctx) {
 #'   [nanoarrow::as_nanoarrow_schema()]. This is used to create the data mask
 #'   for expressions.
 #' @param env The expression environment. This is needed to evaluate expressions.
+#' @param ctx A SedonaDB context whose function registry should be used to resolve
+#'   functions.
 #'
 #' @return An object of class sedonadb_expr_ctx
 #' @noRd
-sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
+sd_expr_ctx <- function(schema = NULL, env = parent.frame(), ctx = NULL) {
   if (is.null(schema)) {
     schema <- nanoarrow::na_struct()
   }
@@ -225,7 +269,7 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame()) {
 
   structure(
     list(
-      factory = sd_expr_factory(),
+      factory = sd_expr_factory(ctx = ctx),
       schema = schema,
       data = rlang::as_data_mask(data),
       env = env,
