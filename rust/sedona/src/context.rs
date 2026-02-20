@@ -462,7 +462,9 @@ impl SedonaDataFrame for DataFrame {
         let sd_simplify_storage_udf: ScalarUDF = ctx
             .functions
             .scalar_udf("sd_simplifystorage")
-            .ok_or_else(|| sedona_internal_datafusion_err!("sd_simplifystorage UDF does not exist"))?
+            .ok_or_else(|| {
+                sedona_internal_datafusion_err!("sd_simplifystorage UDF does not exist")
+            })?
             .clone()
             .into();
         let expr_list = self
