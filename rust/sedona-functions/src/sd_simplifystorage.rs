@@ -180,7 +180,11 @@ mod tests {
                 .cast_to(sedona_type.storage_type())
                 .unwrap();
             let scalar_result = tester.invoke_scalar(initial_scalar.clone()).unwrap();
-            assert_eq!(scalar_result, initial_scalar)
+            assert_eq!(scalar_result, initial_scalar);
+
+            let initial_array = initial_scalar.to_array_of_size(10).unwrap();
+            let array_result = tester.invoke_array(initial_array.clone()).unwrap();
+            assert_eq!(&array_result, &initial_array);
         }
     }
 
@@ -287,8 +291,13 @@ mod tests {
                     .cast_to(simplified_type.storage_type())
                     .unwrap();
 
-                let scalar_result = tester.invoke_scalar(initial_scalar).unwrap();
-                assert_eq!(scalar_result, expected_scalar)
+                let scalar_result = tester.invoke_scalar(initial_scalar.clone()).unwrap();
+                assert_eq!(scalar_result, expected_scalar);
+
+                let initial_array = initial_scalar.to_array_of_size(10).unwrap();
+                let expected_array = expected_scalar.to_array_of_size(10).unwrap();
+                let array_result = tester.invoke_array(initial_array).unwrap();
+                assert_eq!(&array_result, &expected_array);
             }
         }
     }
