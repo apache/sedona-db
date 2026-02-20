@@ -27,10 +27,10 @@ use sedona_schema::datatypes::SedonaType;
 
 /// SD_SimplifyStorage() scalar UDF implementation
 ///
-/// This function is invoked to strip dictionary, run-end-encoded, or dictionary
+/// This function is invoked to strip strip view, dictionary, or run-end encoded
 /// types from storage if needed (or return the input otherwise). This is to support
 /// integration with other libraries like GDAL that haven't yet supported these
-/// types.
+/// storage encodings.
 pub fn sd_simplifystorage_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "sd_simplifystorage",
