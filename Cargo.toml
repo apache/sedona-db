@@ -101,7 +101,7 @@ geo-index = { version = "0.3.3", features = ["use-geo_0_31"] }
 geo-traits = "0.3.0"
 geo-types = "0.7.17"
 geojson = "0.24.2"
-geos = { version = "11.0.1", features = ["geo", "v3_12_0"], git = "https://github.com/georust/geos", rev = "23e9fd50275ba93688a74dd3767fa0a7bcd906aa" }
+geos = { version = "11.0.1", features = ["geo", "v3_12_0"] }
 glam = "0.32.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
