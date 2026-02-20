@@ -2369,10 +2369,7 @@ mod tests {
     #[test]
     fn test_find_st_knn_call_simple() {
         let st_knn_udf = create_dummy_st_knn_udf();
-        let expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         let result = find_st_knn_call(&expr);
         assert!(result.is_some());
@@ -2382,10 +2379,7 @@ mod tests {
     #[test]
     fn test_find_st_knn_call_nested_in_and() {
         let st_knn_udf = create_dummy_st_knn_udf();
-        let knn_expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         // ST_KNN(...) AND l.id > 5
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2402,10 +2396,7 @@ mod tests {
     #[test]
     fn test_find_st_knn_call_deeply_nested() {
         let st_knn_udf = create_dummy_st_knn_udf();
-        let knn_expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         // (l.id > 5 AND r.id > 3) AND ST_KNN(...)
         let inner_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2427,10 +2418,7 @@ mod tests {
     #[test]
     fn test_find_st_knn_call_returns_none_for_non_knn() {
         let st_intersects_udf = create_dummy_st_intersects_udf();
-        let expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_intersects_udf,
-            args: vec![col("l.geom"), col("r.geom")],
-        });
+        let expr = st_intersects_udf.call(vec![col("l.geom"), col("r.geom")]);
 
         assert!(find_st_knn_call(&expr).is_none());
     }
@@ -2438,10 +2426,7 @@ mod tests {
     #[test]
     fn test_find_st_knn_call_returns_none_for_non_and_binary() {
         let st_knn_udf = create_dummy_st_knn_udf();
-        let knn_expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         // ST_KNN(...) OR l.id > 5 — should NOT descend into OR
         let or_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2475,10 +2460,7 @@ mod tests {
 
         let st_knn_udf = create_dummy_st_knn_udf();
         // ST_KNN(l.geom, r.geom, 5, false)  →  query side = left
-        let expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         let result = find_knn_query_side(&expr, &left_schema, &right_schema);
         assert_eq!(result, Some(KNNJoinQuerySide::Left));
@@ -2493,10 +2475,7 @@ mod tests {
 
         let st_knn_udf = create_dummy_st_knn_udf();
         // ST_KNN(r.geom, l.geom, 5, false)  →  query side = right
-        let expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("r.geom"), col("l.geom"), lit(5i32), lit(false)],
-        });
+        let expr = st_knn_udf.call(vec![col("r.geom"), col("l.geom"), lit(5i32), lit(false)]);
 
         let result = find_knn_query_side(&expr, &left_schema, &right_schema);
         assert_eq!(result, Some(KNNJoinQuerySide::Right));
@@ -2510,10 +2489,7 @@ mod tests {
             make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
 
         let st_knn_udf = create_dummy_st_knn_udf();
-        let knn_expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
 
         // l.id = r.id AND ST_KNN(l.geom, r.geom, 5, false)
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2549,10 +2525,7 @@ mod tests {
 
         let st_knn_udf = create_dummy_st_knn_udf();
         // First argument is a literal, not a column reference
-        let expr = Expr::ScalarFunction(ScalarFunction {
-            func: st_knn_udf,
-            args: vec![lit(42), col("r.geom"), lit(5i32), lit(false)],
-        });
+        let expr = st_knn_udf.call(vec![lit(42), col("r.geom"), lit(5i32), lit(false)]);
 
         let result = find_knn_query_side(&expr, &left_schema, &right_schema);
         assert_eq!(result, None);
