@@ -469,7 +469,12 @@ impl SedonaDataFrame for DataFrame {
             .schema()
             .columns()
             .into_iter()
-            .map(|col| sd_simplify_storage_udf.call(vec![Expr::Column(col)]))
+            .map(|col| {
+                let name = col.name().to_string();
+                sd_simplify_storage_udf
+                    .call(vec![Expr::Column(col)])
+                    .alias(name)
+            })
             .collect::<Vec<_>>();
         self.select(expr_list)
     }
@@ -667,6 +672,21 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn simplify_storage_types() {
+        let ctx = SedonaContext::new();
+        let tbl = ctx
+            .sql("SELECT arrow_cast('one', 'Utf8View') as one")
+            .await
+            .unwrap();
+        assert_eq!(tbl.schema().field(0).name(), "one");
+        assert_eq!(tbl.schema().field(0).data_type(), &DataType::Utf8View);
+
+        let simplified = tbl.simplify_storage_types(&ctx).unwrap();
+        assert_eq!(simplified.schema().field(0).name(), "one");
+        assert_eq!(simplified.schema().field(0).data_type(), &DataType::Utf8);
     }
 
     #[tokio::test]

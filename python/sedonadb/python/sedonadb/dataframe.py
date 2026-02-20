@@ -527,6 +527,9 @@ class DataFrame:
         else:
             return super().__repr__()
 
+    def _simplify_storage_types(self):
+        return DataFrame(self._ctx, self._impl.simplify_storage_types(self._ctx), self._options)
+
     def _out_width(self, width=None) -> int:
         if width is None:
             width = self._options.width
