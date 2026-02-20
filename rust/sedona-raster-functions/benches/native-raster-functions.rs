@@ -20,14 +20,6 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
 
-    // RS_BandIsNoData
-    benchmark::scalar(
-        c,
-        &f,
-        "native-raster",
-        "rs_bandisnodata",
-        BenchmarkArgs::Array(Raster(64, 64)),
-    );
     // RS_BandNoDataValue
     benchmark::scalar(
         c,
