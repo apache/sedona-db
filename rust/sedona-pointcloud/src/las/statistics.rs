@@ -17,7 +17,7 @@
 
 use std::{
     collections::HashSet,
-    io::{Cursor, Read},
+    io::{Cursor, Read, Seek},
     sync::Arc,
 };
 
@@ -327,9 +327,11 @@ async fn extract_chunk_stats(
         }
     } else {
         let mut buffer = Cursor::new(bytes);
-
+        // offset to next point after reading raw coords
+        let offset = header.point_format().len() as i64 - 3 * 4;
         for _ in 0..chunk_meta.num_points {
             let point = parse_coords(&mut buffer, header)?;
+            buffer.seek_relative(offset)?;
             extend(&mut stats, point);
         }
     }
