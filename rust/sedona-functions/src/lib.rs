@@ -22,6 +22,7 @@ mod referencing;
 pub mod register;
 mod sd_format;
 pub mod sd_order;
+mod sd_simplifystorage;
 mod st_affine;
 mod st_affine_helpers;
 pub mod st_analyze_agg;
