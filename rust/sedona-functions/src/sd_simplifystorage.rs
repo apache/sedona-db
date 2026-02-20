@@ -145,7 +145,6 @@ mod tests {
     use super::*;
     use arrow_schema::{DataType, Field};
     use datafusion_expr::ScalarUDF;
-    use rstest::rstest;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -155,38 +154,142 @@ mod tests {
         assert_eq!(udf.name(), "sd_simplifystorage");
     }
 
-    #[rstest]
-    fn simplify_identity(
-        // All these types don't need to be simplified
-        #[values(
+    #[test]
+    fn simplify_identity() {
+        let udf = sd_simplifystorage_udf();
+        let types_that_dont_need_simplification = [
             SedonaType::Arrow(DataType::Utf8),
             SedonaType::Arrow(DataType::LargeUtf8),
             SedonaType::Arrow(DataType::Binary),
             SedonaType::Arrow(DataType::LargeBinary),
-            SedonaType::Arrow(DataType::Struct(vec![Field::new("foofy", DataType::Utf8, false)].into())),
+            SedonaType::Arrow(DataType::Struct(
+                vec![Field::new("foofy", DataType::Utf8, false)].into(),
+            )),
             SedonaType::Arrow(DataType::new_list(DataType::Utf8, true)),
-            SedonaType::Arrow(DataType::List(WKB_GEOMETRY.to_storage_field("item", true).unwrap().into())),
+            SedonaType::Arrow(DataType::List(
+                WKB_GEOMETRY.to_storage_field("item", true).unwrap().into(),
+            )),
             WKB_GEOMETRY,
-        )]
-        sedona_type: SedonaType,
-    ) {
-        let udf = sd_simplifystorage_udf();
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(sedona_type.clone());
+        ];
+
+        for sedona_type in types_that_dont_need_simplification {
+            let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
+            tester.assert_return_type(sedona_type.clone());
+
+            let initial_scalar = ScalarValue::Null
+                .cast_to(sedona_type.storage_type())
+                .unwrap();
+            let scalar_result = tester.invoke_scalar(initial_scalar.clone()).unwrap();
+            assert_eq!(scalar_result, initial_scalar)
+        }
     }
 
-    #[rstest]
-    fn simplify_actually(
-        // All these types don't need to be simplified
-        #[values(
-            (SedonaType::Arrow(DataType::Utf8View), SedonaType::Arrow(DataType::Utf8)),
-            (WKB_VIEW_GEOMETRY, WKB_GEOMETRY)
-        )]
-        sedona_type: (SedonaType, SedonaType),
-    ) {
-        let (initial_type, simplified_type) = sedona_type;
+    #[test]
+    fn simplify_actually() {
         let udf = sd_simplifystorage_udf();
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![initial_type.clone()]);
-        tester.assert_return_type(simplified_type.clone());
+
+        let cases = [
+            // Check primitive types that need to be simplified
+            (
+                SedonaType::Arrow(DataType::Utf8View),
+                SedonaType::Arrow(DataType::Utf8),
+            ),
+            (
+                SedonaType::Arrow(DataType::BinaryView),
+                SedonaType::Arrow(DataType::Binary),
+            ),
+            // Check nested types that need to be recursively simplified
+            (
+                SedonaType::Arrow(DataType::new_list(DataType::Utf8View, true)),
+                SedonaType::Arrow(DataType::new_list(DataType::Utf8, true)),
+            ),
+            (
+                SedonaType::Arrow(DataType::new_large_list(DataType::Utf8View, true)),
+                SedonaType::Arrow(DataType::new_large_list(DataType::Utf8, true)),
+            ),
+            (
+                SedonaType::Arrow(DataType::new_fixed_size_list(DataType::Utf8View, 2, true)),
+                SedonaType::Arrow(DataType::new_fixed_size_list(DataType::Utf8, 2, true)),
+            ),
+            (
+                SedonaType::Arrow(DataType::Struct(
+                    vec![Field::new("foofy", DataType::Utf8View, false)].into(),
+                )),
+                SedonaType::Arrow(DataType::Struct(
+                    vec![Field::new("foofy", DataType::Utf8, false)].into(),
+                )),
+            ),
+            // Check dictionary types
+            (
+                SedonaType::Arrow(DataType::Dictionary(
+                    Box::new(DataType::Int8),
+                    Box::new(DataType::Utf8View),
+                )),
+                SedonaType::Arrow(DataType::Utf8),
+            ),
+            // Check run-end encoded
+            (
+                SedonaType::Arrow(DataType::RunEndEncoded(
+                    DataType::Int32.into_nullable_field_ref(),
+                    DataType::Utf8View.into_nullable_field_ref(),
+                )),
+                SedonaType::Arrow(DataType::Utf8),
+            ),
+            // Check complex complex nested types that need to be recursively simplified
+            (
+                SedonaType::Arrow(DataType::ListView(
+                    Field::new("item", DataType::Utf8, true).into(),
+                )),
+                SedonaType::Arrow(DataType::new_list(DataType::Utf8, true)),
+            ),
+            (
+                SedonaType::Arrow(DataType::LargeListView(
+                    Field::new("item", DataType::Utf8, true).into(),
+                )),
+                SedonaType::Arrow(DataType::new_large_list(DataType::Utf8, true)),
+            ),
+            // Extension type metadata should be propagated
+            (WKB_VIEW_GEOMETRY, WKB_GEOMETRY),
+            (
+                SedonaType::Arrow(DataType::List(
+                    WKB_VIEW_GEOMETRY
+                        .to_storage_field("item", true)
+                        .unwrap()
+                        .into(),
+                )),
+                SedonaType::Arrow(DataType::List(
+                    WKB_GEOMETRY.to_storage_field("item", true).unwrap().into(),
+                )),
+            ),
+        ];
+
+        for (initial_type, simplified_type) in cases {
+            let tester = ScalarUdfTester::new(udf.clone().into(), vec![initial_type.clone()]);
+            let return_type = tester.return_type().unwrap();
+            assert_eq!(
+                return_type,
+                simplified_type,
+                "expected {initial_type:?} to simplify to {simplified_type:?} but got {return_type:?}"
+            );
+
+            // A few types aren't well supported by Arrow/DataFusion internals which make it
+            // difficult to create test data.
+            if !matches!(
+                initial_type,
+                SedonaType::Arrow(DataType::RunEndEncoded(_, _))
+                    | SedonaType::Arrow(DataType::ListView(_))
+                    | SedonaType::Arrow(DataType::LargeListView(_))
+            ) {
+                let initial_scalar = ScalarValue::Null
+                    .cast_to(initial_type.storage_type())
+                    .unwrap();
+                let expected_scalar = ScalarValue::Null
+                    .cast_to(simplified_type.storage_type())
+                    .unwrap();
+
+                let scalar_result = tester.invoke_scalar(initial_scalar).unwrap();
+                assert_eq!(scalar_result, expected_scalar)
+            }
+        }
     }
 }
