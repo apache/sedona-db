@@ -17,19 +17,12 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 use std::sync::Arc;
 
-use datafusion_common::{utils::proxy::VecAllocExt, Result};
-use datafusion_expr::JoinType;
-use futures::StreamExt;
-use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
-use parking_lot::Mutex;
-use std::sync::atomic::AtomicUsize;
-
 use crate::index::spatial_index::SpatialIndexRef;
+use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
@@ -38,6 +31,13 @@ use crate::{
     spatial_predicate::SpatialPredicate,
     utils::join_utils::need_produce_result_in_final,
 };
+use async_trait::async_trait;
+use datafusion_common::{utils::proxy::VecAllocExt, Result};
+use datafusion_expr::JoinType;
+use futures::StreamExt;
+use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
+use parking_lot::Mutex;
+use std::sync::atomic::AtomicUsize;
 
 // Type aliases for better readability
 type SpatialRTree = RTree<f32>;
@@ -54,7 +54,7 @@ const RTREE_MEMORY_ESTIMATE_PER_RECT: usize = 60;
 /// 2. Building the spatial R-tree index
 /// 3. Setting up memory tracking and visited bitmaps
 /// 4. Configuring prepared geometries based on execution mode
-pub struct SpatialIndexBuilder {
+pub struct DefaultSpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
     options: SpatialJoinOptions,
@@ -72,25 +72,7 @@ pub struct SpatialIndexBuilder {
     memory_used: usize,
 }
 
-/// Metrics for the build phase of the spatial join.
-#[derive(Clone, Debug, Default)]
-pub struct SpatialJoinBuildMetrics {
-    /// Total time for collecting build-side of join
-    pub(crate) build_time: metrics::Time,
-    /// Memory used by the spatial-index in bytes
-    pub(crate) build_mem_used: metrics::Gauge,
-}
-
-impl SpatialJoinBuildMetrics {
-    pub fn new(partition: usize, metrics: &ExecutionPlanMetricsSet) -> Self {
-        Self {
-            build_time: MetricBuilder::new(metrics).subset_time("build_time", partition),
-            build_mem_used: MetricBuilder::new(metrics).gauge("build_mem_used", partition),
-        }
-    }
-}
-
-impl SpatialIndexBuilder {
+impl DefaultSpatialIndexBuilder {
     /// Create a new builder with the given configuration.
     pub fn new(
         schema: SchemaRef,
@@ -111,55 +93,6 @@ impl SpatialIndexBuilder {
             stats: GeoStatistics::empty(),
             memory_used: 0,
         })
-    }
-
-    /// Estimate the amount of memory required by the R-tree index and evaluating spatial predicates.
-    /// The estimated memory usage does not include the memory required for holding the build side
-    /// batches.
-    pub fn estimate_extra_memory_usage(
-        geo_stats: &GeoStatistics,
-        spatial_predicate: &SpatialPredicate,
-        options: &SpatialJoinOptions,
-    ) -> usize {
-        // Estimate the amount of memory needed by the refiner
-        let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
-        let refiner = create_refiner(
-            options.spatial_library,
-            spatial_predicate,
-            options.clone(),
-            num_geoms,
-            geo_stats.clone(),
-        );
-        let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
-
-        let knn_components_mem_usage =
-            if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
-                KnnComponents::estimate_max_memory_usage(geo_stats)
-            } else {
-                0
-            };
-
-        // Estimate the amount of memory needed for the R-tree
-        let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
-
-        // The final estimation is the sum of all above
-        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
-    }
-
-    /// Add a geometry batch to be indexed.
-    ///
-    /// This method accumulates geometry batches that will be used to build the spatial index.
-    /// Each batch contains processed geometry data along with memory usage information.
-    pub fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
-        let in_mem_size = indexed_batch.in_mem_size()?;
-        self.indexed_batches.push(indexed_batch);
-        self.record_memory_usage(in_mem_size);
-        Ok(())
-    }
-
-    pub fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
-        self.stats.merge(&stats);
-        self
     }
 
     /// Build the spatial R-tree index from collected geometry batches.
@@ -244,8 +177,57 @@ impl SpatialIndexBuilder {
         geom_idx_vec
     }
 
-    /// Finish building and return the completed SpatialIndex.
-    pub fn finish(mut self) -> Result<SpatialIndexRef> {
+    fn record_memory_usage(&mut self, bytes: usize) {
+        self.memory_used += bytes;
+        self.metrics.build_mem_used.set_max(self.memory_used);
+    }
+}
+
+#[async_trait]
+impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
+    fn estimate_extra_memory_usage(
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize {
+        // Estimate the amount of memory needed by the refiner
+        let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
+        let refiner = create_refiner(
+            options.spatial_library,
+            spatial_predicate,
+            options.clone(),
+            num_geoms,
+            geo_stats.clone(),
+        );
+        let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
+
+        let knn_components_mem_usage =
+            if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
+                KnnComponents::estimate_max_memory_usage(geo_stats)
+            } else {
+                0
+            };
+
+        // Estimate the amount of memory needed for the R-tree
+        let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
+
+        // The final estimation is the sum of all above
+        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
+    }
+
+    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        let in_mem_size = indexed_batch.in_mem_size()?;
+        self.indexed_batches.push(indexed_batch);
+        self.record_memory_usage(in_mem_size);
+        Ok(())
+    }
+
+    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
+        self.stats.merge(&stats);
+        self
+    }
+
+    fn finish(mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(DefaultSpatialIndex::empty(
                 self.spatial_predicate,
@@ -309,7 +291,7 @@ impl SpatialIndexBuilder {
         )))
     }
 
-    pub async fn add_stream(
+    async fn add_stream(
         &mut self,
         mut stream: SendableEvaluatedBatchStream,
         geo_statistics: GeoStatistics,
@@ -320,10 +302,5 @@ impl SpatialIndexBuilder {
         }
         self.merge_stats(geo_statistics);
         Ok(())
-    }
-
-    fn record_memory_usage(&mut self, bytes: usize) {
-        self.memory_used += bytes;
-        self.metrics.build_mem_used.set_max(self.memory_used);
     }
 }
