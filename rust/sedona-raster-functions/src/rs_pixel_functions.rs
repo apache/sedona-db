@@ -21,12 +21,12 @@ use std::vec;
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::{cast::AsArray, types::Int32Type};
-use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
+use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::wkb_factory::{write_wkb_point, write_wkb_polygon};
-use sedona_raster::affine_transformation::to_world_coordinate;
+use sedona_geometry::wkb_factory::{write_wkb_point, write_wkb_polygon, WKB_MIN_PROBABLE_BYTES};
+use sedona_raster::affine_transformation::{to_world_coordinate, AffineMatrix};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::datatypes::Edges;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -38,7 +38,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 /// RS_PixelAsPoint(raster, colX, rowY) scalar UDF implementation
 ///
 /// Returns the upper-left corner of the specified pixel as a Point geometry.
-/// The pixel coordinates are 1-based. Returns an error if coordinates are out of bounds.
+/// The pixel coordinates are 1-based. Extrapolates for out-of-bounds coordinates.
 pub fn rs_pixelaspoint_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_pixelaspoint",
@@ -75,36 +75,20 @@ impl SedonaScalarKernel for RsPixelAsPoint {
         let row_array = args[2].clone().into_array(executor.num_iterations())?;
         let row_array = row_array.as_primitive::<Int32Type>();
 
-        let bytes_per_point = 21; // 1 + 4 + 16
+        let bytes_per_point = WKB_MIN_PROBABLE_BYTES;
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             executor.num_iterations() * bytes_per_point,
         );
         let mut crs_builder = StringViewBuilder::with_capacity(executor.num_iterations());
 
-        executor.execute_raster_void(|i, raster_opt| {
-            match raster_opt {
-                None => {
-                    builder.append_null();
-                    crs_builder.append_null();
-                }
-                Some(raster) => {
-                    let col_x = col_array.value(i);
-                    let row_y = row_array.value(i);
-
-                    // Bounds check: 1-based coords must be in [1, width] x [1, height]
-                    let width = raster.metadata().width() as i32;
-                    let height = raster.metadata().height() as i32;
-                    if col_x < 1 || col_x > width || row_y < 1 || row_y > height {
-                        return exec_err!(
-                            "Pixel coordinates ({}, {}) are out of bounds for raster of size {}x{}",
-                            col_x,
-                            row_y,
-                            width,
-                            height
-                        );
-                    }
-
+        let mut col_iter = col_array.iter();
+        let mut row_iter = row_array.iter();
+        executor.execute_raster_void(|_, raster_opt| {
+            let col_x = col_iter.next().unwrap();
+            let row_y = row_iter.next().unwrap();
+            match (raster_opt, col_x, row_y) {
+                (Some(raster), Some(col_x), Some(row_y)) => {
                     // Convert to 0-based for the affine transform
                     let (wx, wy) =
                         to_world_coordinate(raster, (col_x - 1) as i64, (row_y - 1) as i64);
@@ -113,6 +97,10 @@ impl SedonaScalarKernel for RsPixelAsPoint {
                         .map_err(|e| DataFusionError::External(e.into()))?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
+                }
+                _ => {
+                    builder.append_null();
+                    crs_builder.append_null();
                 }
             }
             Ok(())
@@ -180,39 +168,35 @@ impl SedonaScalarKernel for RsPixelAsCentroid {
         let row_array = args[2].clone().into_array(executor.num_iterations())?;
         let row_array = row_array.as_primitive::<Int32Type>();
 
-        let bytes_per_point = 21;
+        let bytes_per_point = WKB_MIN_PROBABLE_BYTES;
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             executor.num_iterations() * bytes_per_point,
         );
         let mut crs_builder = StringViewBuilder::with_capacity(executor.num_iterations());
 
-        executor.execute_raster_void(|i, raster_opt| {
-            match raster_opt {
-                None => {
-                    builder.append_null();
-                    crs_builder.append_null();
-                }
-                Some(raster) => {
-                    let col_x = col_array.value(i);
-                    let row_y = row_array.value(i);
-
+        let mut col_iter = col_array.iter();
+        let mut row_iter = row_array.iter();
+        executor.execute_raster_void(|_, raster_opt| {
+            let col_x = col_iter.next().unwrap();
+            let row_y = row_iter.next().unwrap();
+            match (raster_opt, col_x, row_y) {
+                (Some(raster), Some(col_x), Some(row_y)) => {
                     // Centroid: use 0.5 offset within the pixel
                     let grid_x = (col_x - 1) as f64 + 0.5;
                     let grid_y = (row_y - 1) as f64 + 0.5;
 
-                    let metadata = raster.metadata();
-                    let wx = metadata.upper_left_x()
-                        + grid_x * metadata.scale_x()
-                        + grid_y * metadata.skew_x();
-                    let wy = metadata.upper_left_y()
-                        + grid_x * metadata.skew_y()
-                        + grid_y * metadata.scale_y();
+                    let affine = AffineMatrix::from_metadata(raster.metadata());
+                    let (wx, wy) = affine.transform(grid_x, grid_y);
 
                     write_wkb_point(&mut builder, (wx, wy))
                         .map_err(|e| DataFusionError::External(e.into()))?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
+                }
+                _ => {
+                    builder.append_null();
+                    crs_builder.append_null();
                 }
             }
             Ok(())
@@ -288,15 +272,15 @@ impl SedonaScalarKernel for RsPixelAsPolygon {
         );
         let mut crs_builder = StringViewBuilder::with_capacity(executor.num_iterations());
 
-        executor.execute_raster_void(|i, raster_opt| {
-            match raster_opt {
-                None => {
-                    builder.append_null();
-                    crs_builder.append_null();
-                }
-                Some(raster) => {
-                    let col_x = col_array.value(i) as i64;
-                    let row_y = row_array.value(i) as i64;
+        let mut col_iter = col_array.iter();
+        let mut row_iter = row_array.iter();
+        executor.execute_raster_void(|_, raster_opt| {
+            let col_x = col_iter.next().unwrap();
+            let row_y = row_iter.next().unwrap();
+            match (raster_opt, col_x, row_y) {
+                (Some(raster), Some(col_x), Some(row_y)) => {
+                    let col_x = col_x as i64;
+                    let row_y = row_y as i64;
 
                     // 4 corners in 0-based grid coords, then transformed to world coords
                     // Upper-left: (colX-1, rowY-1), Upper-right: (colX, rowY-1)
@@ -310,6 +294,10 @@ impl SedonaScalarKernel for RsPixelAsPolygon {
                         .map_err(|e| DataFusionError::External(e.into()))?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));
+                }
+                _ => {
+                    builder.append_null();
+                    crs_builder.append_null();
                 }
             }
             Ok(())
@@ -339,49 +327,10 @@ mod tests {
     use arrow_array::Int32Array;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
-    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array_item_crs;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
-
-    /// Build a single-row raster with one band and no nodata value.
-    fn build_no_nodata_raster(
-        width: usize,
-        height: usize,
-        data_type: BandDataType,
-        band_bytes: &[u8],
-        crs: Option<&str>,
-    ) -> arrow_array::StructArray {
-        use sedona_raster::builder::RasterBuilder;
-        use sedona_raster::traits::{BandMetadata, RasterMetadata};
-        use sedona_schema::raster::StorageType;
-        let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: width as u64,
-            height: height as u64,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, crs).expect("start raster");
-        builder
-            .start_band(BandMetadata {
-                datatype: data_type,
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
-            .expect("start band");
-        builder.band_data_writer().append_value(band_bytes);
-        builder.finish_band().expect("finish band");
-        builder.finish_raster().expect("finish raster");
-        builder.finish().expect("finish")
-    }
 
     // -----------------------------------------------------------------------
     // RS_PixelAsPoint tests
@@ -428,7 +377,7 @@ mod tests {
     }
 
     #[test]
-    fn udf_pixelaspoint_out_of_bounds_errors() {
+    fn udf_pixelaspoint_out_of_bounds_extrapolates() {
         let udf = rs_pixelaspoint_udf();
         let tester = ScalarUdfTester::new(
             udf.into(),
@@ -439,13 +388,24 @@ mod tests {
             ],
         );
 
-        // Raster 0 has width=1, height=2 -> valid cols [1,1], rows [1,2]
+        // Raster 0 has width=1, height=2, UL=(1,2), scale=(0.1,-0.2), skew=(0,0)
+        // Pixel (2,1) is out of bounds (width=1), but should extrapolate:
+        // grid(1,0) -> world(1 + 1*0.1, 2 + 0) = (1.1, 2.0)
         let rasters = generate_test_rasters(1, None).unwrap();
         let cols = Int32Array::from(vec![2]); // out of bounds (width=1)
         let rows = Int32Array::from(vec![1]);
 
-        let result = tester.invoke_arrays(vec![Arc::new(rasters), Arc::new(cols), Arc::new(rows)]);
-        assert!(result.is_err());
+        let expected = &create_array_item_crs(
+            &[Some("POINT (1.1 2.0)")],
+            [Some("OGC:CRS84")],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(cols), Arc::new(rows)])
+            .unwrap();
+
+        assert_array_equal(&result, expected);
     }
 
     // -----------------------------------------------------------------------
@@ -517,21 +477,19 @@ mod tests {
             ],
         );
 
-        // Use a simple raster with no skew to ensure exact FP arithmetic.
-        // width=4, height=4, UL=(0,0), scale=(1.0,-1.0), skew=(0,0)
-        // Pixel (2,3) corners in grid coords: (1,2),(2,2),(2,3),(1,3)
-        //   (1,2) -> (1.0, -2.0)
-        //   (2,2) -> (2.0, -2.0)
-        //   (2,3) -> (2.0, -3.0)
-        //   (1,3) -> (1.0, -3.0)
-        let data = vec![0u8; 4 * 4]; // 16 UInt8 pixels
-        let rasters = build_no_nodata_raster(4, 4, BandDataType::UInt8, &data, Some("OGC:CRS84"));
-        let cols = Int32Array::from(vec![2]);
-        let rows = Int32Array::from(vec![3]);
+        // Raster 0: width=1, height=2, UL=(1,2), scale=(0.1,-0.2), skew=(0,0)
+        // Pixel (1,1) corners in 0-based grid coords: (0,0),(1,0),(1,1),(0,1)
+        //   (0,0) -> (1.0, 2.0)
+        //   (1,0) -> (1.1, 2.0)
+        //   (1,1) -> (1.1, 1.8)
+        //   (0,1) -> (1.0, 1.8)
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let cols = Int32Array::from(vec![1]);
+        let rows = Int32Array::from(vec![1]);
 
         let expected = &create_array_item_crs(
             &[Some(
-                "POLYGON ((1.0 -2.0, 2.0 -2.0, 2.0 -3.0, 1.0 -3.0, 1.0 -2.0))",
+                "POLYGON ((1.0 2.0, 1.1 2.0, 1.1 1.8, 1.0 1.8, 1.0 2.0))",
             )],
             [Some("OGC:CRS84")],
             &WKB_GEOMETRY,
