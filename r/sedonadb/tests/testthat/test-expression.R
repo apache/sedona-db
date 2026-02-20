@@ -58,6 +58,15 @@ test_that("function calls with a translation become function calls", {
   expect_snapshot(sd_eval_expr(quote(base::abs(-1L))))
 })
 
+
+test_that("function calls explicitly referencing DataFusion functions work", {
+  expect_snapshot(sd_eval_expr(quote(.fns$abs(-1L))))
+
+  # Check for a resasonable error if this is not a valid name
+  expect_snapshot_error(sd_eval_expr(quote(.fns$absolutely_not(-1L))))
+})
+
+
 test_that("function calls without a translation are evaluated in R", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(function_without_a_translation(1L))))

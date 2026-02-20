@@ -110,6 +110,20 @@
       <SedonaDBExpr>
       abs((- Int32(1)))
 
+# function calls explicitly referencing DataFusion functions work
+
+    Code
+      sd_eval_expr(quote(.fns$abs(-1L)))
+    Output
+      <SedonaDBExpr>
+      abs((- Int32(1)))
+
+---
+
+    Error evaluating translated expression `.fns$absolutely_not(-1L)`
+    Caused by error:
+    ! Scalar UDF 'absolutely_not' not found
+
 # function calls without a translation are evaluated in R
 
     Code
