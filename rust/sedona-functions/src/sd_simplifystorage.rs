@@ -139,3 +139,54 @@ fn simplify_array(array: &ArrayRef, target: &FieldRef) -> Result<ArrayRef> {
         target.data_type(),
     )?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_schema::{DataType, Field};
+    use datafusion_expr::ScalarUDF;
+    use rstest::rstest;
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::testers::ScalarUdfTester;
+
+    #[test]
+    fn udf_metadata() {
+        let udf: ScalarUDF = sd_simplifystorage_udf().into();
+        assert_eq!(udf.name(), "sd_simplifystorage");
+    }
+
+    #[rstest]
+    fn simplify_identity(
+        // All these types don't need to be simplified
+        #[values(
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::LargeUtf8),
+            SedonaType::Arrow(DataType::Binary),
+            SedonaType::Arrow(DataType::LargeBinary),
+            SedonaType::Arrow(DataType::Struct(vec![Field::new("foofy", DataType::Utf8, false)].into())),
+            SedonaType::Arrow(DataType::new_list(DataType::Utf8, true)),
+            SedonaType::Arrow(DataType::List(WKB_GEOMETRY.to_storage_field("item", true).unwrap().into())),
+            WKB_GEOMETRY,
+        )]
+        sedona_type: SedonaType,
+    ) {
+        let udf = sd_simplifystorage_udf();
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type.clone());
+    }
+
+    #[rstest]
+    fn simplify_actually(
+        // All these types don't need to be simplified
+        #[values(
+            (SedonaType::Arrow(DataType::Utf8View), SedonaType::Arrow(DataType::Utf8)),
+            (WKB_VIEW_GEOMETRY, WKB_GEOMETRY)
+        )]
+        sedona_type: (SedonaType, SedonaType),
+    ) {
+        let (initial_type, simplified_type) = sedona_type;
+        let udf = sd_simplifystorage_udf();
+        let tester = ScalarUdfTester::new(udf.clone().into(), vec![initial_type.clone()]);
+        tester.assert_return_type(simplified_type.clone());
+    }
+}
