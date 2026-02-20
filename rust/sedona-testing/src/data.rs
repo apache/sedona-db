@@ -125,6 +125,33 @@ pub fn sedona_testing_dir() -> Result<String> {
     )
 }
 
+/// Get the path to a raster test file from the sedona-testing data directory.
+///
+/// # Arguments
+/// * `name` - The name of the raster file (e.g., "test1.tiff", "test4.tiff")
+///
+/// # Returns
+/// The full path to the raster test file if it exists.
+///
+/// # Example
+/// ```ignore
+/// let path = test_raster("test4.tiff")?;
+/// ```
+pub fn test_raster(name: &str) -> Result<String> {
+    let base = sedona_testing_dir()?;
+    let path = format!("{}/data/raster/{}", base, name);
+    if fs::exists(&path)? {
+        Ok(path)
+    } else {
+        sedona_internal_err!(
+            "sedona-testing raster file '{}' not found at '{}', \
+             run submodules/download-assets.py or check the file name",
+            name,
+            path
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -171,5 +198,19 @@ mod test {
         let maybe_dir = sedona_testing_dir();
         env::remove_var("SEDONA_TESTING_DIR");
         assert!(maybe_dir.is_ok());
+    }
+
+    #[test]
+    fn test_raster_resolves() {
+        // Test that test_raster can find existing raster files
+        let path = test_raster("test4.tiff");
+        assert!(path.is_ok(), "Failed to find test4.tiff: {:?}", path.err());
+        let path_str = path.unwrap();
+        assert!(path_str.ends_with("test4.tiff"));
+        assert!(fs::exists(&path_str).unwrap());
+
+        // Test that non-existent files return an error
+        let err = test_raster("nonexistent.tiff");
+        assert!(err.is_err());
     }
 }
