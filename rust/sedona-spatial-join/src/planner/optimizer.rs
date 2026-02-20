@@ -17,13 +17,15 @@
 use std::sync::Arc;
 
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
-use crate::planner::spatial_expr_utils::collect_spatial_predicate_names;
+use crate::planner::spatial_expr_utils::{
+    collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
+};
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use datafusion_common::tree_node::Transformed;
-use datafusion_common::NullEquality;
-use datafusion_common::Result;
+use datafusion_common::{NullEquality, Result};
 use datafusion_expr::logical_plan::Extension;
+use datafusion_expr::utils::{conjunction, split_conjunction};
 use datafusion_expr::{BinaryExpr, Expr, Operator};
 use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
 use sedona_common::option::SedonaOptions;
@@ -39,6 +41,14 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 ///   before filter pushdown runs. Extension nodes naturally block filter pushdown via
 ///   `prevent_predicate_push_down_columns()`, preventing incorrect pushdown to the build side
 ///   of KNN joins.
+///
+/// - `KnnQuerySideFilterPushdown` is inserted *before* `PushDownFilter` (but after
+///   `KnnJoinEarlyRewrite`) to selectively push query-side-only filters below the
+///   `SpatialJoinPlanNode` extension node. This allows the subsequent `PushDownFilter` to push
+///   those filters further down into scan nodes in the same optimizer pass. DataFusion's
+///   built-in `PushDownFilter` cannot push through extension nodes because they block all
+///   pushdown by default, and the built-in rule pushes the same predicate to ALL children
+///   (which would fail for a filter referencing only one side's columns).
 ///
 /// - `SpatialJoinLogicalRewrite` is appended at the end so that non-KNN spatial joins still
 ///   benefit from filter pushdown before being converted to extension nodes.
@@ -60,9 +70,17 @@ pub(crate) fn register_spatial_join_logical_optimizer(
             )
         })?;
 
-    // Insert KNN-specific rules BEFORE PushDownFilter.
-    // MergeSpatialFilterIntoJoin must come first because it creates the Join(filter=...)
-    // nodes that KnnJoinEarlyRewrite then converts to SpatialJoinPlanNode.
+    // Insert KNN-specific rules BEFORE PushDownFilter. Each `insert` at the same
+    // index pushes earlier insertions forward, so we insert in reverse order.
+    //
+    // Effective order:
+    //   1. MergeSpatialFilterIntoJoin — merges spatial predicates into Join(filter=...)
+    //   2. KnnJoinEarlyRewrite       — converts KNN joins to SpatialJoinPlanNode
+    //   3. KnnQuerySideFilterPushdown — pushes query-side filters below the extension node
+    //   4. PushDownFilter (built-in)  — pushes filters further into scan nodes
+    optimizer
+        .rules
+        .insert(push_down_pos, Arc::new(KnnQuerySideFilterPushdown));
     optimizer
         .rules
         .insert(push_down_pos, Arc::new(KnnJoinEarlyRewrite));
@@ -350,5 +368,145 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
         )?;
 
         Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
+    }
+}
+
+/// Optimizer rule that pushes query-side-only filters below the `SpatialJoinPlanNode` extension
+/// node for KNN joins.
+///
+/// This rule handles the pattern:
+/// ```text
+/// Filter(predicate)
+///   Extension(SpatialJoinPlanNode { filter contains ST_KNN, ... })
+/// ```
+///
+/// For each conjunct in `predicate`, if ALL referenced columns exist in the query-side child's
+/// schema, the conjunct is pushed down as a `Filter` wrapping the query-side child. Remaining
+/// conjuncts stay above the extension node.
+#[derive(Default, Debug)]
+struct KnnQuerySideFilterPushdown;
+
+impl OptimizerRule for KnnQuerySideFilterPushdown {
+    fn name(&self) -> &str {
+        "knn_query_side_filter_pushdown"
+    }
+
+    fn apply_order(&self) -> Option<ApplyOrder> {
+        Some(ApplyOrder::BottomUp)
+    }
+
+    fn supports_rewrite(&self) -> bool {
+        true
+    }
+
+    fn rewrite(
+        &self,
+        plan: LogicalPlan,
+        _config: &dyn OptimizerConfig,
+    ) -> Result<Transformed<LogicalPlan>> {
+        // Match: Filter(predicate, Extension(SpatialJoinPlanNode))
+        let LogicalPlan::Filter(ref filter) = plan else {
+            return Ok(Transformed::no(plan));
+        };
+
+        let LogicalPlan::Extension(ref ext) = *filter.input else {
+            return Ok(Transformed::no(plan));
+        };
+
+        let Some(spatial_join) = ext.node.as_any().downcast_ref::<SpatialJoinPlanNode>() else {
+            return Ok(Transformed::no(plan));
+        };
+
+        // The SpatialJoinPlanNode should be a KNN join (i.e. its filter should contain ST_KNN),
+        // otherwise we shouldn't be seeing it here. This SpatialJoinPlanNode should be produced
+        // by KnnJoinEarlyRewrite.
+        let spatial_predicate_names = collect_spatial_predicate_names(&spatial_join.filter);
+        if !spatial_predicate_names.contains("st_knn") {
+            return Ok(Transformed::no(plan));
+        }
+
+        // Find which child is the query side (first argument of ST_KNN)
+        let query_side = find_knn_query_side(
+            &spatial_join.filter,
+            spatial_join.left.schema(),
+            spatial_join.right.schema(),
+        );
+        let Some(query_side) = query_side else {
+            return Ok(Transformed::no(plan));
+        };
+
+        let query_child_schema = match query_side {
+            KNNJoinQuerySide::Left => spatial_join.left.schema(),
+            KNNJoinQuerySide::Right => spatial_join.right.schema(),
+        };
+
+        // Split the filter predicate into conjuncts
+        let conjuncts = split_conjunction(&filter.predicate);
+
+        let mut push_down: Vec<Expr> = Vec::new();
+        let mut keep_above: Vec<Expr> = Vec::new();
+
+        for conjunct in conjuncts {
+            let col_refs = conjunct.column_refs();
+            if !col_refs.is_empty()
+                && col_refs
+                    .iter()
+                    .all(|col| query_child_schema.has_column(col))
+            {
+                push_down.push(conjunct.clone());
+            } else {
+                keep_above.push(conjunct.clone());
+            }
+        }
+
+        // If nothing to push down, return unchanged
+        if push_down.is_empty() {
+            return Ok(Transformed::no(plan));
+        }
+
+        let pushed_predicate =
+            conjunction(push_down).expect("push_down is non-empty, conjunction should return Some");
+
+        // Wrap the query-side child in a Filter node
+        let (new_left, new_right) = match query_side {
+            KNNJoinQuerySide::Left => {
+                let new_left = LogicalPlan::Filter(Filter::try_new(
+                    pushed_predicate,
+                    Arc::new(spatial_join.left.clone()),
+                )?);
+                (new_left, spatial_join.right.clone())
+            }
+            KNNJoinQuerySide::Right => {
+                let new_right = LogicalPlan::Filter(Filter::try_new(
+                    pushed_predicate,
+                    Arc::new(spatial_join.right.clone()),
+                )?);
+                (spatial_join.left.clone(), new_right)
+            }
+        };
+
+        // Rebuild the SpatialJoinPlanNode with the new children
+        let new_spatial_join = SpatialJoinPlanNode {
+            left: new_left,
+            right: new_right,
+            join_type: spatial_join.join_type,
+            filter: spatial_join.filter.clone(),
+            schema: Arc::clone(&spatial_join.schema),
+            join_constraint: spatial_join.join_constraint,
+            null_equality: spatial_join.null_equality,
+        };
+
+        let new_extension = LogicalPlan::Extension(Extension {
+            node: Arc::new(new_spatial_join),
+        });
+
+        // If there are remaining predicates, wrap in a Filter
+        let result = if let Some(remaining) = conjunction(keep_above) {
+            LogicalPlan::Filter(Filter::try_new(remaining, Arc::new(new_extension))?)
+        } else {
+            new_extension
+        };
+
+        Ok(Transformed::yes(result))
     }
 }
