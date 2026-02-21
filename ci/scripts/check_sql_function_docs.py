@@ -23,24 +23,22 @@ import json
 import sys
 from pathlib import Path
 
-IGNORED_FUNCTIONS: set[str] = {
+IGNORED_FUNCTIONS = {
     # Internal/unsupported for public docs
     "st_geomfromwkbunchecked",
 }
 
 
-def load_functions_from_stream(text: str) -> list[dict[str, object]]:
+def load_functions_from_stream(text):
     data = json.loads(text)
     if not isinstance(data, list):
         raise ValueError("Expected top-level JSON array from list-functions")
     return data
 
 
-def validate_docs(
-    functions: list[dict[str, object]], docs_dir: Path
-) -> tuple[list[str], list[str]]:
-    missing_docs: list[str] = []
-    missing_alias_mentions: list[str] = []
+def validate_docs(functions, docs_dir):
+    missing_docs = []
+    missing_alias_mentions = []
 
     for item in functions:
         name = item.get("name")
@@ -68,7 +66,7 @@ def validate_docs(
     return missing_docs, missing_alias_mentions
 
 
-def main() -> int:
+def main():
     parser = argparse.ArgumentParser(
         description=(
             "Validate that docs/reference/sql has a <function>.qmd for every "
@@ -92,8 +90,7 @@ def main() -> int:
 
     docs_dir = Path(args.docs_dir)
     if not docs_dir.is_dir():
-        print(f"ERROR: docs directory not found: {docs_dir}", file=sys.stderr)
-        return 2
+        raise ValueError(f"ERROR: docs directory not found: {docs_dir}")
 
     try:
         if args.functions_json == "-":
@@ -103,8 +100,7 @@ def main() -> int:
         functions = load_functions_from_stream(raw_json)
         missing_docs, missing_alias_mentions = validate_docs(functions, docs_dir)
     except Exception as e:  # noqa: BLE001
-        print(f"ERROR: validation failed: {e}", file=sys.stderr)
-        return 2
+        raise ValueError(f"Validation failed: {e}") from e
 
     source = "stdin" if args.functions_json == "-" else args.functions_json
     print(f"Checked {len(functions)} functions from: {source}")
@@ -128,4 +124,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import sys
+    
+    sys.exit(main)
