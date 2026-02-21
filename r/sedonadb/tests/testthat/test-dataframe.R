@@ -406,12 +406,13 @@ test_that("sd_summarise() + sd_group_by() works as expected", {
   expect_identical(
     df_in |>
       sd_group_by(letter) |>
-      sd_summarise(x = sum(x)) |>
+      sd_summarise(x = sum(x), n = n()) |>
       sd_arrange(letter) |>
       sd_collect(),
     data.frame(
       letter = c("a", "b", "c"),
-      x = c(1 + 2 + 3, 4 + 5 + 6 + 7, 8 + 9 + 10)
+      x = c(1 + 2 + 3, 4 + 5 + 6 + 7, 8 + 9 + 10),
+      n = c(3, 4, 3)
     )
   )
 })

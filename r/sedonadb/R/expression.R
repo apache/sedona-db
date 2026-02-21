@@ -446,4 +446,8 @@ ensure_translations_registered <- function() {
       })
     )
   }
+
+  sd_register_translation("dplyr::n", function(.ctx) {
+    sd_expr_aggregate_function("count", list(1L), na.rm = FALSE, factory = .ctx$factory)
+  })
 }
