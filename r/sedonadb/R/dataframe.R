@@ -499,7 +499,7 @@ sd_write_parquet <- function(
 ) {
   .data <- as_sedonadb_dataframe(.data)
   if (!is.null(.data$group_by)) {
-    stop("sd_select() does not support grouped input")
+    stop("sd_write_parquet() does not support grouped input")
   }
 
   # Determine single_file_output default based on path and partition_by
