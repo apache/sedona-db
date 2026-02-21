@@ -191,9 +191,9 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
   schema <- nanoarrow::infer_nanoarrow_schema(.data)
   if (is.null(.data$group_by)) {
     grouped_label <- ""
-    grouped_vars = ""
+    grouped_vars <- ""
   } else {
-    grouped_label = "grouped "
+    grouped_label <- "grouped "
     grouped_vars <- sprintf(
       " | [%s]",
       paste0("`", names(.data$group_by), "`", collapse = ", ")
@@ -228,6 +228,10 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #'
 sd_select <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_select() does not support grouped input")
+  }
+
   schema <- nanoarrow::infer_nanoarrow_schema(.data)
   ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
   loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
@@ -252,6 +256,10 @@ sd_select <- function(.data, ...) {
 #'
 sd_transmute <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_transmute() does not support grouped input")
+  }
+
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
@@ -287,6 +295,10 @@ sd_transmute <- function(.data, ...) {
 #'
 sd_filter <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_filter() does not support grouped input")
+  }
+
   rlang::check_dots_unnamed()
 
   expr_quos <- rlang::enquos(...)
@@ -316,6 +328,10 @@ sd_filter <- function(.data, ...) {
 #'
 sd_arrange <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_arrange() does not support grouped input")
+  }
+
   rlang::check_dots_unnamed()
 
   expr_quos <- rlang::enquos(...)
@@ -353,7 +369,7 @@ sd_arrange <- function(.data, ...) {
 #' @export
 #'
 #' @examples
-#' data.frame(letter = c(rep("a", 3, rep("b", 4), rep("c", 3))) x = 1:10) |>
+#' data.frame(letter = c(rep("a", 3), rep("b", 4), rep("c", 3)), x = 1:10) |>
 #'   sd_group_by(letter) |>
 #'   sd_summarise(x = sum(x))
 #'
@@ -376,6 +392,14 @@ sd_group_by <- function(.data, ...) {
   }
 
   new_sedonadb_dataframe(.data$ctx, .data$df, group_by = sd_exprs)
+}
+
+#' @rdname sd_group_by
+#' @export
+sd_ungroup <- function(.data) {
+  .data <- as_sedonadb_dataframe(.data)
+  .data$group_by <- NULL
+  .data
 }
 
 #' Aggregate SedonaDB DataFrames to a single row per group
@@ -474,6 +498,9 @@ sd_write_parquet <- function(
   overwrite_bbox_columns = FALSE
 ) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_select() does not support grouped input")
+  }
 
   # Determine single_file_output default based on path and partition_by
   if (is.null(single_file_output)) {
@@ -502,6 +529,10 @@ sd_write_parquet <- function(
 }
 
 new_sedonadb_dataframe <- function(ctx, internal_df, ..., group_by = NULL) {
+  if (length(group_by) == 0) {
+    group_by <- NULL
+  }
+
   structure(
     list(ctx = ctx, df = internal_df, group_by = group_by),
     class = "sedonadb_dataframe"

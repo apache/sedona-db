@@ -127,7 +127,10 @@ test_that("dataframe can be converted to an array stream", {
 
 test_that("dataframe can be printed", {
   df <- sd_sql("SELECT ST_Point(0, 1) as pt")
-  expect_output(expect_identical(print(df), df), "POINT")
+  expect_snapshot(print(df))
+
+  grouped <- df |> sd_group_by(x = .fns$st_x(pt))
+  expect_snapshot(print(grouped))
 })
 
 test_that("dataframe print uses ASCII when requested", {
@@ -380,6 +383,36 @@ test_that("sd_arrange() works with dplyr-like arrange syntax", {
   expect_identical(
     df_in |> sd_arrange(dplyr::desc(x)) |> sd_collect(),
     data.frame(x = 10:1, y = letters[1:10])
+  )
+})
+
+test_that("sd_group_by() and sd_ungroup() modify .data$group_by", {
+  df_in <- data.frame(letter = letters[1:10], x = 1:10)
+
+  # Check that we can group
+  grouped <- df_in |> sd_group_by(letter, x)
+  expect_identical(names(grouped$group_by), c("letter", "x"))
+
+  # Check that we can ungroup
+  expect_identical(names(sd_ungroup(grouped)$group_by), NULL)
+
+  # Check that we can ungroup using sd_group_by()
+  expect_identical(names(sd_group_by(grouped)$group_by), NULL)
+})
+
+test_that("sd_summarise() + sd_group_by() works as expected", {
+  df_in <- data.frame(letter = c(rep("a", 3), rep("b", 4), rep("c", 3)), x = 1:10)
+
+  expect_identical(
+    df_in |>
+      sd_group_by(letter) |>
+      sd_summarise(x = sum(x)) |>
+      sd_arrange(letter) |>
+      sd_collect(),
+    data.frame(
+      letter = c("a", "b", "c"),
+      x = c(1 + 2 + 3, 4 + 5 + 6 + 7, 8 + 9 + 10)
+    )
   )
 })
 

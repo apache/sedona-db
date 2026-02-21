@@ -2,9 +2,12 @@
 % Please edit documentation in R/dataframe.R
 \name{sd_group_by}
 \alias{sd_group_by}
+\alias{sd_ungroup}
 \title{Group SedonaDB DataFrames by one or more expressions}
 \usage{
 sd_group_by(.data, ...)
+
+sd_ungroup(.data)
 }
 \arguments{
 \item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
@@ -22,7 +25,7 @@ Note that unlike \code{\link[dplyr:group_by]{dplyr::group_by()}}, these groups a
 any transformations.
 }
 \examples{
-data.frame(letter = c(rep("a", 3, rep("b", 4), rep("c", 3))) x = 1:10) |>
+data.frame(letter = c(rep("a", 3), rep("b", 4), rep("c", 3)), x = 1:10) |>
   sd_group_by(letter) |>
   sd_summarise(x = sum(x))
 
