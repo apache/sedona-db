@@ -31,6 +31,13 @@
 #' @param factory A [sd_expr_factory()]. This factory wraps a SedonaDB context
 #'   and is used to resolve scalar functions and/or retrieve options.
 #' @param ctx A SedonaDB context or NULL to use the default context.
+#' @param args A list of SedonaDBExpr or object coercible to one with
+#'   [as_sd_expr()].
+#' @param na.rm For aggregate expressions, should nulls be ignored? The R
+#'   idiom is to respect null; however, the SQL idiom is to drop them. The
+#'   default value follows the R idiom (`na.rm = FALSE`).
+#' @param distinct For aggregate expressions, use only distinct values.
+#' @param ... Reserved for future use
 #'
 #' @returns An object of class SedonaDBExpr
 #' @export

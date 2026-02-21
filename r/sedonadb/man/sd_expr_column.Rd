@@ -64,6 +64,17 @@ R function names (e.g., \code{>}, \code{<}, \code{+}, \code{-}).}
 \item{function_name}{The name of the function to call. This name is resolved
 from the context associated with \code{factory}.}
 
+\item{args}{A list of SedonaDBExpr or object coercible to one with
+\code{\link[=as_sd_expr]{as_sd_expr()}}.}
+
+\item{...}{Reserved for future use}
+
+\item{na.rm}{For aggregate expressions, should nulls be ignored? The R
+idiom is to respect null; however, the SQL idiom is to drop them. The
+default value follows the R idiom (\code{na.rm = FALSE}).}
+
+\item{distinct}{For aggregate expressions, use only distinct values.}
+
 \item{alias}{An alias to apply to \code{expr}.}
 
 \item{ctx}{A SedonaDB context or NULL to use the default context.}
