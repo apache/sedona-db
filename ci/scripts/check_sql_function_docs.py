@@ -23,6 +23,11 @@ import json
 import sys
 from pathlib import Path
 
+IGNORED_FUNCTIONS: set[str] = {
+    # Internal/unsupported for public docs
+    "st_geomfromwkbunchecked",
+}
+
 
 def load_functions_from_stream(text: str) -> list[dict[str, object]]:
     data = json.loads(text)
@@ -46,6 +51,8 @@ def validate_docs(
             isinstance(a, str) for a in aliases
         ):
             raise ValueError(f"Invalid function item (aliases): {item!r}")
+        if name in IGNORED_FUNCTIONS:
+            continue
 
         qmd = docs_dir / f"{name}.qmd"
         if not qmd.exists():
