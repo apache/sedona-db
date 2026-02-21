@@ -313,17 +313,33 @@ sd_register_datafusion_fn <- function(fn_name) {
     # with names we want to support we have to add individual translations
     rlang::check_dots_unnamed()
 
-    # We can do a better job checking but for now we can use this heuristic
-    if (endsWith(fn_name, "_Agg")) {
-      sd_expr_aggregate_function(fn_name, list(...))
-    } else {
-      sd_expr_scalar_function(fn_name, list(...))
-    }
+    sd_expr_scalar_function(fn_name, list(...))
   }
 
   default_fns[[fn_name]] <- fn
   invisible(fn)
 }
+
+#' Register an aggregate translation that calls DataFusion
+#'
+#' @param fn_name The name of the function
+#' @returns fn, invisibly
+#' @noRd
+sd_register_datafusion_fn_agg <- function(fn_name) {
+  force(fn_name)
+
+  fn <- function(.ctx, ..., na.rm = FALSE) {
+    # Generic SQL functions can't have named arguments. For any of these
+    # with names we want to support we have to add individual translations
+    rlang::check_dots_unnamed()
+
+    sd_expr_aggregate_function(fn_name, list(...), na.rm = na.rm)
+  }
+
+  default_fns[[fn_name]] <- fn
+  invisible(fn)
+}
+
 
 default_fns <- new.env(parent = emptyenv())
 
@@ -337,7 +353,11 @@ ensure_translations_registered <- function() {
   # Register default translations for our st_, sd_, and rs_ functions
   fn_names <- utils::.DollarNames(.fns, "^(st|rs|sd|)_")
   for (fn_name in fn_names) {
-    sd_register_datafusion_fn(fn_name)
+    if (endsWith(fn_name, "_agg")) {
+      sd_register_datafusion_fn_agg(fn_name)
+    } else {
+      sd_register_datafusion_fn(fn_name)
+    }
   }
 
   sd_register_translation("base::abs", function(.ctx, x) {
