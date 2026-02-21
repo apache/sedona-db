@@ -38,11 +38,7 @@ pub fn default_function_set() -> FunctionSet {
 
     register_scalar_udfs!(
         function_set,
-        crate::distance::st_distance_sphere_udf,
-        crate::distance::st_distance_spheroid_udf,
         crate::distance::st_distance_udf,
-        crate::distance::st_frechet_distance_udf,
-        crate::distance::st_hausdorff_distance_udf,
         crate::distance::st_max_distance_udf,
         crate::overlay::st_difference_udf,
         crate::overlay::st_intersection_udf,
