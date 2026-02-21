@@ -188,6 +188,27 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
     ascii = ascii
   )
 
+  schema <- nanoarrow::infer_nanoarrow_schema(.data)
+  if (is.null(.data$group_by)) {
+    grouped_label <- ""
+    grouped_vars = ""
+  } else {
+    grouped_label = "grouped "
+    grouped_vars <- sprintf(
+      " | [%s]",
+      paste0("`", names(.data$group_by), "`", collapse = ", ")
+    )
+  }
+
+  cat(
+    sprintf(
+      "<%ssedonab_dataframe: NA x %d%s>\n",
+      grouped_label,
+      length(schema$children),
+      grouped_vars
+    )
+  )
+
   cat(content)
   cat(paste0("Preview of up to ", n, " row(s)\n"))
 
@@ -317,7 +338,47 @@ sd_arrange <- function(.data, ...) {
   new_sedonadb_dataframe(.data$ctx, df)
 }
 
-#' Order rows of a SedonaDB data frame using column values
+#' Group SedonaDB DataFrames by one or more expressions
+#'
+#' Note that unlike [dplyr::group_by()], these groups are dropped after
+#' any transformations.
+#'
+#' @inheritParams sd_count
+#' @param ... Named expressions whose unique combination will be used as
+#'   groups to potentially compute a future aggregate expression. These are
+#'   evaluated in the same way as [dplyr::group_by()] except `.add` nor
+#'   `.drop` are supported.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(letter = c(rep("a", 3, rep("b", 4), rep("c", 3))) x = 1:10) |>
+#'   sd_group_by(letter) |>
+#'   sd_summarise(x = sum(x))
+#'
+sd_group_by <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  # Ensure inputs are given aliases to account for the expected column name
+  exprs_names <- names(r_exprs)
+  for (i in seq_along(sd_exprs)) {
+    name <- exprs_names[i]
+    if (!is.na(name) && name != "") {
+      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+    }
+  }
+
+  new_sedonadb_dataframe(.data$ctx, .data$df, group_by = sd_exprs)
+}
+
+#' Aggregate SedonaDB DataFrames to a single row per group
 #'
 #' @inheritParams sd_count
 #' @param ... Aggregate expressions. These are evaluated in the same way as
@@ -349,8 +410,7 @@ sd_summarise <- function(.data, ...) {
     }
   }
 
-  # No group_by yet, so we pass list() as the grouping variables
-  df <- .data$df$aggregate(list(), sd_exprs)
+  df <- .data$df$aggregate(as.list(.data$group_by), sd_exprs)
   new_sedonadb_dataframe(.data$ctx, df)
 }
 
@@ -441,8 +501,11 @@ sd_write_parquet <- function(
   invisible(.data)
 }
 
-new_sedonadb_dataframe <- function(ctx, internal_df) {
-  structure(list(ctx = ctx, df = internal_df), class = "sedonadb_dataframe")
+new_sedonadb_dataframe <- function(ctx, internal_df, ..., group_by = NULL) {
+  structure(
+    list(ctx = ctx, df = internal_df, group_by = group_by),
+    class = "sedonadb_dataframe"
+  )
 }
 
 #' @importFrom utils head

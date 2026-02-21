@@ -3,7 +3,7 @@
 \name{sd_summarise}
 \alias{sd_summarise}
 \alias{sd_summarize}
-\title{Order rows of a SedonaDB data frame using column values}
+\title{Aggregate SedonaDB DataFrames to a single row per group}
 \usage{
 sd_summarise(.data, ...)
 
@@ -20,7 +20,7 @@ expression (e.g., \code{sum(x) + 1} is not currently possible).}
 An object of class sedonadb_dataframe
 }
 \description{
-Order rows of a SedonaDB data frame using column values
+Aggregate SedonaDB DataFrames to a single row per group
 }
 \examples{
 data.frame(x = c(10:1, NA)) |> sd_summarise(x = sum(x, na.rm = TRUE))
