@@ -31,6 +31,10 @@ kernels:
       type: integer
 ---
 
+## Description
+
+Alias: `ST_GeogFromText`.
+
 ## Examples
 
 ```sql

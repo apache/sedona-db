@@ -34,6 +34,7 @@ kernels:
 ## Description
 
 An optional SRID or CRS can be provided as a second argument to set the spatial reference.
+Aliases: `ST_GeomFromText`, `ST_GeometryFromText`.
 
 ## Examples
 
