@@ -403,7 +403,7 @@ ensure_translations_registered <- function() {
   }
 
   # Register default translations for our st_, sd_, and rs_ functions
-  fn_names <- utils::.DollarNames(.fns, "^(st|rs|sd|)_")
+  fn_names <- utils::.DollarNames(.fns, "^(st|rs|sd)_")
   for (fn_name in fn_names) {
     sd_register_datafusion_fn(fn_name)
   }
