@@ -5139,7 +5139,11 @@ dependencies = [
  "rustyline",
  "sedona",
  "sedona-common",
+ "sedona-functions",
+ "sedona-raster-functions",
  "sedona-tg",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

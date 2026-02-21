@@ -20,12 +20,15 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::{collections::BTreeMap, collections::BTreeSet};
 
 use arrow::array::StringArray;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
-use datafusion::error::Result;
+use datafusion::error::{DataFusionError, Result};
+use datafusion::logical_expr::{AggregateUDFImpl, ScalarUDFImpl};
+use serde::Serialize;
 
 #[derive(Debug)]
 pub enum Function {
@@ -196,5 +199,57 @@ pub fn display_all_functions() -> Result<()> {
     let schema = Schema::new(vec![Field::new("Function", DataType::Utf8, false)]);
     let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)])?;
     println!("{}", pretty_format_batches(&[batch]).unwrap());
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FunctionInfo {
+    pub name: String,
+    pub aliases: Vec<String>,
+}
+
+pub fn list_all_functions() -> Vec<FunctionInfo> {
+    let mut function_set = sedona_functions::register::default_function_set();
+    function_set.merge(sedona_raster_functions::register::default_function_set());
+
+    let mut functions = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for function in function_set.scalar_udfs() {
+        if !is_sedona_sql_function(function.name()) {
+            continue;
+        }
+        let entry = functions.entry(function.name().to_string()).or_default();
+        for alias in function.aliases() {
+            if is_sedona_sql_function(alias) {
+                entry.insert(alias.to_string());
+            }
+        }
+    }
+
+    for function in function_set.aggregate_udfs() {
+        if !is_sedona_sql_function(function.name()) {
+            continue;
+        }
+        functions.entry(function.name().to_string()).or_default();
+    }
+
+    functions
+        .into_iter()
+        .map(|(name, aliases)| FunctionInfo {
+            name,
+            aliases: aliases.into_iter().collect(),
+        })
+        .collect()
+}
+
+fn is_sedona_sql_function(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("st_") || lower.starts_with("rs_")
+}
+
+pub fn print_all_functions_json() -> Result<()> {
+    let output = serde_json::to_string_pretty(&list_all_functions())
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    println!("{output}");
     Ok(())
 }
