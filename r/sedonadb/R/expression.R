@@ -73,6 +73,19 @@ sd_expr_negative <- function(expr, factory = sd_expr_factory()) {
 
 #' @rdname sd_expr_column
 #' @export
+sd_expr_any_function <- function(
+  function_name,
+  args,
+  ...,
+  na.rm = NULL, # nolint: object_name_linter
+  factory = sd_expr_factory()
+) {
+  args_as_expr <- lapply(args, as_sd_expr, factory = factory)
+  factory$any_function(function_name, args_as_expr, na_rm = na.rm)
+}
+
+#' @rdname sd_expr_column
+#' @export
 sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_factory()) {
   args_as_expr <- lapply(args, as_sd_expr, factory = factory)
   factory$scalar_function(function_name, args_as_expr)
@@ -223,11 +236,25 @@ sd_eval_expr_inner <- function(expr, expr_ctx) {
 }
 
 sd_eval_datafusion_fn <- function(fn_key, expr, expr_ctx) {
-  # Evaluate arguments all the way into expressions
+  # Evaluate arguments
   evaluated_args <- lapply(expr[-1], sd_eval_expr_inner, expr_ctx = expr_ctx)
-  # TODO: check names
-  # TODO: aggregate vs not
-  sd_expr_scalar_function(fn_key, evaluated_args, factory = expr_ctx$factory)
+
+  na_rm <- evaluated_args$na.rm
+  evaluated_args$na.rm <- NULL
+
+  if (any(rlang::have_name(evaluated_args))) {
+    stop(
+      sprintf(
+        "Expected unnamed arguments to SedonaDB SQL function but got %s",
+        paste(
+          names(evaluated_args)[rlang::have_name(evaluated_args)],
+          collapse = ", "
+        )
+      )
+    )
+  }
+
+  sd_expr_any_function(fn_key, evaluated_args, na.rm = na_rm, factory = expr_ctx$factory)
 }
 
 sd_eval_translation <- function(fn_key, expr, expr_ctx) {
@@ -338,37 +365,33 @@ sd_register_datafusion_fn <- function(fn_name) {
   force(fn_name)
 
   fn <- function(.ctx, ...) {
-    # Generic SQL functions can't have named arguments. For any of these
-    # with names we want to support we have to add individual translations
-    rlang::check_dots_unnamed()
+    evaluated_args <- list(...)
+    na_rm <- evaluated_args$na.rm
+    evaluated_args$na.rm <- NULL
 
-    sd_expr_scalar_function(fn_name, list(...))
+    if (any(rlang::have_name(evaluated_args))) {
+      stop(
+        sprintf(
+          "Expected unnamed arguments to SedonaDB SQL function but got %s",
+          paste(
+            names(evaluated_args)[rlang::have_name(evaluated_args)],
+            collapse = ", "
+          )
+        )
+      )
+    }
+
+    sd_expr_any_function(
+      fn_name,
+      evaluated_args,
+      na.rm = na_rm,
+      factory = .ctx$factory
+    )
   }
 
   default_fns[[fn_name]] <- fn
   invisible(fn)
 }
-
-#' Register an aggregate translation that calls DataFusion
-#'
-#' @param fn_name The name of the function
-#' @returns fn, invisibly
-#' @noRd
-sd_register_datafusion_fn_agg <- function(fn_name) {
-  force(fn_name)
-
-  fn <- function(.ctx, ..., na.rm = FALSE) {
-    # Generic SQL functions can't have named arguments. For any of these
-    # with names we want to support we have to add individual translations
-    rlang::check_dots_unnamed()
-
-    sd_expr_aggregate_function(fn_name, list(...), na.rm = na.rm)
-  }
-
-  default_fns[[fn_name]] <- fn
-  invisible(fn)
-}
-
 
 default_fns <- new.env(parent = emptyenv())
 
@@ -382,11 +405,7 @@ ensure_translations_registered <- function() {
   # Register default translations for our st_, sd_, and rs_ functions
   fn_names <- utils::.DollarNames(.fns, "^(st|rs|sd|)_")
   for (fn_name in fn_names) {
-    if (endsWith(fn_name, "_agg")) {
-      sd_register_datafusion_fn_agg(fn_name)
-    } else {
-      sd_register_datafusion_fn(fn_name)
-    }
+    sd_register_datafusion_fn(fn_name)
   }
 
   sd_register_translation("base::abs", function(.ctx, x) {

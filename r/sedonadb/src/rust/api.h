@@ -79,6 +79,9 @@ SEXP savvy_SedonaDBExprFactory_aggregate_function__ffi(SEXP self__,
                                                        SEXP c_arg__args,
                                                        SEXP c_arg__na_rm,
                                                        SEXP c_arg__distinct);
+SEXP savvy_SedonaDBExprFactory_any_function__ffi(SEXP self__, SEXP c_arg__name,
+                                                 SEXP c_arg__args,
+                                                 SEXP c_arg__na_rm);
 SEXP savvy_SedonaDBExprFactory_binary__ffi(SEXP self__, SEXP c_arg__op,
                                            SEXP c_arg__lhs, SEXP c_arg__rhs);
 SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP self__, SEXP c_arg__name,

@@ -269,6 +269,14 @@ SEXP savvy_SedonaDBExprFactory_aggregate_function__impl(SEXP self__,
   return handle_result(res);
 }
 
+SEXP savvy_SedonaDBExprFactory_any_function__impl(SEXP self__, SEXP c_arg__name,
+                                                  SEXP c_arg__args,
+                                                  SEXP c_arg__na_rm) {
+  SEXP res = savvy_SedonaDBExprFactory_any_function__ffi(
+      self__, c_arg__name, c_arg__args, c_arg__na_rm);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExprFactory_binary__impl(SEXP self__, SEXP c_arg__op,
                                             SEXP c_arg__lhs, SEXP c_arg__rhs) {
   SEXP res = savvy_SedonaDBExprFactory_binary__ffi(self__, c_arg__op,
@@ -372,6 +380,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExpr_negate__impl, 1},
     {"savvy_SedonaDBExprFactory_aggregate_function__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_aggregate_function__impl, 5},
+    {"savvy_SedonaDBExprFactory_any_function__impl",
+     (DL_FUNC)&savvy_SedonaDBExprFactory_any_function__impl, 4},
     {"savvy_SedonaDBExprFactory_binary__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_binary__impl, 4},
     {"savvy_SedonaDBExprFactory_column__impl",

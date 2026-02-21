@@ -21,6 +21,6 @@ Order rows of a SedonaDB data frame using column values
 }
 \examples{
 data.frame(x = c(10:1, NA)) |> sd_arrange(x)
-data.frame(x = c(10:1, NA)) |> sd_arrange(desc(x))
+data.frame(x = c(1:10, NA)) |> sd_arrange(desc(x))
 
 }

@@ -5,6 +5,7 @@
 \alias{sd_expr_literal}
 \alias{sd_expr_binary}
 \alias{sd_expr_negative}
+\alias{sd_expr_any_function}
 \alias{sd_expr_scalar_function}
 \alias{sd_expr_aggregate_function}
 \alias{sd_expr_cast}
@@ -21,6 +22,14 @@ sd_expr_literal(x, type = NULL, factory = sd_expr_factory())
 sd_expr_binary(op, lhs, rhs, factory = sd_expr_factory())
 
 sd_expr_negative(expr, factory = sd_expr_factory())
+
+sd_expr_any_function(
+  function_name,
+  args,
+  ...,
+  na.rm = NULL,
+  factory = sd_expr_factory()
+)
 
 sd_expr_scalar_function(function_name, args, factory = sd_expr_factory())
 

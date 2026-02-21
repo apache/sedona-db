@@ -120,9 +120,39 @@
 
 ---
 
+    Code
+      sd_eval_expr(quote(.fns$sum(-1L)))
+    Output
+      <SedonaDBExpr>
+      sum((- Int32(1))) RESPECT NULLS
+
+---
+
+    Code
+      sd_eval_expr(quote(.fns$sum(-1L, na.rm = TRUE)))
+    Output
+      <SedonaDBExpr>
+      sum((- Int32(1))) IGNORE NULLS
+
+---
+
+    Code
+      sd_eval_expr(quote(.fns$sum(-1L, na.rm = FALSE)))
+    Output
+      <SedonaDBExpr>
+      sum((- Int32(1))) RESPECT NULLS
+
+---
+
     Error evaluating translated expression `.fns$absolutely_not(-1L)`
     Caused by error:
     ! Scalar UDF 'absolutely_not' not found
+
+---
+
+    Error evaluating translated expression `.fns$absolutely_not(x = -1L)`
+    Caused by error in `sd_eval_datafusion_fn()`:
+    ! Expected unnamed arguments to SedonaDB SQL function but got x
 
 # function calls referencing SedonaDB SQL functions work
 
@@ -152,9 +182,7 @@
 
     Error evaluating translated expression `st_point(1, y = 2)`
     Caused by error:
-    ! Arguments in `...` must be passed by position, not name.
-    x Problematic argument:
-    * y = 2
+    ! Expected unnamed arguments to SedonaDB SQL function but got y
 
 # function calls without a translation are evaluated in R
 

@@ -59,10 +59,18 @@ test_that("function calls with a translation become function calls", {
 })
 
 test_that("function calls explicitly referencing DataFusion functions work", {
+  # Scalar function
   expect_snapshot(sd_eval_expr(quote(.fns$abs(-1L))))
 
-  # Check for a reasonable error if this is not a valid name
+  # Aggregate function
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L))))
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L, na.rm = TRUE))))
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L, na.rm = FALSE))))
+
+  # Check for a reasonable error if this is not a valid name or we have
+  # named arguments
   expect_snapshot_error(sd_eval_expr(quote(.fns$absolutely_not(-1L))))
+  expect_snapshot_error(sd_eval_expr(quote(.fns$absolutely_not(x = -1L))))
 })
 
 test_that("function calls referencing SedonaDB SQL functions work", {
