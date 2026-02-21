@@ -80,7 +80,7 @@ test_that("function calls referencing SedonaDB SQL functions work", {
     sd_eval_expr(quote(st_envelope_agg(st_point(0, 1), na.rm = TRUE)))
   )
 
-  # Check for a reasonable errors (named arguments are not allowed)
+  # Check for reasonable errors (named arguments are not allowed)
   expect_snapshot_error(sd_eval_expr(quote(st_point(1, y = 2))))
 })
 
