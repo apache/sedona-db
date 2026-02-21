@@ -16,19 +16,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: RS_SetSRID
+description: Sets the SRID (spatial reference identifier) for a raster.
 kernels:
-  - returns: string
-    args: [geometry]
+  - returns: raster
+    args:
+    - raster
+    - name: srid
+      type: integer
 ---
 
 ## Description
 
-Alias: `ST_AsWKT`.
+Sets the SRID of a raster. This is metadata-only: raster cell values and
+geotransform are not transformed.
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT RS_SetSRID(RS_Example(), 4326);
 ```

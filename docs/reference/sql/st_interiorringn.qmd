@@ -16,19 +16,31 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: ST_InteriorRingN
+description: Returns the Nth interior ring of a polygon.
 kernels:
-  - returns: string
-    args: [geometry]
+  - returns: geometry
+    args:
+    - geometry
+    - name: n
+      type: integer
 ---
 
 ## Description
 
-Alias: `ST_AsWKT`.
+Returns the Nth interior `LINESTRING` ring of a `POLYGON`. Returns `NULL` if
+the geometry is not a polygon or `n` is out of range.
+
+`n` is 1-based in SedonaDB.
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT
+    ST_InteriorRingN(
+        ST_GeomFromText(
+            'POLYGON((0 0, 0 5, 5 5, 5 0, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1), (1 3, 2 3, 2 4, 1 4, 1 3), (3 3, 4 3, 4 4, 3 4, 3 3))'
+        ),
+        1
+    );
 ```

@@ -24,29 +24,9 @@ pub fn st_distance_udf() -> SedonaScalarUDF {
     distance_stub_udf("ST_Distance")
 }
 
-/// ST_DistanceSphere() scalar UDF stub
-pub fn st_distance_sphere_udf() -> SedonaScalarUDF {
-    distance_stub_udf("ST_DistanceSphere")
-}
-
-/// ST_DistanceSpheroid() scalar UDF stub
-pub fn st_distance_spheroid_udf() -> SedonaScalarUDF {
-    distance_stub_udf("ST_DistanceSpheroid")
-}
-
 /// ST_MaxDistance() scalar UDF stub
 pub fn st_max_distance_udf() -> SedonaScalarUDF {
     distance_stub_udf("ST_MaxDistance")
-}
-
-/// ST_HausdorffDistance() scalar UDF stub
-pub fn st_hausdorff_distance_udf() -> SedonaScalarUDF {
-    distance_stub_udf("ST_HausdorffDistance")
-}
-
-/// ST_FrechetDistance() scalar UDF stub
-pub fn st_frechet_distance_udf() -> SedonaScalarUDF {
-    distance_stub_udf("ST_FrechetDistance")
 }
 
 pub fn distance_stub_udf(name: &str) -> SedonaScalarUDF {

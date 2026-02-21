@@ -163,6 +163,10 @@ jobs:
         run: |
             pip install "python/sedonadb/[geopandas]" -v
 
+      - name: Validate SQL function docs coverage
+        run: |
+          cargo run -p sedona-cli -- list-functions | ci/scripts/check_sql_function_docs.py -
+
       - name: Build documentation
         run: |
           ci/scripts/build-docs.sh

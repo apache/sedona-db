@@ -16,19 +16,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsText
-description: Returns the Well-Known Text string representation of a geometry or geography.
+title: RS_BandPath
+description: >
+  Retrieves the file path of an out-of-database (out-db) raster band, returning
+  the external raster file location referenced by the raster.
 kernels:
-  - returns: string
-    args: [geometry]
+  - returns: utf8
+    args: [raster]
 ---
 
 ## Description
 
-Alias: `ST_AsWKT`.
+Primarily used with out-db rasters, where only raster path and geo-referencing
+metadata are stored in the database.
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Point(1.0, 2.0));
+SELECT RS_BandPath(RS_Example());
 ```
