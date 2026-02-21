@@ -282,7 +282,7 @@ sd_filter <- function(.data, ...) {
 #' Order rows of a SedonaDB data frame using column values
 #'
 #' @inheritParams sd_count
-#' @param ... Unnamed expressions for filter conditions. These are evaluated
+#' @param ... Unnamed expressions for arrange expressions. These are evaluated
 #'   in the same way as [dplyr::arrange()] except does not support extra
 #'   dplyr features such as `across()`, `.by_group`, or `.locale`.
 #'
@@ -315,6 +315,49 @@ sd_arrange <- function(.data, ...) {
 
   df <- .data$df$arrange(sd_exprs, unwrapped$is_descending)
   new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' Order rows of a SedonaDB data frame using column values
+#'
+#' @inheritParams sd_count
+#' @param ... Aggregate expressions. These are evaluated in the same way as
+#'   [dplyr::summarise()] except the outer expression must be an aggregate
+#'   expression (e.g., `sum(x) + 1` is not currently possible).
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = c(10:1, NA)) |> sd_summarise(x = sum(x, na.rm = TRUE))
+#'
+sd_summarise <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  # Ensure inputs are given aliases to account for the expected column name
+  exprs_names <- names(r_exprs)
+  for (i in seq_along(sd_exprs)) {
+    name <- exprs_names[i]
+    if (!is.na(name) && name != "") {
+      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+    }
+  }
+
+  # No group_by yet, so we pass list() as the grouping variables
+  df <- .data$df$aggregate(list(), sd_exprs)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' @rdname sd_summarise
+#' @export
+sd_summarize <- function(.data, ...) {
+  sd_summarise(.data, ...)
 }
 
 #' Write DataFrame to (Geo)Parquet files

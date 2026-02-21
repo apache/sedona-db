@@ -40,6 +40,9 @@ SEXP savvy_InternalContext_sql__ffi(SEXP self__, SEXP c_arg__query);
 SEXP savvy_InternalContext_view__ffi(SEXP self__, SEXP c_arg__table_ref);
 
 // methods and associated functions for InternalDataFrame
+SEXP savvy_InternalDataFrame_aggregate__ffi(SEXP self__,
+                                            SEXP c_arg__group_by_exprs_sexp,
+                                            SEXP c_arg__exprs_sexp);
 SEXP savvy_InternalDataFrame_arrange__ffi(SEXP self__, SEXP c_arg__exprs_sexp,
                                           SEXP c_arg__is_descending_sexp);
 SEXP savvy_InternalDataFrame_collect__ffi(SEXP self__, SEXP c_arg__out);

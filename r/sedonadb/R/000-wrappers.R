@@ -196,6 +196,17 @@ class(`InternalContext`) <- c(
 
 ### wrapper functions for InternalDataFrame
 
+`InternalDataFrame_aggregate` <- function(self) {
+  function(`group_by_exprs_sexp`, `exprs_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_aggregate__impl,
+      `self`,
+      `group_by_exprs_sexp`,
+      `exprs_sexp`
+    ))
+  }
+}
+
 `InternalDataFrame_arrange` <- function(self) {
   function(`exprs_sexp`, `is_descending_sexp`) {
     .savvy_wrap_InternalDataFrame(.Call(
@@ -351,6 +362,7 @@ class(`InternalContext`) <- c(
 `.savvy_wrap_InternalDataFrame` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
+  e$`aggregate` <- `InternalDataFrame_aggregate`(ptr)
   e$`arrange` <- `InternalDataFrame_arrange`(ptr)
   e$`collect` <- `InternalDataFrame_collect`(ptr)
   e$`compute` <- `InternalDataFrame_compute`(ptr)

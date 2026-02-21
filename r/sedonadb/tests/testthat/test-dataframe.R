@@ -355,7 +355,6 @@ test_that("sd_filter() works with dplyr-like filter syntax", {
   )
 })
 
-
 test_that("sd_arrange() works with dplyr-like arrange syntax", {
   df_in <- data.frame(x = 1:10, y = letters[10:1])
 
@@ -381,5 +380,14 @@ test_that("sd_arrange() works with dplyr-like arrange syntax", {
   expect_identical(
     df_in |> sd_arrange(dplyr::desc(x)) |> sd_collect(),
     data.frame(x = 10:1, y = letters[1:10])
+  )
+})
+
+test_that("sd_summarise() works with dplyr-like summarise syntax", {
+  df_in <- data.frame(x = as.double(1:10))
+
+  expect_identical(
+    df_in |> sd_summarise(x = sum(x)) |> sd_collect(),
+    data.frame(x = sum(as.double(1:10)))
   )
 })

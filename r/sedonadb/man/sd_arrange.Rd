@@ -9,7 +9,7 @@ sd_arrange(.data, ...)
 \arguments{
 \item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
-\item{...}{Unnamed expressions for filter conditions. These are evaluated
+\item{...}{Unnamed expressions for arrange expressions. These are evaluated
 in the same way as \code{\link[dplyr:arrange]{dplyr::arrange()}} except does not support extra
 dplyr features such as \code{across()}, \code{.by_group}, or \code{.locale}.}
 }

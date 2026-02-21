@@ -333,15 +333,31 @@ impl InternalDataFrame {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
-    fn arrange(&self, exprs_sexp: savvy::Sexp, is_descending_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
+    fn arrange(
+        &self,
+        exprs_sexp: savvy::Sexp,
+        is_descending_sexp: savvy::Sexp,
+    ) -> savvy::Result<InternalDataFrame> {
         let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
         let is_descending_lglsxp = savvy::LogicalSexp::try_from(is_descending_sexp)?;
 
-        let sort_exprs = zip(exprs, is_descending_lglsxp.iter()).map(|(expr, is_descending)| {
-            SortExpr::new(expr, !is_descending, false)
-        }).collect::<Vec<_>>();
+        let sort_exprs = zip(exprs, is_descending_lglsxp.iter())
+            .map(|(expr, is_descending)| SortExpr::new(expr, !is_descending, false))
+            .collect::<Vec<_>>();
 
         let inner = self.inner.clone().sort(sort_exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn aggregate(
+        &self,
+        group_by_exprs_sexp: savvy::Sexp,
+        exprs_sexp: savvy::Sexp,
+    ) -> savvy::Result<InternalDataFrame> {
+        let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
+        let group_by_exprs = SedonaDBExprFactory::exprs(group_by_exprs_sexp)?;
+
+        let inner = self.inner.clone().aggregate(group_by_exprs, exprs)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 }
