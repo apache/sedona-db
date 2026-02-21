@@ -42,13 +42,18 @@ pub struct LasOpener {
     pub projection: Arc<[usize]>,
     /// Optional limit on the number of rows to read
     pub limit: Option<usize>,
+    /// Filter predicate for pruning
     pub predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Factory for instantiating LAS/LAZ reader
     pub file_reader_factory: Arc<LasFileReaderFactory>,
     /// Table options
     pub options: PointcloudOptions,
     /// Target batch size
-    pub(crate) batch_size: usize,
+    pub batch_size: usize,
+    /// Target partition count
+    pub partition_count: usize,
+    /// Partition to read
+    pub partition: usize,
 }
 
 impl FileOpener for LasOpener {
@@ -56,6 +61,9 @@ impl FileOpener for LasOpener {
         let projection = self.projection.clone();
         let limit = self.limit;
         let batch_size = self.batch_size;
+        let round_robin = self.options.round_robin_partitioning;
+        let partition_count = self.partition_count;
+        let partition = self.partition;
 
         let predicate = self.predicate.clone();
 
@@ -117,6 +125,11 @@ impl FileOpener for LasOpener {
 
             let stream = async_stream::try_stream! {
                 for (i, chunk_meta) in metadata.chunk_table.iter().enumerate() {
+                    // round robin
+                    if round_robin && i % partition_count != partition {
+                        continue;
+                    }
+
                     // limit
                     if let Some(limit) = limit {
                         if row_count >= limit {

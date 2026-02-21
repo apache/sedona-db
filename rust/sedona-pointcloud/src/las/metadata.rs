@@ -120,13 +120,6 @@ impl<'a> LasMetadataReader<'a> {
         self
     }
 
-    /// Fetch header
-    pub async fn fetch_header(&self) -> Result<Header, DataFusionError> {
-        fetch_header(self.store, self.object_meta)
-            .await
-            .map_err(DataFusionError::External)
-    }
-
     /// Fetch LAS/LAZ metadata from the remote object store
     pub async fn fetch_metadata(&self) -> Result<Arc<LasMetadata>, DataFusionError> {
         let Self {
@@ -149,13 +142,9 @@ impl<'a> LasMetadataReader<'a> {
             return Ok(las_file_metadata);
         }
 
-        let header = self.fetch_header().await?;
+        let header = fetch_header(*store, object_meta).await?;
         let extra_attributes = extra_bytes_attributes(&header)?;
-        let chunk_table = if header.laz_vlr().is_ok() {
-            laz_chunk_table(*store, object_meta, &header).await?
-        } else {
-            las_chunk_table(&header).await?
-        };
+        let chunk_table = fetch_chunk_table(*store, object_meta, &header).await?;
         let statistics = if options.collect_statistics {
             Some(
                 chunk_statistics(
@@ -164,6 +153,7 @@ impl<'a> LasMetadataReader<'a> {
                     &chunk_table,
                     &header,
                     options.persist_statistics,
+                    options.parallel_statistics_extraction,
                 )
                 .await?,
             )
@@ -241,7 +231,8 @@ impl<'a> LasMetadataReader<'a> {
     }
 }
 
-async fn fetch_header(
+/// Fetch the [Header] of a LAS/LAZ file
+pub async fn fetch_header(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
 ) -> Result<Header, Box<dyn Error + Send + Sync>> {
@@ -296,6 +287,7 @@ async fn fetch_header(
     Ok(builder.into_header()?)
 }
 
+/// Extra attribute information (custom attributes in LAS/LAZ files)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtraAttribute {
     pub data_type: DataType,
@@ -366,6 +358,19 @@ fn extra_bytes_attributes(
     }
 
     Ok(attributes)
+}
+
+/// Fetch or generate chunk table metadata.
+pub async fn fetch_chunk_table(
+    store: &(impl ObjectStore + ?Sized),
+    object_meta: &ObjectMeta,
+    header: &Header,
+) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
+    if header.laz_vlr().is_ok() {
+        laz_chunk_table(store, object_meta, header).await
+    } else {
+        las_chunk_table(header).await
+    }
 }
 
 async fn laz_chunk_table(
@@ -482,7 +487,7 @@ mod tests {
     use las::{point::Format, Builder, Reader, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
-    use crate::las::metadata::LasMetadataReader;
+    use crate::las::metadata::fetch_header;
 
     #[tokio::test]
     async fn header_basic_e2e() {
@@ -503,14 +508,13 @@ mod tests {
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(&tmp_path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
-        let metadata_reader = LasMetadataReader::new(&store, &object_meta);
 
         // read with las `Reader`
         let reader = Reader::from_path(&tmp_path).unwrap();
 
         assert_eq!(
             reader.header(),
-            &metadata_reader.fetch_header().await.unwrap()
+            &fetch_header(&store, &object_meta).await.unwrap()
         );
     }
 }
