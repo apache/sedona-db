@@ -68,3 +68,8 @@ test_that("configure_proj() errors for invalid inputs", {
     "Invalid search path"
   )
 })
+
+test_that(".fns can have its contents listed", {
+  expect_contains(names(.fns), "st_intersects")
+  expect_contains(.DollarNames(.fns, "st_int"), "st_intersects")
+})

@@ -133,6 +133,27 @@ impl SedonaDBExprFactory {
         Ok(SedonaDBExpr { inner })
     }
 
+    // Wrapper for the case where a function might be aggregate or scalar
+    fn any_function(
+        &self,
+        name: &str,
+        args: savvy::Sexp,
+        na_rm: Option<bool>,
+    ) -> savvy::Result<SedonaDBExpr> {
+        if self
+            .ctx
+            .ctx
+            .state()
+            .aggregate_functions()
+            .contains_key(name)
+            || na_rm.is_some()
+        {
+            self.aggregate_function(name, args, na_rm, None)
+        } else {
+            self.scalar_function(name, args)
+        }
+    }
+
     fn scalar_function(&self, name: &str, args: savvy::Sexp) -> savvy::Result<SedonaDBExpr> {
         if let Some(udf) = self.ctx.ctx.state().scalar_functions().get(name) {
             let args = Self::exprs(args)?;
@@ -152,7 +173,7 @@ impl SedonaDBExprFactory {
     ) -> savvy::Result<SedonaDBExpr> {
         if let Some(udf) = self.ctx.ctx.state().aggregate_functions().get(name) {
             let args = Self::exprs(args)?;
-            let null_treatment = if na_rm.unwrap_or(true) {
+            let null_treatment = if na_rm.unwrap_or(false) {
                 NullTreatment::IgnoreNulls
             } else {
                 NullTreatment::RespectNulls
