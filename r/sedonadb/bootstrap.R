@@ -40,6 +40,9 @@ file.copy(
   recursive = TRUE
 )
 
+# Remove unused libgpuspatial crate
+unlink("src/c/sedona-libgpuspatial", recursive = TRUE)
+
 # Tweak workspace Cargo.toml
 top_cargo_toml <- "src/Cargo.toml"
 lines <- readLines(top_cargo_toml)
@@ -48,4 +51,5 @@ lines <- gsub("r/sedonadb/src/rust", "rust", lines, fixed = TRUE)
 # remove unnecessary workspace members
 lines <- gsub('"python/sedonadb",', "", lines, fixed = TRUE)
 lines <- gsub('"sedona-cli",', "", lines, fixed = TRUE)
+lines <- gsub('"c/sedona-libgpuspatial",', "", lines, fixed = TRUE)
 writeLines(lines, top_cargo_toml)
