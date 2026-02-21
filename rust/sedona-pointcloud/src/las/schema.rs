@@ -22,7 +22,7 @@ use geoarrow_schema::{CoordType, Crs, Dimension, Metadata, PointType, WkbType};
 use las::Header;
 use las_crs::{get_epsg_from_geotiff_crs, get_epsg_from_wkt_crs_bytes};
 
-use crate::{laz::options::LasExtraBytes, options::GeometryEncoding};
+use crate::{las::options::LasExtraBytes, options::GeometryEncoding};
 
 // Arrow schema for LAS points
 pub fn try_schema_from_header(

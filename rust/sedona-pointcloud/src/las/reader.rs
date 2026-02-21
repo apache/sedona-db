@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{io::Cursor, ops::Range, sync::Arc};
+use std::{
+    io::{Cursor, Read},
+    ops::Range,
+    sync::Arc,
+};
 
 use arrow_array::RecordBatch;
 use bytes::Bytes;
@@ -33,22 +37,22 @@ use laz::{
 use object_store::ObjectStore;
 
 use crate::{
-    laz::{
+    las::{
         builder::RowBuilder,
-        metadata::{ChunkMeta, LazMetadata, LazMetadataReader},
+        metadata::{ChunkMeta, LasMetadata, LasMetadataReader},
     },
     options::PointcloudOptions,
 };
 
-/// Laz file reader factory
+/// LAS/LAZ file reader factory
 #[derive(Debug)]
-pub struct LazFileReaderFactory {
+pub struct LasFileReaderFactory {
     store: Arc<dyn ObjectStore>,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
 }
 
-impl LazFileReaderFactory {
-    /// Create a new `LazFileReaderFactory`.
+impl LasFileReaderFactory {
+    /// Create a new `LasFileReaderFactory`.
     pub fn new(
         store: Arc<dyn ObjectStore>,
         metadata_cache: Option<Arc<dyn FileMetadataCache>>,
@@ -63,8 +67,8 @@ impl LazFileReaderFactory {
         &self,
         partitioned_file: PartitionedFile,
         options: PointcloudOptions,
-    ) -> Result<Box<LazFileReader>, DataFusionError> {
-        Ok(Box::new(LazFileReader {
+    ) -> Result<Box<LasFileReader>, DataFusionError> {
+        Ok(Box::new(LasFileReader {
             partitioned_file,
             store: self.store.clone(),
             metadata_cache: self.metadata_cache.clone(),
@@ -73,21 +77,21 @@ impl LazFileReaderFactory {
     }
 }
 
-/// Reader for a laz file in object storage.
-pub struct LazFileReader {
+/// Reader for a LAS/LAZ file in object storage.
+pub struct LasFileReader {
     partitioned_file: PartitionedFile,
     store: Arc<dyn ObjectStore>,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
     pub options: PointcloudOptions,
 }
 
-impl LazFileReader {
-    pub fn get_metadata<'a>(&'a self) -> BoxFuture<'a, Result<Arc<LazMetadata>, DataFusionError>> {
+impl LasFileReader {
+    pub fn get_metadata<'a>(&'a self) -> BoxFuture<'a, Result<Arc<LasMetadata>, DataFusionError>> {
         let object_meta = self.partitioned_file.object_meta.clone();
         let metadata_cache = self.metadata_cache.clone();
 
         async move {
-            LazMetadataReader::new(&self.store, &object_meta)
+            LasMetadataReader::new(&self.store, &object_meta)
                 .with_file_metadata_cache(metadata_cache)
                 .with_options(self.options.clone())
                 .fetch_metadata()
@@ -103,10 +107,6 @@ impl LazFileReader {
         // fetch bytes
         let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
 
-        // laz decompressor
-        let mut decompressor = record_decompressor(&header, bytes)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
         // record batch builder
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
@@ -116,22 +116,28 @@ impl LazFileReader {
                 self.options.las.extra_bytes,
             );
 
-        // transform
-        let format = header.point_format();
-        let transforms = header.transforms();
-
-        let out = vec![0; format.len() as usize];
-        let mut buffer = Cursor::new(out);
-
-        for _ in 0..chunk_meta.num_points {
-            buffer.set_position(0);
-            decompressor.decompress_next(buffer.get_mut())?;
-
-            let point = RawPoint::read_from(&mut buffer, format)
-                .map(|raw_point| Point::new(raw_point, transforms))
+        // parse points
+        if header.laz_vlr().is_ok() {
+            // laz decompressor
+            let mut decompressor = record_decompressor(&header, bytes)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            builder.append(point);
+            let out = vec![0; header.point_format().len() as usize];
+            let mut buffer = Cursor::new(out);
+
+            for _ in 0..chunk_meta.num_points {
+                buffer.set_position(0);
+                decompressor.decompress_next(buffer.get_mut())?;
+                let point = read_point(&mut buffer, &header)?;
+                builder.append(point);
+            }
+        } else {
+            let mut buffer = Cursor::new(bytes);
+
+            for _ in 0..chunk_meta.num_points {
+                let point = read_point(&mut buffer, &header)?;
+                builder.append(point);
+            }
         }
 
         let struct_array = builder.finish()?;
@@ -181,6 +187,12 @@ pub fn record_decompressor(
     Ok(decompressor)
 }
 
+pub(crate) fn read_point<R: Read>(buffer: R, header: &Header) -> Result<Point, DataFusionError> {
+    RawPoint::read_from(buffer, header.point_format())
+        .map(|raw_point| Point::new(raw_point, header.transforms()))
+        .map_err(|e| DataFusionError::External(Box::new(e)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs::File, sync::Arc};
@@ -189,7 +201,7 @@ mod tests {
     use las::{point::Format, Builder, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
-    use crate::laz::reader::LazFileReaderFactory;
+    use crate::las::reader::LasFileReaderFactory;
 
     #[tokio::test]
     async fn reader_basic_e2e() {
@@ -206,20 +218,20 @@ mod tests {
         writer.write_point(Default::default()).unwrap();
         writer.close().unwrap();
 
-        // read batch with `LazFileReader`
+        // read batch with `LasFileReader`
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(tmp_path).unwrap();
         let object = store.head(&location).await.unwrap();
 
-        let laz_file_reader = LazFileReaderFactory::new(Arc::new(store), None)
+        let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
             .create_reader(
                 PartitionedFile::new(location, object.size),
                 Default::default(),
             )
             .unwrap();
-        let metadata = laz_file_reader.get_metadata().await.unwrap();
+        let metadata = file_reader.get_metadata().await.unwrap();
 
-        let batch = laz_file_reader
+        let batch = file_reader
             .get_batch(&metadata.chunk_table[0])
             .await
             .unwrap();

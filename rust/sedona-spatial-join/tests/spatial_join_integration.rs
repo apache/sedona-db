@@ -1117,6 +1117,10 @@ async fn test_knn_join_with_filter_correctness(
             "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND R.id % 7 = 0",
             k
         ),
+        format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND L.id % 7 = 0 AND R.id % 7 = 0",
+            k
+        ),
     ];
 
     for (idx, sql) in sqls.iter().enumerate() {
@@ -1174,6 +1178,7 @@ async fn test_knn_join_with_filter_correctness(
             0 => |l_id: i32, r_id: i32| (l_id.rem_euclid(7)) == (r_id.rem_euclid(7)),
             1 => |l_id: i32, _r_id: i32| l_id.rem_euclid(7) == 0,
             2 => |_l_id: i32, r_id: i32| r_id.rem_euclid(7) == 0,
+            3 => |l_id: i32, r_id: i32| l_id.rem_euclid(7) == 0 && r_id.rem_euclid(7) == 0,
             _ => unreachable!(),
         };
         let expected_results = compute_knn_ground_truth_with_pair_filter(
@@ -1456,6 +1461,142 @@ async fn test_non_knn_join_object_side_filter_is_pushed_down() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Verify that a filter on the *query* (probe / left) side of a KNN join IS automatically pushed
+/// down into the query-side subtree.
+#[tokio::test]
+async fn test_knn_join_query_side_filter_is_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE L.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // The query (left / probe) side MUST have a FilterExec pushed into it.
+    assert!(
+        subtree_contains_filter_exec(&sj.left),
+        "FilterExec should be pushed into the query (left/probe) side of a KNN join"
+    );
+
+    // The build (right / object) side must NOT have a FilterExec.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that when the query side is the *right* child of the join, query-side filters are
+/// still correctly pushed down to that side.
+#[tokio::test]
+async fn test_knn_join_query_side_filter_pushed_down_when_query_is_right() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(R.x, 0), ST_Point(L.x, 1), 3, false) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // In this case, the query (probe) side is the right child. R.id > 5 should be in the right child.
+    assert!(
+        subtree_contains_filter_exec(&sj.right),
+        "FilterExec should be pushed into the query (right/probe) side of a KNN join"
+    );
+
+    // The left (object/build) side must NOT have a FilterExec.
+    assert!(
+        !subtree_contains_filter_exec(&sj.left),
+        "FilterExec should NOT be pushed into the object (left/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that when a WHERE clause has both query-side and object-side filters, only the
+/// query-side filter is pushed down. The object-side filter must remain above the spatial join.
+#[tokio::test]
+async fn test_knn_join_mixed_filter_only_query_side_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE L.id > 5 AND R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // Query side (left) should have the L.id > 5 filter pushed in.
+    assert!(
+        subtree_contains_filter_exec(&sj.left),
+        "FilterExec should be pushed into the query (left/probe) side for L.id > 5"
+    );
+
+    // Object side (right) must NOT have R.id > 5 pushed in.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    // The R.id > 5 filter should remain above the SpatialJoinExec as a FilterExec.
+    // We verify this by checking that the root plan contains a FilterExec above SpatialJoinExec.
+    assert!(
+        has_filter_exec_above_spatial_join(&plan),
+        "R.id > 5 should remain as a FilterExec above SpatialJoinExec"
+    );
+
+    Ok(())
+}
+
+/// Check if there is a `FilterExec` node that is an ancestor of a `SpatialJoinExec`.
+fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    if plan.as_any().downcast_ref::<FilterExec>().is_some() {
+        // Check if any descendant of this FilterExec is a SpatialJoinExec
+        for child in plan.children() {
+            if contains_spatial_join_exec(child) {
+                return true;
+            }
+        }
+    }
+    // Recurse into children
+    for child in plan.children() {
+        if has_filter_exec_above_spatial_join(child) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if the plan tree contains a `SpatialJoinExec`.
+fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
 }
 
 /// Recursively check whether any node in the physical plan tree is a `FilterExec`.

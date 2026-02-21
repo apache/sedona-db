@@ -30,28 +30,28 @@ use sedona_expr::spatial_filter::SpatialFilter;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::{
-    laz::{
-        reader::{LazFileReader, LazFileReaderFactory},
+    las::{
+        reader::{LasFileReader, LasFileReaderFactory},
         schema::try_schema_from_header,
     },
     options::PointcloudOptions,
 };
 
-pub struct LazOpener {
+pub struct LasOpener {
     /// Column indexes in `table_schema` needed by the query
     pub projection: Arc<[usize]>,
     /// Optional limit on the number of rows to read
     pub limit: Option<usize>,
     pub predicate: Option<Arc<dyn PhysicalExpr>>,
-    /// Factory for instantiating laz reader
-    pub laz_file_reader_factory: Arc<LazFileReaderFactory>,
+    /// Factory for instantiating LAS/LAZ reader
+    pub file_reader_factory: Arc<LasFileReaderFactory>,
     /// Table options
     pub options: PointcloudOptions,
     /// Target batch size
     pub(crate) batch_size: usize,
 }
 
-impl FileOpener for LazOpener {
+impl FileOpener for LasOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture, DataFusionError> {
         let projection = self.projection.clone();
         let limit = self.limit;
@@ -59,16 +59,16 @@ impl FileOpener for LazOpener {
 
         let predicate = self.predicate.clone();
 
-        let laz_reader: Box<LazFileReader> = self
-            .laz_file_reader_factory
+        let file_reader: Box<LasFileReader> = self
+            .file_reader_factory
             .create_reader(file.clone(), self.options.clone())?;
 
         Ok(Box::pin(async move {
-            let metadata = laz_reader.get_metadata().await?;
+            let metadata = file_reader.get_metadata().await?;
             let schema = Arc::new(try_schema_from_header(
                 &metadata.header,
-                laz_reader.options.geometry_encoding,
-                laz_reader.options.las.extra_bytes,
+                file_reader.options.geometry_encoding,
+                file_reader.options.las.extra_bytes,
             )?);
 
             let pruning_predicate = predicate.and_then(|physical_expr| {
@@ -146,7 +146,7 @@ impl FileOpener for LazOpener {
                     }
 
                     // fetch batch
-                    let record_batch = laz_reader.get_batch(chunk_meta).await?;
+                    let record_batch = file_reader.get_batch(chunk_meta).await?;
                     let num_rows = record_batch.num_rows();
                     row_count += num_rows;
 
@@ -178,6 +178,52 @@ impl FileOpener for LazOpener {
 #[cfg(test)]
 mod tests {
     use sedona::context::SedonaContext;
+
+    #[tokio::test]
+    async fn las_statistics_pruning() {
+        // file with two clusters, one at 0.5 one at 1.0
+        let path = "tests/data/large.las";
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // ensure no faulty chunk pruning
+        ctx.sql("SET pointcloud.geometry_encoding = 'plain'")
+            .await
+            .unwrap();
+        ctx.sql("SET pointcloud.collect_statistics = 'true'")
+            .await
+            .unwrap();
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE x < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE y < 0.7"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+
+        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
+            .await
+            .unwrap();
+        let count = ctx
+            .sql(&format!("SELECT * FROM \"{path}\" WHERE ST_Intersects(geometry, ST_GeomFromText('POLYGON ((0 0, 0.7 0, 0.7 0.7, 0 0.7, 0 0))'))"))
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(count, 50000);
+    }
 
     #[tokio::test]
     async fn laz_statistics_pruning() {

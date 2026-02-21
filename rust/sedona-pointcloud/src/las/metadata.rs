@@ -37,14 +37,14 @@ use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::{
-    laz::{
+    las::{
         schema::try_schema_from_header,
-        statistics::{chunk_statistics, LazStatistics},
+        statistics::{chunk_statistics, LasStatistics},
     },
     options::PointcloudOptions,
 };
 
-/// Laz chunk metadata
+/// LAS/LAZ chunk metadata
 #[derive(Debug, Clone)]
 pub struct ChunkMeta {
     pub num_points: u64,
@@ -52,16 +52,16 @@ pub struct ChunkMeta {
     pub byte_range: Range<u64>,
 }
 
-/// Laz metadata
+/// LAS/LAZ metadata
 #[derive(Debug, Clone)]
-pub struct LazMetadata {
+pub struct LasMetadata {
     pub header: Arc<Header>,
     pub extra_attributes: Arc<Vec<ExtraAttribute>>,
     pub chunk_table: Vec<ChunkMeta>,
-    pub statistics: Option<LazStatistics>,
+    pub statistics: Option<LasStatistics>,
 }
 
-impl FileMetadata for LazMetadata {
+impl FileMetadata for LasMetadata {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -87,15 +87,15 @@ impl FileMetadata for LazMetadata {
     }
 }
 
-/// Reader for laz file metadata in object storage.
-pub struct LazMetadataReader<'a> {
+/// Reader for LAS/LAZ file metadata in object storage.
+pub struct LasMetadataReader<'a> {
     store: &'a dyn ObjectStore,
     object_meta: &'a ObjectMeta,
     file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
     options: PointcloudOptions,
 }
 
-impl<'a> LazMetadataReader<'a> {
+impl<'a> LasMetadataReader<'a> {
     pub fn new(store: &'a dyn ObjectStore, object_meta: &'a ObjectMeta) -> Self {
         Self {
             store,
@@ -127,8 +127,8 @@ impl<'a> LazMetadataReader<'a> {
             .map_err(DataFusionError::External)
     }
 
-    /// Fetch laz metadata from the remote object store
-    pub async fn fetch_metadata(&self) -> Result<Arc<LazMetadata>, DataFusionError> {
+    /// Fetch LAS/LAZ metadata from the remote object store
+    pub async fn fetch_metadata(&self) -> Result<Arc<LasMetadata>, DataFusionError> {
         let Self {
             store,
             object_meta,
@@ -142,8 +142,8 @@ impl<'a> LazMetadataReader<'a> {
             .and_then(|file_metadata| {
                 file_metadata
                     .as_any()
-                    .downcast_ref::<LazMetadata>()
-                    .map(|laz_file_metadata| Arc::new(laz_file_metadata.to_owned()))
+                    .downcast_ref::<LasMetadata>()
+                    .map(|las_file_metadata| Arc::new(las_file_metadata.to_owned()))
             })
         {
             return Ok(las_file_metadata);
@@ -151,7 +151,11 @@ impl<'a> LazMetadataReader<'a> {
 
         let header = self.fetch_header().await?;
         let extra_attributes = extra_bytes_attributes(&header)?;
-        let chunk_table = chunk_table(*store, object_meta, &header).await?;
+        let chunk_table = if header.laz_vlr().is_ok() {
+            laz_chunk_table(*store, object_meta, &header).await?
+        } else {
+            las_chunk_table(&header).await?
+        };
         let statistics = if options.collect_statistics {
             Some(
                 chunk_statistics(
@@ -167,7 +171,7 @@ impl<'a> LazMetadataReader<'a> {
             None
         };
 
-        let metadata = Arc::new(LazMetadata {
+        let metadata = Arc::new(LasMetadata {
             header: Arc::new(header),
             extra_attributes: Arc::new(extra_attributes),
             chunk_table,
@@ -181,7 +185,7 @@ impl<'a> LazMetadataReader<'a> {
         Ok(metadata)
     }
 
-    /// Read and parse the schema of the laz file
+    /// Read and parse the schema of the LAS/LAZ file
     pub async fn fetch_schema(&mut self) -> Result<Schema, DataFusionError> {
         let metadata = self.fetch_metadata().await?;
 
@@ -194,7 +198,7 @@ impl<'a> LazMetadataReader<'a> {
         Ok(schema)
     }
 
-    /// Fetch the metadata from the laz file via [`Self::fetch_metadata`] and extracts
+    /// Fetch the metadata from the LAS/LAZ file via [`Self::fetch_metadata`] and extracts
     /// the statistics in the metadata
     pub async fn fetch_statistics(
         &self,
@@ -237,7 +241,7 @@ impl<'a> LazMetadataReader<'a> {
     }
 }
 
-pub(crate) async fn fetch_header(
+async fn fetch_header(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
 ) -> Result<Header, Box<dyn Error + Send + Sync>> {
@@ -300,7 +304,8 @@ pub struct ExtraAttribute {
     pub offset: Option<f64>,
 }
 
-pub(crate) fn extra_bytes_attributes(
+/// Extract [ExtraAttribute]s from [Header]
+fn extra_bytes_attributes(
     header: &Header,
 ) -> Result<Vec<ExtraAttribute>, Box<dyn Error + Send + Sync>> {
     let mut attributes = Vec::new();
@@ -363,19 +368,16 @@ pub(crate) fn extra_bytes_attributes(
     Ok(attributes)
 }
 
-pub(crate) async fn chunk_table(
+async fn laz_chunk_table(
     store: &(impl ObjectStore + ?Sized),
     object_meta: &ObjectMeta,
     header: &Header,
 ) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
+    let laz_vlr = header.laz_vlr()?;
+
     let num_points = header.number_of_points();
     let mut point_offset = 0;
-
-    let vlr_len = header.vlrs().iter().map(|v| v.len(false)).sum::<usize>();
-    let header_size = header.version().header_size() as usize + header.padding().len();
-    let mut byte_offset = (header_size + vlr_len + header.vlr_padding().len()) as u64;
-
-    let laz_vlr = header.laz_vlr()?;
+    let mut byte_offset = offset_to_point_data(header);
 
     let ranges = [
         byte_offset..byte_offset + 8,
@@ -438,6 +440,41 @@ pub(crate) async fn chunk_table(
     Ok(chunks)
 }
 
+async fn las_chunk_table(header: &Header) -> Result<Vec<ChunkMeta>, Box<dyn Error + Send + Sync>> {
+    const CHUNK_SIZE: u64 = 50000;
+
+    let num_points = header.number_of_points();
+    let mut point_offset = 0;
+    let mut byte_offset = offset_to_point_data(header);
+    let record_size = header.point_format().len() as u64;
+
+    let num_chunks = num_points.div_ceil(CHUNK_SIZE);
+    let mut chunks = Vec::with_capacity(num_chunks as usize);
+
+    for _ in 0..num_chunks {
+        let point_count = CHUNK_SIZE.min(num_points - point_offset);
+        let byte_count = point_count * record_size;
+
+        let chunk = ChunkMeta {
+            num_points: point_count,
+            point_offset,
+            byte_range: byte_offset..byte_offset + byte_count,
+        };
+
+        chunks.push(chunk);
+        point_offset += point_count;
+        byte_offset += byte_count;
+    }
+
+    Ok(chunks)
+}
+
+fn offset_to_point_data(header: &Header) -> u64 {
+    let vlr_len = header.vlrs().iter().map(|v| v.len(false)).sum::<usize>();
+    let header_size = header.version().header_size() as usize + header.padding().len();
+    (header_size + vlr_len + header.vlr_padding().len()) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -445,7 +482,7 @@ mod tests {
     use las::{point::Format, Builder, Reader, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
-    use crate::laz::metadata::LazMetadataReader;
+    use crate::las::metadata::LasMetadataReader;
 
     #[tokio::test]
     async fn header_basic_e2e() {
@@ -462,11 +499,11 @@ mod tests {
         let mut writer = Writer::new(tmp_file, header).unwrap();
         writer.close().unwrap();
 
-        // read with `LazMetadataReader`
+        // read with `LasMetadataReader`
         let store = LocalFileSystem::new();
         let location = Path::from_filesystem_path(&tmp_path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
-        let metadata_reader = LazMetadataReader::new(&store, &object_meta);
+        let metadata_reader = LasMetadataReader::new(&store, &object_meta);
 
         // read with las `Reader`
         let reader = Reader::from_path(&tmp_path).unwrap();

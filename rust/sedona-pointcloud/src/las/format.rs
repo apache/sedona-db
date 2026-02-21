@@ -34,34 +34,51 @@ use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::{
-    laz::{metadata::LazMetadataReader, reader::LazFileReaderFactory, source::LazSource},
+    las::{metadata::LasMetadataReader, reader::LasFileReaderFactory, source::LasSource},
     options::PointcloudOptions,
 };
 
-const DEFAULT_LAZ_EXTENSION: &str = ".laz";
-
-/// Factory struct used to create [LazFormat]
-#[derive(Default)]
-pub struct LazFormatFactory {
-    // inner options for LAZ
-    pub options: Option<PointcloudOptions>,
+#[derive(Debug, Clone, Copy)]
+pub enum Extension {
+    Las,
+    Laz,
 }
 
-impl LazFormatFactory {
-    /// Creates an instance of [LazFormatFactory]
-    pub fn new() -> Self {
-        Self { options: None }
-    }
-
-    /// Creates an instance of [LazFormatFactory] with customized default options
-    pub fn new_with(options: PointcloudOptions) -> Self {
-        Self {
-            options: Some(options),
+impl Extension {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Extension::Las => "las",
+            Extension::Laz => "laz",
         }
     }
 }
 
-impl FileFormatFactory for LazFormatFactory {
+/// Factory struct used to create [LasFormat]
+pub struct LasFormatFactory {
+    // inner options for LAS/LAZ
+    pub options: Option<PointcloudOptions>,
+    extension: Extension,
+}
+
+impl LasFormatFactory {
+    /// Creates an instance of [LasFormatFactory]
+    pub fn new(extension: Extension) -> Self {
+        Self {
+            options: None,
+            extension,
+        }
+    }
+
+    /// Creates an instance of [LasFormatFactory] with customized default options
+    pub fn new_with(options: PointcloudOptions, extension: Extension) -> Self {
+        Self {
+            options: Some(options),
+            extension,
+        }
+    }
+}
+
+impl FileFormatFactory for LasFormatFactory {
     fn create(
         &self,
         state: &dyn Session,
@@ -80,11 +97,13 @@ impl FileFormatFactory for LazFormatFactory {
             options.set(k, v)?;
         }
 
-        Ok(Arc::new(LazFormat::default().with_options(options)))
+        Ok(Arc::new(
+            LasFormat::new(self.extension).with_options(options),
+        ))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
-        Arc::new(LazFormat::default())
+        Arc::new(LasFormat::new(self.extension))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -92,28 +111,36 @@ impl FileFormatFactory for LazFormatFactory {
     }
 }
 
-impl GetExt for LazFormatFactory {
+impl GetExt for LasFormatFactory {
     fn get_ext(&self) -> String {
-        // Removes the dot, i.e. ".laz" -> "laz"
-        DEFAULT_LAZ_EXTENSION[1..].to_string()
+        self.extension.as_str().to_string()
     }
 }
 
-impl fmt::Debug for LazFormatFactory {
+impl fmt::Debug for LasFormatFactory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LazFormatFactory")
-            .field("LazFormatFactory", &self.options)
+        f.debug_struct("LasFormatFactory")
+            .field("options", &self.options)
+            .field("extension", &self.extension)
             .finish()
     }
 }
 
-/// The LAZ `FileFormat` implementation
-#[derive(Debug, Default)]
-pub struct LazFormat {
+/// The LAS/LAZ `FileFormat` implementation
+#[derive(Debug)]
+pub struct LasFormat {
     pub options: PointcloudOptions,
+    extension: Extension,
 }
 
-impl LazFormat {
+impl LasFormat {
+    pub fn new(extension: Extension) -> Self {
+        Self {
+            options: Default::default(),
+            extension,
+        }
+    }
+
     pub fn with_options(mut self, options: PointcloudOptions) -> Self {
         self.options = options;
         self
@@ -121,13 +148,13 @@ impl LazFormat {
 }
 
 #[async_trait::async_trait]
-impl FileFormat for LazFormat {
+impl FileFormat for LasFormat {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn get_ext(&self) -> String {
-        LazFormatFactory::new().get_ext()
+        LasFormatFactory::new(self.extension).get_ext()
     }
 
     fn get_ext_with_compression(
@@ -159,7 +186,7 @@ impl FileFormat for LazFormat {
             .map(|object_meta| async {
                 let loc_path = object_meta.location.clone();
 
-                let schema = LazMetadataReader::new(store, object_meta)
+                let schema = LasMetadataReader::new(store, object_meta)
                     .with_file_metadata_cache(Some(Arc::clone(&file_metadata_cache)))
                     .with_options(self.options.clone())
                     .fetch_schema()
@@ -193,7 +220,7 @@ impl FileFormat for LazFormat {
         object: &ObjectMeta,
     ) -> Result<Statistics, DataFusionError> {
         let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
-        LazMetadataReader::new(store, object)
+        LasMetadataReader::new(store, object)
             .with_options(self.options.clone())
             .with_file_metadata_cache(Some(Arc::clone(&file_metadata_cache)))
             .fetch_statistics(&table_schema)
@@ -208,17 +235,17 @@ impl FileFormat for LazFormat {
         let mut source = conf
             .file_source()
             .as_any()
-            .downcast_ref::<LazSource>()
+            .downcast_ref::<LasSource>()
             .cloned()
-            .ok_or_else(|| DataFusionError::External("Expected LazSource".into()))?;
+            .ok_or_else(|| DataFusionError::External("Expected LasSource".into()))?;
         source = source.with_options(self.options.clone());
 
         let metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
         let store = state
             .runtime_env()
             .object_store(conf.object_store_url.clone())?;
-        let laz_reader_factory = Arc::new(LazFileReaderFactory::new(store, Some(metadata_cache)));
-        let source = source.with_reader_factory(laz_reader_factory);
+        let reader_factory = Arc::new(LasFileReaderFactory::new(store, Some(metadata_cache)));
+        let source = source.with_reader_factory(reader_factory);
 
         let conf = FileScanConfigBuilder::from(conf)
             .with_source(Arc::new(source))
@@ -228,7 +255,7 @@ impl FileFormat for LazFormat {
     }
 
     fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(LazSource::default().with_options(self.options.clone()))
+        Arc::new(LasSource::new(self.extension).with_options(self.options.clone()))
     }
 }
 
@@ -240,29 +267,48 @@ mod test {
     use datafusion_datasource::file_format::FileFormatFactory;
     use las::{point::Format, Builder, Writer};
 
-    use crate::laz::format::{LazFormat, LazFormatFactory};
+    use crate::las::format::{Extension, LasFormat, LasFormatFactory};
 
     fn setup_context() -> SessionContext {
-        let file_format = Arc::new(LazFormatFactory::new());
-
         let mut state = SessionStateBuilder::new().build();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Las));
+        state.register_file_format(file_format, true).unwrap();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Laz));
         state.register_file_format(file_format, true).unwrap();
 
         SessionContext::new_with_state(state).enable_url_table()
     }
 
     #[tokio::test]
-    async fn laz_format_factory() {
+    async fn format_factory() {
         let ctx = SessionContext::new();
-        let format_factory = Arc::new(LazFormatFactory::new());
+        let format_factory = Arc::new(LasFormatFactory::new(Extension::Las));
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
-        assert!(dyn_format.as_any().downcast_ref::<LazFormat>().is_some());
+        assert!(dyn_format.as_any().downcast_ref::<LasFormat>().is_some());
+
+        let ctx = SessionContext::new();
+        let format_factory = Arc::new(LasFormatFactory::new(Extension::Laz));
+        let dyn_format = format_factory
+            .create(&ctx.state(), &HashMap::new())
+            .unwrap();
+        assert!(dyn_format.as_any().downcast_ref::<LasFormat>().is_some());
     }
 
     #[tokio::test]
     async fn projection() {
+        let ctx = setup_context();
+
+        let df = ctx
+            .sql("SELECT x, y, z FROM 'tests/data/extra.las'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 3);
+
         let ctx = setup_context();
         let df = ctx
             .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")

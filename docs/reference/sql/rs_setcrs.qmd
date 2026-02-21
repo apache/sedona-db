@@ -17,21 +17,22 @@
 # under the License.
 
 title: RS_SetCRS
-description: Set the coordinate reference system (CRS) of the raster.
+description: Sets the Coordinate Reference System (CRS) for a raster.
 kernels:
   - returns: raster
     args:
     - raster
-    - name: crs
+    - name: target_crs
       type: string
 ---
 
 ## Description
 
-Sets the CRS (coordinate reference system) of the raster. This is metadata only — no pixel coordinate transformation occurs. Accepts authority:code identifiers such as `'EPSG:3857'` or `'OGC:CRS84'`. Use `'0'` to clear the CRS. `EPSG:4326` is normalized to `OGC:CRS84`.
+Sets a CRS on a raster. This is metadata-only: raster cell values and
+geotransform are not transformed.
 
 ## Examples
 
 ```sql
-SELECT RS_SetCRS(RS_Example(), 'EPSG:3857');
+SELECT RS_SetCRS(RS_Example(), 'EPSG:4326');
 ```

@@ -17,7 +17,7 @@
 # under the License.
 
 title: RS_SetSRID
-description: Set the spatial reference system identifier (SRID) of the raster.
+description: Sets the SRID (spatial reference identifier) for a raster.
 kernels:
   - returns: raster
     args:
@@ -28,10 +28,11 @@ kernels:
 
 ## Description
 
-Sets the SRID (spatial reference system identifier) of the raster. This is metadata only — no pixel coordinate transformation occurs. Use SRID 0 to clear the CRS. SRID 4326 is normalized to `OGC:CRS84`.
+Sets the SRID of a raster. This is metadata-only: raster cell values and
+geotransform are not transformed.
 
 ## Examples
 
 ```sql
-SELECT RS_SetSRID(RS_Example(), 3857);
+SELECT RS_SetSRID(RS_Example(), 4326);
 ```

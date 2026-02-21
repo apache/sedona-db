@@ -97,13 +97,19 @@ mod test {
         prelude::{SessionConfig, SessionContext},
     };
 
-    use crate::{laz::format::LazFormatFactory, options::PointcloudOptions};
+    use crate::{
+        las::format::{Extension, LasFormatFactory},
+        options::PointcloudOptions,
+    };
 
     fn setup_context() -> SessionContext {
-        let file_format = Arc::new(LazFormatFactory::new());
-
         let config = SessionConfig::new().with_option_extension(PointcloudOptions::default());
         let mut state = SessionStateBuilder::new().with_config(config).build();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Las));
+        state.register_file_format(file_format, true).unwrap();
+
+        let file_format = Arc::new(LasFormatFactory::new(Extension::Laz));
         state.register_file_format(file_format, true).unwrap();
 
         SessionContext::new_with_state(state).enable_url_table()
@@ -114,6 +120,13 @@ mod test {
         let ctx = setup_context();
 
         // default options
+        let df = ctx
+            .sql("SELECT x, y, z FROM 'tests/data/extra.las'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 3);
+
         let df = ctx
             .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
             .await
@@ -128,6 +141,14 @@ mod test {
         ctx.sql("SET pointcloud.las.extra_bytes = 'blob'")
             .await
             .unwrap();
+
+        let df = ctx
+            .sql("SELECT geometry, extra_bytes FROM 'tests/data/extra.las'")
+            .await
+            .unwrap();
+
+        assert_eq!(df.schema().fields().len(), 2);
+
         let df = ctx
             .sql("SELECT geometry, extra_bytes FROM 'tests/data/extra.laz'")
             .await

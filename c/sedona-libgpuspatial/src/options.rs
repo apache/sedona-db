@@ -15,48 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod executor;
-pub mod register;
-mod sd_format;
-pub mod sd_order;
-mod st_affine;
-mod st_affine_helpers;
-pub mod st_analyze_agg;
-mod st_asbinary;
-mod st_asewkb;
-mod st_astext;
-mod st_azimuth;
-mod st_collect_agg;
-mod st_dimension;
-mod st_dump;
-pub mod st_envelope;
-mod st_envelope_agg;
-mod st_flipcoordinates;
-mod st_force_dim;
-mod st_geometryn;
-mod st_geometrytype;
-mod st_geomfromewkb;
-mod st_geomfromwkb;
-mod st_geomfromwkt;
-mod st_haszm;
-mod st_interiorringn;
-mod st_isclosed;
-mod st_iscollection;
-mod st_isempty;
-mod st_knn;
-mod st_makeline;
-mod st_numgeometries;
-mod st_point;
-mod st_pointn;
-mod st_points;
-mod st_pointzm;
-mod st_reverse;
-mod st_rotate;
-mod st_scale;
-mod st_setsrid;
-mod st_srid;
-mod st_start_point;
-mod st_translate;
-mod st_xyzm;
-mod st_xyzm_minmax;
-mod st_zmflag;
+/// Options for GPU-accelerated index and refiner.
+pub struct GpuSpatialOptions {
+    /// Whether to use CUDA memory pool for allocations
+    pub cuda_use_memory_pool: bool,
+    /// Ratio of initial memory pool size to total GPU memory, between 0 and 100
+    pub cuda_memory_pool_init_percent: i32,
+    /// How many threads will concurrently use the library
+    pub concurrency: u32,
+    /// The device id to use
+    pub device_id: i32,
+    /// Whether to build a compressed BVH, which can reduce memory usage, but may increase build time
+    pub compress_bvh: bool,
+    /// The number of batches for pipelined refinement that overlaps the WKB loading and refinement. Setting 1 effectively disables pipelining.
+    pub pipeline_batches: u32,
+}

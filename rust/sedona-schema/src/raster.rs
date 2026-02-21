@@ -105,6 +105,35 @@ pub enum BandDataType {
     Int8 = 10,
 }
 
+impl BandDataType {
+    /// Byte size of a single pixel for this data type.
+    pub fn byte_size(&self) -> usize {
+        match self {
+            BandDataType::UInt8 | BandDataType::Int8 => 1,
+            BandDataType::UInt16 | BandDataType::Int16 => 2,
+            BandDataType::UInt32 | BandDataType::Int32 | BandDataType::Float32 => 4,
+            BandDataType::UInt64 | BandDataType::Int64 | BandDataType::Float64 => 8,
+        }
+    }
+
+    /// Java/Sedona-compatible pixel type name (e.g. `"UNSIGNED_8BITS"`).
+    pub fn pixel_type_name(&self) -> &'static str {
+        match self {
+            BandDataType::UInt8 => "UNSIGNED_8BITS",
+            BandDataType::UInt16 => "UNSIGNED_16BITS",
+            BandDataType::Int16 => "SIGNED_16BITS",
+            BandDataType::Int32 => "SIGNED_32BITS",
+            BandDataType::Float32 => "REAL_32BITS",
+            BandDataType::Float64 => "REAL_64BITS",
+            // Extra types present in Rust but not in Java Sedona
+            BandDataType::UInt32 => "UNSIGNED_32BITS",
+            BandDataType::UInt64 => "UNSIGNED_64BITS",
+            BandDataType::Int64 => "SIGNED_64BITS",
+            BandDataType::Int8 => "SIGNED_8BITS",
+        }
+    }
+}
+
 /// Storage strategy for raster band data within Apache Arrow arrays.
 ///
 /// This enum defines how raster data is physically stored and accessed:
@@ -332,5 +361,33 @@ mod tests {
         } else {
             panic!("Expected Struct type for band");
         }
+    }
+
+    #[test]
+    fn test_band_data_type_byte_size() {
+        assert_eq!(BandDataType::UInt8.byte_size(), 1);
+        assert_eq!(BandDataType::Int8.byte_size(), 1);
+        assert_eq!(BandDataType::UInt16.byte_size(), 2);
+        assert_eq!(BandDataType::Int16.byte_size(), 2);
+        assert_eq!(BandDataType::UInt32.byte_size(), 4);
+        assert_eq!(BandDataType::Int32.byte_size(), 4);
+        assert_eq!(BandDataType::Float32.byte_size(), 4);
+        assert_eq!(BandDataType::UInt64.byte_size(), 8);
+        assert_eq!(BandDataType::Int64.byte_size(), 8);
+        assert_eq!(BandDataType::Float64.byte_size(), 8);
+    }
+
+    #[test]
+    fn test_band_data_type_pixel_type_name() {
+        assert_eq!(BandDataType::UInt8.pixel_type_name(), "UNSIGNED_8BITS");
+        assert_eq!(BandDataType::Int8.pixel_type_name(), "SIGNED_8BITS");
+        assert_eq!(BandDataType::UInt16.pixel_type_name(), "UNSIGNED_16BITS");
+        assert_eq!(BandDataType::Int16.pixel_type_name(), "SIGNED_16BITS");
+        assert_eq!(BandDataType::UInt32.pixel_type_name(), "UNSIGNED_32BITS");
+        assert_eq!(BandDataType::Int32.pixel_type_name(), "SIGNED_32BITS");
+        assert_eq!(BandDataType::Float32.pixel_type_name(), "REAL_32BITS");
+        assert_eq!(BandDataType::UInt64.pixel_type_name(), "UNSIGNED_64BITS");
+        assert_eq!(BandDataType::Int64.pixel_type_name(), "SIGNED_64BITS");
+        assert_eq!(BandDataType::Float64.pixel_type_name(), "REAL_64BITS");
     }
 }

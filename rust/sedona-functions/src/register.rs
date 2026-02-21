@@ -38,7 +38,6 @@ pub fn default_function_set() -> FunctionSet {
 
     register_scalar_udfs!(
         function_set,
-        crate::barrier::barrier_udf,
         crate::sd_format::sd_format_udf,
         crate::sd_order::sd_order_udf,
         crate::st_affine::st_affine_udf,
