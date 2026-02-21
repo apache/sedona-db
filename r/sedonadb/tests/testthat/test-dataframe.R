@@ -354,3 +354,32 @@ test_that("sd_filter() works with dplyr-like filter syntax", {
     data.frame(x = integer())
   )
 })
+
+
+test_that("sd_arrange() works with dplyr-like arrange syntax", {
+  df_in <- data.frame(x = 1:10, y = letters[10:1])
+
+  # Zero conditions
+  expect_identical(
+    df_in |> sd_filter() |> sd_collect(),
+    df_in
+  )
+
+  # One condition
+  expect_identical(
+    df_in |> sd_arrange(x) |> sd_collect(),
+    df_in
+  )
+
+  # Check descending with desc()
+  expect_identical(
+    df_in |> sd_arrange(desc(x)) |> sd_collect(),
+    data.frame(x = 10:1, y = letters[1:10])
+  )
+
+  # Check descending with dplyr::desc()
+  expect_identical(
+    df_in |> sd_arrange(dplyr::desc(x)) |> sd_collect(),
+    data.frame(x = 10:1, y = letters[1:10])
+  )
+})

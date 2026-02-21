@@ -96,3 +96,13 @@ test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
 })
+
+test_that("unwrap_desc() can unwrap calls to desc()", {
+  expect_identical(
+    unwrap_desc(list(quote(desc(a)), quote(dplyr::desc(b)), quote(c))),
+    list(
+      inner_exprs = list(quote(a), quote(b), quote(c)),
+      is_descending = c(TRUE, TRUE, FALSE)
+    )
+  )
+})

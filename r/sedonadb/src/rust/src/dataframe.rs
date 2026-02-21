@@ -332,4 +332,16 @@ impl InternalDataFrame {
 
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
+
+    fn arrange(&self, exprs_sexp: savvy::Sexp, is_descending_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
+        let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
+        let is_descending_lglsxp = savvy::LogicalSexp::try_from(is_descending_sexp)?;
+
+        let sort_exprs = zip(exprs, is_descending_lglsxp.iter()).map(|(expr, is_descending)| {
+            SortExpr::new(expr, !is_descending, false)
+        }).collect::<Vec<_>>();
+
+        let inner = self.inner.clone().sort(sort_exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
 }

@@ -279,6 +279,44 @@ sd_filter <- function(.data, ...) {
   new_sedonadb_dataframe(.data$ctx, df)
 }
 
+#' Order rows of a SedonaDB data frame using column values
+#'
+#' @inheritParams sd_count
+#' @param ... Unnamed expressions for filter conditions. These are evaluated
+#'   in the same way as [dplyr::arrange()] except does not support extra
+#'   dplyr features such as `across()`, `.by_group`, or `.locale`.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = c(10:1, NA)) |> sd_arrange(x)
+#' data.frame(x = c(1:10, NA)) |> sd_arrange(desc(x))
+#'
+sd_arrange <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  rlang::check_dots_unnamed()
+
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
+
+  # Specifically for sd_arrange(), we need to unwrap desc() calls
+  unwrapped <- unwrap_desc(r_exprs)
+
+  sd_exprs <- lapply(
+    unwrapped$inner_exprs,
+    sd_eval_expr,
+    expr_ctx = expr_ctx,
+    env = env
+  )
+
+  df <- .data$df$arrange(sd_exprs, unwrapped$is_descending)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
 #' Write DataFrame to (Geo)Parquet files
 #'
 #' Write this DataFrame to one or more (Geo)Parquet files. For input that contains

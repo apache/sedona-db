@@ -139,6 +139,13 @@ SEXP savvy_InternalContext_view__impl(SEXP self__, SEXP c_arg__table_ref) {
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_arrange__impl(SEXP self__, SEXP c_arg__exprs_sexp,
+                                           SEXP c_arg__is_descending_sexp) {
+  SEXP res = savvy_InternalDataFrame_arrange__ffi(self__, c_arg__exprs_sexp,
+                                                  c_arg__is_descending_sexp);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_collect__impl(SEXP self__, SEXP c_arg__out) {
   SEXP res = savvy_InternalDataFrame_collect__ffi(self__, c_arg__out);
   return handle_result(res);
@@ -323,6 +330,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalContext_sql__impl, 2},
     {"savvy_InternalContext_view__impl",
      (DL_FUNC)&savvy_InternalContext_view__impl, 2},
+    {"savvy_InternalDataFrame_arrange__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_arrange__impl, 3},
     {"savvy_InternalDataFrame_collect__impl",
      (DL_FUNC)&savvy_InternalDataFrame_collect__impl, 2},
     {"savvy_InternalDataFrame_compute__impl",

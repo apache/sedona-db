@@ -224,7 +224,9 @@ sd_eval_expr_inner <- function(expr, expr_ctx) {
 
 sd_eval_datafusion_fn <- function(fn_key, expr, expr_ctx) {
   # Evaluate arguments all the way into expressions
-  evaluated_args <- lapply(expr[-1], sd_eval_expr, expr_ctx = expr_ctx)
+  evaluated_args <- lapply(expr[-1], sd_eval_expr_inner, expr_ctx = expr_ctx)
+  # TODO: check names
+  # TODO: aggregate vs not
   sd_expr_scalar_function(fn_key, evaluated_args, factory = expr_ctx$factory)
 }
 
@@ -247,6 +249,26 @@ sd_eval_translation <- function(fn_key, expr, expr_ctx) {
 
 sd_eval_default <- function(expr, expr_ctx) {
   rlang::eval_tidy(expr, data = expr_ctx$data, env = expr_ctx$env)
+}
+
+# Needed for sd_arrange(), as wrapping expression in desc() is how a descending
+# sort order is specified. Unwraps desc(inner_expr) to separate the expressions.
+unwrap_desc <- function(exprs) {
+  inner_exprs <- vector("list", length(exprs))
+  is_descending <- vector("logical", length(exprs))
+  for (i in seq_along(exprs)) {
+    expr <- exprs[[i]]
+
+    if (rlang::is_call(expr, "desc") || rlang::is_call("desc", ns = "dplyr")) {
+      inner_exprs[[i]] <- expr[[2]]
+      is_descending[[i]] <- TRUE
+    } else {
+      inner_exprs[[i]] <- expr
+      is_descending[[i]] <- FALSE
+    }
+  }
+
+  list(inner_exprs = inner_exprs, is_descending = is_descending)
 }
 
 #' Expression evaluation context
