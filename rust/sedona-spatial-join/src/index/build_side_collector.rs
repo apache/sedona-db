@@ -32,6 +32,8 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
+use crate::index::spatial_index_builder::SpatialIndexBuilder;
+use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
     evaluated_batch::{
         evaluated_batch_stream::{
@@ -41,7 +43,6 @@ use crate::{
         spill::EvaluatedBatchSpillWriter,
         EvaluatedBatch,
     },
-    index::SpatialIndexBuilder,
     operand_evaluator::{create_operand_evaluator, OperandEvaluator},
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
@@ -217,7 +218,7 @@ impl BuildSideBatchesCollector {
         }
 
         let geo_statistics = analyzer.finish();
-        let extra_mem = SpatialIndexBuilder::estimate_extra_memory_usage(
+        let extra_mem = DefaultSpatialIndexBuilder::estimate_extra_memory_usage(
             &geo_statistics,
             &self.spatial_predicate,
             &self.spatial_join_options,

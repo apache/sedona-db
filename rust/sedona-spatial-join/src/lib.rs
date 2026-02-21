@@ -33,8 +33,7 @@ pub use exec::SpatialJoinExec;
 // Re-export function for register the spatial join planner
 pub use planner::register_planner;
 
-// Re-export types needed for external usage (e.g., in Comet)
-pub use index::{SpatialIndex, SpatialJoinBuildMetrics};
+// pub use index::SpatialJoinBuildMetrics;
 pub use spatial_predicate::SpatialPredicate;
 
 // Re-export option types from sedona-common for convenience
