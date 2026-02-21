@@ -263,7 +263,7 @@ sd_transmute <- function(.data, ...) {
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
@@ -304,7 +304,7 @@ sd_filter <- function(.data, ...) {
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
@@ -337,7 +337,7 @@ sd_arrange <- function(.data, ...) {
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
 
   # Specifically for sd_arrange(), we need to unwrap desc() calls
@@ -378,7 +378,7 @@ sd_group_by <- function(.data, ...) {
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
@@ -421,7 +421,7 @@ sd_summarise <- function(.data, ...) {
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
