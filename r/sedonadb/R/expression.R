@@ -286,7 +286,7 @@ unwrap_desc <- function(exprs) {
   for (i in seq_along(exprs)) {
     expr <- exprs[[i]]
 
-    if (rlang::is_call(expr, "desc") || rlang::is_call("desc", ns = "dplyr")) {
+    if (rlang::is_call(expr, "desc") || rlang::is_call(expr, "desc", ns = "dplyr")) {
       inner_exprs[[i]] <- expr[[2]]
       is_descending[[i]] <- TRUE
     } else {
