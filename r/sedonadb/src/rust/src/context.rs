@@ -20,7 +20,7 @@ use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::udf::FFI_ScalarUDF;
-use savvy::{IntoExtPtrSexp, OwnedStringSexp, Result, savvy, savvy_err};
+use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
 
 use sedona::{context::SedonaContext, record_batch_reader_provider::RecordBatchReaderProvider};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
