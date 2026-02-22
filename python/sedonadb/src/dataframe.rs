@@ -325,6 +325,14 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
+    fn simplify_storage_types(
+        &self,
+        ctx: &InternalContext,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let df = self.inner.clone().simplify_storage_types(&ctx.inner)?;
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
     fn __datafusion_table_provider__<'py>(
         &self,
         py: Python<'py>,

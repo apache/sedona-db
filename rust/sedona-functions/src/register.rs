@@ -40,6 +40,7 @@ pub fn default_function_set() -> FunctionSet {
         function_set,
         crate::sd_format::sd_format_udf,
         crate::sd_order::sd_order_udf,
+        crate::sd_simplifystorage::sd_simplifystorage_udf,
         crate::st_affine::st_affine_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_asewkb::st_asewkb_udf,
