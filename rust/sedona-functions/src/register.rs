@@ -38,38 +38,15 @@ pub fn default_function_set() -> FunctionSet {
 
     register_scalar_udfs!(
         function_set,
-        crate::distance::st_distance_udf,
-        crate::distance::st_max_distance_udf,
-        crate::overlay::st_difference_udf,
-        crate::overlay::st_intersection_udf,
-        crate::overlay::st_sym_difference_udf,
-        crate::overlay::st_union_udf,
-        crate::predicates::st_contains_udf,
-        crate::predicates::st_covered_by_udf,
-        crate::predicates::st_covers_udf,
-        crate::predicates::st_disjoint_udf,
-        crate::predicates::st_equals_udf,
-        crate::predicates::st_intersects_udf,
-        crate::predicates::st_knn_udf,
-        crate::predicates::st_touches_udf,
-        crate::predicates::st_within_udf,
-        crate::referencing::st_line_interpolate_point_udf,
-        crate::referencing::st_line_locate_point_udf,
         crate::sd_format::sd_format_udf,
         crate::sd_order::sd_order_udf,
         crate::st_affine::st_affine_udf,
-        crate::st_area::st_area_udf,
         crate::st_asbinary::st_asbinary_udf,
         crate::st_asewkb::st_asewkb_udf,
-        crate::st_asgeojson::st_asgeojson_udf,
         crate::st_astext::st_astext_udf,
         crate::st_azimuth::st_azimuth_udf,
-        crate::st_buffer::st_buffer_udf,
-        crate::st_centroid::st_centroid_udf,
-        crate::st_concavehull::st_concavehull_udf,
         crate::st_dimension::st_dimension_udf,
         crate::st_dump::st_dump_udf,
-        crate::st_dwithin::st_dwithin_udf,
         crate::st_envelope::st_envelope_udf,
         crate::st_flipcoordinates::st_flipcoordinates_udf,
         crate::st_geometryn::st_geometryn_udf,
@@ -87,11 +64,9 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_isclosed::st_isclosed_udf,
         crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
-        crate::st_length::st_length_udf,
-        crate::st_line_merge::st_line_merge_udf,
+        crate::st_knn::st_knn_udf,
         crate::st_makeline::st_makeline_udf,
         crate::st_numgeometries::st_numgeometries_udf,
-        crate::st_perimeter::st_perimeter_udf,
         crate::st_point::st_geogpoint_udf,
         crate::st_point::st_point_udf,
         crate::st_pointn::st_pointn_udf,
@@ -111,7 +86,6 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_srid::st_srid_udf,
         crate::st_start_point::st_end_point_udf,
         crate::st_start_point::st_start_point_udf,
-        crate::st_transform::st_transform_udf,
         crate::st_translate::st_translate_udf,
         crate::st_force_dim::st_force2d_udf,
         crate::st_force_dim::st_force3d_udf,
@@ -137,29 +111,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_analyze_agg::st_analyze_agg_udf,
         crate::st_collect_agg::st_collect_agg_udf,
         crate::st_envelope_agg::st_envelope_agg_udf,
-        crate::st_intersection_agg::st_intersection_agg_udf,
-        crate::st_polygonize_agg::st_polygonize_agg_udf,
-        crate::st_union_agg::st_union_agg_udf,
     );
 
     function_set
-}
-
-/// Functions whose implementations are registered independently
-///
-/// These functions are included in the default function set; however,
-/// it is useful to expose them individually for testing in crates that
-/// implement them.
-pub mod stubs {
-    pub use crate::overlay::*;
-    pub use crate::predicates::*;
-    pub use crate::referencing::*;
-    pub use crate::st_area::st_area_udf;
-    pub use crate::st_azimuth::st_azimuth_udf;
-    pub use crate::st_centroid::st_centroid_udf;
-    pub use crate::st_length::st_length_udf;
-    pub use crate::st_perimeter::st_perimeter_udf;
-    pub use crate::st_setsrid::st_set_crs_with_engine_udf;
-    pub use crate::st_setsrid::st_set_srid_with_engine_udf;
-    pub use crate::st_transform::st_transform_udf;
 }

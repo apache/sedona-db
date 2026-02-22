@@ -20,7 +20,6 @@ use crate::{
 };
 use datafusion_common::error::Result;
 use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
-use sedona_common::sedona_internal_err;
 use std::collections::HashMap;
 
 /// Helper for managing groups of functions
@@ -96,9 +95,8 @@ impl FunctionSet {
 
     /// Add a kernel to a function in this set
     ///
-    /// This adds a scalar UDF with immutable output and no documentation if a
-    /// function of that name does not exist in this set. A reference to the
-    /// matching function is returned.
+    /// This adds a scalar UDF with immutable output if a function of that name does not
+    /// exist in this set. A reference to the matching or inserted function is returned.
     pub fn add_scalar_udf_impl(
         &mut self,
         name: &str,
@@ -116,8 +114,8 @@ impl FunctionSet {
 
     /// Add an aggregate kernel to a function in this set
     ///
-    /// This errors if a function of that name does not exist in this set. A reference
-    /// to the matching function is returned.
+    /// This adds an aggregate UDF with immutable output if a function of that name does not
+    /// exist in this set. A reference to the matching or inserted function is returned.
     pub fn add_aggregate_udf_kernel(
         &mut self,
         name: &str,
@@ -125,10 +123,12 @@ impl FunctionSet {
     ) -> Result<&SedonaAggregateUDF> {
         if let Some(function) = self.aggregate_udf_mut(name) {
             function.add_kernel(kernel);
-            Ok(self.aggregate_udf(name).unwrap())
         } else {
-            sedona_internal_err!("Can't register aggregate kernel for function '{}'", name)
+            let function = SedonaAggregateUDF::from_impl(name, kernel);
+            self.insert_aggregate_udf(function);
         }
+
+        Ok(self.aggregate_udf(name).unwrap())
     }
 }
 
@@ -261,12 +261,10 @@ mod tests {
                 .name(),
             "simple_udaf"
         );
-        let err = functions
-            .add_aggregate_udf_kernel("function that does not exist", kernel.clone())
-            .unwrap_err();
-        assert!(err.message().lines().next().unwrap().contains(
-            "Can't register aggregate kernel for function 'function that does not exist'."
-        ));
+        let added_func = functions
+            .add_aggregate_udf_kernel("function that does not exist yet", kernel.clone())
+            .unwrap();
+        assert_eq!(added_func.name(), "function that does not exist yet");
 
         let udaf2 = SedonaAggregateUDF::new(
             "simple_udaf2",
@@ -281,9 +279,13 @@ mod tests {
                 .aggregate_udfs()
                 .map(|s| s.name())
                 .collect::<HashSet<_>>(),
-            vec!["simple_udaf", "simple_udaf2"]
-                .into_iter()
-                .collect::<HashSet<_>>()
+            vec![
+                "simple_udaf",
+                "simple_udaf2",
+                "function that does not exist yet"
+            ]
+            .into_iter()
+            .collect::<HashSet<_>>()
         );
     }
 }

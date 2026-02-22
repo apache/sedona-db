@@ -35,9 +35,13 @@ use geo::{Distance, Euclidean};
 use geo_types::{Coord, Rect};
 use rstest::rstest;
 use sedona_common::SedonaOptions;
+use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 use sedona_geo::to_geo::GeoTypesExecutor;
 use sedona_geometry::types::GeometryTypeId;
-use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 use sedona_spatial_join::{
     register_planner, spatial_predicate::RelationPredicate, SpatialJoinExec, SpatialPredicate,
 };
@@ -513,6 +517,16 @@ async fn test_full_outer_join() -> Result<()> {
 async fn test_geography_join_is_not_optimized() -> Result<()> {
     let options = SpatialJoinOptions::default();
     let ctx = setup_context(Some(options), 10)?;
+
+    let stub_impl = SimpleSedonaScalarKernel::new_ref(
+        ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
+            SedonaType::Arrow(DataType::Boolean),
+        ),
+        Arc::new(|_arg_types, _args| unreachable!("Should not be executed")),
+    );
+    let st_intersects_udf = SedonaScalarUDF::from_impl("st_intersects", stub_impl);
+    ctx.register_udf(st_intersects_udf.into());
 
     // Prepare geography tables
     let ((left_schema, left_partitions), (right_schema, right_partitions)) =

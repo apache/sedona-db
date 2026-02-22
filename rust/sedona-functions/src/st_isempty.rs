@@ -72,10 +72,6 @@ impl SedonaScalarKernel for STIsEmpty {
     }
 }
 
-pub fn is_wkb_empty(item: &Wkb) -> Result<bool> {
-    invoke_scalar(item)
-}
-
 fn invoke_scalar(item: &Wkb) -> Result<bool> {
     is_geometry_empty(item).map_err(|e| {
         datafusion_common::error::DataFusionError::Execution(format!(

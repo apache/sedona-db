@@ -107,7 +107,7 @@ fn invoke_scalar(wkb: &Wkb) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use sedona_functions::register::stubs::st_centroid_udf;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
@@ -117,8 +117,7 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udf = st_centroid_udf();
-        udf.add_kernels(st_centroid_impl());
+        let udf = SedonaScalarUDF::from_impl("st_centroid", st_centroid_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
@@ -147,8 +146,7 @@ mod tests {
 
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
-        let mut udf = st_centroid_udf();
-        udf.add_kernels(st_centroid_impl());
+        let udf = SedonaScalarUDF::from_impl("st_centroid", st_centroid_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);
 
