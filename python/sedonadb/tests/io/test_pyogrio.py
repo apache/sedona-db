@@ -19,9 +19,11 @@ import io
 import tempfile
 from pathlib import Path
 
+import geoarrow.pyarrow as ga
 import geopandas
 import geopandas.testing
 import pandas as pd
+import pyarrow as pa
 import pytest
 import sedonadb
 import shapely
@@ -221,3 +223,28 @@ def test_write_ogr_many_batches(con):
         geopandas.testing.assert_geodataframe_equal(
             geopandas.read_file(f"{td}/foofy.gpkg"), expected
         )
+
+
+def test_write_ogr_from_view_types(con):
+    # Check that we can write something with view types (even though it is read back
+    # as the simplifed type)
+    wkb_array = ga.with_crs(ga.as_wkb(["POINT (0 1)", "POINT (1 2)"]), ga.OGC_CRS84)
+    wkb_view_array = (
+        ga.wkb_view()
+        .with_crs(ga.OGC_CRS84)
+        .wrap_array(wkb_array.storage.cast(pa.binary_view()))
+    )
+    tab_simple = pa.table(
+        {"string_col": pa.array(["one", "two"], pa.string()), "wkb_geometry": wkb_array}
+    )
+    tab = pa.table(
+        {
+            "string_col": pa.array(["one", "two"], pa.string_view()),
+            "wkb_geometry": wkb_view_array,
+        }
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        con.create_data_frame(tab).to_pyogrio(f"{td}/foofy.fgb")
+        tab_roundtrip = con.read_pyogrio(f"{td}/foofy.fgb").to_arrow_table()
+        assert tab_roundtrip.sort_by("string_col") == tab_simple
