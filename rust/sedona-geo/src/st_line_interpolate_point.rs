@@ -108,7 +108,6 @@ fn invoke_scalar(geom: &geo_types::Geometry<f64>, ratio: f64) -> Result<(f64, f6
 mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_functions::register::stubs::st_area_udf;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::ScalarUdfTester};
 
@@ -116,8 +115,8 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udf = st_area_udf();
-        udf.add_kernels(st_line_interpolate_point_impl());
+        let udf =
+            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![sedona_type, SedonaType::Arrow(DataType::Float64)],

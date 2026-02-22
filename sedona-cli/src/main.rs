@@ -25,12 +25,13 @@ use sedona::memory_pool::DEFAULT_UNSPILLABLE_RESERVE_RATIO;
 use sedona::pool_type::PoolType;
 use sedona_cli::{
     exec,
+    functions::print_all_functions_json,
     print_format::PrintFormat,
     print_options::{MaxRows, PrintOptions},
     DATAFUSION_CLI_VERSION,
 };
 
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[cfg(feature = "mimalloc")]
 use mimalloc::MiMalloc;
@@ -42,6 +43,9 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Debug, Parser, PartialEq)]
 #[clap(author, version, about, long_about= None)]
 struct Args {
+    #[command(subcommand)]
+    subcommand: Option<CliSubcommand>,
+
     #[clap(
         short = 'p',
         long,
@@ -122,6 +126,20 @@ struct Args {
     color: bool,
 }
 
+#[derive(Debug, Subcommand, PartialEq)]
+enum CliSubcommand {
+    /// List all built-in functions.
+    ListFunctions {
+        #[clap(long, value_enum, default_value_t = FunctionListFormat::Json)]
+        format: FunctionListFormat,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum FunctionListFormat {
+    Json,
+}
+
 #[tokio::main]
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
 pub async fn main() -> ExitCode {
@@ -148,6 +166,17 @@ async fn main_inner() -> Result<()> {
     }
 
     let args = Args::parse();
+
+    if let Some(subcommand) = args.subcommand.as_ref() {
+        match subcommand {
+            CliSubcommand::ListFunctions {
+                format: FunctionListFormat::Json,
+            } => {
+                print_all_functions_json()?;
+                return Ok(());
+            }
+        }
+    }
 
     if !args.quiet {
         println!("Sedona CLI v{DATAFUSION_CLI_VERSION}");

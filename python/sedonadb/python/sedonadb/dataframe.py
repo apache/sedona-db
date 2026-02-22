@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
@@ -443,6 +444,94 @@ class DataFrame:
             partition_by,
             sort_by,
             single_file_output,
+        )
+
+    def to_pyogrio(
+        self,
+        path: Union[str, Path, io.BytesIO],
+        *,
+        driver: Optional[str] = None,
+        geometry_type: Optional[str] = None,
+        geometry_name: Optional[str] = None,
+        crs: Optional[str] = None,
+        append: bool = False,
+        **kwargs: Dict[str, Any],
+    ):
+        """Write using GDAL/OGR via pyogrio
+
+        Writes this DataFrame batchwise to a file using GDAL/OGR using the
+        implementation provided by the pyogrio package. This is the same backend
+        used by GeoPandas and this function is a light wrapper around
+        `pyogrio.raw.write_arrow()` that fills in default values using
+        information available to the DataFrame (e.g., geometry column and CRS).
+
+        Args:
+            path: An output path or `BytesIO` output buffer.
+            driver: An explicit GDAL OGR driver. Usually inferred from `path` but
+                must be provided if path is a `BytesIO`. Not all drivers support
+                writing to `BytesIO`.
+            geometry_type: A GeoJSON-style geometry type or `None` to provide an
+                inferred default value (which may be `"Unknown"`). This is required
+                to write some types of output (e.g. Shapefiles) and may provide
+                files that are more efficiently read.
+            geometry_name: The column to write as the primary geometry column. If
+                `None`, the name of the geometry column will be inferred.
+            crs: An optional string overriding the CRS of `geometry_name`.
+            append: Use `True` to append to the file for drivers that support
+                appending.
+            kwargs: Extra arguments passed to `pyogrio.raw.write_arrow()`.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> sd.sql("SELECT ST_Point(0, 1, 3857)").to_pyogrio(f"{td.name}/tmp.fgb")
+            >>> sd.read_pyogrio(f"{td.name}/tmp.fgb").show()
+            ┌──────────────┐
+            │ wkb_geometry │
+            │   geometry   │
+            ╞══════════════╡
+            │ POINT(0 1)   │
+            └──────────────┘
+        """
+        if geometry_name is None:
+            geometry_name = self._impl.primary_geometry_column()
+
+        if crs is None and geometry_name is not None:
+            inferred_crs = self.schema.field(geometry_name).type.crs
+            crs = None if inferred_crs is None else inferred_crs.to_json()
+
+        if geometry_type is None:
+            # This is required for pyogrio.raw.write_arrow(). We could try harder
+            # to infer this because some drivers need this information.
+            geometry_type = "Unknown"
+
+        if isinstance(path, Path):
+            path = str(path)
+
+        if isinstance(path, io.BytesIO) and driver is None:
+            raise ValueError("driver must be provided when path is a BytesIO")
+
+        # There may be more endings worth special-casing here but zipped FlatGeoBuf
+        # is particularly useful and isn't automatically recognized
+        if driver is None and isinstance(path, str) and path.endswith(".fgb.zip"):
+            driver = "FlatGeoBuf"
+
+        # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/raw.py#L755-L897
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/_io.pyx#L2858-L2980
+        import pyogrio.raw
+
+        pyogrio.raw.write_arrow(
+            self,
+            path,
+            driver=driver,
+            geometry_type=geometry_type,
+            geometry_name=geometry_name,
+            crs=crs,
+            append=append,
+            **kwargs,
         )
 
     def show(
