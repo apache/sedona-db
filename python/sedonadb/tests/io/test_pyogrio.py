@@ -227,7 +227,7 @@ def test_write_ogr_many_batches(con):
 
 def test_write_ogr_from_view_types(con):
     # Check that we can write something with view types (even though it is read back
-    # as the simplifed type)
+    # as the simplified type)
     wkb_array = ga.with_crs(ga.as_wkb(["POINT (0 1)", "POINT (1 2)"]), ga.OGC_CRS84)
     wkb_view_array = (
         ga.wkb_view()
