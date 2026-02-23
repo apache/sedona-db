@@ -28,6 +28,12 @@ use datafusion_common::Result;
 use datafusion_expr::ReturnFieldArgs;
 use sedona_common::sedona_internal_datafusion_err;
 
+/// Project a [RecordBatchReader] using a list of physical expressions
+///
+/// This is useful to wrap results with projections that don't change the ordering
+/// of the input, as adding a projection node may otherwise trigger DataFusion's
+/// optimizer to introduce round robin partitioning (which in turn can result in
+/// non-deterministic ordering in some situations).
 pub fn projected_record_batch_reader(
     reader: Box<dyn RecordBatchReader + Send>,
     projection: Vec<(Arc<dyn PhysicalExpr>, String)>,
@@ -63,6 +69,13 @@ pub fn projected_record_batch_reader(
     Ok(Box::new(RecordBatchIterator::new(reader_iter, new_schema)))
 }
 
+/// Project a [RecordBatchReader] with a projection that simplifies the storage types of
+/// all columns
+///
+/// This is useful for wrapping a result reader when exporting a result to an Arrow-consuming
+/// library that does not support newer Arrow types like String views. This is similar
+/// in spirit to calling SD_SimplifyStorage(col) AS col for all columns except this version
+/// does not cause non-deterministic row order.
 pub fn simplify_record_batch_reader(
     ctx: &dyn Session,
     reader: Box<dyn RecordBatchReader + Send>,
@@ -96,4 +109,54 @@ pub fn simplify_record_batch_reader(
         .collect::<Result<Vec<_>>>()?;
 
     projected_record_batch_reader(reader, projection)
+}
+
+#[cfg(test)]
+mod test {
+    use arrow_array::{create_array, ArrayRef};
+    use arrow_schema::{DataType, Field};
+
+    use crate::{context::SedonaContext};
+
+    use super::*;
+
+    #[test]
+    fn simplify_storage_types() {
+        let ctx = SedonaContext::new();
+
+        let view_array = create_array!(
+            Utf8View,
+            [
+                Some("foofy1"),
+                None,
+                Some("foofy2 longer than twelve chars")
+            ]
+        ) as ArrayRef;
+        let simple_array = create_array!(
+            Utf8,
+            [
+                Some("foofy1"),
+                None,
+                Some("foofy2 longer than twelve chars")
+            ]
+        ) as ArrayRef;
+        let view_batch = RecordBatch::try_from_iter([("col1", view_array)]).unwrap();
+        let simple_batch = RecordBatch::try_from_iter([("col1", simple_array)]).unwrap();
+
+        let view_reader =
+            RecordBatchIterator::new([view_batch.clone()].map(Ok), view_batch.schema());
+        let wrapped_reader =
+            simplify_record_batch_reader(&ctx.ctx.state(), Box::new(view_reader)).unwrap();
+        assert_eq!(
+            wrapped_reader.schema().field(0),
+            &Field::new("col1", DataType::Utf8, true)
+        );
+
+        let wrapped_batches = wrapped_reader
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|b| b.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(wrapped_batches, vec![simple_batch])
+    }
 }
