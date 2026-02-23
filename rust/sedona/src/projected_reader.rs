@@ -116,7 +116,7 @@ mod test {
     use arrow_array::{create_array, ArrayRef};
     use arrow_schema::{DataType, Field};
 
-    use crate::{context::SedonaContext};
+    use crate::context::SedonaContext;
 
     use super::*;
 
