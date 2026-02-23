@@ -521,7 +521,7 @@ class DataFrame:
             driver = "FlatGeoBuf"
 
         # GDAL does not support newer Arrow types like string views util 3.14, so we export a
-        # reader with simplier types here
+        # reader with simpler types here
         self_simplified = self._impl.to_stream(self._ctx, simplify=True)
 
         # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
