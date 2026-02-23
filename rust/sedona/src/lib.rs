@@ -21,6 +21,7 @@ mod exec;
 pub mod memory_pool;
 mod object_storage;
 pub mod pool_type;
+pub mod projected_reader;
 pub mod random_geometry_provider;
 pub mod reader;
 pub mod record_batch_reader_provider;
