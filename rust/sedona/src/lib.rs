@@ -25,4 +25,5 @@ pub mod random_geometry_provider;
 pub mod reader;
 pub mod record_batch_reader_provider;
 pub mod show;
+pub mod simplified_reader;
 pub mod size_parser;

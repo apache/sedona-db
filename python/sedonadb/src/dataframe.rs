@@ -34,6 +34,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona::simplified_reader::simplify_record_batch_reader;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
@@ -46,10 +47,12 @@ use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
 
 #[pyclass]
+#[derive(Clone)]
 pub struct InternalDataFrame {
     pub inner: DataFrame,
     pub runtime: Arc<Runtime>,
 }
+
 impl InternalDataFrame {
     pub fn new(inner: DataFrame, runtime: Arc<Runtime>) -> Self {
         Self { inner, runtime }
@@ -174,6 +177,13 @@ impl InternalDataFrame {
         })??;
 
         Ok(batches)
+    }
+
+    fn to_stream(&self, simplify: Option<bool>) -> StreamingResult {
+        StreamingResult {
+            inner: self.clone(),
+            simplify: simplify.unwrap_or(false),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -343,23 +353,6 @@ impl InternalDataFrame {
             FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
         Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
     }
-
-    #[pyo3(signature = (requested_schema=None))]
-    fn __arrow_c_stream__<'py>(
-        &self,
-        py: Python<'py>,
-        requested_schema: Option<Bound<'py, PyAny>>,
-    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        check_py_requested_schema(requested_schema, self.inner.schema().as_arrow())?;
-
-        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
-        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
-        let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
-
-        let ffi_stream = FFI_ArrowArrayStream::new(reader);
-        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
-    }
 }
 
 #[pyclass]
@@ -383,6 +376,40 @@ impl Batches {
             self.schema.clone(),
         );
         let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+
+        let ffi_stream = FFI_ArrowArrayStream::new(reader);
+        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
+        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+    }
+}
+
+#[pyclass]
+pub struct StreamingResult {
+    inner: InternalDataFrame,
+    simplify: bool,
+}
+
+#[pymethods]
+impl StreamingResult {
+    #[pyo3(signature = (requested_schema=None))]
+    fn __arrow_c_stream__<'py>(
+        &self,
+        py: Python<'py>,
+        requested_schema: Option<Bound<'py, PyAny>>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        check_py_requested_schema(requested_schema, self.inner.inner.schema().as_arrow())?;
+
+        let stream = wait_for_future(
+            py,
+            &self.inner.runtime,
+            self.inner.inner.clone().execute_stream(),
+        )??;
+        let reader = PySedonaStreamReader::new(self.inner.runtime.clone(), stream);
+        let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+
+        if self.simplify {
+            reader = simplify_record_batch_reader(reader);
+        }
 
         let ffi_stream = FFI_ArrowArrayStream::new(reader);
         let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
