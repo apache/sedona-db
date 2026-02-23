@@ -239,40 +239,40 @@ def test_udf_datafusion_to_sedonadb(con):
     )
 
 
-# def test_udf_sedonadb_registry_function_to_datafusion(con):
-#     datafusion = pytest.importorskip("datafusion")
-#     udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
+def test_udf_sedonadb_registry_function_to_datafusion(con):
+    datafusion = pytest.importorskip("datafusion")
+    udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
 
-#     # Register with our session
-#     con.register_udf(udf_impl)
+    # Register with our session
+    con.register_udf(udf_impl)
 
-#     # Create a datafusion session, fetch our udf and register with the other session
-#     datafusion_ctx = datafusion.SessionContext()
-#     datafusion_ctx.register_udf(
-#         datafusion.ScalarUDF.from_pycapsule(con._impl.scalar_udf("some_udf"))
-#     )
+    # Create a datafusion session, fetch our udf and register with the other session
+    datafusion_ctx = datafusion.SessionContext()
+    datafusion_ctx.register_udf(
+        datafusion.ScalarUDF.from_pycapsule(con._impl.scalar_udf("some_udf"))
+    )
 
-#     # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
-#     batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
-#     assert len(batches) == 1
-#     pd.testing.assert_frame_equal(
-#         batches[0].to_pandas(),
-#         pd.DataFrame({"col": [b"abcd / 123"]}),
-#     )
+    # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
+    batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
+    assert len(batches) == 1
+    pd.testing.assert_frame_equal(
+        batches[0].to_pandas(),
+        pd.DataFrame({"col": [b"abcd / 123"]}),
+    )
 
 
-# def test_udf_sedonadb_to_datafusion():
-#     datafusion = pytest.importorskip("datafusion")
-#     udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
+def test_udf_sedonadb_to_datafusion():
+    datafusion = pytest.importorskip("datafusion")
+    udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
 
-#     # Create a datafusion session, register udf_impl directly
-#     datafusion_ctx = datafusion.SessionContext()
-#     datafusion_ctx.register_udf(datafusion.ScalarUDF.from_pycapsule(udf_impl))
+    # Create a datafusion session, register udf_impl directly
+    datafusion_ctx = datafusion.SessionContext()
+    datafusion_ctx.register_udf(datafusion.ScalarUDF.from_pycapsule(udf_impl))
 
-#     # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
-#     batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
-#     assert len(batches) == 1
-#     pd.testing.assert_frame_equal(
-#         batches[0].to_pandas(),
-#         pd.DataFrame({"col": [b"abcd / 123"]}),
-#     )
+    # Can't quite use to_pandas() because there is a schema/batch nullability mismatch
+    batches = datafusion_ctx.sql("SELECT some_udf('abcd', 123) as col").collect()
+    assert len(batches) == 1
+    pd.testing.assert_frame_equal(
+        batches[0].to_pandas(),
+        pd.DataFrame({"col": [b"abcd / 123"]}),
+    )
