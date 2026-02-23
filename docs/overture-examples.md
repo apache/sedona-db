@@ -46,7 +46,7 @@ Let's load a table! Like any local or remote collection of Parquet files, we can
 ```python
 sd.read_parquet(
     "s3://overturemaps-us-west-2/release/2026-02-18.0/theme=divisions/type=division_area/",
-    options={"aws.skip_signature": True, "aws.region": "us-west-2"}
+    options={"aws.skip_signature": True, "aws.region": "us-west-2"},
 ).to_view("divisions")
 ```
 
@@ -105,7 +105,9 @@ Overture data makes heavy use of nested types. These can be indexed into or expa
 
 
 ```python
-sd.sql("SELECT names.primary AS name, geometry FROM divisions WHERE region = 'CA-NS'").show(5)
+sd.sql(
+    "SELECT names.primary AS name, geometry FROM divisions WHERE region = 'CA-NS'"
+).show(5)
 ```
 
     ┌────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
@@ -165,7 +167,7 @@ sd.sql(
     FROM divisions
     WHERE ST_Contains(ST_GeomFromWKB($wkb, 4326), geometry)
     """,
-    params={"wkb": ns_bbox_wkb}
+    params={"wkb": ns_bbox_wkb},
 ).to_memtable().to_view("divisions_ns", overwrite=True)
 
 sd.view("divisions_ns").show(5)
@@ -191,7 +193,7 @@ sd.view("divisions_ns").show(5)
 
 The [Overture buildings table](https://docs.overturemaps.org/guides/buildings/) is one of the largest tables provided by the Overture Maps Foundation. The workflow is similar to the division table or any remote table; however, the buildings table presents several unique challenges.
 
-First, the metadata size for all files in the buildings table is very large. SedonaDB caches remote metadata to avoid repeated download; however, the default cache size is too small. For repeated queries against the buildings table, ensure that the cache size is increased and/or `.to_view()` is used to cache the schema.
+First, the metadata size for all files in the buildings table is very large. SedonaDB caches remote metadata to avoid repeated download; however, the default cache size is too small. For repeated queries against the buildings table, ensure that the cache size is increased to at least 900 MB and/or `.to_view()` is used to cache the schema. The cache lives as long as the session...use `sd = sedona.db.connect()` or reset the cache size to a smaller value to clear the cache.
 
 > Overture removes old releases. See [this page](https://docs.overturemaps.org/release-calendar/#current-release) to see the latest version number and replace the relevant portion of the URL below.
 
@@ -201,7 +203,7 @@ sd.sql("SET datafusion.runtime.metadata_cache_limit = '900M'").execute()
 
 sd.read_parquet(
     "s3://overturemaps-us-west-2/release/2026-02-18.0/theme=buildings/type=building/",
-    options={"aws.skip_signature": True, "aws.region": "us-west-2"}
+    options={"aws.skip_signature": True, "aws.region": "us-west-2"},
 ).to_view("buildings")
 ```
 
@@ -273,7 +275,7 @@ sd.sql(
         )
     LIMIT 5;
     """,
-    params=(nyc_bbox_wkt,)
+    params=(nyc_bbox_wkt,),
 ).to_memtable().to_view("buildings_nyc")
 
 sd.view("buildings_nyc").show(5)
