@@ -42,11 +42,11 @@ use datafusion::{
     sql::parser::{DFParser, Statement},
 };
 use datafusion_common::not_impl_err;
+use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
-use datafusion_expr::{dml::InsertOp, Expr, ScalarUDF};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
-use sedona_common::{option::add_sedona_option_extension, sedona_internal_datafusion_err};
+use sedona_common::option::add_sedona_option_extension;
 use sedona_datasource::provider::external_listing_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::IntoScalarKernelRefs;
@@ -377,12 +377,6 @@ pub trait SedonaDataFrame {
         options: SedonaWriteOptions,
         writer_options: Option<TableGeoParquetOptions>,
     ) -> Result<Vec<RecordBatch>>;
-
-    /// Recursively simplify data types
-    ///
-    /// Useful for exporting a data frame to another library where newer types like Utf8View,
-    /// ListView, and RunEndEncoded are not supported.
-    fn simplify_storage_types(self, ctx: &SedonaContext) -> Result<DataFrame>;
 }
 
 #[async_trait]
@@ -456,29 +450,6 @@ impl SedonaDataFrame for DataFrame {
         .build()?;
 
         DataFrame::new(ctx.ctx.state(), plan).collect().await
-    }
-
-    fn simplify_storage_types(self, ctx: &SedonaContext) -> Result<DataFrame> {
-        let sd_simplify_storage_udf: ScalarUDF = ctx
-            .functions
-            .scalar_udf("sd_simplifystorage")
-            .ok_or_else(|| {
-                sedona_internal_datafusion_err!("sd_simplifystorage UDF does not exist")
-            })?
-            .clone()
-            .into();
-        let expr_list = self
-            .schema()
-            .columns()
-            .into_iter()
-            .map(|col| {
-                let name = col.name().to_string();
-                sd_simplify_storage_udf
-                    .call(vec![Expr::Column(col)])
-                    .alias(name)
-            })
-            .collect::<Vec<_>>();
-        self.select(expr_list)
     }
 }
 
@@ -674,21 +645,6 @@ mod tests {
                 ]
             );
         }
-    }
-
-    #[tokio::test]
-    async fn simplify_storage_types() {
-        let ctx = SedonaContext::new();
-        let tbl = ctx
-            .sql("SELECT arrow_cast('one', 'Utf8View') as one")
-            .await
-            .unwrap();
-        assert_eq!(tbl.schema().field(0).name(), "one");
-        assert_eq!(tbl.schema().field(0).data_type(), &DataType::Utf8View);
-
-        let simplified = tbl.simplify_storage_types(&ctx).unwrap();
-        assert_eq!(simplified.schema().field(0).name(), "one");
-        assert_eq!(simplified.schema().field(0).data_type(), &DataType::Utf8);
     }
 
     #[tokio::test]

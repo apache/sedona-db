@@ -29,12 +29,13 @@ use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
+use futures::lock::Mutex;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
+use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona::simplified_reader::simplify_record_batch_reader;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
@@ -179,11 +180,23 @@ impl InternalDataFrame {
         Ok(batches)
     }
 
-    fn to_stream(&self, simplify: Option<bool>) -> StreamingResult {
-        StreamingResult {
-            inner: self.clone(),
-            simplify: simplify.unwrap_or(false),
+    fn to_stream<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+        simplify: Option<bool>,
+    ) -> Result<StreamingResult, PySedonaError> {
+        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
+        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
+        let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+
+        if simplify.unwrap_or(false) {
+            reader = simplify_record_batch_reader(&ctx.inner.ctx.state(), reader)?;
         }
+
+        Ok(StreamingResult {
+            inner: Some(reader).into(),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -335,14 +348,6 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
-    fn simplify_storage_types(
-        &self,
-        ctx: &InternalContext,
-    ) -> Result<InternalDataFrame, PySedonaError> {
-        let df = self.inner.clone().simplify_storage_types(&ctx.inner)?;
-        Ok(InternalDataFrame::new(df, self.runtime.clone()))
-    }
-
     fn __datafusion_table_provider__<'py>(
         &self,
         py: Python<'py>,
@@ -385,8 +390,7 @@ impl Batches {
 
 #[pyclass]
 pub struct StreamingResult {
-    inner: InternalDataFrame,
-    simplify: bool,
+    inner: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
 }
 
 #[pymethods]
@@ -397,23 +401,23 @@ impl StreamingResult {
         py: Python<'py>,
         requested_schema: Option<Bound<'py, PyAny>>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        check_py_requested_schema(requested_schema, self.inner.inner.schema().as_arrow())?;
+        let Some(mut reader_opt) = self.inner.try_lock() else {
+            return Err(PySedonaError::SedonaPython(
+                "SedonaDB DataFrame streaming result may only be consumed from a single thread"
+                    .to_string(),
+            ));
+        };
 
-        let stream = wait_for_future(
-            py,
-            &self.inner.runtime,
-            self.inner.inner.clone().execute_stream(),
-        )??;
-        let reader = PySedonaStreamReader::new(self.inner.runtime.clone(), stream);
-        let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
-
-        if self.simplify {
-            reader = simplify_record_batch_reader(reader);
+        if let Some(reader) = reader_opt.take() {
+            check_py_requested_schema(requested_schema, &reader.schema())?;
+            let ffi_stream = FFI_ArrowArrayStream::new(reader);
+            let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
+            Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+        } else {
+            Err(PySedonaError::SedonaPython(
+                "SedonaDB DataFrame streaming result may only be consumed once".to_string(),
+            ))
         }
-
-        let ffi_stream = FFI_ArrowArrayStream::new(reader);
-        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
     }
 }
 

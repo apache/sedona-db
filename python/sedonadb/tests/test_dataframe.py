@@ -286,16 +286,6 @@ def test_params(con):
         con.sql("SELECT $one + 1 AS col").show()
 
 
-def test_simplify_storage_type(con):
-    df = con.sql("SELECT arrow_cast('one', 'Utf8View') as one")
-    assert df.columns == ["one"]
-    assert pa.schema(df.schema).field(0).type == pa.string_view()
-
-    simplified = df._simplify_storage_types()
-    assert simplified.columns == ["one"]
-    assert pa.schema(simplified.schema).field(0).type == pa.string()
-
-
 def test_dataframe_to_arrow(con):
     df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
     expected_schema = pa.schema(
