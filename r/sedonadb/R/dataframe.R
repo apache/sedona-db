@@ -409,6 +409,41 @@ as_nanoarrow_array_stream.sedonadb_dataframe <- function(x, ..., schema = NULL) 
 
 #' @export
 print.sedonadb_dataframe <- function(x, ..., width = NULL, n = NULL) {
+  # Print class header
+  schema <- nanoarrow::infer_nanoarrow_schema(x)
+  ncols <- length(schema$children)
+
+  cat(sprintf("# A sedonadb_dataframe: ? x %d\n", ncols))
+
+  # Print geometry column info using SedonaTypeR wrapper
+  geo_col_info <- character()
+  for (col_name in names(schema$children)) {
+    child <- schema$children[[col_name]]
+    sd_type <- tryCatch(
+      SedonaTypeR$new(child),
+      error = function(e) NULL
+    )
+    if (!is.null(sd_type)) {
+      logical_type <- sd_type$logical_type_name()
+      if (logical_type == "geometry" || logical_type == "geography") {
+        crs_display <- sd_type$crs_display()
+        geo_col_info <- c(geo_col_info, sprintf("%s%s", col_name, crs_display))
+      }
+    }
+  }
+
+  if (length(geo_col_info) > 0) {
+    if (is.null(width)) {
+      width <- getOption("width")
+    }
+
+    geo_line <- sprintf("# Geometry: %s", paste(geo_col_info, collapse = ", "))
+    if (nchar(geo_line) > width) {
+      geo_line <- paste0(substr(geo_line, 1, width - 3), "...")
+    }
+    cat(paste0(geo_line, "\n"))
+  }
+
   if (isTRUE(getOption("sedonadb.interactive", TRUE))) {
     sd_preview(x, n = n, width = width)
   } else {

@@ -15,30 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "sedonadbr"
-version = { workspace = true }
-publish = false
-edition = "2021"
-
-[lib]
-crate-type = ["staticlib", "lib"]
-
-[dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-datafusion = { workspace = true }
-datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
-datafusion-ffi = { workspace = true }
-savvy = "*"
-savvy-ffi = "*"
-sedona = { workspace = true }
-sedona-adbc = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-geoparquet = { workspace = true }
-sedona-proj = { workspace = true }
-sedona-schema = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
+#' Parse CRS from GeoArrow metadata
+#'
+#' @param crs_json A JSON string representing the CRS (PROJJSON or authority code)
+#' @returns A list with components: authority_code (e.g., "EPSG:5070"), srid (integer),
+#'   name (character string with a human-readable CRS name), and proj_string (character
+#'   string with the PROJ representation of the CRS), or \code{NULL} when no CRS
+#'   information is available, when the \code{"crs"} field is not present in the
+#'   metadata, or when parsing the CRS information fails.
+#' @keywords internal
+sd_parse_crs <- function(crs_json) {
+  parse_crs_metadata(crs_json)
+}
