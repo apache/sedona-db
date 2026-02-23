@@ -15,9 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import geopandas
+import geopandas.testing
 import pytest
 import shapely
-from sedonadb.testing import PostGIS, SedonaDB
+from sedonadb.testing import PostGIS, SedonaDB, skip_if_not_exists
 
 
 # Aggregate functions don't have a suffix in PostGIS
@@ -134,6 +136,36 @@ def test_st_envelope_agg_many_groups(eng, con):
     )
 
     eng.assert_result(result, expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_envelope_nontrivial_input(eng, geoarrow_data):
+    path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
+    eng = eng.create_or_skip()
+    skip_if_not_exists(path)
+
+    df_points_geopandas = geopandas.read_parquet(path)
+    expected = (
+        df_points_geopandas.groupby(df_points_geopandas.FEAT_CODE)["geometry"]
+        .apply(
+            lambda group: shapely.Point(*group.total_bounds[:2])
+            if len(group) == 1
+            else shapely.box(*group.total_bounds)
+        )
+        .reset_index()
+    ).set_crs(df_points_geopandas.crs)
+
+    eng.create_table_parquet("pts", path)
+    result = eng.execute_and_collect(f"""
+        SELECT  "FEAT_CODE", {call_st_envelope_agg(eng, "geometry")} AS geometry
+        FROM pts
+        GROUP BY "FEAT_CODE"
+        ORDER BY "FEAT_CODE"
+    """)
+
+    # This CRS is too complicated to check roundtripping through PostGIS
+    df = eng.result_to_pandas(result)
+    geopandas.testing.assert_geodataframe_equal(df, expected, check_crs=False)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
