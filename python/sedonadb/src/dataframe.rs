@@ -27,7 +27,7 @@ use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues};
-use datafusion_expr::{ExplainFormat, ExplainOption, Expr, ScalarUDF};
+use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
@@ -211,11 +211,8 @@ impl InternalDataFrame {
                     // the required feature for high quality sort output, give an error. This is mostly
                     // an issue when using maturin develop because geography is not a default feature.
                     if has_geography {
-                        let order_udf_opt: Option<ScalarUDF> = ctx
-                            .inner
-                            .functions
-                            .scalar_udf("sd_order")
-                            .map(|udf_opt| udf_opt.clone().into());
+                        let state = ctx.inner.ctx.state();
+                        let order_udf_opt = state.scalar_functions().get("sd_order");
                         if let Some(order_udf) = order_udf_opt {
                             Ok(SortExpr::new(order_udf.call(vec![column]), true, false))
                         } else {
