@@ -202,6 +202,7 @@ impl BoundsGroupsAccumulator2D {
         group_indices: &[usize],
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
+        input_type: SedonaType,
     ) -> Result<()> {
         // Check some of our assumptions about how this will be called
         debug_assert_eq!(self.offset, 0);
@@ -211,7 +212,7 @@ impl BoundsGroupsAccumulator2D {
             debug_assert_eq!(values[0].len(), filter.len());
         }
 
-        let arg_types = [self.input_type.clone()];
+        let arg_types = [input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
         let executor = WkbExecutor::new(&arg_types, &args);
         self.xs.resize(total_num_groups, Interval::empty());
@@ -300,7 +301,13 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        self.execute_update(values, group_indices, opt_filter, total_num_groups)
+        self.execute_update(
+            values,
+            group_indices,
+            opt_filter,
+            total_num_groups,
+            self.input_type.clone(),
+        )
     }
 
     fn state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
@@ -314,8 +321,15 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
         opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        // In this case, our state is identical to our input values
-        self.execute_update(values, group_indices, opt_filter, total_num_groups)
+        // In this case, our state is identical to our input values except our geometry
+        // representation is always WKB_GEOMETRY.
+        self.execute_update(
+            values,
+            group_indices,
+            opt_filter,
+            total_num_groups,
+            WKB_GEOMETRY,
+        )
     }
 
     fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
@@ -333,7 +347,9 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
 mod test {
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY, WKB_VIEW_GEOMETRY_ITEM_CRS,
+    };
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
         create::{create_array, create_scalar},
@@ -400,36 +416,42 @@ mod test {
         );
     }
 
-    #[test]
-    fn udf_invoke_item_crs() {
-        let sedona_type = WKB_GEOMETRY_ITEM_CRS.clone();
+    #[rstest]
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_VIEW_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester =
             AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![sedona_type.clone()]);
-        assert_eq!(tester.return_type().unwrap(), sedona_type.clone());
+        assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY_ITEM_CRS.clone());
 
         let batches = vec![
             vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
             vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
         ];
-        let expected = create_scalar(Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"), &sedona_type);
+        let expected = create_scalar(
+            Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"),
+            &WKB_GEOMETRY_ITEM_CRS,
+        );
 
         assert_scalar_equal(&tester.aggregate_wkt(batches).unwrap(), &expected);
     }
 
-    #[test]
-    fn udf_grouped_accumulate() {
-        let tester = AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![WKB_GEOMETRY]);
+    #[rstest]
+    fn udf_grouped_accumulate(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester =
+            AggregateUdfTester::new(st_envelope_agg_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
         // Six elements, four groups, with one all null group and one partially null group
         let group_indices = vec![0, 3, 1, 1, 0, 2];
         let array0 = create_array(
             &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let array1 = create_array(
             &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let batches = vec![array0, array1];
 
