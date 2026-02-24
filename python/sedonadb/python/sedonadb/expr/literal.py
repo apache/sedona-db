@@ -155,11 +155,17 @@ def _lit_from_wkb_and_crs(wkb, crs):
     return type.wrap_array(storage)
 
 
+def _lit_from_crs(crs):
+    return _resolve_arrow_lit(crs.to_json())
+
+
 def _qualified_type_name(obj):
     return f"{type(obj).__module__}.{type(obj).__name__}"
 
 
 SPECIAL_CASED_LITERALS = {
+    "geoarrow.types.crs.ProjJsonCrs": _lit_from_crs,
+    "geoarrow.types.crs.StringCrs": _lit_from_crs,
     "geopandas.geodataframe.GeoDataFrame": _lit_from_dataframe,
     "geopandas.geoseries.GeoSeries": _lit_from_series,
     # pandas < 3.0
@@ -168,6 +174,7 @@ SPECIAL_CASED_LITERALS = {
     # pandas >= 3.0
     "pandas.DataFrame": _lit_from_dataframe,
     "pandas.Series": _lit_from_series,
+    "pyproj.crs.crs.CRS": _lit_from_crs,
     "sedonadb.dataframe.DataFrame": _lit_from_sedonadb,
     "shapely.geometry.point.Point": _lit_from_shapely,
     "shapely.geometry.linestring.LineString": _lit_from_shapely,
