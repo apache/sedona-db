@@ -58,6 +58,10 @@ test_that("scoped connections can be created", {
   )
 })
 
+test_that("unrecognized options result in a warning", {
+  expect_snapshot_warning(sd_connect(not_an_option = "foofy"))
+})
+
 test_that("sd_read_parquet() works", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
   expect_identical(sd_count(sd_read_parquet(path)), 243)

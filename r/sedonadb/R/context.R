@@ -53,7 +53,7 @@ sd_connect <- function(
 ) {
   unsupported_options <- list(...)
   if (length(unsupported_options) != 0) {
-    stop(
+    warning(
       sprintf(
         "Unrecognized options for sd_connect(): %s",
         paste(names(unsupported_options), collapse = ", ")
@@ -103,9 +103,8 @@ sd_connect <- function(
     return(invisible(global_ctx$ctx))
   }
 
-  opts <- global_ctx$options
-  keys <- as.character(names(opts))
-  values <- as.character(opts)
+  keys <- as.character(names(options))
+  values <- as.character(options)
   ctx <- InternalContext$new(keys, values)
 
   if (global) {
@@ -258,7 +257,6 @@ check_ctx <- function(ctx) {
 
 global_ctx <- new.env(parent = emptyenv())
 global_ctx$ctx <- NULL
-global_ctx$options <- list()
 
 
 #' Configure PROJ
