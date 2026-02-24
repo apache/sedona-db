@@ -179,8 +179,12 @@ NULL
 
 ### associated functions for InternalContext
 
-`InternalContext`$`new` <- function() {
-  .savvy_wrap_InternalContext(.Call(savvy_InternalContext_new__impl))
+`InternalContext`$`new` <- function(`option_keys`, `option_values`) {
+  .savvy_wrap_InternalContext(.Call(
+    savvy_InternalContext_new__impl,
+    `option_keys`,
+    `option_values`
+  ))
 }
 
 
@@ -319,11 +323,11 @@ class(`InternalContext`) <- c(
   function(
     `ctx`,
     `path`,
+    `option_keys`,
+    `option_values`,
     `partition_by`,
     `sort_by`,
-    `single_file_output`,
-    `overwrite_bbox_columns`,
-    `geoparquet_version` = NULL
+    `single_file_output`
   ) {
     `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
     invisible(.Call(
@@ -331,11 +335,11 @@ class(`InternalContext`) <- c(
       `self`,
       `ctx`,
       `path`,
+      `option_keys`,
+      `option_values`,
       `partition_by`,
       `sort_by`,
-      `single_file_output`,
-      `overwrite_bbox_columns`,
-      `geoparquet_version`
+      `single_file_output`
     ))
   }
 }

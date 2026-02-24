@@ -18,6 +18,7 @@
 #' Create SedonaDB logical expressions
 #'
 #' @param column_name A column name
+#' @param x An object to convert to a SedonaDB literal (constant).
 #' @param qualifier An optional qualifier (e.g., table reference) that may be
 #'   used to disambiguate a specific reference
 #' @param function_name The name of the function to call. This name is resolved

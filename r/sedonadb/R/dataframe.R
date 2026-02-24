@@ -18,6 +18,8 @@
 #' Convert an object to a DataFrame
 #'
 #' @param x An object to convert
+#' @param ctx A SedonaDB context. This should always be passed to inner calls
+#'   to SedonaDB functions; NULL implies the global context.
 #' @param ... Extra arguments passed to/from methods
 #' @param schema The requested schema
 #'
@@ -27,29 +29,37 @@
 #' @examples
 #' as_sedonadb_dataframe(data.frame(x = 1:3))
 #'
-as_sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   UseMethod("as_sedonadb_dataframe")
 }
 
 #' @export
-as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   # In the future, schema can be handled with a cast
   x
 }
 
 #' @export
-as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL, ctx = NULL) {
   array <- nanoarrow::as_nanoarrow_array(x, schema = schema)
   stream <- nanoarrow::basic_array_stream(list(array))
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
   new_sedonadb_dataframe(ctx, df)
 }
 
 #' @export
-as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL, ctx = NULL) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
 
   # Verify schema is handled
@@ -61,10 +71,15 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
   x,
   ...,
   schema = NULL,
-  lazy = TRUE
+  lazy = TRUE,
+  ctx = NULL
 ) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
 
   # Verify schema is handled
@@ -72,8 +87,16 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
 }
 
 #' @export
-as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NULL) {
-  ctx <- ctx()
+as_sedonadb_dataframe.datafusion_table_provider <- function(
+  x,
+  ...,
+  schema = NULL,
+  ctx = NULL
+) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_table_provider(x)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -109,8 +132,12 @@ sd_count <- function(.data) {
 #' sd_sql("SELECT 1 as one") |> sd_to_view("foofy")
 #' sd_sql("SELECT * FROM foofy")
 #'
-sd_to_view <- function(.data, table_ref, overwrite = FALSE) {
-  .data <- as_sedonadb_dataframe(.data)
+sd_to_view <- function(.data, table_ref, overwrite = FALSE, ctx = NULL) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
+  .data <- as_sedonadb_dataframe(.data, ctx = ctx)
   .data$df$to_view(.data$ctx, table_ref, overwrite)
   invisible(.data)
 }
@@ -453,6 +480,12 @@ sd_summarize <- function(.data, ...) {
 #'
 #' @inheritParams sd_count
 #' @param path A filename or directory to which parquet file(s) should be written
+#' @param options A named list of key/value options to be used when constructing
+#'   a parquet writer. Common options are exposed as other arguments to
+#'   `sd_write_parquet()`; however, this argument allows setting any DataFusion
+#'   Parquet writer option. If an option is specified here and by another
+#'   argument to this function, the value specified as an explicit argument
+#'   takes precedence.
 #' @param partition_by A character vector of column names to partition by. If non-empty,
 #'   applies hive-style partitioning to the output
 #' @param sort_by A character vector of column names to sort by. Currently only
@@ -475,6 +508,11 @@ sd_summarize <- function(.data, ...) {
 #'   that already exist in the input. This is useful in a read -> modify
 #'   -> write scenario to ensure these columns are up-to-date. If FALSE
 #'   (the default), an error will be raised if a bbox column already exists
+#' @param max_row_group_size Target maximum number of rows in each row group.
+#'   Defaults to the global configuration value (1M rows).
+#' @param compression Sets the Parquet compression codec. Valid values are:
+#'   uncompressed, snappy, gzip(level), brotli(level), lz4, zstd(level), and
+#'   lz4_raw. Defaults to the global configuration value (zstd(3)).
 #'
 #' @returns The input, invisibly
 #' @export
@@ -491,11 +529,14 @@ sd_summarize <- function(.data, ...) {
 sd_write_parquet <- function(
   .data,
   path,
+  options = NULL,
   partition_by = character(0),
   sort_by = character(0),
   single_file_output = NULL,
   geoparquet_version = "1.0",
-  overwrite_bbox_columns = FALSE
+  overwrite_bbox_columns = FALSE,
+  max_row_group_size = NULL,
+  compression = NULL
 ) {
   .data <- as_sedonadb_dataframe(.data)
   if (!is.null(.data$group_by)) {
@@ -507,22 +548,50 @@ sd_write_parquet <- function(
     single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)
   }
 
-  # Validate geoparquet_version
+  # Build the options list: start with user-provided options, then override
+  # with explicitly-specified arguments
+  if (is.null(options)) {
+    options <- list()
+  } else {
+    options <- as.list(options)
+  }
+
+  if (!is.null(max_row_group_size)) {
+    options[["max_row_group_size"]] <- as.character(as.integer(max_row_group_size))
+  }
+
+  if (!is.null(compression)) {
+    options[["compression"]] <- as.character(compression)
+  }
+
+  # Validate and apply geoparquet_version
   if (!is.null(geoparquet_version)) {
-    if (!geoparquet_version %in% c("1.0", "1.1")) {
-      stop("geoparquet_version must be '1.0' or '1.1'")
-    }
+    options[["geoparquet_version"]] <- as.character(geoparquet_version)
+  }
+
+  options[["overwrite_bbox_columns"]] <- tolower(as.character(overwrite_bbox_columns))
+
+  # Convert options to parallel character vectors for Rust
+  option_keys <- names(options)
+  option_values <- as.character(unlist(options, use.names = FALSE))
+
+  if (is.null(option_keys) || any(is.na(option_keys)) || any(option_keys == "")) {
+    stop("All option values must be named")
+  }
+
+  if (length(option_keys) != length(option_values)) {
+    stop("All option values must be length 1")
   }
 
   # Call the underlying Rust method
   .data$df$to_parquet(
     ctx = .data$ctx,
     path = path,
+    option_keys = option_keys,
+    option_values = option_values,
     partition_by = partition_by,
     sort_by = sort_by,
-    single_file_output = single_file_output,
-    overwrite_bbox_columns = overwrite_bbox_columns,
-    geoparquet_version = geoparquet_version
+    single_file_output = single_file_output
   )
 
   invisible(.data)

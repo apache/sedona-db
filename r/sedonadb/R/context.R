@@ -15,10 +15,110 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' Create a SedonaDB context
+#'
+#' Runtime options configure the execution environment. Use
+#' `global = TRUE` to configure the global context or use the
+#' returned object as a scoped context. A scoped context is
+#' recommended for programmatic usage as it prevents named
+#' views from interfering with each other.
+#'
+#' @param global Use TRUE to set options on the global context.
+#' @param memory_limit Maximum memory for query execution, as a
+#'   human-readable string (e.g., `"4gb"`, `"512m"`) or `NULL` for
+#'   unbounded (the default).
+#' @param temp_dir Directory for temporary/spill files, or `NULL` to
+#'   use the DataFusion default.
+#' @param memory_pool_type Memory pool type: `"greedy"` (default) or
+#'   `"fair"`. Only takes effect when `memory_limit` is set.
+#' @param unspillable_reserve_ratio Fraction of memory (0--1) reserved for
+#'   unspillable consumers. Only applies when `memory_pool_type` is
+#'   `"fair"`. Defaults to 0.2 when not explicitly set.
+#' @param ... Reserved for future options
+#'
+#' @returns The constructed context, invisibly.
+#' @export
+#'
+#' @examples
+#' sd_connect(memory_limit = "100mb", memory_pool_type = "fair")
+#'
+#'
+sd_connect <- function(
+  ...,
+  global = FALSE,
+  memory_limit = NULL,
+  temp_dir = NULL,
+  memory_pool_type = NULL,
+  unspillable_reserve_ratio = NULL
+) {
+  unsupported_options <- list(...)
+  if (length(unsupported_options) != 0) {
+    warning(
+      sprintf(
+        "Unrecognized options for sd_connect(): %s",
+        paste(names(unsupported_options), collapse = ", ")
+      )
+    )
+  }
+
+  options <- list()
+
+  if (!is.null(memory_limit)) {
+    stopifnot(is.character(memory_limit), length(memory_limit) == 1L)
+    options[["memory_limit"]] <- memory_limit
+  }
+
+  if (!is.null(temp_dir)) {
+    stopifnot(is.character(temp_dir), length(temp_dir) == 1L)
+    options[["temp_dir"]] <- temp_dir
+  }
+
+  if (!is.null(memory_pool_type)) {
+    memory_pool_type <- match.arg(memory_pool_type, c("greedy", "fair"))
+    options[["memory_pool_type"]] <- memory_pool_type
+  }
+
+  if (!is.null(unspillable_reserve_ratio)) {
+    stopifnot(
+      is.numeric(unspillable_reserve_ratio),
+      length(unspillable_reserve_ratio) == 1L,
+      unspillable_reserve_ratio >= 0,
+      unspillable_reserve_ratio <= 1
+    )
+    options[["unspillable_reserve_ratio"]] <- as.character(
+      unspillable_reserve_ratio
+    )
+  }
+
+  # Don't replace the global context
+  if (global && length(options) > 0 && !is.null(global_ctx$ctx)) {
+    warning(
+      "Cannot change runtime options after the context has been initialized. ",
+      "Set global options with sd_connect() before executing your first query ",
+      "or use a scoped context by passing global = FALSE"
+    )
+
+    return(invisible(global_ctx$ctx))
+  } else if (global && !is.null(global_ctx$ctx)) {
+    return(invisible(global_ctx$ctx))
+  }
+
+  keys <- as.character(names(options))
+  values <- as.character(options)
+  ctx <- InternalContext$new(keys, values)
+
+  if (global) {
+    global_ctx$ctx <- ctx
+  }
+
+  invisible(ctx)
+}
+
 #' Create a DataFrame from one or more Parquet files
 #'
 #' The query will only be executed when requested.
 #'
+#' @param ctx A SedonaDB context.
 #' @param path One or more paths or URIs to Parquet files
 #'
 #' @returns A sedonadb_dataframe
@@ -29,7 +129,13 @@
 #' sd_read_parquet(path) |> head(5) |> sd_preview()
 #'
 sd_read_parquet <- function(path) {
-  ctx <- ctx()
+  sd_ctx_read_parquet(ctx(), path)
+}
+
+#' @rdname sd_read_parquet
+#' @export
+sd_ctx_read_parquet <- function(ctx, path) {
+  check_ctx(ctx)
   df <- ctx$read_parquet(path)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -38,6 +144,7 @@ sd_read_parquet <- function(path) {
 #'
 #' The query will only be executed when requested.
 #'
+#' @param ctx A SedonaDB context.
 #' @param sql A SQL string to execute
 #'
 #' @returns A sedonadb_dataframe
@@ -47,7 +154,13 @@ sd_read_parquet <- function(path) {
 #' sd_sql("SELECT ST_Point(0, 1) as geom") |> sd_preview()
 #'
 sd_sql <- function(sql) {
-  ctx <- ctx()
+  sd_ctx_sql(ctx(), sql)
+}
+
+#' @rdname sd_sql
+#' @export
+sd_ctx_sql <- function(ctx, sql) {
+  check_ctx(ctx)
   df <- ctx$sql(sql)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -56,6 +169,7 @@ sd_sql <- function(sql) {
 #'
 #' Remove a view created with [sd_to_view()] from the context.
 #'
+#' @param ctx A SedonaDB context.
 #' @param table_ref The name of the view reference
 #' @returns The context, invisibly
 #' @export
@@ -67,7 +181,13 @@ sd_sql <- function(sql) {
 #' try(sd_view("foofy"))
 #'
 sd_drop_view <- function(table_ref) {
-  ctx <- ctx()
+  sd_ctx_drop_view(ctx(), table_ref)
+}
+
+#' @rdname sd_drop_view
+#' @export
+sd_ctx_drop_view <- function(ctx, table_ref) {
+  check_ctx(ctx)
   ctx$deregister_table(table_ref)
   invisible(ctx)
 }
@@ -75,7 +195,13 @@ sd_drop_view <- function(table_ref) {
 #' @rdname sd_drop_view
 #' @export
 sd_view <- function(table_ref) {
-  ctx <- ctx()
+  sd_ctx_view(ctx(), table_ref)
+}
+
+#' @rdname sd_drop_view
+#' @export
+sd_ctx_view <- function(ctx, table_ref) {
+  check_ctx(ctx)
   df <- ctx$view(table_ref)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -88,26 +214,46 @@ sd_view <- function(table_ref) {
 #' to a Rust `FFI_ScalarUDF`, an example of which is available from the
 #' [DataFusion Python documentation](https://github.com/apache/datafusion-python/blob/6f3b1cab75cfaa0cdf914f9b6fa023cb9afccd7d/examples/datafusion-ffi-example/src/scalar_udf.rs).
 #'
+#' @param ctx A SedonaDB context.
 #' @param udf An object of class 'datafusion_scalar_udf'
 #'
 #' @returns NULL, invisibly
 #' @export
 #'
 sd_register_udf <- function(udf) {
-  ctx <- ctx()
+  sd_ctx_register_udf(ctx(), udf)
+}
+
+#' @rdname sd_register_udf
+#' @export
+sd_ctx_register_udf <- function(ctx, udf) {
+  check_ctx(ctx)
   ctx$register_scalar_udf(udf)
 }
 # nolint end
 
-# We use just one context for now. In theory we could support multiple
-# contexts with a shared runtime, which would scope the registration
-# of various components more cleanly from the runtime.
+# We mostly use one context but support isolated contexts via sd_ctx_*
+# functions, which more cleanly scope the registration of views and
+# UDFs.
 ctx <- function() {
   if (is.null(global_ctx$ctx)) {
-    global_ctx$ctx <- InternalContext$new()
+    global_ctx$ctx <- sd_connect()
   }
 
   global_ctx$ctx
+}
+
+check_ctx <- function(ctx) {
+  if (!inherits(ctx, "sedonadb::InternalContext")) {
+    stop(
+      sprintf(
+        "Expected ctx to be a SedonaDB context but got object of class '%s'",
+        class(ctx)[1]
+      )
+    )
+  }
+
+  invisible(ctx)
 }
 
 global_ctx <- new.env(parent = emptyenv())

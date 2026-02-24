@@ -284,9 +284,74 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
   )
 
   # Invalid version should error
-  expect_error(
+  expect_snapshot_error(
     sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "2.0"),
-    "geoparquet_version must be"
+  )
+})
+
+test_that("sd_write_parquet accepts max_row_group_size parameter", {
+  skip_if_not_installed("arrow")
+
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_tiny_groups <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_tiny_groups)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(df, tmp_parquet_file_tiny_groups, max_row_group_size = 100)
+
+  # Check file size (tiny row groups have more metadata)
+  expect_gt(
+    file.size(tmp_parquet_file_tiny_groups),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet accepts compression parameter", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_uncompressed <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_uncompressed)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(df, tmp_parquet_file_uncompressed, compression = "uncompressed")
+
+  expect_gt(
+    file.size(tmp_parquet_file_uncompressed),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet accepts options parameter", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_uncompressed <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_uncompressed)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(
+    df,
+    tmp_parquet_file_uncompressed,
+    options = list(compression = "uncompressed")
+  )
+
+  expect_gt(
+    file.size(tmp_parquet_file_uncompressed),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet() errors for inappropriately sized options", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  on.exit(unlink(tmp_parquet_file))
+
+  df <- data.frame(x = 1:10)
+  expect_snapshot_error(
+    sd_write_parquet(df, tmp_parquet_file, options = list(foofy = character(0)))
+  )
+
+  expect_snapshot_error(
+    sd_write_parquet(df, tmp_parquet_file, options = list("option without name"))
   )
 })
 

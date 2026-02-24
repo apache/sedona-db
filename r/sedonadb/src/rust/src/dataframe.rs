@@ -19,6 +19,7 @@ use arrow_array::ffi::FFI_ArrowSchema;
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
+use datafusion::config::ConfigField;
 use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
 use datafusion_expr::utils::conjunction;
@@ -28,7 +29,7 @@ use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::reader::SedonaStreamReader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 use tokio::runtime::Runtime;
@@ -231,12 +232,15 @@ impl InternalDataFrame {
         &self,
         ctx: &InternalContext,
         path: &str,
+        option_keys: savvy::Sexp,
+        option_values: savvy::Sexp,
         partition_by: savvy::Sexp,
         sort_by: savvy::Sexp,
         single_file_output: bool,
-        overwrite_bbox_columns: bool,
-        geoparquet_version: Option<&str>,
     ) -> savvy::Result<()> {
+        let option_keys_strsxp = savvy::StringSexp::try_from(option_keys)?;
+        let option_values_strsxp = savvy::StringSexp::try_from(option_values)?;
+
         let partition_by_strsxp = savvy::StringSexp::try_from(partition_by)?;
         let partition_by_vec = partition_by_strsxp
             .iter()
@@ -257,22 +261,12 @@ impl InternalDataFrame {
             })
             .collect::<Vec<_>>();
 
-        let options = SedonaWriteOptions::new()
+        let write_options = SedonaWriteOptions::new()
             .with_partition_by(partition_by_vec)
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
 
-        let mut writer_options = TableGeoParquetOptions {
-            overwrite_bbox_columns,
-            ..Default::default()
-        };
-        if let Some(geoparquet_version) = geoparquet_version {
-            writer_options.geoparquet_version = geoparquet_version
-                .parse()
-                .map_err(|e| savvy::Error::new(format!("Invalid geoparquet_version: {e}")))?;
-        } else {
-            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
-        }
+        let mut writer_options = TableGeoParquetOptions::default();
 
         // Resolve writer options from the context configuration
         let global_parquet_options = ctx
@@ -286,13 +280,25 @@ impl InternalDataFrame {
             .clone();
         writer_options.inner.global = global_parquet_options;
 
+        // Apply user-specified options
+        for (k, v) in option_keys_strsxp.iter().zip(option_values_strsxp.iter()) {
+            writer_options
+                .set(k, v)
+                .map_err(|e| savvy::Error::new(format!("{e}")))?;
+        }
+
         let inner = self.inner.clone();
         let inner_context = ctx.inner.clone();
         let path_owned = path.to_string();
 
         wait_for_future_captured_r(&self.runtime, async move {
             inner
-                .write_geoparquet(&inner_context, &path_owned, options, Some(writer_options))
+                .write_geoparquet(
+                    &inner_context,
+                    &path_owned,
+                    write_options,
+                    Some(writer_options),
+                )
                 .await
         })??;
 

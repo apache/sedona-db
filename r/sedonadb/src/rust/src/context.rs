@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::RecordBatchReader;
@@ -22,7 +23,10 @@ use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
 
-use sedona::{context::SedonaContext, record_batch_reader_provider::RecordBatchReaderProvider};
+use sedona::{
+    context::SedonaContext, context_builder::SedonaContextBuilder,
+    record_batch_reader_provider::RecordBatchReaderProvider,
+};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
 use tokio::runtime::Runtime;
 
@@ -40,12 +44,26 @@ pub struct InternalContext {
 
 #[savvy]
 impl InternalContext {
-    pub fn new() -> Result<Self> {
+    pub fn new(option_keys: savvy::Sexp, option_values: savvy::Sexp) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
 
-        let inner = wait_for_future_captured_r(&runtime, SedonaContext::new_local_interactive())??;
+        let keys = savvy::StringSexp::try_from(option_keys)?;
+        let values = savvy::StringSexp::try_from(option_values)?;
+
+        let options: HashMap<String, String> = keys
+            .iter()
+            .zip(values.iter())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        let inner = if options.is_empty() {
+            wait_for_future_captured_r(&runtime, SedonaContext::new_local_interactive())??
+        } else {
+            let builder = SedonaContextBuilder::from_options(&options)?;
+            wait_for_future_captured_r(&runtime, builder.build())??
+        };
 
         Ok(Self {
             inner: Arc::new(inner),

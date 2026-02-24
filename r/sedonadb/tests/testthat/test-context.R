@@ -15,6 +15,53 @@
 # specific language governing permissions and limitations
 # under the License.
 
+test_that("the global context is never replaced", {
+  # Check a few times to make sure this is true
+  ctx <- sd_connect(global = TRUE)
+  expect_true(rlang::is_reference(ctx, global_ctx$ctx))
+
+  ctx <- sd_connect(global = TRUE)
+  expect_true(rlang::is_reference(ctx, global_ctx$ctx))
+
+  expect_snapshot_warning(
+    expect_true(
+      rlang::is_reference(
+        sd_connect(global = TRUE, memory_limit = "5g"),
+        global_ctx$ctx
+      )
+    )
+  )
+})
+
+test_that("scoped connections can be created", {
+  ctx <- sd_connect(
+    memory_limit = "1g",
+    temp_dir = tempfile(),
+    memory_pool_type = "fair",
+    unspillable_reserve_ratio = 0.5
+  )
+
+  df <- data.frame(x = 1:10)
+  sd_to_view(df, "some_name", ctx = ctx, overwrite = TRUE)
+
+  df2 <- data.frame(y = 11:20)
+  sd_to_view(df2, "some_name", overwrite = TRUE)
+
+  expect_identical(
+    ctx |> sd_ctx_view("some_name") |> sd_collect(),
+    df
+  )
+
+  expect_identical(
+    sd_view("some_name") |> sd_collect(),
+    df2
+  )
+})
+
+test_that("unrecognized options result in a warning", {
+  expect_snapshot_warning(sd_connect(not_an_option = "foofy"))
+})
+
 test_that("sd_read_parquet() works", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
   expect_identical(sd_count(sd_read_parquet(path)), 243)
