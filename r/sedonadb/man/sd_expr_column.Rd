@@ -61,6 +61,8 @@ used to disambiguate a specific reference}
 \item{factory}{A \code{\link[=sd_expr_factory]{sd_expr_factory()}}. This factory wraps a SedonaDB context
 and is used to resolve scalar functions and/or retrieve options.}
 
+\item{x}{An object to convert to a SedonaDB literal (constant).}
+
 \item{type}{A destination type into which \code{expr} should be cast.}
 
 \item{op}{Operator name for a binary expression. In general these follow
