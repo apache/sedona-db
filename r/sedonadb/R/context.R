@@ -171,7 +171,7 @@ sd_register_udf <- function(udf) {
 ctx <- function() {
   if (is.null(global_ctx$ctx)) {
     opts <- global_ctx$options
-    keys <- names(opts)
+    keys <- as.character(names(opts))
     values <- as.character(opts)
 
     global_ctx$ctx <- InternalContext$new(keys, values)
