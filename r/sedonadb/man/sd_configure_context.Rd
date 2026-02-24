@@ -27,7 +27,7 @@ unspillable consumers. Only applies when \code{memory_pool_type} is
 \code{"fair"}. Defaults to 0.2 when not explicitly set.}
 }
 \value{
-\code{NULL}, invisibly.
+The constructed context, invisibly.
 }
 \description{
 Runtime options configure the execution environment and must be set

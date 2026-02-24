@@ -2,12 +2,17 @@
 % Please edit documentation in R/context.R
 \name{sd_sql}
 \alias{sd_sql}
+\alias{sd_ctx_sql}
 \title{Create a DataFrame from SQL}
 \usage{
 sd_sql(sql)
+
+sd_ctx_sql(ctx, sql)
 }
 \arguments{
 \item{sql}{A SQL string to execute}
+
+\item{ctx}{A SedonaDB context.}
 }
 \value{
 A sedonadb_dataframe
