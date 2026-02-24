@@ -132,7 +132,7 @@ sd_count <- function(.data) {
 #' sd_sql("SELECT 1 as one") |> sd_to_view("foofy")
 #' sd_sql("SELECT * FROM foofy")
 #'
-sd_to_view <- function(.data, table_ref, ctx = NULL, overwrite = FALSE) {
+sd_to_view <- function(.data, table_ref, overwrite = FALSE, ctx = NULL) {
   if (is.null(ctx)) {
     ctx <- ctx()
   }
