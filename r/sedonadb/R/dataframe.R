@@ -116,6 +116,31 @@ sd_count <- function(.data) {
   .data$df$count()
 }
 
+#' Fill in placeholders
+#'
+#' This is a slightly more verbose form of [sd_sql()] with `params` that is
+#' useful if a data frame is to be repeatedly queried.
+#'
+#' @inheritParams sd_count
+#' @param ... Named or unnamed parameters that will be coerced to literals
+#'   with [as_sedonadb_literal()].
+#'
+#' @returns The number of rows after executing the query
+#' @export
+#'
+#' @examples
+#' sd_sql("SELECT ST_Point($1, $2) as pt") |>
+#'   sd_with_params(11, 12)
+#' sd_sql("SELECT ST_Point($x, $y) as pt") |>
+#'   sd_with_params(x = 11, y = 12)
+#'
+sd_with_params <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  params <- lapply(list(...), as_sedonadb_literal)
+  df <- .data$df$with_params(params)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
 #' Register a DataFrame as a named view
 #'
 #' This is useful for creating a view that can be referenced in a SQL

@@ -4,16 +4,16 @@
 \alias{sd_to_view}
 \title{Register a DataFrame as a named view}
 \usage{
-sd_to_view(.data, table_ref, ctx = NULL, overwrite = FALSE)
+sd_to_view(.data, table_ref, overwrite = FALSE, ctx = NULL)
 }
 \arguments{
 \item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{table_ref}{The name of the view reference}
 
-\item{ctx}{A SedonaDB context.}
-
 \item{overwrite}{Use TRUE to overwrite a view with the same name (if it exists)}
+
+\item{ctx}{A SedonaDB context.}
 }
 \value{
 .data, invisibly

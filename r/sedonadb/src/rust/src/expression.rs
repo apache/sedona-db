@@ -231,7 +231,11 @@ impl SedonaDBExprFactory {
             .collect::<savvy::Result<Vec<_>>>()?;
 
         let has_names = literals.iter().any(|(name, _)| !name.is_empty());
-        if has_names {
+        if literals.is_empty() || has_names {
+            if !literals.iter().all(|(name, _)| !name.is_empty()) {
+                return Err(savvy_err!("params must be all named or all unnamed"));
+            }
+
             Ok(ParamValues::Map(literals.into_iter().rev().collect()))
         } else {
             Ok(ParamValues::List(

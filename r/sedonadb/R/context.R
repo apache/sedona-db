@@ -143,7 +143,9 @@ sd_ctx_read_parquet <- function(ctx, path) {
 #' @export
 #'
 #' @examples
-#' sd_sql("SELECT ST_Point(0, 1) as geom") |> sd_preview()
+#' sd_sql("SELECT ST_Point(0, 1) as geom")
+#' sd_sql("SELECT ST_Point($1, $2) as geom", params = list(1, 2))
+#' sd_sql("SELECT ST_Point($x, $y) as geom", params = list(x = 1, y = 2))
 #'
 sd_sql <- function(sql, ..., params = NULL) {
   sd_ctx_sql(ctx(), sql, ..., params = params)

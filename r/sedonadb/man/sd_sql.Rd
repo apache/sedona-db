@@ -5,12 +5,14 @@
 \alias{sd_ctx_sql}
 \title{Create a DataFrame from SQL}
 \usage{
-sd_sql(sql)
+sd_sql(sql, ..., params = NULL)
 
-sd_ctx_sql(ctx, sql)
+sd_ctx_sql(ctx, sql, ..., params = NULL)
 }
 \arguments{
 \item{sql}{A SQL string to execute}
+
+\item{params}{A list of parameters to fill placeholders in the query.}
 
 \item{ctx}{A SedonaDB context.}
 }
@@ -21,6 +23,8 @@ A sedonadb_dataframe
 The query will only be executed when requested.
 }
 \examples{
-sd_sql("SELECT ST_Point(0, 1) as geom") |> sd_preview()
+sd_sql("SELECT ST_Point(0, 1) as geom")
+sd_sql("SELECT ST_Point($1, $2) as geom", params = list(1, 2))
+sd_sql("SELECT ST_Point($x, $y) as geom", params = list(x = 1, y = 2))
 
 }
