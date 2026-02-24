@@ -366,4 +366,10 @@ impl InternalDataFrame {
         let inner = self.inner.clone().aggregate(group_by_exprs, exprs)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
+
+    fn with_params(&self, params_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
+        let param_values = SedonaDBExprFactory::param_values(params_sexp)?;
+        let inner = self.inner.clone().with_param_values(param_values)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
 }

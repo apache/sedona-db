@@ -4,5 +4,5 @@
 
 # unrecognized options result in a warning
 
-    Unrecognized options for sd_connect(): not_an_option
+    Unsupported arguments in sd_connect(): not_an_option
 
