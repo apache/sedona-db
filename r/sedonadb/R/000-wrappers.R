@@ -179,8 +179,12 @@ NULL
 
 ### associated functions for InternalContext
 
-`InternalContext`$`new` <- function() {
-  .savvy_wrap_InternalContext(.Call(savvy_InternalContext_new__impl))
+`InternalContext`$`new` <- function(`option_keys`, `option_values`) {
+  .savvy_wrap_InternalContext(.Call(
+    savvy_InternalContext_new__impl,
+    `option_keys`,
+    `option_values`
+  ))
 }
 
 

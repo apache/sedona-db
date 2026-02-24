@@ -15,6 +15,72 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' Configure runtime options for the SedonaDB context
+#'
+#' Runtime options configure the execution environment and must be set
+#' *before* the first query is executed (i.e., before the internal context
+#' is initialized). Calling `sd_context()` after the context has already
+#' been created will raise an error.
+#'
+#' @param memory_limit Maximum memory for query execution, as a
+#'   human-readable string (e.g., `"4gb"`, `"512m"`) or `NULL` for
+#'   unbounded (the default).
+#' @param temp_dir Directory for temporary/spill files, or `NULL` to
+#'   use the DataFusion default.
+#' @param memory_pool_type Memory pool type: `"greedy"` (default) or
+#'   `"fair"`. Only takes effect when `memory_limit` is set.
+#' @param unspillable_reserve_ratio Fraction of memory (0--1) reserved for
+#'   unspillable consumers. Only applies when `memory_pool_type` is
+#'   `"fair"`. Defaults to 0.2 when not explicitly set.
+#'
+#' @returns `NULL`, invisibly.
+#' @export
+#'
+sd_configure_context <- function(
+  memory_limit = NULL,
+  temp_dir = NULL,
+  memory_pool_type = NULL,
+  unspillable_reserve_ratio = NULL
+) {
+  if (!is.null(global_ctx$ctx)) {
+    warning(
+      "Cannot change runtime options after the context has been initialized. ",
+      "Set options with sd_context() before executing your first query."
+    )
+
+    return(invisible(global_ctx$ctx))
+  }
+
+  if (!is.null(memory_limit)) {
+    stopifnot(is.character(memory_limit), length(memory_limit) == 1L)
+    global_ctx$options[["memory_limit"]] <- memory_limit
+  }
+
+  if (!is.null(temp_dir)) {
+    stopifnot(is.character(temp_dir), length(temp_dir) == 1L)
+    global_ctx$options[["temp_dir"]] <- temp_dir
+  }
+
+  if (!is.null(memory_pool_type)) {
+    memory_pool_type <- match.arg(memory_pool_type, c("greedy", "fair"))
+    global_ctx$options[["memory_pool_type"]] <- memory_pool_type
+  }
+
+  if (!is.null(unspillable_reserve_ratio)) {
+    stopifnot(
+      is.numeric(unspillable_reserve_ratio),
+      length(unspillable_reserve_ratio) == 1L,
+      unspillable_reserve_ratio >= 0,
+      unspillable_reserve_ratio <= 1
+    )
+    global_ctx$options[["unspillable_reserve_ratio"]] <- as.character(
+      unspillable_reserve_ratio
+    )
+  }
+
+  invisible(ctx())
+}
+
 #' Create a DataFrame from one or more Parquet files
 #'
 #' The query will only be executed when requested.
@@ -104,7 +170,11 @@ sd_register_udf <- function(udf) {
 # of various components more cleanly from the runtime.
 ctx <- function() {
   if (is.null(global_ctx$ctx)) {
-    global_ctx$ctx <- InternalContext$new()
+    opts <- global_ctx$options
+    keys <- names(opts)
+    values <- as.character(opts)
+
+    global_ctx$ctx <- InternalContext$new(keys, values)
   }
 
   global_ctx$ctx
@@ -112,6 +182,7 @@ ctx <- function() {
 
 global_ctx <- new.env(parent = emptyenv())
 global_ctx$ctx <- NULL
+global_ctx$options <- list()
 
 
 #' Configure PROJ

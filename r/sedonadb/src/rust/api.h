@@ -31,7 +31,8 @@ SEXP savvy_InternalContext_data_frame_from_table_provider__ffi(
 SEXP savvy_InternalContext_deregister_table__ffi(SEXP self__,
                                                  SEXP c_arg__table_ref);
 SEXP savvy_InternalContext_list_functions__ffi(SEXP self__);
-SEXP savvy_InternalContext_new__ffi(void);
+SEXP savvy_InternalContext_new__ffi(SEXP c_arg__option_keys,
+                                    SEXP c_arg__option_values);
 SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths);
 SEXP savvy_InternalContext_register_scalar_udf__ffi(
     SEXP self__, SEXP c_arg__scalar_udf_xptr);

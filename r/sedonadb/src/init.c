@@ -106,8 +106,10 @@ SEXP savvy_InternalContext_list_functions__impl(SEXP self__) {
   return handle_result(res);
 }
 
-SEXP savvy_InternalContext_new__impl(void) {
-  SEXP res = savvy_InternalContext_new__ffi();
+SEXP savvy_InternalContext_new__impl(SEXP c_arg__option_keys,
+                                     SEXP c_arg__option_values) {
+  SEXP res =
+      savvy_InternalContext_new__ffi(c_arg__option_keys, c_arg__option_values);
   return handle_result(res);
 }
 
@@ -334,7 +336,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"savvy_InternalContext_list_functions__impl",
      (DL_FUNC)&savvy_InternalContext_list_functions__impl, 1},
     {"savvy_InternalContext_new__impl",
-     (DL_FUNC)&savvy_InternalContext_new__impl, 0},
+     (DL_FUNC)&savvy_InternalContext_new__impl, 2},
     {"savvy_InternalContext_read_parquet__impl",
      (DL_FUNC)&savvy_InternalContext_read_parquet__impl, 2},
     {"savvy_InternalContext_register_scalar_udf__impl",
