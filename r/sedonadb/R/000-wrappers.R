@@ -319,11 +319,11 @@ class(`InternalContext`) <- c(
   function(
     `ctx`,
     `path`,
+    `option_keys`,
+    `option_values`,
     `partition_by`,
     `sort_by`,
-    `single_file_output`,
-    `overwrite_bbox_columns`,
-    `geoparquet_version` = NULL
+    `single_file_output`
   ) {
     `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
     invisible(.Call(
@@ -331,11 +331,11 @@ class(`InternalContext`) <- c(
       `self`,
       `ctx`,
       `path`,
+      `option_keys`,
+      `option_values`,
       `partition_by`,
       `sort_by`,
-      `single_file_output`,
-      `overwrite_bbox_columns`,
-      `geoparquet_version`
+      `single_file_output`
     ))
   }
 }

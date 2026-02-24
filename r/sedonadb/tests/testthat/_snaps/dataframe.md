@@ -26,3 +26,15 @@
       +------------+
       Preview of up to 6 row(s)
 
+# sd_write_parquet validates geoparquet_version parameter
+
+    This feature is not implemented: GeoParquetVersion V2_0 is not yet supported
+
+# sd_write_parquet() errors for inappropriately sized options
+
+    All option values must be length 1
+
+---
+
+    All option values must be named
+

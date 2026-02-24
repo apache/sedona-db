@@ -219,13 +219,12 @@ SEXP savvy_InternalDataFrame_to_arrow_stream__impl(
 }
 
 SEXP savvy_InternalDataFrame_to_parquet__impl(
-    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
-    SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
-    SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version) {
+    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__option_keys,
+    SEXP c_arg__option_values, SEXP c_arg__partition_by, SEXP c_arg__sort_by,
+    SEXP c_arg__single_file_output) {
   SEXP res = savvy_InternalDataFrame_to_parquet__ffi(
-      self__, c_arg__ctx, c_arg__path, c_arg__partition_by, c_arg__sort_by,
-      c_arg__single_file_output, c_arg__overwrite_bbox_columns,
-      c_arg__geoparquet_version);
+      self__, c_arg__ctx, c_arg__path, c_arg__option_keys, c_arg__option_values,
+      c_arg__partition_by, c_arg__sort_by, c_arg__single_file_output);
   return handle_result(res);
 }
 
