@@ -82,7 +82,7 @@ pub const RASTER: SedonaType = SedonaType::Raster;
 pub static WKB_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
 
-/// Sentinel for [SedonaType::new_item_crs] containing [WKB_GEOMETRY]
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOMETRY]
 pub static WKB_VIEW_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_VIEW_GEOMETRY).unwrap());
 
@@ -90,7 +90,7 @@ pub static WKB_VIEW_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
 pub static WKB_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap());
 
-/// Sentinel for [SedonaType::new_item_crs] containing [WKB_GEOGRAPHY]
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOGRAPHY]
 pub static WKB_VIEW_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_VIEW_GEOGRAPHY).unwrap());
 
