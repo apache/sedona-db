@@ -4,7 +4,7 @@
 \alias{as_sedonadb_dataframe}
 \title{Convert an object to a DataFrame}
 \usage{
-as_sedonadb_dataframe(x, ..., schema = NULL)
+as_sedonadb_dataframe(x, ..., schema = NULL, ctx = NULL)
 }
 \arguments{
 \item{x}{An object to convert}
@@ -12,6 +12,9 @@ as_sedonadb_dataframe(x, ..., schema = NULL)
 \item{...}{Extra arguments passed to/from methods}
 
 \item{schema}{The requested schema}
+
+\item{ctx}{A SedonaDB context. This should always be passed to inner calls
+to SedonaDB functions; NULL implies the global context.}
 }
 \value{
 A sedonadb_dataframe

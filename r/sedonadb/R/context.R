@@ -15,13 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-#' Configure runtime options for the SedonaDB context
+#' Create a SedonaDB context
 #'
-#' Runtime options configure the execution environment and must be set
-#' *before* the first query is executed (i.e., before the internal context
-#' is initialized). Calling `sd_context()` after the context has already
-#' been created will raise an error.
+#' Runtime options configure the execution environment. Use
+#' `global = TRUE` to configure the global context or use the
+#' returned object as a scoped context. A scoped context is
+#' recommended for programmatic usage as it prevents named
+#' views from interfering with eachother.
 #'
+#' @param global Use TRUE to set options on the global context.
 #' @param memory_limit Maximum memory for query execution, as a
 #'   human-readable string (e.g., `"4gb"`, `"512m"`) or `NULL` for
 #'   unbounded (the default).
@@ -32,38 +34,48 @@
 #' @param unspillable_reserve_ratio Fraction of memory (0--1) reserved for
 #'   unspillable consumers. Only applies when `memory_pool_type` is
 #'   `"fair"`. Defaults to 0.2 when not explicitly set.
+#' @param ... Reserved for future options
 #'
 #' @returns The constructed context, invisibly.
 #' @export
 #'
-sd_configure_context <- function(
+#' @examples
+#' sd_connect(memory_limit = "100mb", memory_pool_type = "fair")
+#'
+#'
+sd_connect <- function(
+  ...,
+  global = FALSE,
   memory_limit = NULL,
   temp_dir = NULL,
   memory_pool_type = NULL,
   unspillable_reserve_ratio = NULL
 ) {
-  if (!is.null(global_ctx$ctx)) {
-    warning(
-      "Cannot change runtime options after the context has been initialized. ",
-      "Set options with sd_configure_context() before executing your first query."
+  unsupported_options <- list(...)
+  if (length(unsupported_options) != 0) {
+    stop(
+      sprintf(
+        "Unrecognized options for sd_connect(): %s",
+        paste(names(unsupported_options), collapse = ", ")
+      )
     )
-
-    return(invisible(global_ctx$ctx))
   }
+
+  options <- list()
 
   if (!is.null(memory_limit)) {
     stopifnot(is.character(memory_limit), length(memory_limit) == 1L)
-    global_ctx$options[["memory_limit"]] <- memory_limit
+    options[["memory_limit"]] <- memory_limit
   }
 
   if (!is.null(temp_dir)) {
     stopifnot(is.character(temp_dir), length(temp_dir) == 1L)
-    global_ctx$options[["temp_dir"]] <- temp_dir
+    options[["temp_dir"]] <- temp_dir
   }
 
   if (!is.null(memory_pool_type)) {
     memory_pool_type <- match.arg(memory_pool_type, c("greedy", "fair"))
-    global_ctx$options[["memory_pool_type"]] <- memory_pool_type
+    options[["memory_pool_type"]] <- memory_pool_type
   }
 
   if (!is.null(unspillable_reserve_ratio)) {
@@ -73,12 +85,34 @@ sd_configure_context <- function(
       unspillable_reserve_ratio >= 0,
       unspillable_reserve_ratio <= 1
     )
-    global_ctx$options[["unspillable_reserve_ratio"]] <- as.character(
+    options[["unspillable_reserve_ratio"]] <- as.character(
       unspillable_reserve_ratio
     )
   }
 
-  invisible(ctx())
+  # Don't replace the global context
+  if (global && length(options) > 0 && !is.null(global_ctx$ctx)) {
+    warning(
+      "Cannot change runtime options after the context has been initialized. ",
+      "Set global options with sd_connect() before executing your first query ",
+      "or use a scoped context by passing global = FALSE"
+    )
+
+    return(invisible(global_ctx$ctx))
+  } else if (global && !is.null(global_ctx$ctx)) {
+    return(invisible(global_ctx$ctx))
+  }
+
+  opts <- global_ctx$options
+  keys <- as.character(names(opts))
+  values <- as.character(opts)
+  ctx <- InternalContext$new(keys, values)
+
+  if (global) {
+    global_ctx$ctx <- ctx
+  }
+
+  invisible(ctx)
 }
 
 #' Create a DataFrame from one or more Parquet files
@@ -203,11 +237,7 @@ sd_ctx_register_udf <- function(ctx, udf) {
 # UDFs.
 ctx <- function() {
   if (is.null(global_ctx$ctx)) {
-    opts <- global_ctx$options
-    keys <- as.character(names(opts))
-    values <- as.character(opts)
-
-    global_ctx$ctx <- InternalContext$new(keys, values)
+    global_ctx$ctx <- sd_connect()
   }
 
   global_ctx$ctx

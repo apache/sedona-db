@@ -18,6 +18,8 @@
 #' Convert an object to a DataFrame
 #'
 #' @param x An object to convert
+#' @param ctx A SedonaDB context. This should always be passed to inner calls
+#'   to SedonaDB functions; NULL implies the global context.
 #' @param ... Extra arguments passed to/from methods
 #' @param schema The requested schema
 #'
@@ -27,29 +29,37 @@
 #' @examples
 #' as_sedonadb_dataframe(data.frame(x = 1:3))
 #'
-as_sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   UseMethod("as_sedonadb_dataframe")
 }
 
 #' @export
-as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   # In the future, schema can be handled with a cast
   x
 }
 
 #' @export
-as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL, ctx = NULL) {
   array <- nanoarrow::as_nanoarrow_array(x, schema = schema)
   stream <- nanoarrow::basic_array_stream(list(array))
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
   new_sedonadb_dataframe(ctx, df)
 }
 
 #' @export
-as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL, ctx = NULL) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
 
   # Verify schema is handled
@@ -61,10 +71,15 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
   x,
   ...,
   schema = NULL,
-  lazy = TRUE
+  lazy = TRUE,
+  ctx = NULL
 ) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
 
   # Verify schema is handled
@@ -72,8 +87,16 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
 }
 
 #' @export
-as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NULL) {
-  ctx <- ctx()
+as_sedonadb_dataframe.datafusion_table_provider <- function(
+  x,
+  ...,
+  schema = NULL,
+  ctx = NULL
+) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_table_provider(x)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -109,8 +132,12 @@ sd_count <- function(.data) {
 #' sd_sql("SELECT 1 as one") |> sd_to_view("foofy")
 #' sd_sql("SELECT * FROM foofy")
 #'
-sd_to_view <- function(.data, table_ref, overwrite = FALSE) {
-  .data <- as_sedonadb_dataframe(.data)
+sd_to_view <- function(.data, table_ref, ctx = NULL, overwrite = FALSE) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
+  .data <- as_sedonadb_dataframe(.data, ctx = ctx)
   .data$df$to_view(.data$ctx, table_ref, overwrite)
   invisible(.data)
 }
