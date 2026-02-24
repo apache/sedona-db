@@ -40,7 +40,7 @@ Runtime options configure the execution environment. Use
 \code{global = TRUE} to configure the global context or use the
 returned object as a scoped context. A scoped context is
 recommended for programmatic usage as it prevents named
-views from interfering with eachother.
+views from interfering with each other.
 }
 \examples{
 sd_connect(memory_limit = "100mb", memory_pool_type = "fair")
