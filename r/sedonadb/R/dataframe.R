@@ -530,7 +530,7 @@ sd_write_parquet <- function(
   }
 
   if (!is.null(max_row_group_size)) {
-    options[["max_row_group_size"]] <- as.character(max_row_group_size)
+    options[["max_row_group_size"]] <- as.character(as.integer(max_row_group_size))
   }
 
   if (!is.null(compression)) {

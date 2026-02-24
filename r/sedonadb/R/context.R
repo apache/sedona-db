@@ -45,7 +45,7 @@ sd_configure_context <- function(
   if (!is.null(global_ctx$ctx)) {
     warning(
       "Cannot change runtime options after the context has been initialized. ",
-      "Set options with sd_context() before executing your first query."
+      "Set options with sd_configure_context() before executing your first query."
     )
 
     return(invisible(global_ctx$ctx))
