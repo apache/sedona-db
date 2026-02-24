@@ -21,7 +21,7 @@
 #' `global = TRUE` to configure the global context or use the
 #' returned object as a scoped context. A scoped context is
 #' recommended for programmatic usage as it prevents named
-#' views from interfering with eachother.
+#' views from interfering with each other.
 #'
 #' @param global Use TRUE to set options on the global context.
 #' @param memory_limit Maximum memory for query execution, as a
