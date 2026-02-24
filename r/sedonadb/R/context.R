@@ -227,6 +227,7 @@ sd_register_udf <- function(udf) {
 #' @rdname sd_register_udf
 #' @export
 sd_ctx_register_udf <- function(ctx, udf) {
+  check_ctx(ctx)
   ctx$register_scalar_udf(udf)
 }
 # nolint end
