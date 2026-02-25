@@ -283,4 +283,32 @@ mod tests {
             .unwrap();
         assert_eq!(count, 50000);
     }
+
+    #[tokio::test]
+    async fn round_robin_partitioning() {
+        // file with two clusters, one at 0.5 one at 1.0
+        let path = "tests/data/large.laz";
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        let result1 = ctx
+            .sql(&format!("SELECT * FROM \"{path}\""))
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        ctx.sql("SET pointcloud.round_robin_partitioning = 'true'")
+            .await
+            .unwrap();
+        let result2 = ctx
+            .sql(&format!("SELECT * FROM \"{path}\""))
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(result1, result2);
+    }
 }

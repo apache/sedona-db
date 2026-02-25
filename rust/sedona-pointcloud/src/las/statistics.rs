@@ -42,7 +42,7 @@ use crate::las::{metadata::ChunkMeta, reader::record_decompressor};
 /// Spatial statistics (extent) of LAS/LAZ chunks for pruning.
 ///
 /// It wraps a `RecordBatch` with x, y, z min and max values and row count per chunk.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LasStatistics {
     pub values: RecordBatch,
 }
@@ -358,10 +358,13 @@ mod tests {
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
     use sedona_geometry::bounding_box::BoundingBox;
 
-    use crate::{las::metadata::LasMetadataReader, options::PointcloudOptions};
+    use crate::{
+        las::{metadata::LasMetadataReader, statistics::chunk_statistics},
+        options::PointcloudOptions,
+    };
 
     #[tokio::test]
-    async fn chunk_statistics() {
+    async fn check_chunk_statistics() {
         for path in ["tests/data/large.las", "tests/data/large.laz"] {
             // read with `LasMetadataReader`
             let store = LocalFileSystem::new();
@@ -407,6 +410,18 @@ mod tests {
                     None
                 ))
             );
+
+            let par_stats = chunk_statistics(
+                &store,
+                &object_meta,
+                &metadata.chunk_table,
+                &metadata.header,
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+            assert_eq!(statistics, &par_stats);
         }
     }
 
