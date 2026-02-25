@@ -125,7 +125,7 @@ sd_count <- function(.data) {
 #' @param ... Named or unnamed parameters that will be coerced to literals
 #'   with [as_sedonadb_literal()].
 #'
-#' @returns The number of rows after executing the query
+#' @returns A sedonadb_dataframe with the provided parameters filled into the query
 #' @export
 #'
 #' @examples
