@@ -59,3 +59,34 @@ test_that("non-scalars can't be automatically converted to literals", {
     "Can't convert non-scalar to sedonadb_expr"
   )
 })
+
+test_that("data.frame can be converted to SedonaDB literal", {
+  expect_identical(
+    as_sedonadb_literal(data.frame(x = 1.0))$debug_string(),
+    "Literal(Float64(1), None)"
+  )
+
+  expect_snapshot_error(
+    as_sedonadb_literal(data.frame(x = 1:5))
+  )
+
+  expect_snapshot_error(
+    as_sedonadb_literal(data.frame(x = 1, y = 2))
+  )
+})
+
+test_that("geometry objects can be converted to SedonaDB literals", {
+  objects <- list(
+    wk::as_wkb("POINT (0 1)"),
+    wk::as_wkt("POINT (0 1)"),
+    wk::xy(0, 1),
+    wk::rct(0, 1, 2, 4),
+    wk::crc(0, 1, 2)
+  )
+
+  for (x in objects) {
+    df <- sd_sql("SELECT ST_Translate($1, 0, 0) as geom", params = list(x))
+    collected <- sd_collect(df)
+    expect_identical(wk::as_wkb(x), wk::as_wkb(collected$geom))
+  }
+})

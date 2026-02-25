@@ -83,6 +83,41 @@ test_that("dataframe rows can be counted", {
   expect_identical(sd_count(df), 1)
 })
 
+test_that("sd_with_params() fills in placeholder values", {
+  df <- sd_sql("SELECT $1 + 1 AS two") |> sd_with_params(1)
+  expect_identical(sd_collect(df), data.frame(two = 2))
+
+  df <- sd_sql("SELECT $x + 1 AS two") |> sd_with_params(x = 1)
+  expect_identical(sd_collect(df), data.frame(two = 2))
+
+  # Check multiple parameters
+  df <- sd_sql("SELECT 'one' || $1 || $2 AS onetwothree") |>
+    sd_with_params("two", "three")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  df <- sd_sql("SELECT 'one' || $x || $y AS onetwothree") |>
+    sd_with_params(x = "two", y = "three")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  # Check order (first name wins, like an R list)
+  df <- sd_sql("SELECT 'one' || $x || $y AS onetwothree") |>
+    sd_with_params(x = "two", y = "three", x = "gazornenplat")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  # Check that an error occurs for missing parameters
+  expect_snapshot_error(
+    sd_sql("SELECT $x + 1 AS two") |> sd_with_params()
+  )
+  expect_snapshot_error(
+    sd_sql("SELECT $1 + 1 AS two") |> sd_with_params()
+  )
+
+  # Check error for mixed named/unnamed
+  expect_snapshot_error(
+    sd_sql("SELECT $x + 1 AS two") |> sd_with_params(x = 1, 2)
+  )
+})
+
 test_that("dataframe can be computed", {
   df <- sd_sql("SELECT 1 as one, 'two' as two")
   df_computed <- sd_compute(df)

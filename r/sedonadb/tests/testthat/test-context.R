@@ -120,3 +120,15 @@ test_that(".fns can have its contents listed", {
   expect_contains(names(.fns), "st_intersects")
   expect_contains(.DollarNames(.fns, "st_int"), "st_intersects")
 })
+
+test_that("sd_sql() applies params to query", {
+  df <- sd_sql(
+    "SELECT ST_AsText(ST_Translate($1, $2, $3)) AS geom",
+    params = list(wk::as_wkb("POINT (0 0)"), 2, 3)
+  )
+
+  expect_identical(
+    df |> sd_collect(),
+    data.frame(geom = "POINT(2 3)")
+  )
+})

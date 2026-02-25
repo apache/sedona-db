@@ -363,6 +363,16 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_with_params` <- function(self) {
+  function(`params_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_with_params__impl,
+      `self`,
+      `params_sexp`
+    ))
+  }
+}
+
 `.savvy_wrap_InternalDataFrame` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
@@ -384,6 +394,7 @@ class(`InternalContext`) <- c(
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
+  e$`with_params` <- `InternalDataFrame_with_params`(ptr)
 
   class(e) <- c(
     "sedonadb::InternalDataFrame",

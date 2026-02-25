@@ -51,16 +51,7 @@ sd_connect <- function(
   memory_pool_type = NULL,
   unspillable_reserve_ratio = NULL
 ) {
-  unsupported_options <- list(...)
-  if (length(unsupported_options) != 0) {
-    warning(
-      sprintf(
-        "Unrecognized options for sd_connect(): %s",
-        paste(names(unsupported_options), collapse = ", ")
-      )
-    )
-  }
-
+  check_dots_empty(..., label = "sd_connect()")
   options <- list()
 
   if (!is.null(memory_limit)) {
@@ -146,22 +137,33 @@ sd_ctx_read_parquet <- function(ctx, path) {
 #'
 #' @param ctx A SedonaDB context.
 #' @param sql A SQL string to execute
+#' @param params A list of parameters to fill placeholders in the query.
+#' @param ... These dots are for future extensions and currently must be empty.
 #'
 #' @returns A sedonadb_dataframe
 #' @export
 #'
 #' @examples
-#' sd_sql("SELECT ST_Point(0, 1) as geom") |> sd_preview()
+#' sd_sql("SELECT ST_Point(0, 1) as geom")
+#' sd_sql("SELECT ST_Point($1, $2) as geom", params = list(1, 2))
+#' sd_sql("SELECT ST_Point($x, $y) as geom", params = list(x = 1, y = 2))
 #'
-sd_sql <- function(sql) {
-  sd_ctx_sql(ctx(), sql)
+sd_sql <- function(sql, ..., params = NULL) {
+  sd_ctx_sql(ctx(), sql, ..., params = params)
 }
 
 #' @rdname sd_sql
 #' @export
-sd_ctx_sql <- function(ctx, sql) {
+sd_ctx_sql <- function(ctx, sql, ..., params = NULL) {
   check_ctx(ctx)
   df <- ctx$sql(sql)
+  check_dots_empty(..., label = "sd_sql()")
+
+  if (!is.null(params)) {
+    params <- lapply(params, as_sedonadb_literal)
+    df <- df$with_params(params)
+  }
+
   new_sedonadb_dataframe(ctx, df)
 }
 

@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{Column, Result, ScalarValue};
+use datafusion_common::{metadata::ScalarAndMetadata, Column, ParamValues, Result, ScalarValue};
 use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
@@ -205,6 +205,43 @@ impl SedonaDBExprFactory {
                 Ok(expr_wrapper.inner.clone())
             })
             .collect()
+    }
+
+    pub fn param_values(exprs_sexp: savvy::Sexp) -> savvy::Result<ParamValues> {
+        let literals = savvy::ListSexp::try_from(exprs_sexp)?
+            .iter()
+            .map(
+                |(name, item)| -> savvy::Result<(String, ScalarAndMetadata)> {
+                    // item here is the Environment wrapper around the external pointer
+                    let expr_wrapper: &SedonaDBExpr =
+                        EnvironmentSexp::try_from(item)?.try_into()?;
+                    if let Expr::Literal(scalar, metadata) = &expr_wrapper.inner {
+                        Ok((
+                            name.to_string(),
+                            ScalarAndMetadata::new(scalar.clone(), metadata.clone()),
+                        ))
+                    } else {
+                        Err(savvy_err!(
+                            "Expected literal expression but got {:?}",
+                            expr_wrapper.inner
+                        ))
+                    }
+                },
+            )
+            .collect::<savvy::Result<Vec<_>>>()?;
+
+        let has_names = literals.iter().any(|(name, _)| !name.is_empty());
+        if literals.is_empty() || has_names {
+            if !literals.iter().all(|(name, _)| !name.is_empty()) {
+                return Err(savvy_err!("params must be all named or all unnamed"));
+            }
+
+            Ok(ParamValues::Map(literals.into_iter().rev().collect()))
+        } else {
+            Ok(ParamValues::List(
+                literals.into_iter().map(|(_, param)| param).collect(),
+            ))
+        }
     }
 }
 

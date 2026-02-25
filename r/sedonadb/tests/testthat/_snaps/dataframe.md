@@ -1,3 +1,15 @@
+# sd_with_params() fills in placeholder values
+
+    Error during planning: No value found for placeholder with name $x
+
+---
+
+    Error during planning: No value found for placeholder with name $1
+
+---
+
+    params must be all named or all unnamed
+
 # dataframe can be printed
 
     Code

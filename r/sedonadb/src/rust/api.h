@@ -69,6 +69,8 @@ SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);
+SEXP savvy_InternalDataFrame_with_params__ffi(SEXP self__,
+                                              SEXP c_arg__params_sexp);
 
 // methods and associated functions for SedonaDBExpr
 SEXP savvy_SedonaDBExpr_alias__ffi(SEXP self__, SEXP c_arg__name);
