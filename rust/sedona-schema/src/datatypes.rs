@@ -82,9 +82,17 @@ pub const RASTER: SedonaType = SedonaType::Raster;
 pub static WKB_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
 
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOMETRY]
+pub static WKB_VIEW_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::new_item_crs(&WKB_VIEW_GEOMETRY).unwrap());
+
 /// Sentinel for [SedonaType::new_item_crs] containing [WKB_GEOGRAPHY]
 pub static WKB_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap());
+
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOGRAPHY]
+pub static WKB_VIEW_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::new_item_crs(&WKB_VIEW_GEOGRAPHY).unwrap());
 
 /// Create a static value for the [`SedonaType::Raster`] that's initialized exactly once,
 /// on first access
