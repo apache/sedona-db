@@ -13,7 +13,7 @@ sd_with_params(.data, ...)
 with \code{\link[=as_sedonadb_literal]{as_sedonadb_literal()}}.}
 }
 \value{
-The number of rows after executing the query
+A sedonadb_dataframe with the provided parameters filled into the query
 }
 \description{
 This is a slightly more verbose form of \code{\link[=sd_sql]{sd_sql()}} with \code{params} that is

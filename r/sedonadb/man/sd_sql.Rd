@@ -12,6 +12,8 @@ sd_ctx_sql(ctx, sql, ..., params = NULL)
 \arguments{
 \item{sql}{A SQL string to execute}
 
+\item{...}{These dots are for future extensions and currently must be empty.}
+
 \item{params}{A list of parameters to fill placeholders in the query.}
 
 \item{ctx}{A SedonaDB context.}
