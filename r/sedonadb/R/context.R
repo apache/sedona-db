@@ -138,6 +138,7 @@ sd_ctx_read_parquet <- function(ctx, path) {
 #' @param ctx A SedonaDB context.
 #' @param sql A SQL string to execute
 #' @param params A list of parameters to fill placeholders in the query.
+#' @param ... These dots are for future extensions and currently must be empty.
 #'
 #' @returns A sedonadb_dataframe
 #' @export
