@@ -71,7 +71,8 @@ def lit(value: Any) -> Literal:
     - SedonaDB DataFrame objects that evaluate to a single column and
       row become a scalar value according to the single represented
       value.
-
+    - pyproj CRS objects become PROJJSON strings (e.g., so they may be used
+      in `ST_SetCRS()`, `ST_Point()`, or `ST_GeomFromWKT()`).
     """
     if isinstance(value, Literal):
         return value
