@@ -97,7 +97,7 @@ fastrand = "2.0"
 float_next_after = "2"
 futures = "0.3"
 geo = "0.31.0"
-geo-index = { git = "https://github.com/georust/geo-index", rev = "refs/pull/157/head", features = ["use-geo_0_31"] }
+geo-index = { git = "https://github.com/Kontinuation/geo-index", rev = "9051730508609892c748bda8de99f4c73e204464", features = ["use-geo_0_31"] }
 geo-traits = "0.3.0"
 geo-types = "0.7.17"
 geojson = "0.24.2"

@@ -2794,7 +2794,7 @@ dependencies = [
 [[package]]
 name = "geo-index"
 version = "0.3.3"
-source = "git+https://github.com/georust/geo-index?rev=refs%2Fpull%2F157%2Fhead#b4137209fd6429f7ca80ff4d4399d55f8c6c427f"
+source = "git+https://github.com/Kontinuation/geo-index?rev=9051730508609892c748bda8de99f4c73e204464#9051730508609892c748bda8de99f4c73e204464"
 dependencies = [
  "bytemuck",
  "float_next_after 1.0.0",
