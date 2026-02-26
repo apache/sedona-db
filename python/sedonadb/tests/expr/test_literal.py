@@ -149,3 +149,24 @@ def test_sedonadb_literal(con):
     with pytest.raises(ValueError, match="size != 1 row"):
         df = con.sql("SELECT 1 as one WHERE false")
         pa.array(lit(df))
+
+
+def test_crs_literal():
+    import pyproj
+
+    crs = pyproj.CRS("EPSG:26920")
+    assert pa.array(lit(crs)) == pa.array([crs.to_json()])
+
+    # Ensure this is also the case for whatever GeoSeries.crs returns
+    geoseries = geopandas.GeoSeries.from_wkt(["POINT (0 1)"], crs="EPSG:26920")
+    assert pa.array(lit(geoseries.crs)) == pa.array([crs.to_json()])
+
+    # Make sure geoarrow.pyarrow CRSes also work here
+
+    # A ProjjsonCrs
+    ga_crs = ga.wkb().with_crs(crs).crs
+    assert pa.array(lit(ga_crs)) == pa.array([crs.to_json()])
+
+    # A StringCrs
+    ga_crs = ga.wkb().with_crs("EPSG:26920").crs
+    assert pa.array(lit(ga_crs)) == pa.array([crs.to_json()])
