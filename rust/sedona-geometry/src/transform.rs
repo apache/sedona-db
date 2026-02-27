@@ -152,6 +152,12 @@ pub struct CachingCrsEngine<T: CrsEngine> {
     pipeline_cache: RefCell<LruCache<PipelineCacheKey<'static>, Rc<dyn CrsTransform>>>,
 }
 
+impl<T: CrsEngine> CachingCrsEngine<T> {
+    pub fn engine(&self) -> &T {
+        &self.engine
+    }
+}
+
 /// Cache key for CRS to CRS transforms
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct CrsToCrsCacheKey<'a> {
