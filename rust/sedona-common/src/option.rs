@@ -15,12 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::fmt::Display;
+use std::sync::Arc;
 
 use datafusion::config::{ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit};
 use datafusion::prelude::SessionConfig;
-use datafusion_common::config_namespace;
 use datafusion_common::Result;
+use datafusion_common::{config_err, config_namespace};
 use regex::Regex;
+
+use crate::sedona_internal_err;
 
 /// Default minimum number of analyzed geometries for speculative execution mode to select an
 /// optimal execution mode.
@@ -39,6 +42,9 @@ config_namespace! {
     pub struct SedonaOptions {
         /// Options for spatial join
         pub spatial_join: SpatialJoinOptions, default = SpatialJoinOptions::default()
+
+        /// Global CRS provider
+        pub crs_provider: GlobalCrsProviderOption, default = GlobalCrsProviderOption::default()
     }
 }
 
@@ -403,6 +409,56 @@ impl ConfigField for TgIndexType {
         *self = index_type;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalCrsProviderOption(Arc<dyn CrsProvider>);
+
+impl GlobalCrsProviderOption {
+    pub fn new(inner: Arc<dyn CrsProvider>) -> Self {
+        GlobalCrsProviderOption(inner)
+    }
+
+    pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
+        self.0.to_projjson(crs_string)
+    }
+}
+
+impl Default for GlobalCrsProviderOption {
+    fn default() -> Self {
+        Self(Arc::new(DefaultCrsProvider {}))
+    }
+}
+
+impl PartialEq for GlobalCrsProviderOption {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl ConfigField for GlobalCrsProviderOption {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        v.some(key, format!("{:?}", self.0), description);
+    }
+
+    fn set(&mut self, key: &str, _value: &str) -> Result<()> {
+        config_err!("Can't set {key} from SQL")
+    }
+}
+
+#[derive(Debug)]
+struct DefaultCrsProvider {}
+
+impl CrsProvider for DefaultCrsProvider {
+    fn to_projjson(&self, crs_string: &str) -> Result<String> {
+        sedona_internal_err!(
+            "Can't convert {crs_string} to PROJJSON CRS (no CrsProvider registered)"
+        )
+    }
+}
+
+pub trait CrsProvider: std::fmt::Debug + Send + Sync {
+    fn to_projjson(&self, crs_string: &str) -> Result<String>;
 }
 
 #[cfg(test)]
