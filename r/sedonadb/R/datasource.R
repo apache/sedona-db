@@ -21,18 +21,18 @@ read_sf_stream <- function(
   ...,
   query = NA,
   options = NULL,
-  drivers = character(0),
+  drivers = NULL,
   filter = NULL,
-  fid_column_name = character(0),
+  fid_column_name = NULL,
   ctx = NULL,
   lazy = FALSE
 ) {
   check_dots_empty(..., label = "sd_read_sf_stream()")
 
-  layer <- if (is.null(layer)) {
-    character(0)
+  if (is.null(layer)) {
+    layer <- character(0)
   } else {
-    enc2utf8(layer)
+    layer <- enc2utf8(layer)
   }
 
   if (nchar(dsn) == 0) {
@@ -43,14 +43,17 @@ read_sf_stream <- function(
 
   # A heuristic to catch common database DSNs so that we don't try to normalize
   # them as file paths
-  dsn_isdb <- grepl("^(pg|mssql|pgeo|odbc):", tolower(dsn))
+  dsn_isdb <- grepl("^(pg|mssql|pgeo|odbc|postgresql):", tolower(dsn))
 
   # Normalize (e.g., replace ~) and ensure internal encoding is UTF-8
   if (length(dsn) == 1 && dsn_exists && !dsn_isdb) {
     dsn <- enc2utf8(normalizePath(dsn))
   }
 
+  # Rcpp expects these to be character vectors
   options <- as.character(options)
+  drivers <- as.character(drivers)
+  fid_column_name <- as.character(fid_column_name)
 
   if (!is.null(filter)) {
     filter <- wk::as_wkt(filter)
@@ -77,19 +80,26 @@ read_sf_stream <- function(
     getOption("width")
   )
 
+  # Check filter for CRS equality
+  if (!identical(filter, character())) {
+    filter_crs <- sf::st_crs(filter)
+
+    for (column_crs in info[[2]]) {
+      column_crs_sf <- sf::st_crs(column_crs)
+      if (filter_crs != column_crs_sf) {
+        stop(
+          sprintf(
+            "filter crs (%s) does not match output CRS (%s)",
+            format(filter_crs),
+            format(column_crs_sf)
+          )
+        )
+      }
+    }
+  }
+
   # sf doesn't currently support GEOMETRY_METADATA_ENCODING=GEOARROW, so we
-  # need to post-process the stream
-
-  # Check that the filter's CRS matched the dataset CRS
-  # if (!is.null(filter)) {
-  #   filter_crs <- wk::wk_crs(filter)
-  #   for (crs in info[[2]]) {
-  #     if (!wk::wk_crs_equal(sf::st_crs(crs), filter_crs)) {
-  #       stop("filter CRS is not equal to geometry column CRS")
-  #     }
-  #   }
-  # }
-
+  # need to post-process the stream to ensure the CRS is set on the output
   geometry_column_names <- info[[1]]
   geometry_column_crses <- vapply(
     info[[2]],
