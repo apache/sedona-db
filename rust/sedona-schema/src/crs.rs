@@ -377,7 +377,7 @@ impl AuthorityCode {
         let ac = if Self::validate_epsg_code(auth_code) {
             format!("EPSG:{auth_code}")
         } else {
-            auth_code.to_string()
+            auth_code.to_uppercase()
         };
         Some(Arc::new(AuthorityCode { auth_code: ac }))
     }
@@ -399,7 +399,7 @@ impl AuthorityCode {
     /// Validate the authority part of an authority:code string
     /// Note: this can be expanded in the future to support more authorities
     fn validate_authority(authority: &str) -> bool {
-        matches!(authority, "EPSG" | "OGC")
+        authority.chars().all(|c| c.is_alphanumeric())
     }
 
     /// Validate that a code is alphanumeric for general authority codes.
@@ -551,14 +551,52 @@ mod test {
 
     #[test]
     fn deserialize() {
+        // lnglat() crses
         assert_eq!(deserialize_crs("EPSG:4326").unwrap(), lnglat());
-
         assert_eq!(deserialize_crs("OGC:CRS84").unwrap(), lnglat());
-
         assert_eq!(deserialize_crs(OGC_CRS84_PROJJSON).unwrap(), lnglat());
 
+        // None crses
         assert!(deserialize_crs("").unwrap().is_none());
+        assert!(deserialize_crs("0").unwrap().is_none());
 
+        // Authority:Code CRSes
+        // Make sure we can deserialize a few common authorities
+        assert_eq!(
+            deserialize_crs("EPSG:3857")
+                .unwrap()
+                .unwrap()
+                .to_authority_code()
+                .unwrap(),
+            Some("EPSG:3857".to_string())
+        );
+
+        assert_eq!(
+            deserialize_crs("OGC:CRS27")
+                .unwrap()
+                .unwrap()
+                .to_authority_code()
+                .unwrap(),
+            Some("OGC:CRS27".to_string())
+        );
+
+        assert_eq!(
+            deserialize_crs("ESRI:102005")
+                .unwrap()
+                .unwrap()
+                .to_authority_code()
+                .unwrap(),
+            Some("ESRI:102005".to_string())
+        );
+
+        // Check that we can deserialize lowercase authorities and that they compare
+        // equal to upperdase authorities
+        assert_eq!(
+            deserialize_crs("epsg:3857").unwrap(),
+            deserialize_crs("EPSG:3857").unwrap()
+        );
+
+        // Erroneous CRSes
         assert!(deserialize_crs("[]").is_err());
 
         let crs_value = serde_json::Value::String("EPSG:4326".to_string());
