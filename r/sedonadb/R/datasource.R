@@ -15,7 +15,36 @@
 # specific language governing permissions and limitations
 # under the License.
 
-read_sf_stream <- function(
+#' Read GDAL/OGR via the sf package
+#'
+#' Uses the ArrowArrayStream interface to GDAL exposed via the sf package
+#' to read GDAL/OGR-based data sources.
+#'
+#' @param ctx A SedonaDB context created using [sd_connect()].
+#' @param dsn,layer Description of datasource and layer. See [sf::read_sf()]
+#'   for details.
+#' @param ... Currently unused and must be empty
+#' @param query A SQL query to pass on to GDAL/OGR.
+#' @param options A character vector with layer open options in the
+#'   form "KEY=VALUE".
+#' @param drivers A list of drivers to try if the dsn cannot be guessed.
+#' @param filter A spatial object that may be used to filter while reading.
+#'   In the future SedonaDB will automatically calculate this value based on
+#'   the query. May be any spatial object that can be converted to WKT via
+#'   [wk::as_wkt()]. This filter's CRS must match that of the data.
+#' @param fid_column_name An optional name for the feature id (FID) column.
+#' @param lazy Use `TRUE` to stream the data from the source rather than collect
+#'   first. This can be faster for large data sources but can also be confusing
+#'   because the data may only be scanned exactly once.
+#'
+#' @returns A SedonaDB DataFrame.
+#' @export
+#'
+#' @examples
+#' nc_gpkg <- system.file("gpkg/nc.gpkg", package = "sf")
+#' sd_read_sf(nc_gpkg)
+#'
+sd_read_sf <- function(
   dsn,
   layer = NULL,
   ...,
@@ -24,8 +53,61 @@ read_sf_stream <- function(
   drivers = NULL,
   filter = NULL,
   fid_column_name = NULL,
-  ctx = NULL,
   lazy = FALSE
+) {
+  sd_ctx_read_sf(
+    ctx(),
+    dsn = dsn,
+    layer = layer,
+    ...,
+    query = query,
+    options = options,
+    drivers = drivers,
+    filter = filter,
+    fid_column_name = fid_column_name,
+    lazy = lazy
+  )
+}
+
+#' @rdname sd_read_sf
+#' @export
+sd_ctx_read_sf <- function(
+  ctx,
+  dsn,
+  layer = NULL,
+  ...,
+  query = NA,
+  options = NULL,
+  drivers = NULL,
+  filter = NULL,
+  fid_column_name = NULL,
+  lazy = FALSE
+) {
+  stream <- read_sf_stream(
+    dsn = dsn,
+    layer = layer,
+    ...,
+    query = query,
+    options = options,
+    drivers = drivers,
+    filter = filter,
+    fid_column_name = fid_column_name
+  )
+
+  df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
+  new_sedonadb_dataframe(ctx, df)
+}
+
+
+read_sf_stream <- function(
+  dsn,
+  layer = NULL,
+  ...,
+  query = NA,
+  options = NULL,
+  drivers = NULL,
+  filter = NULL,
+  fid_column_name = NULL
 ) {
   check_dots_empty(..., label = "sd_read_sf_stream()")
 

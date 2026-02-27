@@ -15,12 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("read_sf_stream() works for layers with named geometry columns", {
+test_that("sd_read_sf() works for layers with named geometry columns", {
   skip_if_not_installed("sf")
 
   nc_gpkg <- system.file("gpkg/nc.gpkg", package = "sf")
 
-  from_stream <- sf::st_as_sf(read_sf_stream(nc_gpkg))
+  from_stream <- sf::st_as_sf(sd_read_sf(nc_gpkg))
   from_sf <- sf::st_read(nc_gpkg, quiet = TRUE)
 
   # Expect identical CRS
@@ -33,12 +33,12 @@ test_that("read_sf_stream() works for layers with named geometry columns", {
   )
 })
 
-test_that("read_sf_stream() works for layers with unnamed geometry columns", {
+test_that("sd_read_sf() works for layers with unnamed geometry columns", {
   skip_if_not_installed("sf")
 
   nc_shp <- system.file("shape/nc.shp", package = "sf")
 
-  from_stream <- sf::st_as_sf(read_sf_stream(nc_shp))
+  from_stream <- sf::st_as_sf(sd_read_sf(nc_shp))
   from_sf <- sf::st_read(nc_shp, quiet = TRUE, promote_to_multi = FALSE)
 
   # Expect identical CRS
@@ -57,7 +57,7 @@ test_that("read_sf_stream() works for layers with unnamed geometry columns", {
   )
 })
 
-test_that("read_sf_stream() works for database dsns / non-default layers", {
+test_that("sd_read_sf() works for database dsns / non-default layers", {
   skip_if_not_installed("sf")
 
   # Can be tested using docker compose up with
@@ -77,7 +77,7 @@ test_that("read_sf_stream() works for database dsns / non-default layers", {
     quiet = TRUE
   )
 
-  from_stream <- sf::st_as_sf(read_sf_stream(test_uri, "test_sf_nc"))
+  from_stream <- sf::st_as_sf(sd_read_sf(test_uri, "test_sf_nc"))
   from_sf <- sf::st_read(test_uri, "test_sf_nc", quiet = TRUE)
 
   # Expect identical CRS
@@ -90,13 +90,13 @@ test_that("read_sf_stream() works for database dsns / non-default layers", {
   )
 })
 
-test_that("read_sf_stream() works with filter", {
+test_that("sd_read_sf() works with filter", {
   skip_if_not_installed("sf")
 
   nc_gpkg <- system.file("gpkg/nc.gpkg", package = "sf")
   filter <- wk::rct(-77.901, 36.162, -77.075, 36.556, crs = sf::st_crs("NAD27"))
 
-  from_stream <- sf::st_as_sf(read_sf_stream(nc_gpkg, filter = filter))
+  from_stream <- sf::st_as_sf(sd_read_sf(nc_gpkg, filter = filter))
   from_sf <- sf::st_read(nc_gpkg, quiet = TRUE, wkt_filter = wk::as_wkt(filter))
 
   # Expect identical CRS
@@ -110,5 +110,5 @@ test_that("read_sf_stream() works with filter", {
 
   # Check for error if filtered with an invalid CRS
   wk::wk_crs(filter) <- NULL
-  expect_snapshot_error(read_sf_stream(nc_gpkg, filter = filter))
+  expect_snapshot_error(sd_read_sf(nc_gpkg, filter = filter))
 })
