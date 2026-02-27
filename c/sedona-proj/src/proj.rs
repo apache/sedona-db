@@ -301,7 +301,24 @@ impl Proj {
     }
 
     pub(crate) fn to_projjson(&self) -> Result<String, SedonaProjError> {
-        Err(SedonaProjError::Invalid("not implemented".to_string()))
+        let inner = unsafe {
+            call_proj_api!(
+                self.ctx.api,
+                proj_as_projjson,
+                self.ctx.inner,
+                self.inner,
+                ptr::null()
+            )
+        };
+
+        if inner.is_null() {
+            return Err(SedonaProjError::Invalid(
+                "proj_as_projjson returned null".to_string(),
+            ));
+        }
+
+        let c_str = unsafe { CStr::from_ptr(inner) };
+        Ok(c_str.to_string_lossy().to_string())
     }
 
     /// Create a transformation between two coordinate reference systems.

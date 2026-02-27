@@ -19,7 +19,7 @@ use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
 use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
 use geo_traits::Dimensions;
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
