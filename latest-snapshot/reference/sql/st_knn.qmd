@@ -24,15 +24,29 @@ kernels:
     - name: geomA
       type: geometry
       description: The geometry around which to search.
-    - name: geomb
+    - name: geomB
       type: geometry
       description: Column containing candidate geometries.
     - name: k
       type: integer
-      description: The number of nearest neighbours to return.
+      description: The number of nearest neighbours to return. Defaults to 1.
     - name: use_spheroid
       type: boolean
-      description: true to use spherical distance, false for Euclidean
+      description: true to use spherical distance, false for Euclidean. Defaults to false.
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+    - name: geomB
+      type: geometry
+    - name: k
+      type: integer
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+    - name: geomB
+      type: geometry
 ---
 
 ## Description
@@ -54,5 +68,5 @@ WITH table2 AS (
 table1 AS (
     SELECT ST_Point(0, 0) AS geom2
 )
-SELECT * FROM table1 JOIN table2 ON ST_KNN(geom1, geom2, 3, false);
+SELECT * FROM table1 JOIN table2 ON ST_KNN(geom1, geom2, 3);
 ```
