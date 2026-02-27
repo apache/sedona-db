@@ -27,3 +27,18 @@ impl CrsProvider for ProjCrsProvider {
         with_global_proj_engine(|e| e.engine().to_projjson(crs_string))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn proj_crs_provider() {
+        let provider = ProjCrsProvider{};
+        let projjson = provider.to_projjson("EPSG:3857").unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+    }
+}

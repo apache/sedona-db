@@ -633,6 +633,17 @@ mod test {
     use super::*;
     use approx::assert_relative_eq;
 
+    #[test]
+    fn test_crs_to_projjson() {
+        let ctx = Rc::new(ProjContext::try_from_proj_sys().unwrap());
+        let proj = Proj::try_new(ctx.clone(), "EPSG:3857").unwrap();
+        let projjson = proj.to_projjson().unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+    }
+
     /// Test conversion from NAD83 US Survey Feet (EPSG 2230) to NAD83 Metres (EPSG 26946)
     #[test]
     fn test_crs_to_crs_conversion() {

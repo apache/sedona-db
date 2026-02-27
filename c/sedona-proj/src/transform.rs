@@ -347,6 +347,22 @@ mod test {
     use wkb::reader::read_wkb;
 
     #[test]
+    fn proj_as_projjson() {
+        let engine = ProjCrsEngineBuilder::default().build().unwrap();
+        let projjson = engine.to_projjson("EPSG:3857").unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+
+        let err = engine.to_projjson("gazornenplat").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Failed to create CRS from source 'gazornenplat': Invalid PROJ string syntax"
+        );
+    }
+
+    #[test]
     fn proj_crs_to_crs() {
         let engine = ProjCrsEngineBuilder::default().build().unwrap();
         let trans = engine
