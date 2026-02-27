@@ -590,4 +590,32 @@ mod tests {
         assert!(config.set("", "invalid").is_err());
         assert!(config.set("", "fixed[10]").is_err());
     }
+
+    #[test]
+    fn test_default_crs_provider_returns_error() {
+        let provider = CrsProviderOption::default();
+        let result = provider.to_projjson("EPSG:4326");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Can't convert EPSG:4326 to PROJJSON CRS"),
+            "Unexpected error message: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("no CrsProvider registered"),
+            "Unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_crs_provider_option_set_from_sql_returns_error() {
+        let mut option = CrsProviderOption::default();
+        let result = option.set("sedona.crs_provider", "some_value");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Can't set sedona.crs_provider from SQL"),
+            "Unexpected error message: {err_msg}"
+        );
+    }
 }
