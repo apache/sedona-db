@@ -17,7 +17,7 @@
 
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
-use datafusion_common::{DataFusionError, Result, exec_datafusion_err};
+use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
 use geo_traits::Dimensions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_geometry::bounding_box::BoundingBox;
@@ -220,10 +220,13 @@ pub struct ProjCrsEngine {
 
 impl ProjCrsEngine {
     pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
-        let _source_crs = Proj::try_new(self.ctx.clone(), crs_string)
-            .map_err(|e| exec_datafusion_err!("Failed to create CRS from source '{crs_string}': {e}"))?;
+        let source_crs = Proj::try_new(self.ctx.clone(), crs_string).map_err(|e| {
+            exec_datafusion_err!("Failed to create CRS from source '{crs_string}': {e}")
+        })?;
 
-        sedona_internal_err!("source crs export not yet implemented")
+        source_crs
+            .to_projjson()
+            .map_err(|e| exec_datafusion_err!("Failed to export '{crs_string}' as PROJJSON: {e}"))
     }
 }
 

@@ -300,6 +300,10 @@ impl Proj {
         Ok(Self { inner, ctx })
     }
 
+    pub(crate) fn to_projjson(&self) -> Result<String, SedonaProjError> {
+        Err(SedonaProjError::Invalid("not implemented".to_string()))
+    }
+
     /// Create a transformation between two coordinate reference systems.
     ///
     /// This creates a transformation pipeline that converts coordinates from
