@@ -740,7 +740,7 @@ mod tests {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "st_transform([]): No kernel matching arguments"
+            "st_transform(): No kernel matching arguments"
         );
 
         // Too many args
@@ -756,7 +756,7 @@ mod tests {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "st_transform([Arrow(Utf8), Arrow(Utf8), Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
+            "st_transform(utf8, utf8, utf8, utf8): No kernel matching arguments"
         );
 
         // First arg not geometry
@@ -770,7 +770,7 @@ mod tests {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "st_transform([Arrow(Utf8), Arrow(Utf8)]): No kernel matching arguments"
+            "st_transform(utf8, utf8): No kernel matching arguments"
         );
 
         // Second arg not string or numeric
@@ -781,7 +781,7 @@ mod tests {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "st_transform([Wkb(Planar, None), Arrow(Boolean)]): No kernel matching arguments"
+            "st_transform(geometry, boolean): No kernel matching arguments"
         );
 
         // third arg not string or numeric
@@ -796,7 +796,7 @@ mod tests {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "st_transform([Wkb(Planar, None), Arrow(Utf8), Arrow(Boolean)]): No kernel matching arguments"
+            "st_transform(geometry, utf8, boolean): No kernel matching arguments"
         );
     }
 

@@ -1984,14 +1984,11 @@ mod tests {
     fn test_match_knn_predicate_insufficient_args() {
         let column_indices = create_test_column_indices();
 
-        // Create ST_KNN with only 3 arguments (insufficient - needs 4)
+        // Create ST_KNN with only 1 arguments (insufficient - needs 2)
         let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
-        let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
-        let k_literal =
-            Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
 
         let st_knn_udf = create_dummy_st_knn_udf();
-        let args = vec![left_geom, right_geom, k_literal]; // Missing use_spheroid arg
+        let args = vec![left_geom];
         let st_knn = create_spatial_function_expr(st_knn_udf, args);
 
         let predicate = match_knn_predicate(&st_knn, &column_indices);
