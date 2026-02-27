@@ -90,15 +90,20 @@ read_sf_internal <- function(
   #   }
   # }
 
-  # Return the stream. The lifecycle of the underlying GDAL dataset is tied
-  # to the lifecycle of the stream (i.e., when the stream id released, the
-  # dataset object will be closed)
-  stream
+  geometry_column_names <- info[[1]]
+  geometry_column_crses <- vapply(
+    info[[2]],
+    function(x) wk::wk_crs_projjson(sf::st_crs(x)),
+    character(1)
+  )
 
-  if (is.null(ctx)) {
-    ctx <- ctx()
-  }
+  stream_out <- nanoarrow::nanoarrow_allocate_array_stream()
+  apply_crses_to_sf_stream(
+    stream,
+    geometry_column_names,
+    geometry_column_crses,
+    stream_out
+  )
 
-  df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
-  new_sedonadb_dataframe(ctx, df)
+  stream_out
 }

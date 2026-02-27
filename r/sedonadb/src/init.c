@@ -55,6 +55,16 @@ SEXP handle_result(SEXP res_) {
   return (SEXP)res;
 }
 
+SEXP savvy_apply_crses_to_sf_stream__impl(SEXP c_arg__stream_in_xptr,
+                                          SEXP c_arg__geometry_column_names,
+                                          SEXP c_arg__geometry_column_crses,
+                                          SEXP c_arg__stream_out_xptr) {
+  SEXP res = savvy_apply_crses_to_sf_stream__ffi(
+      c_arg__stream_in_xptr, c_arg__geometry_column_names,
+      c_arg__geometry_column_crses, c_arg__stream_out_xptr);
+  return handle_result(res);
+}
+
 SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
                                        SEXP c_arg__database_path,
                                        SEXP c_arg__search_path) {
@@ -328,6 +338,8 @@ SEXP savvy_SedonaDBExprFactory_scalar_function__impl(SEXP self__,
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"savvy_apply_crses_to_sf_stream__impl",
+     (DL_FUNC)&savvy_apply_crses_to_sf_stream__impl, 4},
     {"savvy_configure_proj_shared__impl",
      (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
     {"savvy_init_r_runtime_interrupts__impl",
