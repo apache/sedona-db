@@ -34,7 +34,7 @@ mod test {
 
     #[test]
     fn proj_crs_provider() {
-        let provider = ProjCrsProvider{};
+        let provider = ProjCrsProvider {};
         let projjson = provider.to_projjson("EPSG:3857").unwrap();
         assert!(
             projjson.starts_with("{"),

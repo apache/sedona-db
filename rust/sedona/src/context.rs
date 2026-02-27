@@ -115,9 +115,8 @@ impl SedonaContext {
             .extensions
             .get_mut::<SedonaOptions>()
             .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
-        opts.crs_provider = CrsProviderOption::new(Arc::new(
-            sedona_proj::provider::ProjCrsProvider::default(),
-        ));
+        opts.crs_provider =
+            CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
 
         #[cfg(feature = "pointcloud")]
         let session_config = session_config.with_option_extension(
