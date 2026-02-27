@@ -153,6 +153,7 @@ pub struct CachingCrsEngine<T: CrsEngine> {
 }
 
 impl<T: CrsEngine> CachingCrsEngine<T> {
+    /// Return a reference to the wrapped engine
     pub fn engine(&self) -> &T {
         &self.engine
     }

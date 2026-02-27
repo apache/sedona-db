@@ -47,7 +47,7 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::{
-    option::add_sedona_option_extension, sedona_internal_datafusion_err, GlobalCrsProviderOption,
+    option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
     SedonaOptions,
 };
 use sedona_datasource::provider::external_listing_table;
@@ -109,13 +109,13 @@ impl SedonaContext {
         let mut session_config = add_sedona_option_extension(session_config);
 
         // Always register the PROJ CrsProvider by default (if PROJ is not configured
-        // before it is used an error will be raised)
+        // before it is used an error will be raised).
         let opts = session_config
             .options_mut()
             .extensions
             .get_mut::<SedonaOptions>()
             .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
-        opts.crs_provider = GlobalCrsProviderOption::new(Arc::new(
+        opts.crs_provider = CrsProviderOption::new(Arc::new(
             sedona_proj::provider::ProjCrsProvider::default(),
         ));
 

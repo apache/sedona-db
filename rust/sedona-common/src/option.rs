@@ -43,8 +43,8 @@ config_namespace! {
         /// Options for spatial join
         pub spatial_join: SpatialJoinOptions, default = SpatialJoinOptions::default()
 
-        /// Global CRS provider
-        pub crs_provider: GlobalCrsProviderOption, default = GlobalCrsProviderOption::default()
+        /// Global [CrsProvider] for CRS metadata operations
+        pub crs_provider: CrsProviderOption, default = CrsProviderOption::default()
     }
 }
 
@@ -411,32 +411,47 @@ impl ConfigField for TgIndexType {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct GlobalCrsProviderOption(Arc<dyn CrsProvider>);
+/// Trait defining an abstract provider of Coordinate Reference System metadata
+///
+/// Unlike a CrsEngine, which provides concrete coordinate transformations for
+/// pairs of projections, a CrsProvider is handles metadata-only operations.
+/// Currently this is only used to resolve an arbitrary CRS representation to
+/// PROJJSON (e.g., to write valid GeoParquet files from arbitrary CRSes), but
+/// could also be used to validate CRSes.
+pub trait CrsProvider: std::fmt::Debug + Send + Sync {
+    fn to_projjson(&self, crs_string: &str) -> Result<String>;
+}
 
-impl GlobalCrsProviderOption {
+/// Wrapper class implementing [ConfigField] that allows a [CrsProvider]
+/// member in [SedonaOptions].
+#[derive(Debug, Clone)]
+pub struct CrsProviderOption(Arc<dyn CrsProvider>);
+
+impl CrsProviderOption {
+    /// Create a new option from a [CrsProvider] reference
     pub fn new(inner: Arc<dyn CrsProvider>) -> Self {
-        GlobalCrsProviderOption(inner)
+        CrsProviderOption(inner)
     }
 
+    /// Convert an arbitrary string to a PROJJSON representation if possible
     pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
         self.0.to_projjson(crs_string)
     }
 }
 
-impl Default for GlobalCrsProviderOption {
+impl Default for CrsProviderOption {
     fn default() -> Self {
         Self(Arc::new(DefaultCrsProvider {}))
     }
 }
 
-impl PartialEq for GlobalCrsProviderOption {
+impl PartialEq for CrsProviderOption {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl ConfigField for GlobalCrsProviderOption {
+impl ConfigField for CrsProviderOption {
     fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
         v.some(key, format!("{:?}", self.0), description);
     }
@@ -455,10 +470,6 @@ impl CrsProvider for DefaultCrsProvider {
             "Can't convert {crs_string} to PROJJSON CRS (no CrsProvider registered)"
         )
     }
-}
-
-pub trait CrsProvider: std::fmt::Debug + Send + Sync {
-    fn to_projjson(&self, crs_string: &str) -> Result<String>;
 }
 
 #[cfg(test)]

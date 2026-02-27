@@ -219,6 +219,7 @@ pub struct ProjCrsEngine {
 }
 
 impl ProjCrsEngine {
+    /// Resolve the CRS represented by this object to a PROJJSON string
     pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
         let source_crs = Proj::try_new(self.ctx.clone(), crs_string).map_err(|e| {
             exec_datafusion_err!("Failed to create CRS from source '{crs_string}': {e}")
