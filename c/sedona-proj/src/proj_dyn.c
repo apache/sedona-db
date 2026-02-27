@@ -112,6 +112,7 @@ static int load_proj_from_handle(struct ProjApi* api, void* handle, char* err_ms
   LOAD_PROJ_FUNCTION(api, proj_normalize_for_visualization);
   LOAD_PROJ_FUNCTION(api, proj_trans);
   LOAD_PROJ_FUNCTION(api, proj_trans_array);
+  LOAD_PROJ_FUNCTION(api, proj_as_projjson);
 
   api->release = &proj_dyn_release_api;
   api->private_data = handle;

@@ -523,12 +523,12 @@ impl ProjApi {
     #[cfg(feature = "proj-sys")]
     fn from_proj_sys() -> Self {
         use proj_sys::{
-            proj_area_create, proj_area_destroy, proj_area_set_bbox, proj_context_create,
-            proj_context_destroy, proj_context_errno, proj_context_errno_string,
-            proj_context_set_database_path, proj_context_set_search_paths, proj_create,
-            proj_create_crs_to_crs_from_pj, proj_cs_get_axis_count, proj_destroy, proj_errno,
-            proj_errno_reset, proj_info, proj_log_level, proj_normalize_for_visualization,
-            proj_trans, proj_trans_array,
+            proj_area_create, proj_area_destroy, proj_area_set_bbox, proj_as_projjson,
+            proj_context_create, proj_context_destroy, proj_context_errno,
+            proj_context_errno_string, proj_context_set_database_path,
+            proj_context_set_search_paths, proj_create, proj_create_crs_to_crs_from_pj,
+            proj_cs_get_axis_count, proj_destroy, proj_errno, proj_errno_reset, proj_info,
+            proj_log_level, proj_normalize_for_visualization, proj_trans, proj_trans_array,
         };
 
         let mut inner = proj_dyn_bindgen::ProjApi::default();
@@ -599,42 +599,14 @@ impl ProjApi {
             inner.proj_trans_array = Some(std::mem::transmute(
                 proj_trans_array as unsafe extern "C" fn(*mut _, _, usize, *mut _) -> _,
             ));
+            inner.proj_as_projjson = Some(std::mem::transmute(
+                proj_as_projjson as unsafe extern "C" fn(_, _, _) -> _,
+            ));
         }
 
         Self {
             inner,
             name: "proj_sys".to_string(),
-        }
-    }
-}
-
-// We don't have control over this generated source, so we can't derive the implementation
-#[allow(clippy::derivable_impls)]
-impl Default for proj_dyn_bindgen::ProjApi {
-    fn default() -> Self {
-        Self {
-            proj_area_create: Default::default(),
-            proj_area_destroy: Default::default(),
-            proj_area_set_bbox: Default::default(),
-            proj_context_create: Default::default(),
-            proj_context_destroy: Default::default(),
-            proj_context_errno_string: Default::default(),
-            proj_context_errno: Default::default(),
-            proj_context_set_database_path: Default::default(),
-            proj_context_set_search_paths: Default::default(),
-            proj_create_crs_to_crs_from_pj: Default::default(),
-            proj_create: Default::default(),
-            proj_cs_get_axis_count: Default::default(),
-            proj_destroy: Default::default(),
-            proj_errno_reset: Default::default(),
-            proj_errno: Default::default(),
-            proj_info: Default::default(),
-            proj_log_level: Default::default(),
-            proj_normalize_for_visualization: Default::default(),
-            proj_trans: Default::default(),
-            proj_trans_array: Default::default(),
-            release: Default::default(),
-            private_data: ptr::null_mut(),
         }
     }
 }

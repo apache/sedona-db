@@ -85,6 +85,8 @@ struct ProjApi {
   PJ* (*proj_normalize_for_visualization)(PJ_CONTEXT* ctx, const PJ* obj);
   PJ_COORD (*proj_trans)(PJ* P, PJ_DIRECTION direction, PJ_COORD coord);
   PJ_COORD (*proj_trans_array)(PJ* P, PJ_DIRECTION direction, size_t n, PJ_COORD* coord);
+  const char* (*proj_as_projjson)(PJ_CONTEXT* ctx, const PJ* obj,
+                                  const char* const* options);
   void (*release)(struct ProjApi*);
   void* private_data;
 };

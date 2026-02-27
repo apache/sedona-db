@@ -84,7 +84,7 @@ pub struct PJ_INFO {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct ProjApi {
     pub proj_area_create: Option<unsafe extern "C" fn() -> *mut PJ_AREA>,
     pub proj_area_destroy: Option<unsafe extern "C" fn(area: *mut PJ_AREA)>,
@@ -144,6 +144,13 @@ pub struct ProjApi {
             n: usize,
             coord: *mut PJ_COORD,
         ) -> PJ_COORD,
+    >,
+    pub proj_as_projjson: Option<
+        unsafe extern "C" fn(
+            ctx: *mut PJ_CONTEXT,
+            obj: *const PJ,
+            options: *const *const c_char,
+        ) -> *const c_char,
     >,
     pub release: Option<unsafe extern "C" fn(arg1: *mut ProjApi)>,
     pub private_data: *mut c_void,
