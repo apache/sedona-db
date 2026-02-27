@@ -340,18 +340,36 @@ fn match_knn_predicate(
     }
 
     let args = scalar_fn.args();
-    if args.len() < 4 {
-        return None; // ST_KNN requires 4 arguments: (queries_geom, objects_geom, k, use_spheroid)
+
+    if args.len() < 2 {
+        return None;
     }
 
     let queries_geom = &args[0];
     let objects_geom = &args[1];
-    let k_expr = &args[2];
-    let use_spheroid_expr = &args[3];
 
-    // Extract literal values for k and use_spheroid
-    let k = extract_literal_u32(k_expr)?;
-    let use_spheroid = extract_literal_bool(use_spheroid_expr)?;
+    let (k, use_spheroid) = match args.len() {
+        2 => {
+            // Apply default k (1) and use_spheroid (false)
+            (1, false)
+        }
+        3 => {
+            // Extract literal values for k and apply default use_spheroid (false)
+            let k_expr = &args[2];
+            let k = extract_literal_u32(k_expr)?;
+            (k, false)
+        }
+        4 => {
+            // Extract literal values for k and use_spheroid
+            let k_expr = &args[2];
+            let k = extract_literal_u32(k_expr)?;
+
+            let use_spheroid_expr = &args[3];
+            let use_spheroid = extract_literal_bool(use_spheroid_expr)?;
+            (k, use_spheroid)
+        }
+        _ => return None,
+    };
 
     // Collect column references for geometry arguments
     let queries_refs = collect_column_references(queries_geom, column_indices);
