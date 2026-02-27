@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-read_sf_internal <- function(
+read_sf_stream <- function(
   dsn,
   layer = NULL,
   ...,
@@ -54,7 +54,7 @@ read_sf_internal <- function(
 
   if (!is.null(filter)) {
     filter <- wk::as_wkt(filter)
-    if (length(filter) != 1){
+    if (length(filter) != 1) {
       stop("Filter must be a geometry-like object of length one")
     }
   } else {
@@ -96,6 +96,18 @@ read_sf_internal <- function(
     function(x) wk::wk_crs_projjson(sf::st_crs(x)),
     character(1)
   )
+
+  # The sf implementation assigns the "missing" geometry column name "geometry"
+  # where the name in the schema is "wkb_geometry".
+  if (
+    "geometry" %in% geometry_column_names && !("wkb_geometry" %in% geometry_column_names)
+  ) {
+    geometry_column_names <- c(geometry_column_names, "wkb_geometry")
+    geometry_column_crses <- c(
+      geometry_column_crses,
+      geometry_column_crses[geometry_column_names == "geometry"]
+    )
+  }
 
   stream_out <- nanoarrow::nanoarrow_allocate_array_stream()
   apply_crses_to_sf_stream(
