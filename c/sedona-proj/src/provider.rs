@@ -19,7 +19,7 @@ use sedona_common::CrsProvider;
 
 use crate::transform::with_global_proj_engine;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ProjCrsProvider {}
 
 impl CrsProvider for ProjCrsProvider {
