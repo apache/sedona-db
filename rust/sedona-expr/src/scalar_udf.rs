@@ -347,10 +347,7 @@ mod tests {
         assert_eq!(err.message(), "empty(): No kernel matching arguments");
 
         let batch_err = tester.invoke_arrays(vec![]).unwrap_err();
-        assert_eq!(
-            batch_err.message(),
-            "empty(): No kernel matching arguments"
-        );
+        assert_eq!(batch_err.message(), "empty(): No kernel matching arguments");
 
         Ok(())
     }
