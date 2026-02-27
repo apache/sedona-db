@@ -160,7 +160,7 @@ pub fn create_geoparquet_writer_physical_plan(
                     let projjson_string = sedona_options.crs_provider.to_projjson(string)?;
                     crs_value = projjson_string.parse().map_err(|e| {
                         exec_datafusion_err!(
-                            "Failed to parse CRS for column '{}' from CrsEngine {e}",
+                            "Failed to parse CRS for column '{}' from CrsProvider {e}",
                             f.name()
                         )
                     })?;
