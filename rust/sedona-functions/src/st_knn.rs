@@ -33,8 +33,8 @@ pub fn st_knn_udf() -> SedonaScalarUDF {
             vec![
                 ArgMatcher::is_geometry_or_geography(),
                 ArgMatcher::is_geometry_or_geography(),
-                ArgMatcher::is_numeric(),
-                ArgMatcher::is_boolean(),
+                ArgMatcher::optional(ArgMatcher::is_numeric()),
+                ArgMatcher::optional(ArgMatcher::is_boolean()),
             ],
             SedonaType::Arrow(DataType::Boolean),
         ),

@@ -727,7 +727,7 @@ mod test {
         let err = tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "fun([Wkb(Planar, None), Wkb(Planar, None)]): No kernel matching arguments"
+            "fun(geometry, geometry): No kernel matching arguments"
         );
     }
 

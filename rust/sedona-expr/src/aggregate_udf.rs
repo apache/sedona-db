@@ -139,7 +139,16 @@ impl SedonaAggregateUDF {
             }
         }
 
-        not_impl_err!("{}({:?}): No kernel matching arguments", self.name, args)
+        let args_display = args
+            .iter()
+            .map(|arg| arg.logical_type_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        not_impl_err!(
+            "{}({args_display}): No kernel matching arguments",
+            self.name
+        )
     }
 }
 
@@ -268,15 +277,12 @@ mod test {
         );
         assert_eq!(udf.name(), "empty");
         let err = udf.return_field(&[]).unwrap_err();
-        assert_eq!(err.message(), "empty([]): No kernel matching arguments");
+        assert_eq!(err.message(), "empty(): No kernel matching arguments");
         assert!(udf.kernels().is_empty());
         assert_eq!(udf.coerce_types(&[])?, vec![]);
 
         let batch_err = udf.return_field(&[]).unwrap_err();
-        assert_eq!(
-            batch_err.message(),
-            "empty([]): No kernel matching arguments"
-        );
+        assert_eq!(batch_err.message(), "empty(): No kernel matching arguments");
 
         Ok(())
     }

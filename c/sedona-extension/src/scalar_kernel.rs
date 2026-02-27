@@ -735,7 +735,7 @@ mod test {
         let err = ffi_tester.return_type().unwrap_err();
         assert_eq!(
             err.message(),
-            "simple_udf_from_ffi([]): No kernel matching arguments"
+            "simple_udf_from_ffi(): No kernel matching arguments"
         );
     }
 
