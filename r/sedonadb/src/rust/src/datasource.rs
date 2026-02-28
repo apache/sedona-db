@@ -29,8 +29,7 @@ use sedona_schema::{
 
 use crate::ffi::import_array_stream;
 
-/// This is a workaround for the current availability of the GDAL stream interface
-/// as exposed by the sf package. With
+
 #[savvy]
 fn apply_crses_to_sf_stream(
     stream_in_xptr: savvy::Sexp,

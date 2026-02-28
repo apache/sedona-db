@@ -126,10 +126,23 @@ read_sf_stream <- function(
   # A heuristic to catch common database DSNs so that we don't try to normalize
   # them as file paths
   dsn_isdb <- grepl("^(pg|mssql|pgeo|odbc|postgresql):", tolower(dsn))
+  dsn_is_http <- grepl("^https://", dsn)
 
   # Normalize (e.g., replace ~) and ensure internal encoding is UTF-8
-  if (length(dsn) == 1 && dsn_exists && !dsn_isdb) {
+  if (length(dsn) == 1 && dsn_exists && !dsn_isdb && !dsn_is_http) {
     dsn <- enc2utf8(normalizePath(dsn))
+
+    if (endsWith(dsn, ".zip")) {
+      dsn <- paste0("/vsizip/", dsn)
+    }
+  }
+
+  if (dsn_is_http) {
+    dsn <- paste0("/vsicurl/", enc2utf8(dsn))
+
+    if (endsWith(dsn, ".zip")) {
+      dsn <- paste0("/vsizip/", dsn)
+    }
   }
 
   # Rcpp expects these to be character vectors

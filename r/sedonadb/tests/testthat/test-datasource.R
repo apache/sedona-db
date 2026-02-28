@@ -112,3 +112,35 @@ test_that("sd_read_sf() works with filter", {
   wk::wk_crs(filter) <- NULL
   expect_snapshot_error(sd_read_sf(nc_gpkg, filter = filter))
 })
+
+test_that("sd_read_sf() works for zipped dsns", {
+  skip_if_not_installed("sf")
+
+  fgb <- system.file("files/natural-earth_cities.fgb", package = "sedonadb")
+  fgb_zip <- paste0(fgb, ".zip")
+
+  from_stream_fgb <- sd_read_sf(fgb) |> sf::st_as_sf()
+  from_stream_fgb_zip <- sd_read_sf(fgb_zip) |> sf::st_as_sf()
+  expect_identical(from_stream_fgb_zip, from_stream_fgb)
+})
+
+test_that("sd_read_sf() works for URL dsns", {
+  skip_if_offline()
+  skip_if_not_installed("sf")
+
+  # nolint start: line_length_linter
+  url <- "https://github.com/geoarrow/geoarrow-data/releases/download/v0.2.0/ns-water_water-point.fgb"
+  # nolint end
+  expect_identical(
+    sd_read_sf(url) |> sd_count(),
+    44690
+  )
+
+  # nolint start: line_length_linter
+  zipped_url <- "https://github.com/geoarrow/geoarrow-data/releases/download/v0.1.0/ns-water-water_point.fgb.zip"
+  # nolint end
+  expect_identical(
+    sd_read_sf(zipped_url) |> sd_count(),
+    44690
+  )
+})

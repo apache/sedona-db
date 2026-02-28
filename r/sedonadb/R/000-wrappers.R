@@ -54,8 +54,7 @@ NULL
   stop(class, " cannot be modified", call. = FALSE)
 }
 
-#' This is a workaround for the current availability of the GDAL stream interface
-#' as exposed by the sf package. With
+
 `apply_crses_to_sf_stream` <- function(
   `stream_in_xptr`,
   `geometry_column_names`,

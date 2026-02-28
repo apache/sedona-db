@@ -43,6 +43,9 @@ file.copy(
 # Remove unused libgpuspatial crate
 unlink("src/c/sedona-libgpuspatial", recursive = TRUE)
 
+# Other unused files
+unlink("src/c/.clang-format")
+
 # Tweak workspace Cargo.toml
 top_cargo_toml <- "src/Cargo.toml"
 lines <- readLines(top_cargo_toml)
