@@ -28,14 +28,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
-use crate::index::BuildPartition;
+use crate::index::spatial_index::SpatialIndexRef;
+use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
-use crate::{
-    index::{SpatialIndex, SpatialIndexBuilder, SpatialJoinBuildMetrics},
-    partitioning::SpatialPartition,
-    spatial_predicate::SpatialPredicate,
-};
+use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
 
 pub(crate) struct PartitionedIndexProvider {
     schema: SchemaRef,
@@ -49,7 +47,7 @@ pub(crate) struct PartitionedIndexProvider {
     data: BuildSideData,
 
     /// Async cells for indexes, one per regular partition
-    index_cells: Vec<DisposableAsyncCell<SharedResult<Arc<SpatialIndex>>>>,
+    index_cells: Vec<DisposableAsyncCell<SharedResult<SpatialIndexRef>>>,
 
     /// The memory reserved in the build side collection phase. We'll hold them until
     /// we don't need to build spatial indexes.
@@ -145,7 +143,7 @@ impl PartitionedIndexProvider {
     pub async fn build_or_wait_for_index(
         &self,
         partition_id: u32,
-    ) -> Option<Result<Arc<SpatialIndex>>> {
+    ) -> Option<Result<SpatialIndexRef>> {
         let cell = match self.index_cells.get(partition_id as usize) {
             Some(cell) => cell,
             None => {
@@ -194,7 +192,7 @@ impl PartitionedIndexProvider {
         }
     }
 
-    async fn maybe_build_index(&self, partition_id: u32) -> Option<Result<Arc<SpatialIndex>>> {
+    async fn maybe_build_index(&self, partition_id: u32) -> Option<Result<SpatialIndexRef>> {
         match &self.data {
             BuildSideData::SinglePartition(build_partition_opt) => {
                 if partition_id != 0 {
@@ -237,7 +235,7 @@ impl PartitionedIndexProvider {
         }
     }
 
-    pub async fn wait_for_index(&self, partition_id: u32) -> Option<Result<Arc<SpatialIndex>>> {
+    pub async fn wait_for_index(&self, partition_id: u32) -> Option<Result<SpatialIndexRef>> {
         let cell = match self.index_cells.get(partition_id as usize) {
             Some(cell) => cell,
             None => {
@@ -268,8 +266,8 @@ impl PartitionedIndexProvider {
     async fn build_index_for_single_partition(
         &self,
         build_partitions: Vec<BuildPartition>,
-    ) -> Result<Arc<SpatialIndex>> {
-        let mut index_builder = SpatialIndexBuilder::new(
+    ) -> Result<SpatialIndexRef> {
+        let mut index_builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -284,15 +282,14 @@ impl PartitionedIndexProvider {
             index_builder.add_stream(stream, geo_statistics).await?;
         }
 
-        let index = index_builder.finish()?;
-        Ok(Arc::new(index))
+        index_builder.finish()
     }
 
     async fn build_index_for_spilled_partition(
         &self,
         spilled_partition: SpilledPartition,
-    ) -> Result<Arc<SpatialIndex>> {
-        let mut index_builder = SpatialIndexBuilder::new(
+    ) -> Result<SpatialIndexRef> {
+        let mut index_builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -345,14 +342,13 @@ impl PartitionedIndexProvider {
 
         index_builder.merge_stats(geo_statistics);
 
-        let index = index_builder.finish()?;
-        Ok(Arc::new(index))
+        index_builder.finish()
     }
 }
 
 async fn get_index_from_cell(
-    cell: &DisposableAsyncCell<SharedResult<Arc<SpatialIndex>>>,
-) -> Option<Result<Arc<SpatialIndex>>> {
+    cell: &DisposableAsyncCell<SharedResult<SpatialIndexRef>>,
+) -> Option<Result<SpatialIndexRef>> {
     match cell.get().await {
         Some(Ok(index)) => Some(Ok(index)),
         Some(Err(shared_err)) => Some(Err(DataFusionError::Shared(shared_err))),
@@ -546,7 +542,7 @@ mod tests {
             .build_or_wait_for_index(0)
             .await
             .expect("partition exists")?;
-        assert_eq!(first_index.indexed_batches.len(), 1);
+        assert_eq!(first_index.num_indexed_batches(), 1);
         assert_eq!(provider.num_loaded_indexes(), 1);
 
         let cached_index = provider
@@ -591,13 +587,13 @@ mod tests {
         let idx_one = idx_one.expect("partition exists")?;
         let idx_two = idx_two.expect("partition exists")?;
         assert!(Arc::ptr_eq(&idx_one, &idx_two));
-        assert_eq!(idx_one.indexed_batches.len(), 1);
+        assert_eq!(idx_one.num_indexed_batches(), 1);
 
         let second_partition = provider
             .build_or_wait_for_index(1)
             .await
             .expect("second partition exists")?;
-        assert_eq!(second_partition.indexed_batches.len(), 1);
+        assert_eq!(second_partition.num_indexed_batches(), 1);
         assert_eq!(provider.num_loaded_indexes(), 2);
         Ok(())
     }

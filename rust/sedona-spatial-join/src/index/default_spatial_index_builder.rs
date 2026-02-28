@@ -1,0 +1,306 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use arrow::array::BooleanBufferBuilder;
+use arrow_schema::SchemaRef;
+use sedona_common::SpatialJoinOptions;
+use sedona_expr::statistics::GeoStatistics;
+use std::sync::Arc;
+
+use crate::index::spatial_index::SpatialIndexRef;
+use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::{
+    evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
+    index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
+    operand_evaluator::create_operand_evaluator,
+    refine::create_refiner,
+    spatial_predicate::SpatialPredicate,
+    utils::join_utils::need_produce_result_in_final,
+};
+use async_trait::async_trait;
+use datafusion_common::{utils::proxy::VecAllocExt, Result};
+use datafusion_expr::JoinType;
+use futures::StreamExt;
+use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
+use parking_lot::Mutex;
+use std::sync::atomic::AtomicUsize;
+
+// Type aliases for better readability
+type SpatialRTree = RTree<f32>;
+type DataIdToBatchPos = Vec<(i32, i32)>;
+type RTreeBuildResult = (SpatialRTree, DataIdToBatchPos);
+
+/// Rough estimate for in-memory size of the rtree per rect in bytes
+const RTREE_MEMORY_ESTIMATE_PER_RECT: usize = 60;
+
+/// Builder for constructing a SpatialIndex from geometry batches.
+///
+/// This builder handles:
+/// 1. Accumulating geometry batches to be indexed
+/// 2. Building the spatial R-tree index
+/// 3. Setting up memory tracking and visited bitmaps
+/// 4. Configuring prepared geometries based on execution mode
+pub struct DefaultSpatialIndexBuilder {
+    schema: SchemaRef,
+    spatial_predicate: SpatialPredicate,
+    options: SpatialJoinOptions,
+    join_type: JoinType,
+    probe_threads_count: usize,
+    metrics: SpatialJoinBuildMetrics,
+
+    /// Batches to be indexed
+    indexed_batches: Vec<EvaluatedBatch>,
+
+    /// Statistics for indexed geometries
+    stats: GeoStatistics,
+
+    /// Memory used by the spatial index
+    memory_used: usize,
+}
+
+impl DefaultSpatialIndexBuilder {
+    /// Create a new builder with the given configuration.
+    pub fn new(
+        schema: SchemaRef,
+        spatial_predicate: SpatialPredicate,
+        options: SpatialJoinOptions,
+        join_type: JoinType,
+        probe_threads_count: usize,
+        metrics: SpatialJoinBuildMetrics,
+    ) -> Result<Self> {
+        Ok(Self {
+            schema,
+            spatial_predicate,
+            options,
+            join_type,
+            probe_threads_count,
+            metrics,
+            indexed_batches: Vec::new(),
+            stats: GeoStatistics::empty(),
+            memory_used: 0,
+        })
+    }
+
+    /// Build the spatial R-tree index from collected geometry batches.
+    fn build_rtree(&mut self) -> Result<RTreeBuildResult> {
+        let build_timer = self.metrics.build_time.timer();
+
+        let num_rects = self
+            .indexed_batches
+            .iter()
+            .map(|batch| batch.rects().iter().flatten().count())
+            .sum::<usize>();
+
+        let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
+        let mut batch_pos_vec = vec![(-1, -1); num_rects];
+
+        for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
+            let rects = batch.rects();
+            for (idx, rect_opt) in rects.iter().enumerate() {
+                let Some(rect) = rect_opt else {
+                    continue;
+                };
+                let min = rect.min();
+                let max = rect.max();
+                let data_idx = rtree_builder.add(min.x, min.y, max.x, max.y);
+                batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+            }
+        }
+
+        let rtree = rtree_builder.finish::<HilbertSort>();
+        build_timer.done();
+
+        let mem_usage = rtree.metadata().data_buffer_length() + batch_pos_vec.allocated_size();
+        self.record_memory_usage(mem_usage);
+
+        Ok((rtree, batch_pos_vec))
+    }
+
+    /// Build visited bitmaps for tracking left-side indices in outer joins.
+    fn build_visited_bitmaps(&mut self) -> Result<Option<Mutex<Vec<BooleanBufferBuilder>>>> {
+        if !need_produce_result_in_final(self.join_type) {
+            return Ok(None);
+        }
+
+        let mut bitmaps = Vec::with_capacity(self.indexed_batches.len());
+        let mut total_buffer_size = 0;
+
+        for batch in &self.indexed_batches {
+            let batch_rows = batch.batch.num_rows();
+            let buffer_size = batch_rows.div_ceil(8);
+            total_buffer_size += buffer_size;
+
+            let mut bitmap = BooleanBufferBuilder::new(batch_rows);
+            bitmap.append_n(batch_rows, false);
+            bitmaps.push(bitmap);
+        }
+
+        self.record_memory_usage(total_buffer_size);
+
+        Ok(Some(Mutex::new(bitmaps)))
+    }
+
+    /// Create an rtree data index to consecutive index mapping.
+    fn build_geom_idx_vec(&mut self, batch_pos_vec: &Vec<(i32, i32)>) -> Vec<usize> {
+        let mut num_geometries = 0;
+        let mut batch_idx_offset = Vec::with_capacity(self.indexed_batches.len() + 1);
+        batch_idx_offset.push(0);
+        for batch in &self.indexed_batches {
+            num_geometries += batch.batch.num_rows();
+            batch_idx_offset.push(num_geometries);
+        }
+
+        let mut geom_idx_vec = Vec::with_capacity(batch_pos_vec.len());
+        self.record_memory_usage(geom_idx_vec.allocated_size());
+
+        for (batch_idx, row_idx) in batch_pos_vec {
+            // Convert (batch_idx, row_idx) to a linear, sequential index
+            let batch_offset = batch_idx_offset[*batch_idx as usize];
+            let prepared_idx = batch_offset + *row_idx as usize;
+            geom_idx_vec.push(prepared_idx);
+        }
+
+        geom_idx_vec
+    }
+
+    fn record_memory_usage(&mut self, bytes: usize) {
+        self.memory_used += bytes;
+        self.metrics.build_mem_used.set_max(self.memory_used);
+    }
+}
+
+#[async_trait]
+impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
+    fn estimate_extra_memory_usage(
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize {
+        // Estimate the amount of memory needed by the refiner
+        let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
+        let refiner = create_refiner(
+            options.spatial_library,
+            spatial_predicate,
+            options.clone(),
+            num_geoms,
+            geo_stats.clone(),
+        );
+        let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
+
+        let knn_components_mem_usage =
+            if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
+                KnnComponents::estimate_max_memory_usage(geo_stats)
+            } else {
+                0
+            };
+
+        // Estimate the amount of memory needed for the R-tree
+        let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
+
+        // The final estimation is the sum of all above
+        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
+    }
+
+    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        let in_mem_size = indexed_batch.in_mem_size()?;
+        self.indexed_batches.push(indexed_batch);
+        self.record_memory_usage(in_mem_size);
+        Ok(())
+    }
+
+    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
+        self.stats.merge(&stats);
+        self
+    }
+
+    fn finish(mut self) -> Result<SpatialIndexRef> {
+        if self.indexed_batches.is_empty() {
+            return Ok(Arc::new(DefaultSpatialIndex::empty(
+                self.spatial_predicate,
+                self.schema,
+                self.options,
+                AtomicUsize::new(self.probe_threads_count),
+            )));
+        }
+
+        let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
+        let num_geoms = self
+            .indexed_batches
+            .iter()
+            .map(|batch| batch.batch.num_rows())
+            .sum::<usize>();
+
+        let (rtree, batch_pos_vec) = self.build_rtree()?;
+
+        let geom_idx_vec = self.build_geom_idx_vec(&batch_pos_vec);
+        let visited_build_side = self.build_visited_bitmaps()?;
+
+        let refiner = create_refiner(
+            self.options.spatial_library,
+            &self.spatial_predicate,
+            self.options.clone(),
+            num_geoms,
+            self.stats.clone(),
+        );
+        self.record_memory_usage(refiner.estimate_max_memory_usage(&self.stats));
+
+        let cache_size = batch_pos_vec.len();
+        let knn_components_opt = {
+            if matches!(
+                self.spatial_predicate,
+                SpatialPredicate::KNearestNeighbors(_)
+            ) {
+                let knn_components = KnnComponents::new(cache_size, &self.indexed_batches)?;
+                self.record_memory_usage(knn_components.estimated_memory_usage());
+                Some(knn_components)
+            } else {
+                None
+            }
+        };
+
+        log::debug!(
+            "Estimated memory used by spatial index: {}",
+            self.memory_used
+        );
+        Ok(Arc::new(DefaultSpatialIndex::new(
+            self.schema,
+            self.options,
+            evaluator,
+            refiner,
+            rtree,
+            self.indexed_batches,
+            batch_pos_vec,
+            geom_idx_vec,
+            visited_build_side,
+            AtomicUsize::new(self.probe_threads_count),
+            knn_components_opt,
+        )))
+    }
+
+    async fn add_stream(
+        &mut self,
+        mut stream: SendableEvaluatedBatchStream,
+        geo_statistics: GeoStatistics,
+    ) -> Result<()> {
+        while let Some(batch) = stream.next().await {
+            let indexed_batch = batch?;
+            self.add_batch(indexed_batch)?;
+        }
+        self.merge_stats(geo_statistics);
+        Ok(())
+    }
+}

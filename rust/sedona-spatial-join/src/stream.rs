@@ -42,7 +42,8 @@ use std::sync::Arc;
 use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
-use crate::index::{partitioned_index_provider::PartitionedIndexProvider, SpatialIndex};
+use crate::index::partitioned_index_provider::PartitionedIndexProvider;
+use crate::index::spatial_index::SpatialIndexRef;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::partitioning::SpatialPartition;
 use crate::prepare::SpatialJoinComponents;
@@ -101,11 +102,11 @@ pub(crate) struct SpatialJoinStream {
     /// Probe side evaluated batch stream provider
     probe_stream_provider: Option<PartitionedProbeStreamProvider>,
     /// The spatial index for the current partition
-    spatial_index: Option<Arc<SpatialIndex>>,
+    spatial_index: Option<SpatialIndexRef>,
     /// The probe-side evaluated batch stream for the current partition
     probe_evaluated_stream: Option<SendableEvaluatedBatchStream>,
     /// Pending future for building or waiting on a partitioned index
-    pending_index_future: Option<BoxFuture<'static, Option<Result<Arc<SpatialIndex>>>>>,
+    pending_index_future: Option<BoxFuture<'static, Option<Result<SpatialIndexRef>>>>,
     /// Total number of regular partitions produced by the provider
     num_regular_partitions: Option<u32>,
     /// The spatial predicate being evaluated
@@ -896,7 +897,7 @@ pub(crate) struct SpatialJoinBatchIterator {
     /// The side of the build stream, either Left or Right
     build_side: JoinSide,
     /// The spatial index reference
-    spatial_index: Arc<SpatialIndex>,
+    spatial_index: SpatialIndexRef,
     /// The probe side batch being processed
     probe_evaluated_batch: Arc<EvaluatedBatch>,
     /// Join metrics for tracking performance
@@ -1051,7 +1052,7 @@ pub(crate) struct SpatialJoinBatchIteratorParams {
     /// Which input side is treated as the build side.
     pub build_side: JoinSide,
     /// Spatial index for the build side.
-    pub spatial_index: Arc<SpatialIndex>,
+    pub spatial_index: SpatialIndexRef,
     /// Probe-side batch with any required pre-evaluated columns.
     pub probe_evaluated_batch: Arc<EvaluatedBatch>,
     /// Metrics instance used to report probe work.
@@ -1606,7 +1607,7 @@ impl std::fmt::Debug for SpatialJoinBatchIterator {
 /// rows that were never matched by any probe row.
 pub(crate) struct UnmatchedBuildBatchIterator {
     /// The spatial index reference
-    spatial_index: Arc<SpatialIndex>,
+    spatial_index: SpatialIndexRef,
     /// Current batch index being processed
     current_batch_idx: usize,
     /// Total number of batches to process
@@ -1622,7 +1623,7 @@ impl UnmatchedBuildBatchIterator {
     ///
     /// Fails if the spatial index has not been configured to track visited build-side rows.
     pub(crate) fn try_new(
-        spatial_index: Arc<SpatialIndex>,
+        spatial_index: SpatialIndexRef,
         empty_right_batch: RecordBatch,
     ) -> Result<Self> {
         let visited_left_side = spatial_index.visited_build_side();
