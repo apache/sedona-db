@@ -1,0 +1,72 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_KNN
+description: Returns true if geomA finds k nearest neighbors from geomB.
+kernels:
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+      description: The geometry around which to search.
+    - name: geomB
+      type: geometry
+      description: Column containing candidate geometries.
+    - name: k
+      type: integer
+      description: The number of nearest neighbours to return. Defaults to 1.
+    - name: use_spheroid
+      type: boolean
+      description: true to use spherical distance, false for Euclidean. Defaults to false.
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+    - name: geomB
+      type: geometry
+    - name: k
+      type: integer
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+    - name: geomB
+      type: geometry
+---
+
+## Description
+
+`ST_KNN` is used in a join condition to find the k nearest neighbors of one geometry from another set of geometries. The actual k-nearest neighbors logic is handled by the spatial join execution engine: the function itself is a stub that simply defines the expected signature.
+
+## Examples
+
+```sql
+WITH table2 AS (
+    SELECT geom1 FROM (VALUES
+        (ST_Point(0, 1)),
+        (ST_Point(2, 3)),
+        (ST_Point(4, 5)),
+        (ST_Point(6, 7)),
+        (ST_Point(8, 9))
+    ) AS t(geom1)
+),
+table1 AS (
+    SELECT ST_Point(0, 0) AS geom2
+)
+SELECT * FROM table1 JOIN table2 ON ST_KNN(geom1, geom2, 3);
+```
