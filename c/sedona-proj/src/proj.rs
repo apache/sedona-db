@@ -463,9 +463,6 @@ struct ProjApi {
     _lib: Option<Library>,
 }
 
-unsafe impl Send for ProjApi {}
-unsafe impl Sync for ProjApi {}
-
 impl Debug for ProjApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProjApi").field("name", &self.name).finish()
