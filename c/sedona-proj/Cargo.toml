@@ -28,9 +28,6 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[build-dependencies]
-cc = { version = "1" }
-
 [dev-dependencies]
 approx = { workspace = true }
 geo-types = { workspace = true }
@@ -44,6 +41,7 @@ default = [ "proj-sys" ]
 proj-sys = [ "dep:proj-sys" ]
 
 [dependencies]
+libloading = { workspace = true }
 serde_json = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }

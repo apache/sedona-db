@@ -42,7 +42,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::{error::SedonaProjError, proj_dyn_bindgen};
+use libloading::Library;
+
+use crate::{dyn_load, error::SedonaProjError, proj_dyn_bindgen};
 
 /// A macro to safely call a function pointer from a ProjApi
 ///
@@ -449,24 +451,16 @@ impl Proj {
 /// loaded using C code; however, this could be migrated to Rust which also
 /// provides dynamic library loading capabilities.
 ///
-/// This API is thread safe and is marked as such; however, clients must not
-/// call the inner release callback. Doing so will set function pointers to
-/// null, which will cause subsequent calls to panic.
-#[derive(Default)]
+/// This API is thread safe and is marked as such. When loading PROJ from a
+/// shared library, the `_lib` field holds the `Library` handle, ensuring that
+/// the underlying library and its function pointers remain valid for the
+/// lifetime of this `ProjApi` instance.
 struct ProjApi {
     inner: proj_dyn_bindgen::ProjApi,
     name: String,
-}
-
-unsafe impl Send for ProjApi {}
-unsafe impl Sync for ProjApi {}
-
-impl Drop for ProjApi {
-    fn drop(&mut self) {
-        if let Some(releaser) = self.inner.release {
-            unsafe { releaser(&mut self.inner) }
-        }
-    }
+    /// Keep the dynamically loaded library alive for the lifetime of the function pointers.
+    /// `None` when using `proj-sys` (statically linked), `Some` when loaded from a shared library.
+    _lib: Option<Library>,
 }
 
 impl Debug for ProjApi {
@@ -477,31 +471,12 @@ impl Debug for ProjApi {
 
 impl ProjApi {
     fn try_from_shared_library(shared_library: PathBuf) -> Result<Arc<Self>, SedonaProjError> {
-        let mut inner = proj_dyn_bindgen::ProjApi::default();
-        let mut err_message = (0..1024).map(|_| 0).collect::<Vec<u8>>();
-        let shared_library_c = CString::new(shared_library.to_string_lossy().to_string())
-            .map_err(|_| SedonaProjError::Invalid("embedded nul in Rust string".to_string()))?;
-
-        let err = unsafe {
-            proj_dyn_bindgen::proj_dyn_api_init(
-                &mut inner as _,
-                shared_library_c.as_ptr(),
-                err_message.as_mut_ptr() as _,
-                err_message.len().try_into().unwrap(),
-            )
-        };
-
-        let c_err_message = CStr::from_bytes_until_nul(&err_message)
-            .map_err(|_| SedonaProjError::Invalid("embedded nul in C string".to_string()))?;
-        if err != 0 {
-            return Err(SedonaProjError::LibraryError(
-                c_err_message.to_string_lossy().to_string(),
-            ));
-        }
+        let (lib, inner) = dyn_load::load_proj_from_path(&shared_library)?;
 
         Ok(Arc::new(Self {
             inner,
             name: shared_library.to_string_lossy().to_string(),
+            _lib: Some(lib),
         }))
     }
 
@@ -624,6 +599,7 @@ impl ProjApi {
         Self {
             inner,
             name: "proj_sys".to_string(),
+            _lib: None,
         }
     }
 }
