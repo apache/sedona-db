@@ -105,6 +105,7 @@ geos = { version = "11.0.1", features = ["geo", "v3_12_0"] }
 glam = "0.32.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
+libloading = "0.9"
 lru = "0.16"
 mimalloc = { version = "0.1", default-features = false }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }

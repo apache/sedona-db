@@ -155,12 +155,3 @@ pub struct ProjApi {
     pub release: Option<unsafe extern "C" fn(arg1: *mut ProjApi)>,
     pub private_data: *mut c_void,
 }
-
-unsafe extern "C" {
-    pub fn proj_dyn_api_init(
-        api: *mut ProjApi,
-        shared_object_path: *const c_char,
-        err_msg: *mut c_char,
-        len: c_int,
-    ) -> c_int;
-}

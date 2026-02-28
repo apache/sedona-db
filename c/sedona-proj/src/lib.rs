@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+mod dyn_load;
 pub mod error;
 mod proj;
 mod proj_dyn_bindgen;
