@@ -124,6 +124,55 @@ fn criterion_benchmark(c: &mut Criterion) {
             Float64(-45.0, 45.0),
         ),
     );
+
+    // RS_Intersects(raster, geometry) - point
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_intersects",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Point),
+    );
+    // RS_Intersects(raster, geometry) - polygon
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_intersects",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+    );
+    // RS_Intersects(raster, raster)
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_intersects",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Raster(64, 64)),
+    );
+    // RS_Contains(raster, geometry) - point
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_contains",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Point),
+    );
+    // RS_Contains(raster, geometry) - polygon
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_contains",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+    );
+    // RS_Within(raster, geometry) - polygon
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_within",
+        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+    );
 }
 
 criterion_group!(benches, criterion_benchmark);
