@@ -29,7 +29,6 @@ use sedona_schema::{
 
 use crate::ffi::import_array_stream;
 
-
 #[savvy]
 fn apply_crses_to_sf_stream(
     stream_in_xptr: savvy::Sexp,
