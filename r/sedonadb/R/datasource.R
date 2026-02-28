@@ -160,7 +160,8 @@ read_sf_stream <- function(
   }
 
   stream <- nanoarrow::nanoarrow_allocate_array_stream()
-  info <- sf:::CPL_read_gdal_stream(
+  read_fn <- asNamespace("sf")[["CPL_read_gdal_stream"]]
+  info <- read_fn(
     stream,
     dsn,
     layer,
