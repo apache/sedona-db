@@ -440,6 +440,22 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         assert "bbox" in df_roundtrip.columns
 
 
+def test_write_geoparquet_ensure_projjson_crs(con):
+    df = con.sql("SELECT ST_Point(1, 2, 'EPSG:3857') AS geometry")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        df.to_parquet(tmp_parquet)
+
+        file_kv_metadata = parquet.ParquetFile(tmp_parquet).metadata.metadata
+        assert b"geo" in file_kv_metadata
+        geo_metadata = json.loads(file_kv_metadata[b"geo"])
+        crs = geo_metadata["columns"]["geometry"]["crs"]
+        assert crs != "EPSG:3857"
+        assert crs["id"]["authority"] == "EPSG"
+        assert crs["id"]["code"] == 3857
+
+
 def test_write_geoparquet_unknown(con):
     with pytest.raises(SedonaError, match="Unexpected GeoParquet version string"):
         con.sql("SELECT 1 as one").to_parquet(

@@ -45,7 +45,7 @@ use datafusion_physical_plan::{
 use float_next_after::NextAfter;
 use futures::StreamExt;
 use geo_traits::GeometryTrait;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::{
@@ -58,6 +58,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
     schema::SedonaSchema,
 };
+use serde_json::Value;
 
 use crate::{
     metadata::{GeoParquetColumnMetadata, GeoParquetCovering, GeoParquetMetadata},
@@ -147,9 +148,28 @@ pub fn create_geoparquet_writer_physical_plan(
         if crs == lnglat() {
             // Do nothing, lnglat is the meaning of an omitted CRS
         } else if let Some(crs) = crs {
-            column_metadata.crs = Some(crs.to_json().parse().map_err(|e| {
+            let mut crs_value: Value = crs.to_json().parse().map_err(|e| {
                 exec_datafusion_err!("Failed to parse CRS for column '{}' {e}", f.name())
-            })?);
+            })?;
+
+            // Ensure crs is PROJJSON to ensure this file is not rejected by downstream readers
+            if let Value::String(string) = &crs_value {
+                if let Some(sedona_options) =
+                    session_config_options.extensions.get::<SedonaOptions>()
+                {
+                    let projjson_string = sedona_options.crs_provider.to_projjson(string)?;
+                    crs_value = projjson_string.parse().map_err(|e| {
+                        exec_datafusion_err!(
+                            "Failed to parse CRS for column '{}' from CrsProvider {e}",
+                            f.name()
+                        )
+                    })?;
+                } else {
+                    return sedona_internal_err!("SedonaOptions not available");
+                }
+            }
+
+            column_metadata.crs = Some(crs_value);
         } else {
             return exec_err!(
                 "Can't write GeoParquet from null CRS\nUse ST_SetSRID({}, ...) to assign it one",

@@ -15,12 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::fmt::Display;
+use std::sync::Arc;
 
 use datafusion::config::{ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit};
 use datafusion::prelude::SessionConfig;
-use datafusion_common::config_namespace;
 use datafusion_common::Result;
+use datafusion_common::{config_err, config_namespace};
 use regex::Regex;
+
+use crate::sedona_internal_err;
 
 /// Default minimum number of analyzed geometries for speculative execution mode to select an
 /// optimal execution mode.
@@ -39,6 +42,9 @@ config_namespace! {
     pub struct SedonaOptions {
         /// Options for spatial join
         pub spatial_join: SpatialJoinOptions, default = SpatialJoinOptions::default()
+
+        /// Global [CrsProvider] for CRS metadata operations
+        pub crs_provider: CrsProviderOption, default = CrsProviderOption::default()
     }
 }
 
@@ -405,6 +411,67 @@ impl ConfigField for TgIndexType {
     }
 }
 
+/// Trait defining an abstract provider of Coordinate Reference System metadata
+///
+/// Unlike a CrsEngine, which provides concrete coordinate transformations for
+/// pairs of projections, a CrsProvider is handles metadata-only operations.
+/// Currently this is only used to resolve an arbitrary CRS representation to
+/// PROJJSON (e.g., to write valid GeoParquet files from arbitrary CRSes), but
+/// could also be used to validate CRSes.
+pub trait CrsProvider: std::fmt::Debug + Send + Sync {
+    fn to_projjson(&self, crs_string: &str) -> Result<String>;
+}
+
+/// Wrapper class implementing [ConfigField] that allows a [CrsProvider]
+/// member in [SedonaOptions].
+#[derive(Debug, Clone)]
+pub struct CrsProviderOption(Arc<dyn CrsProvider>);
+
+impl CrsProviderOption {
+    /// Create a new option from a [CrsProvider] reference
+    pub fn new(inner: Arc<dyn CrsProvider>) -> Self {
+        CrsProviderOption(inner)
+    }
+
+    /// Convert an arbitrary string to a PROJJSON representation if possible
+    pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
+        self.0.to_projjson(crs_string)
+    }
+}
+
+impl Default for CrsProviderOption {
+    fn default() -> Self {
+        Self(Arc::new(DefaultCrsProvider {}))
+    }
+}
+
+impl PartialEq for CrsProviderOption {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl ConfigField for CrsProviderOption {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        v.some(key, format!("{:?}", self.0), description);
+    }
+
+    fn set(&mut self, key: &str, _value: &str) -> Result<()> {
+        config_err!("Can't set {key} from SQL")
+    }
+}
+
+#[derive(Debug)]
+struct DefaultCrsProvider {}
+
+impl CrsProvider for DefaultCrsProvider {
+    fn to_projjson(&self, crs_string: &str) -> Result<String> {
+        sedona_internal_err!(
+            "Can't convert {crs_string} to PROJJSON CRS (no CrsProvider registered)"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +589,33 @@ mod tests {
         assert!(config.set("", "0").is_err());
         assert!(config.set("", "invalid").is_err());
         assert!(config.set("", "fixed[10]").is_err());
+    }
+
+    #[test]
+    fn test_default_crs_provider_returns_error() {
+        let provider = CrsProviderOption::default();
+        let result = provider.to_projjson("EPSG:4326");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Can't convert EPSG:4326 to PROJJSON CRS"),
+            "Unexpected error message: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("no CrsProvider registered"),
+            "Unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_crs_provider_option_set_from_sql_returns_error() {
+        let mut option = CrsProviderOption::default();
+        let result = option.set("sedona.crs_provider", "some_value");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Can't set sedona.crs_provider from SQL"),
+            "Unexpected error message: {err_msg}"
+        );
     }
 }

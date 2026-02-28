@@ -173,7 +173,7 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
 
     geom_meta = _geom_column_metadata(out_geo2)
     assert geom_meta["encoding"] == "WKB"
-    assert geom_meta["crs"] == "EPSG:3857"
+    assert geom_meta["crs"]["id"] == {"authority": "EPSG", "code": 3857}
 
     # Test 5: overriding with a different CRS replaces the previous value.
     geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:4326"}})
@@ -212,7 +212,7 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     df.to_parquet(out_geo_multi)
     geom_meta = _geom_column_metadata(out_geo_multi)
     assert geom_meta["encoding"] == "WKB"
-    assert geom_meta["crs"] == "EPSG:3857"
+    assert geom_meta["crs"]["id"] == {"authority": "EPSG", "code": 3857}
     assert geom_meta["edges"] == "spherical"
 
     # Test 8: specify a non-existent column raises error
@@ -261,7 +261,7 @@ def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):
     geom1_meta = _geom_column_metadata(out_geo2, "geom1")
     geom2_meta = _geom_column_metadata(out_geo2, "geom2")
     assert geom1_meta["encoding"] == "WKB"
-    assert geom1_meta["crs"] == "EPSG:3857"
+    assert geom1_meta["crs"]["id"] == {"authority": "EPSG", "code": 3857}
     assert geom2_meta["encoding"] == "WKB"
 
 

@@ -46,7 +46,10 @@ use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
-use sedona_common::option::add_sedona_option_extension;
+use sedona_common::{
+    option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
+    SedonaOptions,
+};
 use sedona_datasource::provider::external_listing_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::IntoScalarKernelRefs;
@@ -103,7 +106,18 @@ impl SedonaContext {
         // and perhaps for all of these initializing them optionally from environment
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
-        let session_config = add_sedona_option_extension(session_config);
+        let mut session_config = add_sedona_option_extension(session_config);
+
+        // Always register the PROJ CrsProvider by default (if PROJ is not configured
+        // before it is used an error will be raised).
+        let opts = session_config
+            .options_mut()
+            .extensions
+            .get_mut::<SedonaOptions>()
+            .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
+        opts.crs_provider =
+            CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
+
         #[cfg(feature = "pointcloud")]
         let session_config = session_config.with_option_extension(
             PointcloudOptions::default()

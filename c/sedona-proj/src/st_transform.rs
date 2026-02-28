@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use crate::transform::{ProjCrsEngine, ProjCrsEngineBuilder};
+
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
@@ -22,20 +22,21 @@ use datafusion_common::cast::{as_string_view_array, as_struct_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
-use sedona_geometry::transform::{transform, CachingCrsEngine, CrsEngine, CrsTransform};
+use sedona_geometry::transform::{transform, CrsEngine, CrsTransform};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::crs::{deserialize_crs, Crs};
 use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
 use sedona_schema::matchers::ArgMatcher;
-use std::cell::OnceCell;
 use std::io::Write;
 use std::iter::zip;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use wkb::reader::Wkb;
+
+use crate::transform::with_global_proj_engine;
 
 /// ST_Transform() implementation using the proj crate
 pub fn st_transform_impl() -> ScalarKernelRef {
@@ -362,79 +363,6 @@ impl<'a> ArgInput<'a> {
                 .into_array(iterations)
         }
     }
-}
-
-/// Configure the global PROJ engine
-///
-/// Provides an opportunity for a calling application to provide the
-/// [ProjCrsEngineBuilder] whose `build()` method will be used to create
-/// a set of thread local [CrsEngine]s which in turn will perform the actual
-/// computations. This provides an opportunity to configure locations of
-/// various files in addition to network CDN access preferences.
-///
-/// This configuration can be set more than once; however, once the engines
-/// are constructed they cannot currently be reconfigured. This code is structured
-/// deliberately to ensure that if an error occurs creating an engine that the
-/// configuration can be set again. Notably, this will occur if this crate was
-/// built without proj-sys the first time somebody calls st_transform.
-pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()> {
-    let mut global_builder = PROJ_ENGINE_BUILDER.try_write().map_err(|_| {
-        DataFusionError::Configuration(
-            "Failed to acquire write lock for global PROJ configuration".to_string(),
-        )
-    })?;
-    global_builder.replace(builder);
-    Ok(())
-}
-
-/// Do something with the global thread-local PROJ engine, creating it if it has not
-/// already been created.
-pub(crate) fn with_global_proj_engine<
-    R,
-    F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>,
->(
-    mut func: F,
-) -> Result<R> {
-    PROJ_ENGINE.with(|engine_cell| {
-        // If there is already an engine, use it!
-        if let Some(engine) = engine_cell.get() {
-            return func(engine);
-        }
-
-        // Otherwise, attempt to get the builder
-        let maybe_builder = PROJ_ENGINE_BUILDER.read().map_err(|_| {
-            // Highly unlikely (can only occur when a panic occurred during set)
-            sedona_internal_datafusion_err!(
-                "Failed to acquire read lock for global PROJ configuration"
-            )
-        })?;
-
-        // ...and build the engine. This will use a default configuration
-        // (i.e., proj_sys or error) if the builder was never set.
-        let proj_engine = maybe_builder
-            .as_ref()
-            .unwrap_or(&ProjCrsEngineBuilder::default())
-            .build()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        engine_cell
-            .set(CachingCrsEngine::new(proj_engine))
-            .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
-        func(engine_cell.get().unwrap())
-    })
-}
-
-/// Global builder as a thread-safe RwLock. Normally set once on application start
-/// or never set to use all default settings.
-static PROJ_ENGINE_BUILDER: RwLock<Option<ProjCrsEngineBuilder>> =
-    RwLock::<Option<ProjCrsEngineBuilder>>::new(None);
-
-// CrsTransform backed by PROJ is not thread safe, so we define the cache as thread-local
-// to avoid race conditions.
-thread_local! {
-    static PROJ_ENGINE: OnceCell<CachingCrsEngine<ProjCrsEngine>> = const {
-        OnceCell::<CachingCrsEngine<ProjCrsEngine>>::new()
-    };
 }
 
 #[cfg(test)]

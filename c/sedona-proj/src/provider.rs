@@ -14,18 +14,31 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
-use sedona_expr::scalar_udf::ScalarKernelRef;
 
-use crate::st_transform::st_transform_impl;
+use sedona_common::CrsProvider;
 
-pub use crate::transform::configure_global_proj_engine;
-pub use crate::transform::ProjCrsEngineBuilder;
+use crate::transform::with_global_proj_engine;
 
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
-    vec![("st_transform", st_transform_impl())]
+#[derive(Debug, Default)]
+pub struct ProjCrsProvider {}
+
+impl CrsProvider for ProjCrsProvider {
+    fn to_projjson(&self, crs_string: &str) -> datafusion_common::Result<String> {
+        with_global_proj_engine(|e| e.engine().to_projjson(crs_string))
+    }
 }
 
-pub fn aggregate_kernels() -> Vec<(&'static str, SedonaAccumulatorRef)> {
-    vec![]
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn proj_crs_provider() {
+        let provider = ProjCrsProvider {};
+        let projjson = provider.to_projjson("EPSG:3857").unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+    }
 }
