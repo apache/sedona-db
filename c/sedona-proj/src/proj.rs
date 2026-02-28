@@ -465,13 +465,6 @@ struct ProjApi {
 unsafe impl Send for ProjApi {}
 unsafe impl Sync for ProjApi {}
 
-impl Drop for ProjApi {
-    fn drop(&mut self) {
-        // The `Library` in `_lib` is dropped automatically, which unloads the shared library.
-        // No need to call the C `release` callback anymore.
-    }
-}
-
 impl Debug for ProjApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProjApi").field("name", &self.name).finish()

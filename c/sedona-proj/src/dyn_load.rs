@@ -15,11 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Pure Rust dynamic loader for PROJ symbols using `libloading`.
-//!
-//! Replaces the C implementation (`proj_dyn.c`) that used `dlopen`/`dlsym`
-//! (Unix) or `LoadLibrary`/`GetProcAddress` (Windows).
-
 use std::path::Path;
 
 use libloading::Library;
