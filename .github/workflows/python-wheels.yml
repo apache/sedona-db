@@ -27,6 +27,8 @@ on:
     branches:
       - main
       - 'branch-**'
+      # TODO: Remove before merging to main
+      - 'refactor/proj-dyn-loading'
   workflow_dispatch:
 
 permissions:
