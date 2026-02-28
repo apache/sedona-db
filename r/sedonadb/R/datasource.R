@@ -109,7 +109,7 @@ read_sf_stream <- function(
   filter = NULL,
   fid_column_name = NULL
 ) {
-  check_dots_empty(..., label = "sd_read_sf_stream()")
+  check_dots_empty(..., label = "sd_read_sf()")
 
   if (is.null(layer)) {
     layer <- character(0)
@@ -117,8 +117,8 @@ read_sf_stream <- function(
     layer <- enc2utf8(layer)
   }
 
-  if (nchar(dsn) == 0) {
-    stop("Expected non-empty value for dsn")
+  if (length(dsn) != 1 || nchar(dsn) == 0) {
+    stop("Expected non-empty value of length 1 for dsn")
   }
 
   dsn_exists <- file.exists(dsn)
