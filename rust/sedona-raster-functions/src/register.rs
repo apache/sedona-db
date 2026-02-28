@@ -40,6 +40,7 @@ pub fn default_function_set() -> FunctionSet {
         function_set,
         crate::rs_bandpath::rs_bandpath_udf,
         crate::rs_convexhull::rs_convexhull_udf,
+        crate::rs_count::rs_count_udf,
         crate::rs_envelope::rs_envelope_udf,
         crate::rs_example::rs_example_udf,
         crate::rs_georeference::rs_georeference_udf,
