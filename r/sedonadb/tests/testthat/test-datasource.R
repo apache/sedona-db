@@ -125,7 +125,7 @@ test_that("sd_read_sf() works for zipped dsns", {
 })
 
 test_that("sd_read_sf() works for URL dsns", {
-  skip_if_offline()
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   # nolint start: line_length_linter

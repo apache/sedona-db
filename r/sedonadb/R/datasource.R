@@ -178,11 +178,11 @@ read_sf_stream <- function(
 
   # Check filter for CRS equality
   if (!identical(filter, character())) {
-    filter_crs <- sf::st_crs(filter)
+    filter_crs <- wk::wk_crs(filter)
 
     for (column_crs in info[[2]]) {
       column_crs_sf <- sf::st_crs(column_crs)
-      if (filter_crs != column_crs_sf) {
+      if (wk::wk_crs_equal(filter_crs, column_crs_sf)) {
         stop(
           sprintf(
             "filter crs (%s) does not match output CRS (%s)",

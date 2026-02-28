@@ -325,8 +325,6 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
 })
 
 test_that("sd_write_parquet accepts max_row_group_size parameter", {
-  skip_if_not_installed("arrow")
-
   tmp_parquet_file <- tempfile(fileext = ".parquet")
   tmp_parquet_file_tiny_groups <- tempfile(fileext = ".parquet")
   on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_tiny_groups)))
