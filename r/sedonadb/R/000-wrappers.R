@@ -55,6 +55,22 @@ NULL
 }
 
 
+`apply_crses_to_sf_stream` <- function(
+  `stream_in_xptr`,
+  `geometry_column_names`,
+  `geometry_column_crses`,
+  `stream_out_xptr`
+) {
+  invisible(.Call(
+    savvy_apply_crses_to_sf_stream__impl,
+    `stream_in_xptr`,
+    `geometry_column_names`,
+    `geometry_column_crses`,
+    `stream_out_xptr`
+  ))
+}
+
+
 `configure_proj_shared` <- function(
   `shared_library_path` = NULL,
   `database_path` = NULL,

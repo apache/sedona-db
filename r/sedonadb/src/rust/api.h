@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+SEXP savvy_apply_crses_to_sf_stream__ffi(SEXP c_arg__stream_in_xptr,
+                                         SEXP c_arg__geometry_column_names,
+                                         SEXP c_arg__geometry_column_crses,
+                                         SEXP c_arg__stream_out_xptr);
 SEXP savvy_configure_proj_shared__ffi(SEXP c_arg__shared_library_path,
                                       SEXP c_arg__database_path,
                                       SEXP c_arg__search_path);
