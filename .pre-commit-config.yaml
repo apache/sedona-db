@@ -68,3 +68,14 @@ repos:
         types_or: [c, c++]
         # Don't run on vendored files
         exclude: "^c/(sedona-geoarrow-c/src/geoarrow|sedona-geoarrow-c/src/nanoarrow|sedona-tg/src/tg)/.*"
+
+  # Slow hooks, only run on `git push`
+  - repo: local
+    hooks:
+      - id: cargo-clippy-fix-workspace
+        name: cargo clippy fix workspace (best effort)
+        entry: bash -c 'bash ci/scripts/cargo-clippy.sh --fix'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        files: '(^|/)(Cargo\.toml|Cargo\.lock|.*\.rs)$'
