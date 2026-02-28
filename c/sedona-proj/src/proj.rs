@@ -451,9 +451,10 @@ impl Proj {
 /// loaded using C code; however, this could be migrated to Rust which also
 /// provides dynamic library loading capabilities.
 ///
-/// This API is thread safe and is marked as such; however, clients must not
-/// call the inner release callback. Doing so will set function pointers to
-/// null, which will cause subsequent calls to panic.
+/// This API is thread safe and is marked as such. When loading PROJ from a
+/// shared library, the `_lib` field holds the `Library` handle, ensuring that
+/// the underlying library and its function pointers remain valid for the
+/// lifetime of this `ProjApi` instance.
 struct ProjApi {
     inner: proj_dyn_bindgen::ProjApi,
     name: String,

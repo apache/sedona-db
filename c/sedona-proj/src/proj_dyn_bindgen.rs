@@ -18,7 +18,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_char, c_int, c_uint};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -153,5 +153,4 @@ pub struct ProjApi {
         ) -> *const c_char,
     >,
     pub release: Option<unsafe extern "C" fn(arg1: *mut ProjApi)>,
-    pub private_data: *mut c_void,
 }

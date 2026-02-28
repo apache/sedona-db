@@ -93,7 +93,7 @@ pub(crate) fn load_proj_from_path(path: &Path) -> Result<(Library, ProjApi), Sed
         ))
     })?;
 
-    let mut api = unsafe { std::mem::zeroed::<ProjApi>() };
+    let mut api = ProjApi::default();
     load_all_symbols(&lib, &mut api)?;
     Ok((lib, api))
 }
