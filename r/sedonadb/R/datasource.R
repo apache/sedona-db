@@ -126,7 +126,7 @@ read_sf_stream <- function(
   # A heuristic to catch common database DSNs so that we don't try to normalize
   # them as file paths
   dsn_isdb <- grepl("^(pg|mssql|pgeo|odbc|postgresql):", tolower(dsn))
-  dsn_is_http <- grepl("^https://", dsn)
+  dsn_is_http <- grepl("^https?://", dsn)
 
   # Normalize (e.g., replace ~) and ensure internal encoding is UTF-8
   if (length(dsn) == 1 && dsn_exists && !dsn_isdb && !dsn_is_http) {
