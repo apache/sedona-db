@@ -17,6 +17,7 @@
 
 import io
 import tempfile
+import warnings
 from pathlib import Path
 
 import geoarrow.pyarrow as ga
@@ -169,13 +170,16 @@ def test_write_ogr(con):
         )
 
         # Ensure inferred CRS that is None works
-        con.sql("SELECT ST_Point(0, 1)").to_pyogrio(f"{td}/foofy.fgb")
-        expected = geopandas.GeoDataFrame(
-            {"geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"])}
-        )
-        geopandas.testing.assert_geodataframe_equal(
-            geopandas.read_file(f"{td}/foofy.fgb"), expected
-        )
+        # pyogrio warns for the case where a CRS is None
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            con.sql("SELECT ST_Point(0, 1)").to_pyogrio(f"{td}/foofy.fgb")
+            expected = geopandas.GeoDataFrame(
+                {"geometry": geopandas.GeoSeries.from_wkt(["POINT (0 1)"])}
+            )
+            geopandas.testing.assert_geodataframe_equal(
+                geopandas.read_file(f"{td}/foofy.fgb"), expected
+            )
 
 
 def test_write_ogr_buffer(con):
@@ -187,7 +191,7 @@ def test_write_ogr_buffer(con):
 
     df.to_pyogrio(buf, driver="FlatGeoBuf")
     geopandas.testing.assert_geodataframe_equal(
-        geopandas.read_file(buf.getvalue(), driver="FlatGeoBuf"), expected
+        geopandas.read_file(buf.getvalue()), expected
     )
 
     # Ensure reasonable error if driver is not specified

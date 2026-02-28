@@ -22,6 +22,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+import sedonadb
 from sedonadb.testing import PostGIS, SedonaDB, random_geometry
 from shapely.geometry import Point
 
@@ -245,6 +246,9 @@ def test_spatial_mark_join_via_correlated_exists(outer, on):
     ],
 )
 def test_spatial_join_geography(join_type, on):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Python package built without s2geography")
+
     with (
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
