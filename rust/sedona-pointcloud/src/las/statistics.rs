@@ -15,7 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashSet, io::Cursor, sync::Arc};
+use std::{
+    collections::HashSet,
+    io::{Cursor, Read, Seek},
+    sync::Arc,
+};
 
 use arrow_array::{
     builder::PrimitiveBuilder,
@@ -25,22 +29,20 @@ use arrow_array::{
 };
 use arrow_ipc::{reader::FileReader, writer::FileWriter};
 use arrow_schema::{DataType, Field, Schema};
+use byteorder::{LittleEndian, ReadBytesExt};
 use datafusion_common::{arrow::compute::concat_batches, Column, DataFusionError, ScalarValue};
 use datafusion_pruning::PruningStatistics;
-use las::{Header, Point};
+use las::Header;
 use object_store::{path::Path, ObjectMeta, ObjectStore, PutPayload};
-
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::las::{
-    metadata::ChunkMeta,
-    reader::{read_point, record_decompressor},
-};
+use crate::las::{metadata::ChunkMeta, reader::record_decompressor};
 
 /// Spatial statistics (extent) of LAS/LAZ chunks for pruning.
 ///
 /// It wraps a `RecordBatch` with x, y, z min and max values and row count per chunk.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LasStatistics {
     pub values: RecordBatch,
 }
@@ -208,6 +210,7 @@ pub async fn chunk_statistics(
     chunk_table: &[ChunkMeta],
     header: &Header,
     persist: bool,
+    parallel: bool,
 ) -> Result<LasStatistics, DataFusionError> {
     let stats_path = Path::parse(format!("{}.stats", object_meta.location.as_ref()))?;
 
@@ -234,9 +237,27 @@ pub async fn chunk_statistics(
             // extract statistics
             let mut builder = LasStatisticsBuilder::new_with_capacity(chunk_table.len());
 
-            for chunk_meta in chunk_table {
-                let stats = extract_chunk_stats(store, object_meta, chunk_meta, header).await?;
-                builder.add_values(&stats, chunk_meta.num_points);
+            if parallel {
+                let stats: Vec<[f64; 6]> = chunk_table
+                    .par_iter()
+                    .map(|chunk_meta| {
+                        futures::executor::block_on(extract_chunk_stats(
+                            store,
+                            object_meta,
+                            chunk_meta,
+                            header,
+                        ))
+                    })
+                    .collect::<Result<Vec<[f64; 6]>, DataFusionError>>()?;
+
+                for (stat, meta) in stats.iter().zip(chunk_table) {
+                    builder.add_values(stat, meta.num_points);
+                }
+            } else {
+                for chunk_meta in chunk_table {
+                    let stats = extract_chunk_stats(store, object_meta, chunk_meta, header).await?;
+                    builder.add_values(&stats, chunk_meta.num_points);
+                }
             }
 
             let stats = builder.finish();
@@ -274,14 +295,14 @@ async fn extract_chunk_stats(
         f64::NEG_INFINITY,
     ];
 
-    let extend = |stats: &mut [f64; 6], point: Point| {
+    let extend = |stats: &mut [f64; 6], point: [f64; 3]| {
         *stats = [
-            stats[0].min(point.x),
-            stats[1].max(point.x),
-            stats[2].min(point.y),
-            stats[3].max(point.y),
-            stats[4].min(point.z),
-            stats[5].max(point.z),
+            stats[0].min(point[0]),
+            stats[1].max(point[0]),
+            stats[2].min(point[1]),
+            stats[3].max(point[1]),
+            stats[4].min(point[2]),
+            stats[5].max(point[2]),
         ];
     };
 
@@ -301,19 +322,29 @@ async fn extract_chunk_stats(
         for _ in 0..chunk_meta.num_points {
             buffer.set_position(0);
             decompressor.decompress_next(buffer.get_mut())?;
-            let point = read_point(&mut buffer, header)?;
+            let point = parse_coords(&mut buffer, header)?;
             extend(&mut stats, point);
         }
     } else {
         let mut buffer = Cursor::new(bytes);
-
+        // offset to next point after reading raw coords
+        let offset = header.point_format().len() as i64 - 3 * 4;
         for _ in 0..chunk_meta.num_points {
-            let point = read_point(&mut buffer, header)?;
+            let point = parse_coords(&mut buffer, header)?;
+            buffer.seek_relative(offset)?;
             extend(&mut stats, point);
         }
     }
 
     Ok(stats)
+}
+
+fn parse_coords<R: Read>(mut buffer: R, header: &Header) -> Result<[f64; 3], DataFusionError> {
+    let transforms = header.transforms();
+    let x = transforms.x.direct(buffer.read_i32::<LittleEndian>()?);
+    let y = transforms.y.direct(buffer.read_i32::<LittleEndian>()?);
+    let z = transforms.z.direct(buffer.read_i32::<LittleEndian>()?);
+    Ok([x, y, z])
 }
 
 #[cfg(test)]
@@ -327,10 +358,13 @@ mod tests {
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
     use sedona_geometry::bounding_box::BoundingBox;
 
-    use crate::{las::metadata::LasMetadataReader, options::PointcloudOptions};
+    use crate::{
+        las::{metadata::LasMetadataReader, statistics::chunk_statistics},
+        options::PointcloudOptions,
+    };
 
     #[tokio::test]
-    async fn chunk_statistics() {
+    async fn check_chunk_statistics() {
         for path in ["tests/data/large.las", "tests/data/large.laz"] {
             // read with `LasMetadataReader`
             let store = LocalFileSystem::new();
@@ -376,6 +410,18 @@ mod tests {
                     None
                 ))
             );
+
+            let par_stats = chunk_statistics(
+                &store,
+                &object_meta,
+                &metadata.chunk_table,
+                &metadata.header,
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+            assert_eq!(statistics, &par_stats);
         }
     }
 
