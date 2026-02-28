@@ -18,7 +18,7 @@ use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::StringBuilder;
-use arrow_array::{cast::AsArray, types::Int32Type, Array};
+use arrow_array::{cast::AsArray, types::Int32Type};
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -104,12 +104,9 @@ impl SedonaScalarKernel for RsBandPathWithBandIndex {
         let mut builder =
             StringBuilder::with_capacity(executor.num_iterations(), preallocate_bytes);
 
-        executor.execute_raster_void(|i, raster_opt| {
-            let band_index = if band_index_array.is_null(i) {
-                1 // Default to band 1 if null
-            } else {
-                band_index_array.value(i)
-            };
+        let mut band_index_iter = band_index_array.iter();
+        executor.execute_raster_void(|_, raster_opt| {
+            let band_index = band_index_iter.next().unwrap().unwrap_or(1);
             get_band_path(raster_opt, band_index, &mut builder)
         })?;
 
