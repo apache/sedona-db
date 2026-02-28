@@ -2793,9 +2793,9 @@ dependencies = [
 
 [[package]]
 name = "geo-index"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cd6109ce196b24a92872567a6e41952756944bbd2ddca410e379a7c401eb7e"
+checksum = "f310ad245e63f6b5fcf4a7c2663139708eae1374045396eef95ea3badd242d57"
 dependencies = [
  "bytemuck",
  "float_next_after 1.0.0",
