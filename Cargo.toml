@@ -118,7 +118,7 @@ regex = "1.12"
 rstest = "0.26.1"
 serde = { version = "1" }
 serde_json = { version = "1" }
-serde_with = { version = "1" }
+serde_with = { version = "3" }
 tempfile = { version = "3"}
 thiserror = { version = "2" }
 tokio = { version = "1.48", features = ["macros", "rt", "sync"] }
