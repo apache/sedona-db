@@ -92,7 +92,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-windows-x86_64
           path: python/sedonadb/dist/*.whl
@@ -145,7 +145,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-macOS-arm64
           path: python/sedonadb/dist/*.whl
@@ -199,7 +199,7 @@ jobs:
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
           SEDONADB_MACOS_ARCH: x86_64
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-macOS-amd64
           path: python/sedonadb/dist/*.whl
@@ -246,7 +246,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-${{ matrix.config.label }}
           path: python/sedonadb/dist/*.whl
