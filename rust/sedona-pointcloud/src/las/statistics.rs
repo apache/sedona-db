@@ -238,6 +238,10 @@ pub async fn chunk_statistics(
             let mut builder = LasStatisticsBuilder::new_with_capacity(chunk_table.len());
 
             if parallel {
+                // While the method to infer the schema, adopted from the Parquet
+                // reader, uses concurrency (metadata fetch concurrency), it is not
+                // parallel. Extracting statistics in parallel can substantially improve
+                // the extraction process by a factor of the number of cores available.
                 let stats: Vec<[f64; 6]> = chunk_table
                     .par_iter()
                     .map(|chunk_meta| {
@@ -358,9 +362,8 @@ mod tests {
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
     use sedona_geometry::bounding_box::BoundingBox;
 
-    use crate::{
-        las::{metadata::LasMetadataReader, statistics::chunk_statistics},
-        options::PointcloudOptions,
+    use crate::las::{
+        metadata::LasMetadataReader, options::LasOptions, statistics::chunk_statistics,
     };
 
     #[tokio::test]
@@ -375,7 +378,7 @@ mod tests {
             let metadata = metadata_reader.fetch_metadata().await.unwrap();
             assert!(metadata.statistics.is_none());
 
-            let options = PointcloudOptions {
+            let options = LasOptions {
                 collect_statistics: true,
                 ..Default::default()
             };
@@ -452,7 +455,7 @@ mod tests {
         let location = Path::from_filesystem_path(&tmp_path).unwrap();
         let object_meta = store.head(&location).await.unwrap();
 
-        let options = PointcloudOptions {
+        let options = LasOptions {
             collect_statistics: true,
             persist_statistics: true,
             ..Default::default()

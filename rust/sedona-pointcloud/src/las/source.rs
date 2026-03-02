@@ -29,9 +29,8 @@ use datafusion_physical_plan::{
 };
 use object_store::ObjectStore;
 
-use crate::{
-    las::{format::Extension, opener::LasOpener, reader::LasFileReaderFactory},
-    options::PointcloudOptions,
+use crate::las::{
+    format::Extension, opener::LasOpener, options::LasOptions, reader::LasFileReaderFactory,
 };
 
 #[derive(Clone, Debug)]
@@ -47,7 +46,7 @@ pub struct LasSource {
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
     pub(crate) projected_statistics: Option<Statistics>,
-    pub(crate) options: PointcloudOptions,
+    pub(crate) options: LasOptions,
     pub(crate) extension: Extension,
 }
 
@@ -65,7 +64,7 @@ impl LasSource {
         }
     }
 
-    pub fn with_options(mut self, options: PointcloudOptions) -> Self {
+    pub fn with_options(mut self, options: LasOptions) -> Self {
         self.options = options;
         self
     }
@@ -161,6 +160,18 @@ impl FileSource for LasSource {
     ) -> Result<Option<FileScanConfig>, DataFusionError> {
         if output_ordering.is_none() & self.options.round_robin_partitioning {
             // Custom round robin repartitioning
+            //
+            // The default way to partition a dataset to enable parallel reading
+            // by DataFusion is through splitting files by byte ranges into the
+            // number of target partitions. For selective queries on (partially)
+            // ordered datasets that support pruning, this can result in unequal
+            // resource use, as all the work is done on one partition while the
+            // rest is pruned. Additionally, this breaks the existing locality
+            // in the input when it is converted, as data from all partitions
+            // ends up in each output row group. This approach addresses these
+            // issues by partitioning the dataset using a round-robin scheme
+            // across sequential chunks. This improves selective query performance
+            // by more than half.
             let mut config = config.clone();
             config.file_groups = config
                 .file_groups

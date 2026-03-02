@@ -36,12 +36,10 @@ use las::{
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::{
-    las::{
-        schema::try_schema_from_header,
-        statistics::{chunk_statistics, LasStatistics},
-    },
-    options::PointcloudOptions,
+use crate::las::{
+    options::LasOptions,
+    schema::try_schema_from_header,
+    statistics::{chunk_statistics, LasStatistics},
 };
 
 /// LAS/LAZ chunk metadata
@@ -92,7 +90,7 @@ pub struct LasMetadataReader<'a> {
     store: &'a dyn ObjectStore,
     object_meta: &'a ObjectMeta,
     file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    options: PointcloudOptions,
+    options: LasOptions,
 }
 
 impl<'a> LasMetadataReader<'a> {
@@ -115,7 +113,7 @@ impl<'a> LasMetadataReader<'a> {
     }
 
     /// set table options
-    pub fn with_options(mut self, options: PointcloudOptions) -> Self {
+    pub fn with_options(mut self, options: LasOptions) -> Self {
         self.options = options;
         self
     }
@@ -182,7 +180,7 @@ impl<'a> LasMetadataReader<'a> {
         let schema = try_schema_from_header(
             &metadata.header,
             self.options.geometry_encoding,
-            self.options.las.extra_bytes,
+            self.options.extra_bytes,
         )?;
 
         Ok(schema)

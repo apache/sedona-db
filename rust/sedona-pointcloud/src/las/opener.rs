@@ -29,12 +29,10 @@ use futures::StreamExt;
 use sedona_expr::spatial_filter::SpatialFilter;
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::{
-    las::{
-        reader::{LasFileReader, LasFileReaderFactory},
-        schema::try_schema_from_header,
-    },
-    options::PointcloudOptions,
+use crate::las::{
+    options::LasOptions,
+    reader::{LasFileReader, LasFileReaderFactory},
+    schema::try_schema_from_header,
 };
 
 pub struct LasOpener {
@@ -47,7 +45,7 @@ pub struct LasOpener {
     /// Factory for instantiating LAS/LAZ reader
     pub file_reader_factory: Arc<LasFileReaderFactory>,
     /// Table options
-    pub options: PointcloudOptions,
+    pub options: LasOptions,
     /// Target batch size
     pub batch_size: usize,
     /// Target partition count
@@ -76,7 +74,7 @@ impl FileOpener for LasOpener {
             let schema = Arc::new(try_schema_from_header(
                 &metadata.header,
                 file_reader.options.geometry_encoding,
-                file_reader.options.las.extra_bytes,
+                file_reader.options.extra_bytes,
             )?);
 
             let pruning_predicate = predicate.and_then(|physical_expr| {
@@ -200,10 +198,10 @@ mod tests {
         let ctx = SedonaContext::new_local_interactive().await.unwrap();
 
         // ensure no faulty chunk pruning
-        ctx.sql("SET pointcloud.geometry_encoding = 'plain'")
+        ctx.sql("SET las.geometry_encoding = 'plain'")
             .await
             .unwrap();
-        ctx.sql("SET pointcloud.collect_statistics = 'true'")
+        ctx.sql("SET las.collect_statistics = 'true'")
             .await
             .unwrap();
 
@@ -225,9 +223,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 50000);
 
-        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
-            .await
-            .unwrap();
+        ctx.sql("SET las.geometry_encoding = 'wkb'").await.unwrap();
         let count = ctx
             .sql(&format!("SELECT * FROM \"{path}\" WHERE ST_Intersects(geometry, ST_GeomFromText('POLYGON ((0 0, 0.7 0, 0.7 0.7, 0 0.7, 0 0))'))"))
             .await
@@ -246,10 +242,10 @@ mod tests {
         let ctx = SedonaContext::new_local_interactive().await.unwrap();
 
         // ensure no faulty chunk pruning
-        ctx.sql("SET pointcloud.geometry_encoding = 'plain'")
+        ctx.sql("SET las.geometry_encoding = 'plain'")
             .await
             .unwrap();
-        ctx.sql("SET pointcloud.collect_statistics = 'true'")
+        ctx.sql("SET las.collect_statistics = 'true'")
             .await
             .unwrap();
 
@@ -271,9 +267,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 50000);
 
-        ctx.sql("SET pointcloud.geometry_encoding = 'wkb'")
-            .await
-            .unwrap();
+        ctx.sql("SET las.geometry_encoding = 'wkb'").await.unwrap();
         let count = ctx
             .sql(&format!("SELECT * FROM \"{path}\" WHERE ST_Intersects(geometry, ST_GeomFromText('POLYGON ((0 0, 0.7 0, 0.7 0.7, 0 0.7, 0 0))'))"))
             .await
@@ -299,7 +293,7 @@ mod tests {
             .await
             .unwrap();
 
-        ctx.sql("SET pointcloud.round_robin_partitioning = 'true'")
+        ctx.sql("SET las.round_robin_partitioning = 'true'")
             .await
             .unwrap();
         let result2 = ctx

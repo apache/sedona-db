@@ -33,9 +33,9 @@ use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
-use crate::{
-    las::{metadata::LasMetadataReader, reader::LasFileReaderFactory, source::LasSource},
-    options::PointcloudOptions,
+use crate::las::{
+    metadata::LasMetadataReader, options::LasOptions, reader::LasFileReaderFactory,
+    source::LasSource,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -56,7 +56,7 @@ impl Extension {
 /// Factory struct used to create [LasFormat]
 pub struct LasFormatFactory {
     // inner options for LAS/LAZ
-    pub options: Option<PointcloudOptions>,
+    pub options: Option<LasOptions>,
     extension: Extension,
 }
 
@@ -70,7 +70,7 @@ impl LasFormatFactory {
     }
 
     /// Creates an instance of [LasFormatFactory] with customized default options
-    pub fn new_with(options: PointcloudOptions, extension: Extension) -> Self {
+    pub fn new_with(options: LasOptions, extension: Extension) -> Self {
         Self {
             options: Some(options),
             extension,
@@ -87,8 +87,8 @@ impl FileFormatFactory for LasFormatFactory {
         let mut options = state
             .config_options()
             .extensions
-            .get::<PointcloudOptions>()
-            .or_else(|| state.table_options().extensions.get::<PointcloudOptions>())
+            .get::<LasOptions>()
+            .or_else(|| state.table_options().extensions.get::<LasOptions>())
             .cloned()
             .or(self.options.clone())
             .unwrap_or_default();
@@ -129,7 +129,7 @@ impl fmt::Debug for LasFormatFactory {
 /// The LAS/LAZ `FileFormat` implementation
 #[derive(Debug)]
 pub struct LasFormat {
-    pub options: PointcloudOptions,
+    pub options: LasOptions,
     extension: Extension,
 }
 
@@ -141,7 +141,7 @@ impl LasFormat {
         }
     }
 
-    pub fn with_options(mut self, options: PointcloudOptions) -> Self {
+    pub fn with_options(mut self, options: LasOptions) -> Self {
         self.options = options;
         self
     }
@@ -195,7 +195,7 @@ impl FileFormat for LasFormat {
                 Ok::<_, DataFusionError>((loc_path, schema))
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
-            // fetch schemas concurrently, if requested
+            // fetch schemas concurrently, if requested (note that this is not parallel)
             .buffered(state.config_options().execution.meta_fetch_concurrency)
             .try_collect()
             .await?;

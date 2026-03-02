@@ -35,9 +35,10 @@ use geoarrow_array::{
 use geoarrow_schema::Dimension;
 use las::{Header, Point};
 
-use crate::{
-    las::{metadata::ExtraAttribute, options::LasExtraBytes, schema::try_schema_from_header},
-    options::GeometryEncoding,
+use crate::las::{
+    metadata::ExtraAttribute,
+    options::{GeometryEncoding, LasExtraBytes},
+    schema::try_schema_from_header,
 };
 
 #[derive(Debug)]
@@ -515,9 +516,9 @@ mod tests {
     use las::{point::Format, Builder, Writer};
     use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 
-    use crate::{
-        las::{options::LasExtraBytes, reader::LasFileReaderFactory},
-        options::PointcloudOptions,
+    use crate::las::{
+        options::{LasExtraBytes, LasOptions},
+        reader::LasFileReaderFactory,
     };
 
     #[tokio::test]
@@ -544,7 +545,7 @@ mod tests {
             let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
                 .create_reader(
                     PartitionedFile::new(location, object.size),
-                    PointcloudOptions::default(),
+                    LasOptions::default(),
                 )
                 .unwrap();
             let metadata = file_reader.get_metadata().await.unwrap();
@@ -578,7 +579,7 @@ mod tests {
         let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
             .create_reader(
                 PartitionedFile::new(location, object.size),
-                PointcloudOptions::default().with_las_extra_bytes(LasExtraBytes::Typed),
+                LasOptions::default().with_las_extra_bytes(LasExtraBytes::Typed),
             )
             .unwrap();
         let metadata = file_reader.get_metadata().await.unwrap();

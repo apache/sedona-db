@@ -36,12 +36,10 @@ use laz::{
 };
 use object_store::ObjectStore;
 
-use crate::{
-    las::{
-        builder::RowBuilder,
-        metadata::{ChunkMeta, LasMetadata, LasMetadataReader},
-    },
-    options::PointcloudOptions,
+use crate::las::{
+    builder::RowBuilder,
+    metadata::{ChunkMeta, LasMetadata, LasMetadataReader},
+    options::LasOptions,
 };
 
 /// LAS/LAZ file reader factory
@@ -66,7 +64,7 @@ impl LasFileReaderFactory {
     pub fn create_reader(
         &self,
         partitioned_file: PartitionedFile,
-        options: PointcloudOptions,
+        options: LasOptions,
     ) -> Result<Box<LasFileReader>, DataFusionError> {
         Ok(Box::new(LasFileReader {
             partitioned_file,
@@ -82,7 +80,7 @@ pub struct LasFileReader {
     partitioned_file: PartitionedFile,
     store: Arc<dyn ObjectStore>,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    pub options: PointcloudOptions,
+    pub options: LasOptions,
 }
 
 impl LasFileReader {
@@ -111,10 +109,7 @@ impl LasFileReader {
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
             .with_geometry_encoding(self.options.geometry_encoding)
-            .with_extra_attributes(
-                metadata.extra_attributes.clone(),
-                self.options.las.extra_bytes,
-            );
+            .with_extra_attributes(metadata.extra_attributes.clone(), self.options.extra_bytes);
 
         // parse points
         if header.laz_vlr().is_ok() {
