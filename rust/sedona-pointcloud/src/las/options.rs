@@ -127,8 +127,8 @@ extensions_options! {
     /// LAS/LAZ configuration options
     ///
     /// * `geometry encoding`: plain (x, y, z), wkb or native (geoarrow)
-    /// * `collect statistics`: extract las/laz chunk statistics (reqires a full scan on registration)
-    /// * `parallel statistics extration`: extract statistics in parallel
+    /// * `collect statistics`: extract las/laz chunk statistics (requires a full scan on registration)
+    /// * `parallel statistics extraction`: extract statistics in parallel
     /// * `persist statistics`: store statistics in a sidecar file for future reuse (requires write access)
     /// * `round robin partitioning`: read chunks in parallel with round robin instead of byte range (default)
     /// * `extra bytes`: las extra byte attributes handling, ignore, keep as binary blob, or typed
