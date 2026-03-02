@@ -2737,6 +2737,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gdal-sys"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cceef1cc08a1f031c5717cb645bb361a3114470cc142cc96bc5e62b79695632e"
+dependencies = [
+ "bindgen",
+ "pkg-config",
+ "semver",
+]
+
+[[package]]
 name = "generational-arena"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5250,6 +5261,16 @@ dependencies = [
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-gdal"
+version = "0.3.0"
+dependencies = [
+ "gdal-sys",
+ "libloading 0.9.0",
+ "sedona-testing",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
