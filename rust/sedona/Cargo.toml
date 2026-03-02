@@ -41,6 +41,7 @@ tg = ["dep:sedona-tg"]
 http = ["object_store/http"]
 pointcloud = ["dep:sedona-pointcloud"]
 proj = ["sedona-proj/proj-sys"]
+gdal = ["sedona-gdal/gdal-sys"]
 spatial-join = ["dep:sedona-spatial-join"]
 s2geography = ["dep:sedona-s2geography"]
 
@@ -77,6 +78,7 @@ sedona-geoparquet = { workspace = true }
 sedona-geos = { workspace = true, optional = true }
 sedona-pointcloud = { workspace = true, optional = true }
 sedona-proj = { workspace = true }
+sedona-gdal = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-spatial-join = { workspace = true, optional = true }

@@ -5110,6 +5110,7 @@ dependencies = [
  "sedona-datasource",
  "sedona-expr",
  "sedona-functions",
+ "sedona-gdal",
  "sedona-geo",
  "sedona-geometry",
  "sedona-geoparquet",
