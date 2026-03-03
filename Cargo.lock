@@ -2742,7 +2742,6 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cceef1cc08a1f031c5717cb645bb361a3114470cc142cc96bc5e62b79695632e"
 dependencies = [
- "bindgen",
  "pkg-config",
  "semver",
 ]
