@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
