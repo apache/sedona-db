@@ -93,7 +93,8 @@ impl SedonaScalarKernel for RsBandPixelTypeWithBand {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let band_index_array = args[1].clone().into_array(executor.num_iterations())?;
+        let band_index_array = args[1].clone().cast_to(&DataType::Int32, None)?;
+        let band_index_array = band_index_array.into_array(executor.num_iterations())?;
         let band_index_array = as_int32_array(&band_index_array)?;
 
         let mut builder =
@@ -197,7 +198,8 @@ impl SedonaScalarKernel for RsBandNoDataValueWithBand {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let band_index_array = args[1].clone().into_array(executor.num_iterations())?;
+        let band_index_array = args[1].clone().cast_to(&DataType::Int32, None)?;
+        let band_index_array = band_index_array.into_array(executor.num_iterations())?;
         let band_index_array = as_int32_array(&band_index_array)?;
 
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
