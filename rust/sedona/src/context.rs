@@ -28,7 +28,6 @@ use crate::{
 };
 use arrow_array::RecordBatch;
 use async_trait::async_trait;
-use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
     common::plan_err,
@@ -41,6 +40,7 @@ use datafusion::{
     prelude::{DataFrame, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
+use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
 use datafusion_common::not_impl_err;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
@@ -104,6 +104,7 @@ impl SedonaContext {
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
         let mut session_config = add_sedona_option_extension(session_config);
+        let target_partitions = session_config.target_partitions();
 
         // Always register the PROJ CrsProvider by default (if PROJ is not configured
         // before it is used an error will be raised).
@@ -114,6 +115,17 @@ impl SedonaContext {
             .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
         opts.crs_provider =
             CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
+
+        // Set the spilled batch in-memory size threshold to 5% of the per-partition memory limit,
+        // with a minimum of 10MB. Batches larger than this threshold will be broken into smaller batches
+        // before writing to spill files. This is to avoid overshooting memory limit when reading super
+        // large spilled batches.
+        if let MemoryLimit::Finite(memory_limit) = runtime_env.memory_pool.memory_limit() {
+            let per_partition_memory_limit = memory_limit.div_ceil(target_partitions);
+            opts.spatial_join.spilled_batch_in_memory_size_threshold = per_partition_memory_limit
+                .div_ceil(20)
+                .max(10 * 1024 * 1024);
+        }
 
         #[cfg(feature = "pointcloud")]
         let session_config = session_config.with_option_extension(
