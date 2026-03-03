@@ -129,7 +129,7 @@ impl ExecutionPlan for ProbeShuffleExec {
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.inner_repartition.input()]
+        vec![self.inner_repartition.input()]
     }
 
     fn with_new_children(
