@@ -20,8 +20,8 @@ use std::vec;
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{Float64Builder, StringBuilder};
-use arrow_array::{cast::AsArray, types::Int32Type};
 use arrow_schema::DataType;
+use datafusion_common::cast::as_int32_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -94,7 +94,7 @@ impl SedonaScalarKernel for RsBandPixelTypeWithBand {
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
         let band_index_array = args[1].clone().into_array(executor.num_iterations())?;
-        let band_index_array = band_index_array.as_primitive::<Int32Type>();
+        let band_index_array = as_int32_array(&band_index_array)?;
 
         let mut builder =
             StringBuilder::with_capacity(executor.num_iterations(), executor.num_iterations() * 20);
@@ -198,7 +198,7 @@ impl SedonaScalarKernel for RsBandNoDataValueWithBand {
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
         let band_index_array = args[1].clone().into_array(executor.num_iterations())?;
-        let band_index_array = band_index_array.as_primitive::<Int32Type>();
+        let band_index_array = as_int32_array(&band_index_array)?;
 
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
         let mut band_index_iter = band_index_array.iter();
