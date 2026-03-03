@@ -126,17 +126,6 @@ pub fn sedona_testing_dir() -> Result<String> {
 }
 
 /// Get the path to a raster test file from the sedona-testing data directory.
-///
-/// # Arguments
-/// * `name` - The name of the raster file (e.g., "test1.tiff", "test4.tiff")
-///
-/// # Returns
-/// The full path to the raster test file if it exists.
-///
-/// # Example
-/// ```ignore
-/// let path = test_raster("test4.tiff")?;
-/// ```
 pub fn test_raster(name: &str) -> Result<String> {
     let base = sedona_testing_dir()?;
     let path = format!("{}/data/raster/{}", base, name);
