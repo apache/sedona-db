@@ -39,7 +39,9 @@ sd.options.memory_limit = "4gb"
 ```
 
 Without a memory limit, SedonaDB uses an unbounded memory pool and operators
-will not spill to disk.
+can use as much memory as needed (until the process hits system limits). In
+this mode, operators typically won't spill to disk because there is no memory
+budget to enforce.
 
 !!! note
     All runtime options (`memory_limit`, `memory_pool_type`, `temp_dir`,
@@ -70,6 +72,9 @@ sd = sedona.db.connect()
 sd.options.memory_limit = "4gb"
 sd.options.memory_pool_type = "fair"
 ```
+
+!!! note
+    `memory_pool_type` only takes effect when `memory_limit` is set.
 
 ### Unspillable reserve ratio
 
@@ -118,7 +123,15 @@ sd.options.unspillable_reserve_ratio = 0.2
 sd.options.temp_dir = "/tmp/sedona-spill"
 
 # Now execute queries -- options are frozen after the first query runs
-df = sd.sql("SELECT ...")
+# Example: configure DataFusion settings and then run your workload
+sd.sql("SET datafusion.execution.spill_compression = 'lz4_frame'").execute()
+
+df = sd.sql("""
+SELECT a.id, b.id
+FROM a
+JOIN b
+  ON ST_Intersects(a.geom, b.geom)
+""")
 ```
 
 ## Operators Supporting Memory Limits
@@ -126,27 +139,40 @@ df = sd.sql("SELECT ...")
 When a memory limit is configured, the following operators automatically spill
 intermediate data to disk when they exceed their memory budget:
 
-**SedonaDB operators:**
+In practice, this means memory limits and spilling can apply to both SedonaDB's
+spatial operators and DataFusion's general-purpose operators used by common SQL
+constructs:
+
+**SedonaDB:**
 
 - **Spatial joins** -- Both the build-side (index construction, partition
   collection) and probe-side (stream repartitioning) of SedonaDB's spatial
   joins support memory-pressure-driven spilling.
 
-**DataFusion operators:**
+**DataFusion (physical operators):**
 
-- **`SortExec`** -- External sort that spills sorted runs to disk when memory
-  is exhausted, then merges them.
-- **`HashJoinExec`** -- Hash join that spills hash table partitions to disk
-  under memory pressure.
-- **`SortMergeJoinExec`** -- Sort-merge join that spills buffered batches to
-  disk when the memory limit is exceeded.
-- **`AggregateExec`** -- Grouped aggregation that spills intermediate
-  aggregation state to sorted spill files when memory is exhausted.
+This list is not exhaustive. Many other DataFusion physical operators and
+execution strategies may allocate memory through the same runtime memory pool
+and may spill to disk when memory limits are enforced.
+
+- **`ORDER BY` / sorted Top-K** (`SortExec`) -- External sort that
+  spills sorted runs to disk when memory is exhausted, then merges them.
+- **Many joins** (`HashJoinExec`) -- Hash join that spills hash table partitions
+  to disk under memory pressure.
+- **Sort-merge joins** (`SortMergeJoinExec`) -- Sort-merge join that spills
+  buffered batches to disk when the memory limit is exceeded.
+- **`GROUP BY` aggregations** (`AggregateExec`) -- Grouped aggregation that
+  spills intermediate aggregation state to sorted spill files when memory is
+  exhausted.
 
 ## Advanced DataFusion Configurations
 
 DataFusion provides additional execution configurations that affect spill
 behavior. These can be set via SQL `SET` statements after connecting:
+
+!!! note
+    `SET` is executed as a query. Configure `sd.options.*` runtime options (like
+    `memory_limit` and `temp_dir`) before running any `SET` statements.
 
 ### Spill compression
 
@@ -156,10 +182,6 @@ CPU work. This is beneficial when disk I/O throughput is low or when disk space
 is not large enough to hold uncompressed spill data.
 
 ```python
-sd = sedona.db.connect()
-sd.options.memory_limit = "4gb"
-sd.options.memory_pool_type = "fair"
-
 # Enable LZ4 compression for spill files
 sd.sql("SET datafusion.execution.spill_compression = 'lz4_frame'").execute()
 ```
@@ -214,5 +236,6 @@ ulimit -n
 ulimit -n 65535
 ```
 
-To make this persistent across sessions, refer to your shell's configuration
-(e.g., add `ulimit -n 65535` to `~/.zshrc` or `~/.bashrc`).
+This affects the current shell session. Persistent/system-wide limits are OS
+and configuration dependent; consult your macOS configuration and documentation
+if you need to raise the hard limit.
