@@ -45,9 +45,10 @@ budget to enforce.
 
 !!! note
     All runtime options (`memory_limit`, `memory_pool_type`, `temp_dir`,
-    `unspillable_reserve_ratio`) must be set **before** the first query is
-    executed. Once the first query runs, the internal execution context is
-    created and these options become read-only.
+    `unspillable_reserve_ratio`) must be set **before** the internal context
+    is initialized — that is, before the first call to `sd.sql(...)` or any
+    read method (for example, `sd.read_parquet(...)`). Once the internal
+    context is created, these options become read-only.
 
 ## Memory Pool Types
 
@@ -171,8 +172,10 @@ DataFusion provides additional execution configurations that affect spill
 behavior. These can be set via SQL `SET` statements after connecting:
 
 !!! note
-    `SET` is executed as a query. Configure `sd.options.*` runtime options (like
-    `memory_limit` and `temp_dir`) before running any `SET` statements.
+    Calling `sd.sql("SET ...")` initializes the internal context and freezes
+    runtime options immediately, before `.execute()` is run. Configure
+    `sd.options.*` runtime options (like `memory_limit` and `temp_dir`) before
+    calling any `sd.sql(...)`, including `SET` statements.
 
 ### Spill compression
 
