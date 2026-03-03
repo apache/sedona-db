@@ -26,5 +26,8 @@ unsafe extern "C" {
     pub fn SedonaGeographyGlueTestLinkage() -> f64;
     pub fn SedonaGeographyGlueLngLatToCellId(lng: f64, lat: f64) -> u64;
     pub fn SedonaGeographyGlueNumKernels() -> usize;
-    pub fn SedonaGeographyGlueInitKernels(kernels_array: *mut c_void, kerenels_size_bytes: usize) -> c_int;
+    pub fn SedonaGeographyGlueInitKernels(
+        kernels_array: *mut c_void,
+        kerenels_size_bytes: usize,
+    ) -> c_int;
 }
