@@ -133,8 +133,8 @@ impl Driver {
                 GDALCreate,
                 self.c_driver,
                 c_filename.as_ptr(),
-                0,
-                0,
+                1,
+                1,
                 0,
                 GDALDataType::GDT_Unknown,
                 ptr::null_mut()
@@ -225,6 +225,6 @@ mod tests {
         let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
         let ds = driver.create_vector_only("").unwrap();
         assert_eq!(ds.raster_count(), 0);
-        assert_eq!(ds.raster_size(), (0, 0));
+        assert_eq!(ds.raster_size(), (1, 1));
     }
 }
