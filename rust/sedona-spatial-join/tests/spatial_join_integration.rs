@@ -802,7 +802,7 @@ async fn run_spatial_join_query(
     )?);
 
     let is_optimized_spatial_join = options.is_some();
-    let repartition_probe_side = options.as_ref().map_or(false, |o| o.repartition_probe_side);
+    let repartition_probe_side = options.as_ref().is_some_and(|o| o.repartition_probe_side);
     let ctx = setup_context(options, batch_size)?;
     ctx.register_table("L", Arc::clone(&mem_table_left))?;
     ctx.register_table("R", Arc::clone(&mem_table_right))?;
