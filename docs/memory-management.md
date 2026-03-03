@@ -158,8 +158,9 @@ and may spill to disk when memory limits are enforced.
 
 - **`ORDER BY` / sorted Top-K** (`SortExec`) -- External sort that
   spills sorted runs to disk when memory is exhausted, then merges them.
-- **Many joins** (`HashJoinExec`) -- Hash join that spills hash table partitions
-  to disk under memory pressure.
+- **Hash joins** (`HashJoinExec`) -- Hash join does not support spilling yet.
+  The query will fail with a memory reservation error if the hash table exceeds
+  the memory limit.
 - **Sort-merge joins** (`SortMergeJoinExec`) -- Sort-merge join that spills
   buffered batches to disk when the memory limit is exceeded.
 - **`GROUP BY` aggregations** (`AggregateExec`) -- Grouped aggregation that
