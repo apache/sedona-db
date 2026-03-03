@@ -147,6 +147,7 @@ sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
 sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
+sedona-extension = { version = "0.3.0", path = "c/sedona-extension" }
 sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }
 sedona-geos = { version = "0.3.0", path = "c/sedona-geos" }
 sedona-proj = { version = "0.3.0", path = "c/sedona-proj", default-features = false }

@@ -15,9 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use sedona_expr::scalar_udf::ScalarKernelRef;
+use std::sync::Arc;
 
-use crate::{geography_glue_bindgen::*};
+use datafusion_common::Result;
+use sedona_expr::scalar_udf::ScalarKernelRef;
+use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
+
+use crate::geography_glue_bindgen::*;
 
 /// Compute an S2 Cell identifier from a longitude/latitude pair
 ///
@@ -29,8 +33,32 @@ pub fn s2_cell_id_from_lnglat(lnglat: (f64, f64)) -> u64 {
     unsafe { SedonaGeographyGlueLngLatToCellId(lnglat.0, lnglat.1) }
 }
 
-pub fn s2_scalar_udfs() -> Vec<(String, ScalarKernelRef)> {
-    Vec::new()
+pub fn s2_scalar_kernels() -> Vec<(String, ScalarKernelRef)> {
+    let mut ffi_scalar_kernels = Vec::<SedonaCScalarKernel>::new();
+    ffi_scalar_kernels.resize_with(unsafe { SedonaGeographyGlueNumKernels() }, Default::default);
+
+    let err_code = unsafe {
+        SedonaGeographyGlueInitKernels(
+            ffi_scalar_kernels.as_mut_ptr() as _,
+            size_of::<SedonaCScalarKernel>() * ffi_scalar_kernels.len(),
+        )
+    };
+
+    if err_code != 0 {
+        panic!("SedonaGeographyGlueInitKernels() failed")
+    }
+
+    ffi_scalar_kernels
+        .into_iter()
+        .map(|c_kernel| {
+            let imported_kernel = ImportedScalarKernel::try_from(c_kernel)?;
+            Ok((
+                imported_kernel.function_name().unwrap().to_string(),
+                Arc::new(imported_kernel) as ScalarKernelRef,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()
+        .expect("kernel import")
 }
 
 /// Dependency versions for underlying libraries
@@ -98,11 +126,6 @@ impl Versions {
 
 #[cfg(test)]
 mod test {
-    use arrow_array::{ArrayRef, ffi};
-    use arrow_schema::DataType;
-    use sedona_schema::datatypes::WKB_GEOGRAPHY;
-    use sedona_testing::create::create_array_storage;
-
     use super::*;
 
     #[test]
@@ -123,8 +146,8 @@ mod test {
 
     #[test]
     fn test_s2_scalar_kernels() {
-        let kernels = s2_scalar_udfs();
-        assert!(kernels.len() > 0);
+        let kernels = s2_scalar_kernels();
+        assert!(!kernels.is_empty());
     }
 
     #[test]

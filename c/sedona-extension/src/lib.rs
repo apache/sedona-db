@@ -15,5 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub(crate) mod extension;
+pub mod extension;
 pub mod scalar_kernel;

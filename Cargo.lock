@@ -5544,6 +5544,7 @@ dependencies = [
  "rstest",
  "sedona",
  "sedona-expr",
+ "sedona-extension",
  "sedona-functions",
  "sedona-schema",
  "sedona-testing",
