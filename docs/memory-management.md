@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Memory Management
+# Memory Management and Spilling
 
 SedonaDB supports memory-limited execution with automatic spill-to-disk,
 allowing you to process datasets that are larger than available memory. When a
