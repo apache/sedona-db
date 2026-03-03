@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! Ported (and contains copied code) from georust/gdal:
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/config.rs>.
+//! Original code is licensed under MIT.
+//!
 //! GDAL configuration option wrappers.
 
 use std::ffi::CString;

@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! Ported (and contains copied code) from georust/gdal:
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/geo_transform.rs>.
+//! Original code is licensed under MIT.
+//!
 //! GeoTransform type and extension trait.
 //!
 //! The [`apply`](GeoTransformEx::apply) and [`invert`](GeoTransformEx::invert)

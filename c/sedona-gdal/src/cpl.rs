@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+//! Ported (and contains copied code) from georust/gdal:
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/cpl.rs>.
+//! Original code is licensed under MIT.
+//!
 //! GDAL Common Portability Library Functions.
 //!
 //! Provides [`CslStringList`], a pure-Rust implementation of GDAL's null-terminated
