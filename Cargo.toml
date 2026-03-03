@@ -20,6 +20,7 @@ members = [
     "c/sedona-geoarrow-c",
     "c/sedona-geos",
     "c/sedona-libgpuspatial",
+    "c/sedona-gdal",
     "c/sedona-proj",
     "c/sedona-s2geography",
     "c/sedona-tg",
@@ -150,6 +151,7 @@ sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
 # C wrapper crates
 sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }
 sedona-geos = { version = "0.3.0", path = "c/sedona-geos" }
+sedona-gdal = { version = "0.3.0", path = "c/sedona-gdal", default-features = false }
 sedona-proj = { version = "0.3.0", path = "c/sedona-proj", default-features = false }
 sedona-s2geography = { version = "0.3.0", path = "c/sedona-s2geography" }
 sedona-tg = { version = "0.3.0", path = "c/sedona-tg" }
