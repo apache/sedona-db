@@ -331,7 +331,7 @@ impl SedonaScalarKernel for RsPixelAsPolygon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::Int32Array;
+    use arrow_array::{Int32Array, Int64Array};
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
@@ -369,6 +369,35 @@ mod tests {
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
         let cols = Int32Array::from(vec![1, 1, 1]);
         let rows = Int32Array::from(vec![1, 1, 1]);
+
+        let expected = &create_array_item_crs(
+            &[Some("POINT (1.0 2.0)"), None, Some("POINT (3.0 4.0)")],
+            [Some("OGC:CRS84"), None, Some("OGC:CRS84")],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(cols), Arc::new(rows)])
+            .unwrap();
+
+        assert_array_equal(&result, expected);
+    }
+
+    #[test]
+    fn udf_pixelaspoint_invoke_int64() {
+        let udf = rs_pixelaspoint_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+            ],
+        );
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let cols = Int64Array::from(vec![1i64, 1, 1]);
+        let rows = Int64Array::from(vec![1i64, 1, 1]);
 
         let expected = &create_array_item_crs(
             &[Some("POINT (1.0 2.0)"), None, Some("POINT (3.0 4.0)")],
@@ -462,6 +491,35 @@ mod tests {
         assert_array_equal(&result, expected);
     }
 
+    #[test]
+    fn udf_pixelascentroid_invoke_int64() {
+        let udf = rs_pixelascentroid_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+            ],
+        );
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let cols = Int64Array::from(vec![1i64, 1, 1]);
+        let rows = Int64Array::from(vec![1i64, 1, 1]);
+
+        let expected = &create_array_item_crs(
+            &[Some("POINT (1.05 1.9)"), None, Some("POINT (3.13 3.84)")],
+            [Some("OGC:CRS84"), None, Some("OGC:CRS84")],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(cols), Arc::new(rows)])
+            .unwrap();
+
+        assert_array_equal(&result, expected);
+    }
+
     // -----------------------------------------------------------------------
     // RS_PixelAsPolygon tests
     // -----------------------------------------------------------------------
@@ -493,6 +551,37 @@ mod tests {
         let rasters = generate_test_rasters(1, None).unwrap();
         let cols = Int32Array::from(vec![1]);
         let rows = Int32Array::from(vec![1]);
+
+        let expected = &create_array_item_crs(
+            &[Some(
+                "POLYGON ((1.0 2.0, 1.1 2.0, 1.1 1.8, 1.0 1.8, 1.0 2.0))",
+            )],
+            [Some("OGC:CRS84")],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(cols), Arc::new(rows)])
+            .unwrap();
+
+        assert_array_equal(&result, expected);
+    }
+
+    #[test]
+    fn udf_pixelaspolygon_invoke_int64() {
+        let udf = rs_pixelaspolygon_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+                SedonaType::Arrow(arrow_schema::DataType::Int64),
+            ],
+        );
+
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let cols = Int64Array::from(vec![1i64]);
+        let rows = Int64Array::from(vec![1i64]);
 
         let expected = &create_array_item_crs(
             &[Some(

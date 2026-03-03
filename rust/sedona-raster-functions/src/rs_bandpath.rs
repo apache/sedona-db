@@ -149,7 +149,7 @@ fn get_band_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Int32Array, StringArray};
+    use arrow_array::{Array, Int32Array, Int64Array, StringArray};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
@@ -207,6 +207,30 @@ mod tests {
         assert!(string_array.is_null(0));
         assert!(string_array.is_null(1));
         assert!(string_array.is_null(2));
+    }
+
+    #[test]
+    fn udf_bandpath_with_int64_band_index() {
+        let udf: ScalarUDF = rs_bandpath_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int64)]);
+
+        let rasters = build_outdb_rasters();
+        let band_indices = Int64Array::from(vec![1i64, 1, 2]);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(band_indices)])
+            .unwrap();
+
+        let string_array = result
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Expected StringArray");
+
+        // Raster 0, band 1: OutDbRef -> URL
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
+        // Raster 1: null raster -> null
+        assert!(string_array.is_null(1));
+        // Raster 2, band 2: OutDbRef -> URL
+        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
     #[test]
