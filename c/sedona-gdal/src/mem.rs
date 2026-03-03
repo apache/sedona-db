@@ -222,9 +222,9 @@ impl MemDatasetBuilder {
                 api,
                 MEMDatasetCreate,
                 empty_filename.as_ptr(),
-                self.width as i32,
-                self.height as i32,
-                self.n_owned_bands as i32,
+                self.width.try_into()?,
+                self.height.try_into()?,
+                self.n_owned_bands.try_into()?,
                 owned_bands_data_type,
                 std::ptr::null_mut()
             )
@@ -258,7 +258,7 @@ impl MemDatasetBuilder {
         // Set per-band nodata values.
         for (i, band_spec) in self.bands.iter().enumerate() {
             if let Some(nodata) = &band_spec.nodata {
-                let raster_band = dataset.rasterband(i + 1)?;
+                let raster_band = dataset.rasterband(i + 1 + self.n_owned_bands)?;
                 match nodata {
                     Nodata::F64(v) => raster_band.set_no_data_value(Some(*v))?,
                     Nodata::I64(v) => raster_band.set_no_data_value_i64(Some(*v))?,
@@ -405,7 +405,13 @@ mod tests {
         let external_band = [0u8; 8 * 8];
         let dataset = unsafe {
             MemDatasetBuilder::new_with_owned_bands(8, 8, 1, GdalDataType::Float32)
-                .add_band(GdalDataType::UInt8, external_band.as_ptr())
+                .add_band_with_options(
+                    GdalDataType::UInt8,
+                    external_band.as_ptr(),
+                    None,
+                    None,
+                    Some(Nodata::U64(255)),
+                )
                 .build()
                 .unwrap()
         };
@@ -418,5 +424,7 @@ mod tests {
             dataset.rasterband(2).unwrap().band_type(),
             GdalDataType::UInt8
         );
+        let nodata = dataset.rasterband(2).unwrap().no_data_value();
+        assert_eq!(nodata, Some(255.0));
     }
 }

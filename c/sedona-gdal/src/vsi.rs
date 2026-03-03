@@ -146,9 +146,9 @@ mod tests {
         assert!(matches!(
             unlink_mem_file(api, file_name).unwrap_err(),
             GdalError::UnlinkMemFile {
-                file_name
+                file_name: err_file_name
             }
-            if file_name == file_name
+            if err_file_name == file_name
         ));
     }
 

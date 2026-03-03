@@ -148,7 +148,7 @@ impl<'a> VrtRasterBand<'a> {
         resampling: Option<&str>,
         nodata: Option<f64>,
     ) -> Result<()> {
-        let c_resampling = resampling.and_then(|s| CString::new(s).ok());
+        let c_resampling = resampling.map(CString::new).transpose()?;
 
         let resampling_ptr = c_resampling
             .as_ref()
