@@ -33,7 +33,7 @@ pub fn s2_cell_id_from_lnglat(lnglat: (f64, f64)) -> u64 {
     unsafe { SedonaGeographyGlueLngLatToCellId(lnglat.0, lnglat.1) }
 }
 
-pub fn s2_scalar_kernels() -> Vec<(String, ScalarKernelRef)> {
+pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     let mut ffi_scalar_kernels = Vec::<SedonaCScalarKernel>::new();
     ffi_scalar_kernels.resize_with(unsafe { SedonaGeographyGlueNumKernels() }, Default::default);
 
@@ -57,8 +57,7 @@ pub fn s2_scalar_kernels() -> Vec<(String, ScalarKernelRef)> {
                 Arc::new(imported_kernel) as ScalarKernelRef,
             ))
         })
-        .collect::<Result<Vec<_>>>()
-        .expect("kernel import")
+        .collect()
 }
 
 /// Dependency versions for underlying libraries
@@ -146,7 +145,7 @@ mod test {
 
     #[test]
     fn test_s2_scalar_kernels() {
-        let kernels = s2_scalar_kernels();
+        let kernels = s2_scalar_kernels().unwrap();
         assert!(!kernels.is_empty());
     }
 
