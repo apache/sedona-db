@@ -20,7 +20,8 @@ use std::vec;
 
 use crate::executor::RasterExecutor;
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
-use arrow_array::{cast::AsArray, types::Int32Type};
+use arrow_schema::DataType;
+use datafusion_common::cast::as_int32_array;
 use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
@@ -70,10 +71,12 @@ impl SedonaScalarKernel for RsPixelAsPoint {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let col_array = args[1].clone().into_array(executor.num_iterations())?;
-        let col_array = col_array.as_primitive::<Int32Type>();
-        let row_array = args[2].clone().into_array(executor.num_iterations())?;
-        let row_array = row_array.as_primitive::<Int32Type>();
+        let col_array = args[1].clone().cast_to(&DataType::Int32, None)?;
+        let col_array = col_array.into_array(executor.num_iterations())?;
+        let col_array = as_int32_array(&col_array)?;
+        let row_array = args[2].clone().cast_to(&DataType::Int32, None)?;
+        let row_array = row_array.into_array(executor.num_iterations())?;
+        let row_array = as_int32_array(&row_array)?;
 
         let bytes_per_point = WKB_MIN_PROBABLE_BYTES;
         let mut builder = BinaryBuilder::with_capacity(
@@ -163,10 +166,12 @@ impl SedonaScalarKernel for RsPixelAsCentroid {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let col_array = args[1].clone().into_array(executor.num_iterations())?;
-        let col_array = col_array.as_primitive::<Int32Type>();
-        let row_array = args[2].clone().into_array(executor.num_iterations())?;
-        let row_array = row_array.as_primitive::<Int32Type>();
+        let col_array = args[1].clone().cast_to(&DataType::Int32, None)?;
+        let col_array = col_array.into_array(executor.num_iterations())?;
+        let col_array = as_int32_array(&col_array)?;
+        let row_array = args[2].clone().cast_to(&DataType::Int32, None)?;
+        let row_array = row_array.into_array(executor.num_iterations())?;
+        let row_array = as_int32_array(&row_array)?;
 
         let bytes_per_point = WKB_MIN_PROBABLE_BYTES;
         let mut builder = BinaryBuilder::with_capacity(
@@ -259,10 +264,12 @@ impl SedonaScalarKernel for RsPixelAsPolygon {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let col_array = args[1].clone().into_array(executor.num_iterations())?;
-        let col_array = col_array.as_primitive::<Int32Type>();
-        let row_array = args[2].clone().into_array(executor.num_iterations())?;
-        let row_array = row_array.as_primitive::<Int32Type>();
+        let col_array = args[1].clone().cast_to(&DataType::Int32, None)?;
+        let col_array = col_array.into_array(executor.num_iterations())?;
+        let col_array = as_int32_array(&col_array)?;
+        let row_array = args[2].clone().cast_to(&DataType::Int32, None)?;
+        let row_array = row_array.into_array(executor.num_iterations())?;
+        let row_array = as_int32_array(&row_array)?;
 
         // 1 (byte order) + 4 (type) + 4 (num rings) + 4 (num points) + 80 (5 pts * 16)
         let bytes_per_poly = 93;
