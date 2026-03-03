@@ -243,7 +243,7 @@ fn get_nodata_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Float64Array, Int32Array, StringArray, StructArray};
+    use arrow_array::{Array, Float64Array, Int32Array, Int64Array, StringArray, StructArray};
     use datafusion_expr::ScalarUDF;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
@@ -327,6 +327,26 @@ mod tests {
     }
 
     #[test]
+    fn udf_bandpixeltype_with_int64_band() {
+        let udf: ScalarUDF = rs_bandpixeltype_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int64)]);
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let band_indices = Int64Array::from(vec![1i64, 1, 1]);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(band_indices)])
+            .unwrap();
+        let string_array = result
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Expected StringArray");
+
+        assert_eq!(string_array.value(0), "UNSIGNED_16BITS");
+        assert!(string_array.is_null(1));
+        assert_eq!(string_array.value(2), "UNSIGNED_16BITS");
+    }
+
+    #[test]
     fn udf_bandpixeltype_non_existing_band() {
         let udf: ScalarUDF = rs_bandpixeltype_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
@@ -360,6 +380,21 @@ mod tests {
         let expected: Arc<dyn arrow_array::Array> =
             Arc::new(Float64Array::from(vec![Some(0.0), None, Some(0.0)]));
         let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        assert_array_equal(&result, &expected);
+    }
+
+    #[test]
+    fn udf_bandnodatavalue_with_int64_band() {
+        let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int64)]);
+
+        let rasters = generate_test_rasters(3, Some(1)).unwrap();
+        let band_indices = Int64Array::from(vec![1i64, 1, 1]);
+        let expected: Arc<dyn arrow_array::Array> =
+            Arc::new(Float64Array::from(vec![Some(0.0), None, Some(0.0)]));
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), Arc::new(band_indices)])
+            .unwrap();
         assert_array_equal(&result, &expected);
     }
 
