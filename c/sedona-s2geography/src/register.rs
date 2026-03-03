@@ -14,35 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use sedona_expr::scalar_udf::ScalarKernelRef;
 
-use crate::scalar_kernel;
+use sedona_expr::scalar_udf::ScalarKernelRef;
+use std::sync::OnceLock;
+
+static S2_SCALAR_KERNELS: OnceLock<Vec<(String, ScalarKernelRef)>> = OnceLock::new();
 
 pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
-    vec![
-        ("st_area", scalar_kernel::st_area_impl()),
-        ("st_centroid", scalar_kernel::st_centroid_impl()),
-        ("st_closestpoint", scalar_kernel::st_closest_point_impl()),
-        ("st_contains", scalar_kernel::st_contains_impl()),
-        ("st_convexhull", scalar_kernel::st_convex_hull_impl()),
-        ("st_difference", scalar_kernel::st_difference_impl()),
-        ("st_distance", scalar_kernel::st_distance_impl()),
-        ("st_equals", scalar_kernel::st_equals_impl()),
-        ("st_intersection", scalar_kernel::st_intersection_impl()),
-        ("st_intersects", scalar_kernel::st_intersects_impl()),
-        (
-            "st_lineinterpolatepoint",
-            scalar_kernel::st_line_interpolate_point_impl(),
-        ),
-        (
-            "st_linelocatepoint",
-            scalar_kernel::st_line_locate_point_impl(),
-        ),
-        ("st_length", scalar_kernel::st_length_impl()),
-        ("st_symdifference", scalar_kernel::st_sym_difference_impl()),
-        ("st_maxdistance", scalar_kernel::st_max_distance_impl()),
-        ("st_perimeter", scalar_kernel::st_perimeter_impl()),
-        ("st_shortestline", scalar_kernel::st_shortest_line_impl()),
-        ("st_union", scalar_kernel::st_union_impl()),
-    ]
+    S2_SCALAR_KERNELS
+        .get_or_init(crate::s2geography::s2_scalar_udfs)
+        .iter()
+        .map(|(name, kernel)| (name.as_str(), kernel.clone()))
+        .collect()
 }
