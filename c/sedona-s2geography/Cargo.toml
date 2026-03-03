@@ -44,6 +44,7 @@ arrow-array = { workspace = true, features = ["ffi"] }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 errno = { version = "0.3" }
+sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-extension = { workspace = true }
 sedona-functions = { workspace = true }

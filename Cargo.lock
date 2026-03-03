@@ -5593,6 +5593,7 @@ dependencies = [
  "regex",
  "rstest",
  "sedona",
+ "sedona-common",
  "sedona-expr",
  "sedona-extension",
  "sedona-functions",

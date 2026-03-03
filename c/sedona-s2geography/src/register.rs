@@ -15,15 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use std::sync::OnceLock;
 
-static S2_SCALAR_KERNELS: OnceLock<Vec<(String, ScalarKernelRef)>> = OnceLock::new();
+static S2_SCALAR_KERNELS: OnceLock<Result<Vec<(String, ScalarKernelRef)>>> = OnceLock::new();
 
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
-    S2_SCALAR_KERNELS
-        .get_or_init(crate::s2geography::s2_scalar_kernels)
-        .iter()
-        .map(|(name, kernel)| (name.as_str(), kernel.clone()))
-        .collect()
+pub fn scalar_kernels() -> Result<Vec<(&'static str, ScalarKernelRef)>> {
+    match S2_SCALAR_KERNELS.get_or_init(crate::s2geography::s2_scalar_kernels) {
+        Ok(kernels) => Ok(kernels
+            .iter()
+            .map(|(name, kernel)| (name.as_str(), kernel.clone()))
+            .collect()),
+        Err(err) => sedona_internal_err!("Error initializing s2geography kernels: {err}"),
+    }
 }
