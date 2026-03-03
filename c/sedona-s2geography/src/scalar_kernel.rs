@@ -29,10 +29,10 @@ mod test {
         testers::ScalarUdfTester,
     };
 
-    use crate::s2geography::s2_scalar_udfs;
+    use crate::s2geography::s2_scalar_kernels;
 
     fn s2_udf(name: &str) -> SedonaScalarUDF {
-        for (kernel_name, kernel) in s2_scalar_udfs() {
+        for (kernel_name, kernel) in s2_scalar_kernels() {
             if name == kernel_name {
                 return SedonaScalarUDF::from_impl(name, kernel);
             }

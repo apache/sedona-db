@@ -22,7 +22,7 @@ static S2_SCALAR_KERNELS: OnceLock<Vec<(String, ScalarKernelRef)>> = OnceLock::n
 
 pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
     S2_SCALAR_KERNELS
-        .get_or_init(crate::s2geography::s2_scalar_udfs)
+        .get_or_init(crate::s2geography::s2_scalar_kernels)
         .iter()
         .map(|(name, kernel)| (name.as_str(), kernel.clone()))
         .collect()

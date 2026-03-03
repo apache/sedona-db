@@ -45,6 +45,7 @@ datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 errno = { version = "0.3" }
 sedona-expr = { workspace = true }
+sedona-extension = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-schema = { workspace = true }
 thiserror = { workspace = true }
