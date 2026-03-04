@@ -66,15 +66,14 @@ struct Args {
     #[clap(
         short = 'm',
         long,
-        help = "The memory pool limitation (e.g. '10g'), default to None (no limit)",
-        value_parser(extract_memory_pool_size)
+        help = "The memory pool limitation (e.g. '10g'), default to 75% of physical memory. Use 'unlimited' to disable"
     )]
-    memory_limit: Option<usize>,
+    memory_limit: Option<String>,
 
     #[clap(
         long,
         help = "Specify the memory pool type 'greedy' or 'fair'",
-        default_value_t = PoolType::Greedy
+        default_value_t = PoolType::Fair
     )]
     mem_pool_type: PoolType,
 
@@ -190,8 +189,14 @@ async fn main_inner() -> Result<()> {
     let mut builder = SedonaContextBuilder::new()
         .with_pool_type(args.mem_pool_type.clone())
         .with_unspillable_reserve_ratio(args.unspillable_reserve_ratio)?;
-    if let Some(memory_limit) = args.memory_limit {
-        builder = builder.with_memory_limit(memory_limit);
+    if let Some(ref memory_limit) = args.memory_limit {
+        if memory_limit.eq_ignore_ascii_case("unlimited") {
+            builder = builder.without_memory_limit();
+        } else {
+            let limit =
+                extract_memory_pool_size(memory_limit).map_err(DataFusionError::Configuration)?;
+            builder = builder.with_memory_limit(limit);
+        }
     }
     let ctx = builder.build().await?;
 

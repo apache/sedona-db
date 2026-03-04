@@ -118,6 +118,7 @@ rand = "0.10"
 regex = "1.12"
 rstest = "0.26.1"
 serde = { version = "1" }
+sysinfo = "0.38"
 serde_json = { version = "1" }
 serde_with = { version = "1" }
 tempfile = { version = "3"}

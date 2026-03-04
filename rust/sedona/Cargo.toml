@@ -85,5 +85,6 @@ sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sysinfo = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
