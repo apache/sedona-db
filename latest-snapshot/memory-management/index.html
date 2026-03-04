@@ -888,10 +888,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#example-spatial-join-with-limited-memory" class="md-nav__link">
+  <a href="#example-spatial-join-with-memory-management" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example: Spatial Join with Limited Memory
+        Example: Spatial Join with Memory Management
       
     </span>
   </a>
@@ -1707,10 +1707,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#example-spatial-join-with-limited-memory" class="md-nav__link">
+  <a href="#example-spatial-join-with-memory-management" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example: Spatial Join with Limited Memory
+        Example: Spatial Join with Memory Management
       
     </span>
   </a>
@@ -1838,33 +1838,38 @@
   specific language governing permissions and limitations
   under the License.
 --><h1 id="memory-management-and-spilling">Memory Management and Spilling<a class="headerlink" href="#memory-management-and-spilling" title="Permanent link">¶</a></h1>
-<p>SedonaDB supports memory-limited execution with automatic spill-to-disk, allowing you to process datasets that are larger than available memory. When a memory limit is configured, operators that exceed their memory budget automatically spill intermediate data to temporary files on disk and read them back as needed.</p>
+<p>SedonaDB uses memory-limited execution with automatic spill-to-disk out of the box. By default, the memory limit is set to <strong>75% of the system's physical memory</strong> and memory is managed by a <strong>fair</strong> pool. When operators exceed their memory budget they automatically spill intermediate data to temporary files on disk and read them back as needed.</p>
+<p>This means SedonaDB works well for large datasets without any configuration. The sections below explain how to tune the defaults when needed.</p>
 <h2 id="configuring-memory-limits">Configuring Memory Limits<a class="headerlink" href="#configuring-memory-limits" title="Permanent link">¶</a></h2>
-<p>Set <code>memory_limit</code> on the context options to cap the total memory available for query execution. The limit accepts an integer (bytes) or a human-readable string such as <code>"4gb"</code>, <code>"512m"</code>, or <code>"1.5g"</code>.</p>
+<p>By default, SedonaDB limits query execution memory to <strong>75% of the system's physical memory</strong>. You can override this by setting <code>memory_limit</code> on the context options before running your first query. The limit accepts an integer (bytes) or a human-readable string such as <code>"4gb"</code>, <code>"512m"</code>, or <code>"1.5g"</code>.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
 </code></pre></div>
-<p>Without a memory limit, SedonaDB uses an unbounded memory pool and operators can use as much memory as needed (until the process hits system limits). In this mode, operators typically won't spill to disk because there is no memory budget to enforce.</p>
+<p>To disable the memory limit entirely and use an unbounded memory pool, set <code>memory_limit</code> to <code>"unlimited"</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"unlimited"</span>
+</code></pre></div>
+<p>In unbounded mode, operators can use as much memory as needed (until the process hits system limits) and typically won't spill to disk because there is no memory budget to enforce.</p>
 <blockquote>
 <p><strong>Note:</strong> All runtime options (<code>memory_limit</code>, <code>memory_pool_type</code>, <code>temp_dir</code>, <code>unspillable_reserve_ratio</code>) must be set before the internal context is initialized. The internal context is created on the first call to <code>sd.sql(...)</code> (including <code>SET</code> statements) or any read method (for example, <code>sd.read_parquet(...)</code>) -- not when you call <code>.execute()</code> on the returned DataFrame. Once the internal context is created, these runtime options become read-only.</p>
 </blockquote>
 <h2 id="memory-pool-types">Memory Pool Types<a class="headerlink" href="#memory-pool-types" title="Permanent link">¶</a></h2>
 <p>The <code>memory_pool_type</code> option controls how the memory budget is distributed among concurrent operators. Two pool types are available:</p>
 <ul>
-<li><strong><code>"greedy"</code></strong> -- Grants memory reservations on a first-come-first-served basis. This is the default when no pool type is specified. Simple, but can lead to memory reservation failures under pressure -- one consumer may exhaust the pool before others get a chance to reserve memory.</li>
-<li><strong><code>"fair"</code> (recommended)</strong> -- Distributes memory fairly among spillable consumers and reserves a fraction of the pool for unspillable consumers. More stable under memory pressure and significantly less likely to cause reservation failures, at the cost of slightly lower utilization of the total reserved memory.</li>
+<li><strong><code>"fair"</code> (default)</strong> -- Distributes memory fairly among spillable consumers and reserves a fraction of the pool for unspillable consumers. Stable under memory pressure and significantly less likely to cause reservation failures.</li>
+<li><strong><code>"greedy"</code></strong> -- Grants memory reservations on a first-come-first-served basis. Simpler, but can lead to memory reservation failures under pressure -- one consumer may exhaust the pool before others get a chance to reserve memory.</li>
 </ul>
-<p>We recommend using <code>"fair"</code> whenever a memory limit is configured.</p>
+<p>You only need to set <code>memory_pool_type</code> if you want to switch to the greedy pool:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"greedy"</span>
 </code></pre></div>
 <blockquote>
-<p><strong>Note:</strong> <code>memory_pool_type</code> only takes effect when <code>memory_limit</code> is set.</p>
+<p><strong>Note:</strong> <code>memory_pool_type</code> only takes effect when a memory limit is active (i.e., <code>memory_limit</code> is not set to <code>"unlimited"</code>).</p>
 </blockquote>
 <h3 id="unspillable-reserve-ratio">Unspillable reserve ratio<a class="headerlink" href="#unspillable-reserve-ratio" title="Permanent link">¶</a></h3>
 <p>When using the <code>"fair"</code> pool, the <code>unspillable_reserve_ratio</code> option controls the fraction of the memory pool reserved for unspillable consumers (operators that cannot spill their memory to disk). It accepts a float between <code>0.0</code> and <code>1.0</code> and defaults to <code>0.2</code> (20%) when not explicitly set.</p>
@@ -1872,7 +1877,6 @@
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"8gb"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">unspillable_reserve_ratio</span> <span class="o">=</span> <span class="mf">0.3</span>  <span class="c1"># reserve 30% for unspillable consumers</span>
 </code></pre></div>
 <h2 id="temporary-directory-for-spill-files">Temporary Directory for Spill Files<a class="headerlink" href="#temporary-directory-for-spill-files" title="Permanent link">¶</a></h2>
@@ -1880,22 +1884,20 @@
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">temp_dir</span> <span class="o">=</span> <span class="s2">"/mnt/fast-ssd/sedona-spill"</span>
 </code></pre></div>
-<h2 id="example-spatial-join-with-limited-memory">Example: Spatial Join with Limited Memory<a class="headerlink" href="#example-spatial-join-with-limited-memory" title="Permanent link">¶</a></h2>
-<p>This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using <code>ST_Contains</code>. Spatial joins are one of the most common workloads that benefit from memory limits and spill-to-disk.</p>
+<h2 id="example-spatial-join-with-memory-management">Example: Spatial Join with Memory Management<a class="headerlink" href="#example-spatial-join-with-memory-management" title="Permanent link">¶</a></h2>
+<p>This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using <code>ST_Contains</code>. 4GB memory limit and fair pool are used. We also override <code>temp_dir</code> to control where spill files are written.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 
-<span class="c1"># Configure runtime options before any sd.sql(...) or sd.read_* call.</span>
+<span class="c1"># Optionally override runtime options before any sd.sql(...) or sd.read_* call.</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">unspillable_reserve_ratio</span> <span class="o">=</span> <span class="mf">0.2</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">temp_dir</span> <span class="o">=</span> <span class="s2">"/tmp/sedona-spill"</span>
 
+<span class="c1"># Call sd.sql(...) or sd.read_* to trigger the creation of the context with the above options.</span>
 <span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
     <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"</span>
 <span class="p">)</span>
@@ -1944,7 +1946,7 @@
 </code></pre></div>
 
 <h2 id="operators-supporting-memory-limits">Operators Supporting Memory Limits<a class="headerlink" href="#operators-supporting-memory-limits" title="Permanent link">¶</a></h2>
-<p>When a memory limit is configured, the following operators automatically spill intermediate data to disk when they exceed their memory budget.</p>
+<p>With the default memory limit active, the following operators automatically spill intermediate data to disk when they exceed their memory budget.</p>
 <p>In practice, this means memory limits and spilling can apply to both SedonaDB's spatial operators and DataFusion's general-purpose operators used by common SQL constructs.</p>
 <p><strong>SedonaDB:</strong></p>
 <ul>
@@ -1968,19 +1970,15 @@
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
 
 <span class="c1"># Enable LZ4 compression for spill files.</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.spill_compression = 'lz4_frame'"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 </code></pre></div>
 <h3 id="maximum-temporary-directory-size">Maximum temporary directory size<a class="headerlink" href="#maximum-temporary-directory-size" title="Permanent link">¶</a></h3>
-<p>DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is <strong>100 G</strong>. If your workload needs to spill more data than this, increase the limit.</p>
+<p>DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is <strong>100G</strong>. If your workload needs to spill more data than this, increase the limit.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
 
 <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
 
 <span class="c1"># Increase the spill directory size limit to 500 GB.</span>
 <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.runtime.max_temp_directory_size = '500G'"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
@@ -2022,7 +2020,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="March 4, 2026 15:39:41 UTC">March 4, 2026 15:39:41</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="March 4, 2026 19:46:09 UTC">March 4, 2026 19:46:09</span>
   </span>
 
     
