@@ -33,6 +33,10 @@ pub use exec::SpatialJoinExec;
 // Re-export function for register the spatial join planner
 pub use planner::register_planner;
 
+// Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
+// its presence in optimized physical plans.
+pub use planner::probe_shuffle_exec::ProbeShuffleExec;
+
 // Re-export types needed for external usage (e.g., in Comet)
 pub use index::{SpatialIndex, SpatialJoinBuildMetrics};
 pub use spatial_predicate::SpatialPredicate;

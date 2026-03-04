@@ -26,7 +26,7 @@ use datafusion::{
     prelude::{SessionConfig, SessionContext},
 };
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion_common::Result;
+use datafusion_common::{JoinSide, Result};
 use datafusion_expr::{ColumnarValue, JoinType};
 use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
@@ -43,7 +43,8 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use sedona_spatial_join::{
-    register_planner, spatial_predicate::RelationPredicate, SpatialJoinExec, SpatialPredicate,
+    register_planner, spatial_predicate::RelationPredicate, ProbeShuffleExec, SpatialJoinExec,
+    SpatialPredicate,
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
@@ -801,6 +802,7 @@ async fn run_spatial_join_query(
     )?);
 
     let is_optimized_spatial_join = options.is_some();
+    let repartition_probe_side = options.as_ref().is_some_and(|o| o.repartition_probe_side);
     let ctx = setup_context(options, batch_size)?;
     ctx.register_table("L", Arc::clone(&mem_table_left))?;
     ctx.register_table("R", Arc::clone(&mem_table_right))?;
@@ -810,6 +812,9 @@ async fn run_spatial_join_query(
     let spatial_join_execs = collect_spatial_join_exec(&plan)?;
     if is_optimized_spatial_join {
         assert_eq!(spatial_join_execs.len(), 1);
+        if repartition_probe_side {
+            probe_side_of_spatial_join_exec_should_be_shuffled(spatial_join_execs[0]);
+        }
     } else {
         assert!(spatial_join_execs.is_empty());
     }
@@ -827,6 +832,20 @@ fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&Spati
         Ok(TreeNodeRecursion::Continue)
     })?;
     Ok(spatial_join_execs)
+}
+
+fn probe_side_of_spatial_join_exec_should_be_shuffled(sj: &SpatialJoinExec) {
+    let probe_child = match &sj.on {
+        SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
+            JoinSide::Left => &sj.left,
+            _ => &sj.right,
+        },
+        _ => &sj.right, // non-KNN: probe is always right after swap
+    };
+    assert!(
+        subtree_contains_probe_shuffle_exec(probe_child),
+        "ProbeShuffleExec should be present on the probe side of SpatialJoinExec"
+    );
 }
 
 async fn test_mark_join(
@@ -1604,6 +1623,20 @@ fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
         if node.as_any().downcast_ref::<FilterExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
+}
+
+/// Recursively check whether any node in the physical plan tree is a `ProbeShuffleExec`.
+fn subtree_contains_probe_shuffle_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<ProbeShuffleExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }

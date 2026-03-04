@@ -31,15 +31,13 @@ use datafusion_common::{plan_err, DFSchema, JoinSide, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNode;
 use datafusion_expr::LogicalPlan;
 use datafusion_physical_expr::create_physical_expr;
-use datafusion_physical_expr::Partitioning;
 use datafusion_physical_plan::joins::utils::JoinFilter;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
-use datafusion_physical_plan::repartition::RepartitionExec;
-use datafusion_physical_plan::ExecutionPlanProperties;
 use sedona_common::sedona_internal_err;
 
 use crate::exec::SpatialJoinExec;
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
+use crate::planner::probe_shuffle_exec::ProbeShuffleExec;
 use crate::planner::spatial_expr_utils::{is_spatial_predicate_supported, transform_join_filter};
 use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
@@ -325,11 +323,7 @@ fn repartition_probe_side(
         }
     };
 
-    let num_partitions = probe_plan.output_partitioning().partition_count();
-    *probe_plan = Arc::new(RepartitionExec::try_new(
-        Arc::clone(probe_plan),
-        Partitioning::RoundRobinBatch(num_partitions),
-    )?);
+    *probe_plan = Arc::new(ProbeShuffleExec::try_new(Arc::clone(probe_plan))?);
 
     Ok((physical_left, physical_right))
 }
