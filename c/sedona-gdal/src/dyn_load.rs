@@ -79,7 +79,7 @@ macro_rules! load_fn_any {
     }};
 }
 
-/// Populate all 64 function-pointer fields of [`SedonaGdalApi`] from the given
+/// Populate all function-pointer fields of [`SedonaGdalApi`] from the given
 /// [`Library`] handle.
 fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalInitLibraryError> {
     // --- Dataset ---

@@ -30,9 +30,9 @@ use crate::gdal_dyn_bindgen::SedonaGdalApi;
 ///
 /// Panics if the function pointer is `None`. This is unreachable in correct usage
 /// because all function pointers are guaranteed to be `Some` after successful
-/// `sedona_gdal_dyn_api_init` (the C loader fails if any symbol is missing),
-/// and you cannot obtain a `&GdalApi` without successful initialization
-/// (it's behind `OnceLock`).
+/// initialization of [`GdalApi`] via [`GdalApi::try_from_shared_library`] or
+/// [`GdalApi::try_from_current_process`], and you cannot obtain a `&GdalApi`
+/// without successful initialization.
 macro_rules! call_gdal_api {
     ($api:expr, $func:ident $(, $arg:expr)*) => {
         if let Some(func) = $api.inner.$func {
@@ -80,7 +80,8 @@ impl GdalApi {
         &self.name
     }
 
-    /// Check the last CPL error and return a `GdalError` if there was one.
+    /// Check the last CPL error and return a `GdalError`, it always returns an error struct
+    /// (even when the error number is 0).
     pub fn last_cpl_err(&self, default_err_class: u32) -> GdalError {
         let err_no = unsafe { call_gdal_api!(self, CPLGetLastErrorNo) };
         let err_msg = unsafe {

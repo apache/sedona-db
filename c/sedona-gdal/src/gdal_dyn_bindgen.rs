@@ -66,7 +66,6 @@ pub enum GDALDataType {
     GDT_CFloat16 = 16,
     GDT_CFloat32 = 10,
     GDT_CFloat64 = 11,
-    GDT_TypeCount = 17,
 }
 
 impl GDALDataType {
@@ -90,7 +89,6 @@ impl GDALDataType {
             14 => Ok(GDALDataType::GDT_Int8),
             15 => Ok(GDALDataType::GDT_Float16),
             16 => Ok(GDALDataType::GDT_CFloat16),
-            17 => Ok(GDALDataType::GDT_TypeCount),
             _ => Err(()),
         }
     }
@@ -239,7 +237,7 @@ pub const wkbNDR: OGRwkbByteOrder = 1; // Little endian
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Default)]
-pub struct SedonaGdalApi {
+pub(crate) struct SedonaGdalApi {
     // --- Dataset ---
     pub GDALOpenEx: Option<
         unsafe extern "C" fn(
