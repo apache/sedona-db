@@ -250,3 +250,69 @@ fn current_process_library() -> Result<Library, GdalInitLibraryError> {
         })?
         .into())
 }
+
+#[cfg(not(any(unix, windows)))]
+compile_error!(
+    "sedona-gdal: current_process_library() is not implemented for this platform. \
+     Only Unix and Windows are supported."
+);
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Loading from an invalid path should return a `LibraryError`.
+    #[test]
+    fn test_shared_library_error() {
+        let err = load_gdal_from_path(Path::new("/not/a/valid/gdal/library.so")).unwrap_err();
+        assert!(
+            matches!(err, GdalInitLibraryError::LibraryError(_)),
+            "Expected LibraryError, got: {err:?}"
+        );
+        assert!(
+            !err.to_string().is_empty(),
+            "Error message should not be empty"
+        );
+    }
+
+    /// Verify that loading from the current process succeeds when GDAL symbols
+    /// are linked in (i.e. the `gdal-sys` feature is enabled).
+    #[cfg(feature = "gdal-sys")]
+    #[test]
+    fn test_load_from_current_process() {
+        let (_lib, api) = load_gdal_from_current_process()
+            .expect("load_gdal_from_current_process should succeed when gdal-sys is linked");
+
+        // Spot-check that key function pointers were resolved.
+        assert!(
+            api.GDALAllRegister.is_some(),
+            "GDALAllRegister should be loaded"
+        );
+        assert!(api.GDALOpenEx.is_some(), "GDALOpenEx should be loaded");
+        assert!(api.GDALClose.is_some(), "GDALClose should be loaded");
+    }
+
+    /// Test loading from an explicit shared library path, gated behind an
+    /// environment variable. Skips gracefully when the variable is unset.
+    #[test]
+    fn test_load_from_shared_library() {
+        if let Ok(gdal_library) = std::env::var("SEDONA_GDAL_TEST_SHARED_LIBRARY") {
+            if !gdal_library.is_empty() {
+                let (_lib, api) = load_gdal_from_path(Path::new(&gdal_library))
+                    .expect("Should load GDAL from SEDONA_GDAL_TEST_SHARED_LIBRARY");
+
+                assert!(
+                    api.GDALAllRegister.is_some(),
+                    "GDALAllRegister should be loaded"
+                );
+                assert!(api.GDALOpenEx.is_some(), "GDALOpenEx should be loaded");
+                return;
+            }
+        }
+
+        println!(
+            "Skipping test_load_from_shared_library - \
+             SEDONA_GDAL_TEST_SHARED_LIBRARY environment variable not set"
+        );
+    }
+}

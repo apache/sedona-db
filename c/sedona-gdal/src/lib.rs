@@ -31,4 +31,5 @@ pub use errors::GdalError;
 pub use gdal_api::GdalApi;
 pub use register::{
     configure_global_gdal_api, get_global_gdal_api, is_gdal_api_configured, with_global_gdal_api,
+    GdalApiBuilder,
 };
