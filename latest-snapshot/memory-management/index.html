@@ -7,27 +7,31 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_intersection/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/memory-management/">
       
       
+        <link rel="prev" href="../programming-guide/">
+      
+      
+        <link rel="next" href="../reference/python/">
       
       
         
       
       
-      <link rel="icon" href="../../../image/sedona_logo_symbol.png">
+      <link rel="icon" href="../image/sedona_logo_symbol.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
     
     
       
-        <title>ST_Intersection - Apache Sedona</title>
+        <title>Memory Management and Spilling - Apache Sedona</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -46,17 +50,17 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
-  <link href="../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -84,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_intersection" class="md-skip">
+        <a href="#memory-management-and-spilling" class="md-skip">
           Skip to content
         </a>
       
@@ -140,9 +144,9 @@
         </label>
 
         <!-- Link to home -->
-        <a href="../../.." title="Apache Sedona" class="header-logo" aria-label="Apache Sedona" data-md-component="logo">
+        <a href=".." title="Apache Sedona" class="header-logo" aria-label="Apache Sedona" data-md-component="logo">
           
-  <img src="../../../image/logo.svg" alt="logo">
+  <img src="../image/logo.svg" alt="logo">
 
         </a>
 
@@ -157,7 +161,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Intersection
+              Memory Management and Spilling
             
           </span>
             </div>
@@ -279,11 +283,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../.." class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href=".." class="md-tabs__link">
           
   
   
@@ -519,8 +525,8 @@
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
 
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Apache Sedona" class="logo-link" aria-label="Apache Sedona" data-md-component="logo">
-      <img src="../../../image/header/logo-mobile.svg" alt="" class="logo">
+    <a href=".." title="Apache Sedona" class="logo-link" aria-label="Apache Sedona" data-md-component="logo">
+      <img src="../image/header/logo-mobile.svg" alt="" class="logo">
     </a>
   </label>
 
@@ -571,26 +577,31 @@
     
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -608,7 +619,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -626,7 +637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -654,7 +665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../quickstart-python/" class="md-nav__link">
+      <a href="../quickstart-python/" class="md-nav__link">
         
   
   
@@ -682,7 +693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../programming-guide/" class="md-nav__link">
+      <a href="../programming-guide/" class="md-nav__link">
         
   
   
@@ -707,26 +718,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4">
         
           
-          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
             
   
   
@@ -744,7 +760,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -759,10 +775,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../memory-management/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory Management and Spilling
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -778,6 +821,165 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-memory-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuring Memory Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-pool-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory Pool Types
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Pool Types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unspillable-reserve-ratio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unspillable reserve ratio
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporary-directory-for-spill-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Temporary Directory for Spill Files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-spatial-join-with-limited-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example: Spatial Join with Limited Memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operators-supporting-memory-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operators Supporting Memory Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-datafusion-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advanced DataFusion Configurations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced DataFusion Configurations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spill-compression" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spill compression
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maximum-temporary-directory-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maximum temporary directory size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="System Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#maximum-number-of-open-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maximum number of open files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -804,17 +1006,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5">
         
           
-          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
             
   
   
@@ -850,7 +1055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../python/" class="md-nav__link">
+      <a href="../reference/python/" class="md-nav__link">
         
   
   
@@ -878,7 +1083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../reference/sql/" class="md-nav__link">
         
   
   
@@ -906,7 +1111,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../sql-joins/" class="md-nav__link">
+      <a href="../reference/sql-joins/" class="md-nav__link">
         
   
   
@@ -948,17 +1153,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6">
         
           
-          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
             
   
   
@@ -994,7 +1202,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../geopandas-interop/" class="md-nav__link">
+      <a href="../geopandas-interop/" class="md-nav__link">
         
   
   
@@ -1022,7 +1230,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../overture-examples/" class="md-nav__link">
+      <a href="../overture-examples/" class="md-nav__link">
         
   
   
@@ -1050,7 +1258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../crs-examples/" class="md-nav__link">
+      <a href="../crs-examples/" class="md-nav__link">
         
   
   
@@ -1078,7 +1286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../delta-lake/" class="md-nav__link">
+      <a href="../delta-lake/" class="md-nav__link">
         
   
   
@@ -1106,7 +1314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../iceberg/" class="md-nav__link">
+      <a href="../iceberg/" class="md-nav__link">
         
   
   
@@ -1134,7 +1342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../working-with-parquet-files/" class="md-nav__link">
+      <a href="../working-with-parquet-files/" class="md-nav__link">
         
   
   
@@ -1162,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../working-with-sql-sedonadb/" class="md-nav__link">
+      <a href="../working-with-sql-sedonadb/" class="md-nav__link">
         
   
   
@@ -1198,7 +1406,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributors-guide/" class="md-nav__link">
+      <a href="../contributors-guide/" class="md-nav__link">
         
   
   
@@ -1449,10 +1657,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#configuring-memory-limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Usage
+        Configuring Memory Limits
       
     </span>
   </a>
@@ -1460,10 +1668,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#arguments" class="md-nav__link">
+  <a href="#memory-pool-types" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Arguments
+        Memory Pool Types
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory Pool Types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unspillable-reserve-ratio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unspillable reserve ratio
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#temporary-directory-for-spill-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Temporary Directory for Spill Files
       
     </span>
   </a>
@@ -1471,13 +1707,91 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
+  <a href="#example-spatial-join-with-limited-memory" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Examples
+        Example: Spatial Join with Limited Memory
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operators-supporting-memory-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operators Supporting Memory Limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-datafusion-configurations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advanced DataFusion Configurations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced DataFusion Configurations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#spill-compression" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Spill compression
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maximum-temporary-directory-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maximum temporary directory size
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="System Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#maximum-number-of-open-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maximum number of open files
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1498,7 +1812,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_intersection.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/memory-management.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1506,34 +1820,188 @@
   
 
 
-<h1 id="st_intersection">ST_Intersection<a class="headerlink" href="#st_intersection" title="Permanent link">¶</a></h1>
-<p>Computes the intersection of two geometries or geographies.</p>
-<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
-<span class="n">geography</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span><span class="n">geogA</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="n">geogB</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<!---
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+--><h1 id="memory-management-and-spilling">Memory Management and Spilling<a class="headerlink" href="#memory-management-and-spilling" title="Permanent link">¶</a></h1>
+<p>SedonaDB supports memory-limited execution with automatic spill-to-disk, allowing you to process datasets that are larger than available memory. When a memory limit is configured, operators that exceed their memory budget automatically spill intermediate data to temporary files on disk and read them back as needed.</p>
+<h2 id="configuring-memory-limits">Configuring Memory Limits<a class="headerlink" href="#configuring-memory-limits" title="Permanent link">¶</a></h2>
+<p>Set <code>memory_limit</code> on the context options to cap the total memory available for query execution. The limit accepts an integer (bytes) or a human-readable string such as <code>"4gb"</code>, <code>"512m"</code>, or <code>"1.5g"</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
 </code></pre></div>
-<h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
+<p>Without a memory limit, SedonaDB uses an unbounded memory pool and operators can use as much memory as needed (until the process hits system limits). In this mode, operators typically won't spill to disk because there is no memory budget to enforce.</p>
+<blockquote>
+<p><strong>Note:</strong> All runtime options (<code>memory_limit</code>, <code>memory_pool_type</code>, <code>temp_dir</code>, <code>unspillable_reserve_ratio</code>) must be set before the internal context is initialized. The internal context is created on the first call to <code>sd.sql(...)</code> (including <code>SET</code> statements) or any read method (for example, <code>sd.read_parquet(...)</code>) -- not when you call <code>.execute()</code> on the returned DataFrame. Once the internal context is created, these runtime options become read-only.</p>
+</blockquote>
+<h2 id="memory-pool-types">Memory Pool Types<a class="headerlink" href="#memory-pool-types" title="Permanent link">¶</a></h2>
+<p>The <code>memory_pool_type</code> option controls how the memory budget is distributed among concurrent operators. Two pool types are available:</p>
 <ul>
-<li><strong>geogA</strong> (geography): Input geography</li>
-<li><strong>geogB</strong> (geography): Input geography</li>
-<li><strong>geomA</strong> (geometry): Input geometry</li>
-<li><strong>geomB</strong> (geometry): Input geometry</li>
+<li><strong><code>"greedy"</code></strong> -- Grants memory reservations on a first-come-first-served basis. This is the default when no pool type is specified. Simple, but can lead to memory reservation failures under pressure -- one consumer may exhaust the pool before others get a chance to reserve memory.</li>
+<li><strong><code>"fair"</code> (recommended)</strong> -- Distributes memory fairly among spillable consumers and reserves a fraction of the pool for unspillable consumers. More stable under memory pressure and significantly less likely to cause reservation failures, at the cost of slightly lower utilization of the total reserved memory.</li>
 </ul>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Intersection</span><span class="p">(</span>
-<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'</span><span class="p">),</span>
-<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'</span><span class="p">)</span>
-<span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<p>We recommend using <code>"fair"</code> whenever a memory limit is configured.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────┐
-│                 val                │
-│              geometry              │
-╞════════════════════════════════════╡
-│ POLYGON((1 1,1 10,10 10,10 1,1 1)) │
-└────────────────────────────────────┘
+<blockquote>
+<p><strong>Note:</strong> <code>memory_pool_type</code> only takes effect when <code>memory_limit</code> is set.</p>
+</blockquote>
+<h3 id="unspillable-reserve-ratio">Unspillable reserve ratio<a class="headerlink" href="#unspillable-reserve-ratio" title="Permanent link">¶</a></h3>
+<p>When using the <code>"fair"</code> pool, the <code>unspillable_reserve_ratio</code> option controls the fraction of the memory pool reserved for unspillable consumers (operators that cannot spill their memory to disk). It accepts a float between <code>0.0</code> and <code>1.0</code> and defaults to <code>0.2</code> (20%) when not explicitly set.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"8gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">unspillable_reserve_ratio</span> <span class="o">=</span> <span class="mf">0.3</span>  <span class="c1"># reserve 30% for unspillable consumers</span>
+</code></pre></div>
+<h2 id="temporary-directory-for-spill-files">Temporary Directory for Spill Files<a class="headerlink" href="#temporary-directory-for-spill-files" title="Permanent link">¶</a></h2>
+<p>By default, DataFusion uses the system temporary directory for spill files. You can override this with <code>temp_dir</code> to control where spill data is written -- for example, to point to a larger or faster disk.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">temp_dir</span> <span class="o">=</span> <span class="s2">"/mnt/fast-ssd/sedona-spill"</span>
+</code></pre></div>
+<h2 id="example-spatial-join-with-limited-memory">Example: Spatial Join with Limited Memory<a class="headerlink" href="#example-spatial-join-with-limited-memory" title="Permanent link">¶</a></h2>
+<p>This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using <code>ST_Contains</code>. Spatial joins are one of the most common workloads that benefit from memory limits and spill-to-disk.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+<span class="c1"># Configure runtime options before any sd.sql(...) or sd.read_* call.</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">unspillable_reserve_ratio</span> <span class="o">=</span> <span class="mf">0.2</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">temp_dir</span> <span class="o">=</span> <span class="s2">"/tmp/sedona-spill"</span>
+
+<span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
+    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"</span>
+<span class="p">)</span>
+<span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
+    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"</span>
+<span class="p">)</span>
+<span class="n">countries</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"countries"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    SELECT</span>
+<span class="sd">        cities.name city_name,</span>
+<span class="sd">        countries.name country_name</span>
+<span class="sd">    FROM cities</span>
+<span class="sd">    JOIN countries</span>
+<span class="sd">      ON ST_Contains(countries.geometry, cities.geometry)</span>
+<span class="sd">    """</span>
+<span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌───────────────┬─────────────────────────────┐
+│   city_name   ┆         country_name        │
+│      utf8     ┆             utf8            │
+╞═══════════════╪═════════════════════════════╡
+│ Suva          ┆ Fiji                        │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Dodoma        ┆ United Republic of Tanzania │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Dar es Salaam ┆ United Republic of Tanzania │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Bir Lehlou    ┆ Western Sahara              │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Ottawa        ┆ Canada                      │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Vancouver     ┆ Canada                      │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Toronto       ┆ Canada                      │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ San Francisco ┆ United States of America    │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Denver        ┆ United States of America    │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Houston       ┆ United States of America    │
+└───────────────┴─────────────────────────────┘
 </code></pre></div>
 
-<p><a class="glightbox" data-type="image" data-width="100%" data-height="auto" href="../st_intersection_files/figure-commonmark/cell-2-output-1.png" data-desc-position="bottom"><img alt="" src="../st_intersection_files/figure-commonmark/cell-2-output-1.png"></a></p>
+<h2 id="operators-supporting-memory-limits">Operators Supporting Memory Limits<a class="headerlink" href="#operators-supporting-memory-limits" title="Permanent link">¶</a></h2>
+<p>When a memory limit is configured, the following operators automatically spill intermediate data to disk when they exceed their memory budget.</p>
+<p>In practice, this means memory limits and spilling can apply to both SedonaDB's spatial operators and DataFusion's general-purpose operators used by common SQL constructs.</p>
+<p><strong>SedonaDB:</strong></p>
+<ul>
+<li><strong>Spatial joins</strong> -- Both the build-side (index construction, partition collection) and probe-side (stream repartitioning) of SedonaDB's spatial joins support memory-pressure-driven spilling.</li>
+</ul>
+<p><strong>DataFusion (physical operators):</strong></p>
+<p>This list is not exhaustive. Many other DataFusion physical operators and execution strategies may allocate memory through the same runtime memory pool and may spill to disk when memory limits are enforced.</p>
+<ul>
+<li><strong><code>ORDER BY</code> / sorted Top-K</strong> (<code>SortExec</code>) -- External sort that spills sorted runs to disk when memory is exhausted, then merges them.</li>
+<li><strong>Hash joins</strong> (<code>HashJoinExec</code>) -- Hash join does not support spilling yet. The query will fail with a memory reservation error if the hash table exceeds the memory limit.</li>
+<li><strong>Sort-merge joins</strong> (<code>SortMergeJoinExec</code>) -- Sort-merge join that spills buffered batches to disk when the memory limit is exceeded.</li>
+<li><strong><code>GROUP BY</code> aggregations</strong> (<code>AggregateExec</code>) -- Grouped aggregation that spills intermediate aggregation state to sorted spill files when memory is exhausted.</li>
+</ul>
+<h2 id="advanced-datafusion-configurations">Advanced DataFusion Configurations<a class="headerlink" href="#advanced-datafusion-configurations" title="Permanent link">¶</a></h2>
+<p>DataFusion provides additional execution configurations that affect spill behavior. These can be set via SQL <code>SET</code> statements after connecting.</p>
+<blockquote>
+<p><strong>Note:</strong> Calling <code>sd.sql(...)</code> initializes the internal context immediately (including <code>sd.sql("SET ...")</code>) and freezes runtime options immediately. Configure <code>sd.options.*</code> runtime options (like <code>memory_limit</code> and <code>temp_dir</code>) before calling any <code>sd.sql(...)</code>, including <code>SET</code> statements.</p>
+</blockquote>
+<h3 id="spill-compression">Spill compression<a class="headerlink" href="#spill-compression" title="Permanent link">¶</a></h3>
+<p>By default, data is written to spill files uncompressed. Enabling compression reduces the amount of disk I/O and disk space used at the cost of additional CPU work. This is beneficial when disk I/O throughput is low or when disk space is not large enough to hold uncompressed spill data.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+
+<span class="c1"># Enable LZ4 compression for spill files.</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.spill_compression = 'lz4_frame'"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="maximum-temporary-directory-size">Maximum temporary directory size<a class="headerlink" href="#maximum-temporary-directory-size" title="Permanent link">¶</a></h3>
+<p>DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is <strong>100 G</strong>. If your workload needs to spill more data than this, increase the limit.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+
+<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"4gb"</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_pool_type</span> <span class="o">=</span> <span class="s2">"fair"</span>
+
+<span class="c1"># Increase the spill directory size limit to 500 GB.</span>
+<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.runtime.max_temp_directory_size = '500G'"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="system-configuration">System Configuration<a class="headerlink" href="#system-configuration" title="Permanent link">¶</a></h2>
+<h3 id="maximum-number-of-open-files">Maximum number of open files<a class="headerlink" href="#maximum-number-of-open-files" title="Permanent link">¶</a></h3>
+<p>Large workloads that spill heavily can create a large number of temporary files. During a spatial join, each parallel execution thread may create one spill file per spatial partition. The total number of open spill files can therefore reach <strong>parallelism x number of spatial partitions</strong>. For example, on an 8-CPU host running a spatial join that produces 500 spatial partitions, up to <strong>8 x 500 = 4,000</strong> spill files may be open simultaneously -- far exceeding the default per-process file descriptor limit.</p>
+<p>The operating system's per-process file descriptor limit must be high enough to accommodate this, otherwise queries will fail with "too many open files" errors.</p>
+<p><strong>Linux:</strong></p>
+<p>The default limit is typically 1024, which is easily exceeded by spill-heavy workloads like the example above.</p>
+<p>To raise the limit permanently, add the following to <code>/etc/security/limits.conf</code>:</p>
+<div class="highlight"><pre><span></span><code>*    soft    nofile    65535
+*    hard    nofile    65535
+</code></pre></div>
+<p>Then log out and back in (or reboot) for the change to take effect. Verify with:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">ulimit</span><span class="w"> </span>-n
+</code></pre></div>
+<p><strong>macOS:</strong></p>
+<div class="highlight"><pre><span></span><code><span class="nb">ulimit</span><span class="w"> </span>-n<span class="w"> </span><span class="m">65535</span>
+</code></pre></div>
+<p>This affects the current shell session. Persistent/system-wide limits are OS and configuration dependent; consult your macOS configuration and documentation if you need to raise the hard limit.</p>
 
 
 
@@ -1554,7 +2022,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="March 4, 2026 15:53:50 UTC">March 4, 2026 15:53:50</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="March 4, 2026 15:39:41 UTC">March 4, 2026 15:39:41</span>
   </span>
 
     
@@ -1589,7 +2057,7 @@
     <div class="footer__top">
 
       <div class="col-left">
-        <img src="../../../image/footer/logo-footer.svg" alt="" class="footer-logo">
+        <img src="../image/footer/logo-footer.svg" alt="" class="footer-logo">
       </div>
 
       <div class="col-right">
@@ -1663,10 +2131,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   
