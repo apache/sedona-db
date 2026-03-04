@@ -144,9 +144,17 @@ pub fn test_raster(name: &str) -> Result<String> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn example_files() {
+        let _guard = env_lock().lock().unwrap();
+
         // By default this should resolve, since we are in a test!
         assert!(geoarrow_data_dir().is_ok());
         assert!(test_geoparquet("natural-earth", "countries").is_ok());
@@ -173,6 +181,8 @@ mod test {
 
     #[test]
     fn sedona_testing_dir_resolves() {
+        let _guard = env_lock().lock().unwrap();
+
         assert!(sedona_testing_dir().is_ok());
 
         env::set_var("SEDONA_TESTING_DIR", "this_directory_does_not_exist");
@@ -191,6 +201,8 @@ mod test {
 
     #[test]
     fn test_raster_resolves() {
+        let _guard = env_lock().lock().unwrap();
+
         // Test that test_raster can find existing raster files
         let path = test_raster("test4.tiff");
         assert!(path.is_ok(), "Failed to find test4.tiff: {:?}", path.err());
