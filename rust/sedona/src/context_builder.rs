@@ -40,6 +40,7 @@ const DEFAULT_MEMORY_FRACTION: f64 = 0.75;
 fn default_memory_limit() -> usize {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
+    // `System::total_memory()` returns bytes since sysinfo 0.23+.
     let total = sys.total_memory() as f64;
     (total * DEFAULT_MEMORY_FRACTION) as usize
 }

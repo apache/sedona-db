@@ -66,9 +66,10 @@ struct Args {
     #[clap(
         short = 'm',
         long,
-        help = "The memory pool limitation (e.g. '10g'), default to 75% of physical memory. Use 'unlimited' to disable"
+        help = "The memory pool limitation (e.g. '10g'), default to 75% of physical memory. Use 'unlimited' to disable",
+        value_parser(parse_memory_limit)
     )]
-    memory_limit: Option<String>,
+    memory_limit: Option<MemoryLimitArg>,
 
     #[clap(
         long,
@@ -139,6 +140,15 @@ enum FunctionListFormat {
     Json,
 }
 
+/// Parsed representation of the `--memory-limit` CLI argument.
+#[derive(Debug, Clone, PartialEq)]
+enum MemoryLimitArg {
+    /// Disable the memory limit entirely.
+    Unlimited,
+    /// Use an explicit byte limit.
+    Limit(usize),
+}
+
 #[tokio::main]
 /// Calls [`main_inner`], then handles printing errors and returning the correct exit code
 pub async fn main() -> ExitCode {
@@ -189,14 +199,14 @@ async fn main_inner() -> Result<()> {
     let mut builder = SedonaContextBuilder::new()
         .with_pool_type(args.mem_pool_type.clone())
         .with_unspillable_reserve_ratio(args.unspillable_reserve_ratio)?;
-    if let Some(ref memory_limit) = args.memory_limit {
-        if memory_limit.eq_ignore_ascii_case("unlimited") {
+    match args.memory_limit {
+        Some(MemoryLimitArg::Unlimited) => {
             builder = builder.without_memory_limit();
-        } else {
-            let limit =
-                extract_memory_pool_size(memory_limit).map_err(DataFusionError::Configuration)?;
+        }
+        Some(MemoryLimitArg::Limit(limit)) => {
             builder = builder.with_memory_limit(limit);
         }
+        None => {}
     }
     let ctx = builder.build().await?;
 
@@ -255,6 +265,14 @@ fn parse_command(command: &str) -> Result<String, String> {
 
 pub fn extract_memory_pool_size(size: &str) -> Result<usize, String> {
     sedona::size_parser::parse_size_string(size).map_err(|e| e.to_string())
+}
+
+fn parse_memory_limit(s: &str) -> Result<MemoryLimitArg, String> {
+    if s.eq_ignore_ascii_case("unlimited") {
+        Ok(MemoryLimitArg::Unlimited)
+    } else {
+        extract_memory_pool_size(s).map(MemoryLimitArg::Limit)
+    }
 }
 
 fn validate_unspillable_reserve_ratio(s: &str) -> Result<f64, String> {
