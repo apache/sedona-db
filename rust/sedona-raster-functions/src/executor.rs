@@ -21,7 +21,7 @@ use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_string_view_array, as_struct_array,
 };
 use datafusion_common::error::Result;
-use datafusion_common::{exec_err, DataFusionError, ScalarValue};
+use datafusion_common::{exec_err, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::{RasterRefImpl, RasterStructArray};
@@ -331,10 +331,10 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
         match (&self.args[0], &self.args[1]) {
             (ColumnarValue::Array(a0), ColumnarValue::Array(a1)) => {
                 let s0 = a0.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
-                    DataFusionError::Internal("Expected StructArray for raster data".to_string())
+                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
                 let s1 = a1.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
-                    DataFusionError::Internal("Expected StructArray for raster data".to_string())
+                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
 
                 let arr0 = RasterStructArray::new(s0);
@@ -365,7 +365,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
             (ColumnarValue::Array(a0), ColumnarValue::Scalar(sv1)) => {
                 let s0 = a0.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
-                    DataFusionError::Internal("Expected StructArray for raster data".to_string())
+                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
                 let arr0 = RasterStructArray::new(s0);
                 if arr0.len() != self.num_iterations {
@@ -386,9 +386,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     ScalarValue::Null => None,
                     _ => {
-                        return Err(DataFusionError::Internal(
-                            "Expected Struct scalar for raster".to_string(),
-                        ))
+                        return sedona_internal_err!("Expected Struct scalar for raster");
                     }
                 };
 
@@ -404,7 +402,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
             (ColumnarValue::Scalar(sv0), ColumnarValue::Array(a1)) => {
                 let s1 = a1.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
-                    DataFusionError::Internal("Expected StructArray for raster data".to_string())
+                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
                 let arr1 = RasterStructArray::new(s1);
                 if arr1.len() != self.num_iterations {
@@ -425,9 +423,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     ScalarValue::Null => None,
                     _ => {
-                        return Err(DataFusionError::Internal(
-                            "Expected Struct scalar for raster".to_string(),
-                        ))
+                        return sedona_internal_err!("Expected Struct scalar for raster");
                     }
                 };
 
@@ -453,9 +449,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     ScalarValue::Null => None,
                     _ => {
-                        return Err(DataFusionError::Internal(
-                            "Expected Struct scalar for raster".to_string(),
-                        ))
+                        return sedona_internal_err!("Expected Struct scalar for raster");
                     }
                 };
                 let r1 = match sv1 {
@@ -469,9 +463,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     ScalarValue::Null => None,
                     _ => {
-                        return Err(DataFusionError::Internal(
-                            "Expected Struct scalar for raster".to_string(),
-                        ))
+                        return sedona_internal_err!("Expected Struct scalar for raster");
                     }
                 };
 
@@ -510,9 +502,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         .as_any()
                         .downcast_ref::<StructArray>()
                         .ok_or_else(|| {
-                            DataFusionError::Internal(
-                                "Expected StructArray for raster data".to_string(),
-                            )
+                            sedona_internal_datafusion_err!("Expected StructArray for raster data")
                         })?;
                 let raster_array = RasterStructArray::new(raster_struct);
 
@@ -549,9 +539,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     }
                     Ok(())
                 }
-                _ => Err(DataFusionError::Internal(
-                    "Expected Struct scalar for raster".to_string(),
-                )),
+                _ => sedona_internal_err!("Expected Struct scalar for raster"),
             },
         }
     }
@@ -560,11 +548,11 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
         let sedona_type = self
             .arg_types
             .get(arg_index)
-            .ok_or_else(|| DataFusionError::Internal("Missing argument type".to_string()))?;
+            .ok_or_else(|| sedona_internal_datafusion_err!("Missing argument type"))?;
         let arg = self
             .args
             .get(arg_index)
-            .ok_or_else(|| DataFusionError::Internal("Missing argument".to_string()))?;
+            .ok_or_else(|| sedona_internal_datafusion_err!("Missing argument"))?;
 
         if is_item_crs_type(sedona_type) {
             let item_type = match sedona_type {

@@ -36,6 +36,7 @@ use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
+use datafusion_common::exec_datafusion_err;
 use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -322,9 +323,9 @@ fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
 /// Evaluate a spatial predicate between two WKB geometries
 fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Result<bool> {
     let geom_a = tg::Geom::parse_wkb(wkb_a, tg::IndexType::Default)
-        .map_err(|e| DataFusionError::Execution(format!("Failed to parse WKB A: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("Failed to parse WKB A: {e}"))?;
     let geom_b = tg::Geom::parse_wkb(wkb_b, tg::IndexType::Default)
-        .map_err(|e| DataFusionError::Execution(format!("Failed to parse WKB B: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("Failed to parse WKB B: {e}"))?;
 
     Ok(Op::evaluate(&geom_a, &geom_b))
 }
