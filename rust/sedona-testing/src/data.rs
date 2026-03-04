@@ -144,16 +144,16 @@ pub fn test_raster(name: &str) -> Result<String> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    // These tests mutate global states including environment variables so they must
+    // run serially. The SERIAL_TEST mutex ensures that only one test executes at a time,
+    // preventing race conditions when modifying and restoring environment variables.
+    static SERIAL_TEST: Mutex<()> = Mutex::new(());
 
     #[test]
     fn example_files() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = SERIAL_TEST.lock().unwrap();
 
         // By default this should resolve, since we are in a test!
         assert!(geoarrow_data_dir().is_ok());
@@ -181,7 +181,7 @@ mod test {
 
     #[test]
     fn sedona_testing_dir_resolves() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = SERIAL_TEST.lock().unwrap();
 
         assert!(sedona_testing_dir().is_ok());
 
@@ -201,7 +201,7 @@ mod test {
 
     #[test]
     fn test_raster_resolves() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = SERIAL_TEST.lock().unwrap();
 
         // Test that test_raster can find existing raster files
         let path = test_raster("test4.tiff");
