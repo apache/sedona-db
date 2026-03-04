@@ -37,17 +37,20 @@ class Options:
     created will raise a `RuntimeError`:
 
     - `memory_limit`: Maximum memory for execution, in bytes or as a
-      human-readable string (e.g., `"4gb"`, `"512m"`).
+      human-readable string (e.g., `"4gb"`, `"512m"`). Set to
+      `"unlimited"` to disable the memory limit. Defaults to 75% of
+      system physical memory.
     - `temp_dir`: Directory for temporary/spill files.
     - `memory_pool_type`: Memory pool type (`"greedy"` or `"fair"`).
+      Defaults to `"fair"`.
     - `unspillable_reserve_ratio`: Fraction of memory reserved for
       unspillable consumers (only applies to the `"fair"` pool type).
 
     Examples:
 
         >>> sd = sedona.db.connect()
-        >>> sd.options.memory_limit = "4gb"
-        >>> sd.options.memory_pool_type = "fair"
+        >>> sd.options.memory_limit = "4gb"          # override default (75% of RAM)
+        >>> sd.options.memory_pool_type = "greedy"    # override default (fair)
         >>> sd.options.temp_dir = "/tmp/sedona-spill"
         >>> sd.options.interactive = True
         >>> sd.sql("SELECT 1 as one")
@@ -67,7 +70,7 @@ class Options:
         # Runtime options (must be set before first query)
         self._memory_limit = None
         self._temp_dir = None
-        self._memory_pool_type = "greedy"
+        self._memory_pool_type = None
         self._unspillable_reserve_ratio = None
 
         # Set to True once the internal context is created; after this,
@@ -126,9 +129,9 @@ class Options:
         """Maximum memory for query execution.
 
         Accepts an integer (bytes) or a human-readable string such as
-        `"4gb"`, `"512m"`, or `"1.5g"`. When set, a bounded memory pool is
-        created to enforce this limit. Without a memory limit, DataFusion's
-        default unbounded pool is used.
+        `"4gb"`, `"512m"`, or `"1.5g"`. Set to `"unlimited"` to disable
+        the memory limit entirely. When `None`, the Rust-side default
+        (75% of system physical memory) is used.
 
         Must be set before the first query is executed.
 
@@ -137,6 +140,7 @@ class Options:
             >>> sd = sedona.db.connect()
             >>> sd.options.memory_limit = "4gb"
             >>> sd.options.memory_limit = 4 * 1024 * 1024 * 1024  # equivalent
+            >>> sd.options.memory_limit = "unlimited"  # disable memory limit
         """
         return self._memory_limit
 
@@ -175,26 +179,27 @@ class Options:
             )
 
     @property
-    def memory_pool_type(self) -> str:
+    def memory_pool_type(self) -> Optional[str]:
         """Memory pool type: `"greedy"` or `"fair"`.
 
-        - `"greedy"`: A simple pool that grants reservations on a
-          first-come-first-served basis. This is the default.
         - `"fair"`: A pool that fairly distributes memory among spillable
           consumers and reserves a fraction for unspillable consumers
-          (configured via `unspillable_reserve_ratio`).
+          (configured via `unspillable_reserve_ratio`). This is the default.
+        - `"greedy"`: A simple pool that grants reservations on a
+          first-come-first-served basis.
 
-        Only takes effect when `memory_limit` is set.
+        When `None`, the Rust-side default (`"fair"`) is used.
+        Only takes effect when a memory limit is active.
         Must be set before the first query is executed.
         """
         return self._memory_pool_type
 
     @memory_pool_type.setter
-    def memory_pool_type(self, value: Literal["greedy", "fair"]) -> None:
+    def memory_pool_type(self, value: "Optional[Literal['greedy', 'fair']]") -> None:
         self._check_runtime_mutable("memory_pool_type")
-        if value not in ("greedy", "fair"):
+        if value is not None and value not in ("greedy", "fair"):
             raise ValueError(
-                f"memory_pool_type must be 'greedy' or 'fair', got '{value}'"
+                f"memory_pool_type must be 'greedy', 'fair', or None, got '{value}'"
             )
         self._memory_pool_type = value
 

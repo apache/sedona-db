@@ -871,8 +871,13 @@ mod tests {
             .expect("SedonaOptions not found");
         assert!(opts.spatial_join.spilled_batch_in_memory_size_threshold >= 10 * 1024 * 1024);
 
-        // Specify no memory limit, spilled batch threshold should be unlimited (0 is for unlimited)
-        let ctx = SedonaContextBuilder::new().build().await.unwrap();
+        // Explicitly disable the memory limit; spilled batch threshold should be unlimited
+        // (0 means unlimited)
+        let ctx = SedonaContextBuilder::new()
+            .without_memory_limit()
+            .build()
+            .await
+            .unwrap();
         let state = ctx.ctx.state();
         let opts = state
             .config_options()
