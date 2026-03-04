@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_lineinterpolatepoint/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_bandnodatavalue/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_LineInterpolatePoint - Apache Sedona</title>
+        <title>RS_BandNoDataValue - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_lineinterpolatepoint" class="md-skip">
+        <a href="#rs_bandnodatavalue" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_LineInterpolatePoint
+              RS_BandNoDataValue
             
           </span>
             </div>
@@ -1383,17 +1383,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#description" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Description
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1421,7 +1410,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_lineinterpolatepoint.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_bandnodatavalue.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1429,29 +1418,37 @@
   
 
 
-<h1 id="st_lineinterpolatepoint">ST_LineInterpolatePoint<a class="headerlink" href="#st_lineinterpolatepoint" title="Permanent link">¶</a></h1>
-<p>Returns a point interpolated along a line.</p>
+<h1 id="rs_bandnodatavalue">RS_BandNoDataValue<a class="headerlink" href="#rs_bandnodatavalue" title="Permanent link">¶</a></h1>
+<p>Returns the nodata value of the specified band as a double. Returns null
+if the band has no nodata value defined.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_LineInterpolatePoint</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">fraction</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">float64</span><span class="w"> </span><span class="n">RS_BandNoDataValue</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">)</span>
+<span class="n">float64</span><span class="w"> </span><span class="n">RS_BandNoDataValue</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">band</span><span class="p">:</span><span class="w"> </span><span class="nb">int</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geom</strong> (geometry): Input geometry</li>
-<li><strong>fraction</strong> (double)</li>
+<li><strong>rast</strong> (raster): Input raster</li>
+<li><strong>band</strong> (int): Band index (1-based). Defaults to 1 if not specified.</li>
 </ul>
-<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Returns a point interpolated along a line. First argument must be a
-LINESTRING. Second argument is a double between 0 and 1 representing
-fraction of total linestring length the point has to be located.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_LineInterpolatePoint</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(25 50, 100 125, 150 190)'</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">2</span><span class="p">);</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_BandNoDataValue</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">());</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
-│ st_lineinterpolatepoint(st_geomfromwkt(Utf8("LINESTRING(25 50, 100 125, 150  │
-│                            190)")),Float64(0.2))…                            │
-╞══════════════════════════════════════════════════════════════════════════════╡
-│ POINT(51.5974135047432 76.5974135047432)                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────┐
+│ rs_bandnodatavalue(rs_example()) │
+│              float64             │
+╞══════════════════════════════════╡
+│                            127.0 │
+└──────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_BandNoDataValue</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────┐
+│ rs_bandnodatavalue(rs_example(),Int64(1)) │
+│                  float64                  │
+╞═══════════════════════════════════════════╡
+│                                     127.0 │
+└───────────────────────────────────────────┘
 </code></pre></div>
 
 
