@@ -93,7 +93,7 @@ sd.options.temp_dir = "/mnt/fast-ssd/sedona-spill"
 
 ## Example: Spatial Join with Memory Management
 
-This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using `ST_Contains`. 4GB memory limit and fair pool are used. The only override here is `temp_dir` to control where spill files are written.
+This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using `ST_Contains`. 4GB memory limit and fair pool are used. We also override `temp_dir` to control where spill files are written.
 
 
 ```python
@@ -103,8 +103,10 @@ sd = sedona.db.connect()
 
 # Optionally override runtime options before any sd.sql(...) or sd.read_* call.
 sd.options.memory_limit = "4gb"
+sd.options.memory_pool_type = "fair"
 sd.options.temp_dir = "/tmp/sedona-spill"
 
+# Call sd.sql(...) or sd.read_* to trigger the creation of the context with the above options.
 cities = sd.read_parquet(
     "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"
 )
@@ -194,7 +196,7 @@ sd.sql("SET datafusion.execution.spill_compression = 'lz4_frame'").execute()
 
 ### Maximum temporary directory size
 
-DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is **100 G**. If your workload needs to spill more data than this, increase the limit.
+DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is **100G**. If your workload needs to spill more data than this, increase the limit.
 
 
 ```python
