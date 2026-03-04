@@ -101,6 +101,18 @@
          <lastmod>2026-03-04</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_pixelascentroid/</loc>
+         <lastmod>2026-03-04</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_pixelaspoint/</loc>
+         <lastmod>2026-03-04</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_pixelaspolygon/</loc>
+         <lastmod>2026-03-04</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_rastertoworldcoord/</loc>
          <lastmod>2026-03-04</lastmod>
     </url>
