@@ -87,9 +87,7 @@ sd.options.temp_dir = "/mnt/fast-ssd/sedona-spill"
 
 ## Example: Spatial Join with Limited Memory
 
-This example performs a spatial join between Overture addresses (points) and Overture buildings (polygons) using `ST_Contains`. Spatial joins are one of the most common workloads that benefit from memory limits and spill-to-disk.
-
-> **Note:** Overture removes old releases. See https://docs.overturemaps.org/release-calendar/#current-release for the latest version number and replace the relevant portion of the URLs below.
+This example performs a spatial join between Natural Earth cities (points) and Natural Earth countries (polygons) using `ST_Contains`. Spatial joins are one of the most common workloads that benefit from memory limits and spill-to-disk.
 
 
 ```python
@@ -103,52 +101,53 @@ sd.options.memory_pool_type = "fair"
 sd.options.unspillable_reserve_ratio = 0.2
 sd.options.temp_dir = "/tmp/sedona-spill"
 
-# Overture buildings metadata is large; increase the remote metadata cache.
-sd.sql("SET datafusion.runtime.metadata_cache_limit = '900M'").execute()
+cities = sd.read_parquet(
+    "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"
+)
+cities.to_view("cities", overwrite=True)
 
-aws = {"aws.skip_signature": True, "aws.region": "us-west-2"}
-
-sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2026-02-18.0/theme=buildings/type=building/",
-    options=aws,
-).to_view("buildings")
-
-sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2026-02-18.0/theme=addresses/type=address/",
-    options=aws,
-).to_view("addresses")
-
-# Limit the scan to a region of interest using the bbox columns (helps avoid scanning the full tables).
-west, south, east, north = -74.05, 40.68, -73.90, 40.88
+countries = sd.read_parquet(
+    "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"
+)
+countries.to_view("countries", overwrite=True)
 
 sd.sql(
     """
-    WITH buildings_roi AS (
-        SELECT id AS building_id, geometry AS building_geom
-        FROM buildings
-        WHERE bbox.xmin < $east
-          AND bbox.xmax > $west
-          AND bbox.ymin < $north
-          AND bbox.ymax > $south
-    ),
-    addresses_roi AS (
-        SELECT id AS address_id, geometry AS address_geom
-        FROM addresses
-        WHERE bbox.xmin < $east
-          AND bbox.xmax > $west
-          AND bbox.ymin < $north
-          AND bbox.ymax > $south
-    )
     SELECT
-        a.address_id,
-        b.building_id
-    FROM addresses_roi a
-    JOIN buildings_roi b
-      ON ST_Contains(b.building_geom, a.address_geom)
-    """,
-    params={"west": west, "south": south, "east": east, "north": north},
+        cities.name city_name,
+        countries.name country_name
+    FROM cities
+    JOIN countries
+      ON ST_Contains(countries.geometry, cities.geometry)
+    """
 ).show(10)
 ```
+
+    ┌───────────────┬─────────────────────────────┐
+    │   city_name   ┆         country_name        │
+    │      utf8     ┆             utf8            │
+    ╞═══════════════╪═════════════════════════════╡
+    │ Suva          ┆ Fiji                        │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Dodoma        ┆ United Republic of Tanzania │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Dar es Salaam ┆ United Republic of Tanzania │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Bir Lehlou    ┆ Western Sahara              │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Ottawa        ┆ Canada                      │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Vancouver     ┆ Canada                      │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Toronto       ┆ Canada                      │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ San Francisco ┆ United States of America    │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Denver        ┆ United States of America    │
+    ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+    │ Houston       ┆ United States of America    │
+    └───────────────┴─────────────────────────────┘
+
 
 ## Operators Supporting Memory Limits
 
@@ -193,7 +192,7 @@ sd.sql("SET datafusion.execution.spill_compression = 'lz4_frame'").execute()
 
 ### Maximum temporary directory size
 
-DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is **100 GB**. If your workload needs to spill more data than this, increase the limit.
+DataFusion limits the total size of temporary spill files to prevent unbounded disk usage. The default limit is **100 G**. If your workload needs to spill more data than this, increase the limit.
 
 
 ```python
@@ -204,7 +203,7 @@ sd.options.memory_limit = "4gb"
 sd.options.memory_pool_type = "fair"
 
 # Increase the spill directory size limit to 500 GB.
-sd.sql("SET datafusion.runtime.max_temp_directory_size = '500gb'").execute()
+sd.sql("SET datafusion.runtime.max_temp_directory_size = '500G'").execute()
 ```
 
 ## System Configuration
