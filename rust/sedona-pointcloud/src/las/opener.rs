@@ -280,6 +280,26 @@ mod tests {
 
     #[tokio::test]
     async fn round_robin_partitioning() {
+        use datafusion_common::arrow::compute::{
+            concat_batches, sort_to_indices, take_record_batch,
+        };
+
+        /// Concatenate batches and sort by the column at `sort_col` index for
+        /// order-independent comparison.
+        fn concat_and_sort(
+            batches: &[arrow_array::RecordBatch],
+            sort_col: usize,
+        ) -> arrow_array::RecordBatch {
+            assert!(
+                !batches.is_empty(),
+                "expected at least one RecordBatch, but the query returned none"
+            );
+            let schema = batches[0].schema();
+            let combined = concat_batches(&schema, batches).unwrap();
+            let indices = sort_to_indices(combined.column(sort_col), None, None).unwrap();
+            take_record_batch(&combined, &indices).unwrap()
+        }
+
         // file with two clusters, one at 0.5 one at 1.0
         let path = "tests/data/large.laz";
 
@@ -303,6 +323,13 @@ mod tests {
             .collect()
             .await
             .unwrap();
-        assert_eq!(result1, result2);
+
+        // Compare content independent of batch boundaries and partition ordering.
+        // Sort by the geometry column (index 0) to get a deterministic row order.
+        // Single-column sort suffices because all rows within each cluster in the
+        // test data are identical (see generate.py), so ties are indistinguishable.
+        let batch1 = concat_and_sort(&result1, 0);
+        let batch2 = concat_and_sort(&result2, 0);
+        assert_eq!(batch1, batch2);
     }
 }
