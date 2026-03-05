@@ -32,12 +32,13 @@ use sedona_common::{sedona_internal_err, NumSpatialPartitionsConfig, SedonaOptio
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
+use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
+use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
     index::{
         memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
         partitioned_index_provider::PartitionedIndexProvider,
         BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
-        SpatialJoinBuildMetrics,
     },
     partitioning::{
         broadcast::BroadcastPartitioner,
@@ -215,12 +216,21 @@ impl SpatialJoinComponentsBuilder {
             reservations.push(reservation);
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
-
+        let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
+        let builder = Arc::new(DefaultSpatialIndexBuilder::new(
+            self.build_schema.clone(),
+            self.spatial_predicate.clone(),
+            self.sedona_options.spatial_join.clone(),
+            self.join_type,
+            self.probe_threads_count,
+            join_metrics.clone(),
+        )?);
         let collector = BuildSideBatchesCollector::new(
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             Arc::clone(&runtime_env),
             spill_compression,
+            builder,
         );
         let build_partitions = collector
             .collect_all(
