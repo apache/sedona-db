@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 from sedonadb import _lib
-from sedonadb.context import connect, configure_proj
+from sedonadb.context import connect, configure_proj, configure_gdal
 
 __version__ = _lib.sedona_python_version()
 
@@ -23,8 +23,9 @@ __features__ = _lib.sedona_python_features()
 
 __all__ = ["connect", "options"]
 
-# Attempt to configure PROJ on import. This will warn if PROJ
-# can't be configured but should never error. The auto-configured
+# Attempt to configure PROJ and GDAL on import. This will warn if PROJ
+# or GDAL can't be configured but should never error. The auto-configured
 # value can be overridden as long as the call to configure_proj()
-# occurs before actually creating a transform.
+# and configure_gdal() occurs before actually creating a transform.
 configure_proj("auto")
+configure_gdal(preset="auto")
