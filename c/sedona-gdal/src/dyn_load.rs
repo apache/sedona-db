@@ -163,6 +163,9 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     load_fn!(lib, api, GDALFPolygonize);
     load_fn!(lib, api, GDALPolygonize);
 
+    // --- Version ---
+    load_fn!(lib, api, GDALVersionInfo);
+
     // --- Config ---
     load_fn!(lib, api, CPLSetThreadLocalConfigOption);
 

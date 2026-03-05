@@ -76,6 +76,24 @@ impl GdalApi {
         &self.name
     }
 
+    /// Query GDAL version information.
+    ///
+    /// `request` is one of the standard `GDALVersionInfo` keys:
+    /// - `"RELEASE_NAME"` — e.g. `"3.8.4"`
+    /// - `"VERSION_NUM"` — e.g. `"3080400"`
+    /// - `"BUILD_INFO"` — multi-line build details
+    pub fn version_info(&self, request: &str) -> String {
+        let c_request = std::ffi::CString::new(request).unwrap();
+        let ptr = unsafe { call_gdal_api!(self, GDALVersionInfo, c_request.as_ptr()) };
+        if ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
     /// Check the last CPL error and return a `GdalError`, it always returns an error struct
     /// (even when the error number is 0).
     pub fn last_cpl_err(&self, default_err_class: u32) -> GdalError {

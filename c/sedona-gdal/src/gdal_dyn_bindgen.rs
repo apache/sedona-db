@@ -504,6 +504,9 @@ pub(crate) struct SedonaGdalApi {
         ) -> CPLErr,
     >,
 
+    // --- Version ---
+    pub GDALVersionInfo: Option<unsafe extern "C" fn(pszRequest: *const c_char) -> *const c_char>,
+
     // --- Config ---
     pub CPLSetThreadLocalConfigOption:
         Option<unsafe extern "C" fn(pszKey: *const c_char, pszValue: *const c_char)>,
