@@ -14,19 +14,18 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from sedonadb import _lib
-from sedonadb.context import connect, configure_proj, configure_gdal, gdal_version
 
-__version__ = _lib.sedona_python_version()
+import sedonadb
 
-__features__ = _lib.sedona_python_features()
 
-__all__ = ["connect", "options", "gdal_version"]
+def test_gdal_version():
+    """Verify that GDAL was loaded successfully and reports a valid version."""
+    version = sedonadb.gdal_version()
+    assert version is not None, "GDAL should be loaded (gdal_version() returned None)"
+    assert len(version) > 0, "GDAL version string should not be empty"
 
-# Attempt to configure PROJ and GDAL on import. This will warn if PROJ
-# or GDAL can't be configured but should never error. The auto-configured
-# values can be overridden as long as configure_proj() is called before
-# creating a transform and configure_gdal() is called before any
-# GDAL-backed operation (e.g., raster I/O).
-configure_proj("auto")
-configure_gdal(preset="auto")
+    # GDAL versions look like "3.8.4" or "3.12.0"
+    parts = version.split(".")
+    assert len(parts) >= 2, f"Expected dotted version string, got: {version}"
+    major = int(parts[0])
+    assert major >= 3, f"Expected GDAL >= 3.x, got: {version}"

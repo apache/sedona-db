@@ -22,7 +22,12 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
-from sedonadb._lib import InternalContext, configure_gdal_shared, configure_proj_shared
+from sedonadb._lib import (
+    InternalContext,
+    configure_gdal_shared,
+    configure_proj_shared,
+    gdal_version as _gdal_version,
+)
 from sedonadb._options import Options
 from sedonadb.dataframe import DataFrame, _create_data_frame
 from sedonadb.functions import Functions
@@ -795,3 +800,22 @@ def _configure_gdal_conda():
         shared_library = prefix / "lib" / _gdal_lib_name()
 
     configure_gdal(shared_library=shared_library)
+
+
+def gdal_version() -> Optional[str]:
+    """Return the GDAL release version string, or ``None`` if GDAL is not loaded.
+
+    This function triggers lazy GDAL initialization if ``configure_gdal()``
+    was previously called but the library has not yet been loaded. If GDAL
+    cannot be loaded, ``None`` is returned instead of raising an error.
+
+    Returns:
+        A version string such as ``"3.8.4"``, or ``None`` if GDAL is
+        not available.
+
+    Examples:
+
+        >>> sedonadb.gdal_version()
+        '3.8.4'
+    """
+    return _gdal_version()
