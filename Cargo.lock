@@ -5811,6 +5811,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-datasource",
  "sedona-expr",
+ "sedona-gdal",
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",

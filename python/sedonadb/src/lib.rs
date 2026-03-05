@@ -17,6 +17,7 @@
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
+use sedona_gdal::register::{configure_global_gdal_api, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 use std::ffi::c_void;
 
@@ -95,12 +96,22 @@ fn configure_proj_shared(
     Ok(())
 }
 
+#[pyfunction]
+fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaError> {
+    let builder = GdalApiBuilder::default().with_shared_library(shared_library_path.into());
+    configure_global_gdal_api(builder).map_err(|e| {
+        PySedonaError::SedonaPython(format!("Failed to configure GDAL shared library: {e}"))
+    })?;
+    Ok(())
+}
+
 #[pymodule]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
     configure_tg_allocator();
 
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
