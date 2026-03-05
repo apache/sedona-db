@@ -815,7 +815,8 @@ def gdal_version() -> Optional[str]:
 
     Examples:
 
-        >>> sedonadb.gdal_version()
+        >>> import sedonadb
+        >>> sedonadb.gdal_version()  # doctest: +SKIP
         '3.8.4'
     """
     return _gdal_version()
