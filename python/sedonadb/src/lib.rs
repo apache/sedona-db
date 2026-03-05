@@ -17,7 +17,7 @@
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
-use sedona_gdal::register::{configure_global_gdal_api, GdalApiBuilder};
+use sedona_gdal::register::{configure_global_gdal_api, get_global_gdal_api, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 use std::ffi::c_void;
 
@@ -105,6 +105,20 @@ fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaErro
     Ok(())
 }
 
+#[pyfunction]
+fn gdal_version() -> Result<Option<String>, PySedonaError> {
+    let api = match get_global_gdal_api() {
+        Ok(api) => api,
+        Err(_) => return Ok(None),
+    };
+    let version = api.version_info(c"RELEASE_NAME");
+    if version.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(version))
+    }
+}
+
 #[pymodule]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
@@ -112,6 +126,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(gdal_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
