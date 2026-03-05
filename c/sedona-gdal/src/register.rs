@@ -17,7 +17,7 @@
 
 use crate::errors::GdalInitLibraryError;
 use crate::gdal_api::GdalApi;
-use std::ffi::c_char;
+use std::ffi::CStr;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -78,16 +78,17 @@ impl GdalApiBuilder {
         };
 
         #[cfg(feature = "gdal-sys")]
-        let get_gdal_version_info = |arg: *const c_char| unsafe {
+        let get_gdal_version_info = |arg: &str| unsafe {
             // Calling into `gdal-sys` also forces the linker to include GDAL
             // symbols, so that `try_from_current_process` (which resolves function pointers
             // via `dlsym` on the current process) can find them at runtime.
-            gdal_sys::GDALVersionInfo(arg)
+            let c_arg = std::ffi::CString::new(arg).unwrap();
+            let c_version = gdal_sys::GDALVersionInfo(c_arg.as_ptr());
+            CStr::from_ptr(c_version).to_string_lossy().into_owned()
         };
 
         #[cfg(not(feature = "gdal-sys"))]
-        let get_gdal_version_info =
-            |arg: *const c_char| unsafe { call_gdal_api!(api, GDALVersionInfo, arg) };
+        let get_gdal_version_info = |arg: &str| api.version_info(arg);
 
         check_gdal_version(get_gdal_version_info)?;
         Ok(api)
@@ -202,44 +203,19 @@ where
 /// (e.g. GDAL 3.12 fails a check for 3.4), whereas we need a **minimum** version
 /// check (>=).
 fn check_gdal_version(
-    mut gdal_version_info: impl FnMut(*const c_char) -> *const c_char,
+    mut gdal_version_info: impl FnMut(&str) -> String,
 ) -> Result<(), GdalInitLibraryError> {
-    use std::ffi::CStr;
-
-    let version_ptr = gdal_version_info(c"VERSION_NUM".as_ptr());
-    if version_ptr.is_null() {
-        return Err(GdalInitLibraryError::LibraryError(
-            "GDALVersionInfo(\"VERSION_NUM\") returned null".to_string(),
-        ));
-    }
-
-    let version_cstr = unsafe { CStr::from_ptr(version_ptr) };
-    let version_num: i32 = version_cstr
-        .to_str()
-        .map_err(|e| {
-            GdalInitLibraryError::LibraryError(format!(
-                "GDAL version string is not valid UTF-8: {e}"
-            ))
-        })?
-        .trim()
-        .parse()
-        .map_err(|e| {
-            GdalInitLibraryError::LibraryError(format!(
-                "Failed to parse GDAL version number {:?}: {e}",
-                version_cstr
-            ))
-        })?;
+    let version_str = gdal_version_info("VERSION_NUM");
+    let version_num: i32 = version_str.trim().parse().map_err(|e| {
+        GdalInitLibraryError::LibraryError(format!(
+            "Failed to parse GDAL version number {:?}: {e}",
+            version_str
+        ))
+    })?;
 
     if version_num < MIN_GDAL_VERSION_NUM {
         // Get the human-readable release name for the error message.
-        let release_ptr = gdal_version_info(c"RELEASE_NAME".as_ptr());
-        let release_name = if release_ptr.is_null() {
-            format!("version_num={version_num}")
-        } else {
-            unsafe { CStr::from_ptr(release_ptr) }
-                .to_string_lossy()
-                .into_owned()
-        };
+        let release_name = gdal_version_info("RELEASE_NAME");
         return Err(GdalInitLibraryError::LibraryError(format!(
             "GDAL >= {MIN_GDAL_VERSION_MAJOR}.{MIN_GDAL_VERSION_MINOR} required \
              for sedona-gdal (found {release_name})"
