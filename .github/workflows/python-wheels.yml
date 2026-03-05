@@ -23,6 +23,9 @@ on:
     paths:
       - 'ci/scripts/wheels-*'
       - '.github/workflows/python-wheels.yml'
+      # TODO(bopeng): remove after GDAL testing is done
+      - 'python/sedonadb/**'
+      - 'c/sedona-gdal/**'
   push:
     branches:
       - main
