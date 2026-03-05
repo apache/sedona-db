@@ -585,13 +585,18 @@ def _configure_proj_pyproj():
     )
 
 
-def _configure_proj_system():
+def _proj_lib_name() -> str:
+    if sys.platform == "darwin":
+        return "libproj.dylib"
+    if sys.platform.startswith("linux"):
+        return "libproj.so"
     if sys.platform == "win32":
-        configure_proj(shared_library="proj.dll")
-    elif sys.platform == "darwin":
-        configure_proj(shared_library="libproj.dylib")
-    else:
-        configure_proj(shared_library="libproj.so")
+        return "proj.dll"
+    raise ValueError(f"Unsupported platform: {sys.platform}")
+
+
+def _configure_proj_system():
+    configure_proj(shared_library=_proj_lib_name())
 
 
 def _configure_proj_prefix(prefix: str):
@@ -599,10 +604,15 @@ def _configure_proj_prefix(prefix: str):
     if not prefix.exists():
         raise ValueError(f"Can't configure PROJ from prefix '{prefix}': does not exist")
 
+    if sys.platform == "win32":
+        shared_library = prefix / "Library" / "bin" / _proj_lib_name()
+    else:
+        shared_library = prefix / "lib" / _proj_lib_name()
+
     configure_proj(
-        shared_library=Path(prefix) / "lib" / "libproj.dylib",
-        database_path=Path(prefix) / "share" / "proj" / "proj.db",
-        search_path=Path(prefix) / "share" / "proj",
+        shared_library=shared_library,
+        database_path=prefix / "share" / "proj" / "proj.db",
+        search_path=prefix / "share" / "proj",
     )
 
 
