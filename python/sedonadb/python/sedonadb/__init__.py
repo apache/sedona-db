@@ -25,7 +25,8 @@ __all__ = ["connect", "options"]
 
 # Attempt to configure PROJ and GDAL on import. This will warn if PROJ
 # or GDAL can't be configured but should never error. The auto-configured
-# value can be overridden as long as the call to configure_proj()
-# and configure_gdal() occurs before actually creating a transform.
+# values can be overridden as long as configure_proj() is called before
+# creating a transform and configure_gdal() is called before any
+# GDAL-backed operation (e.g., raster I/O).
 configure_proj("auto")
 configure_gdal(preset="auto")
