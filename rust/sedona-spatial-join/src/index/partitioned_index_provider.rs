@@ -15,25 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_schema::SchemaRef;
-use datafusion_common::{DataFusionError, Result, SharedResult};
-use datafusion_common_runtime::JoinSet;
-use datafusion_execution::memory_pool::MemoryReservation;
-use datafusion_expr::JoinType;
-use futures::StreamExt;
-use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
-use std::ops::DerefMut;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-
 use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
+use crate::evaluated_batch::evaluated_batch_stream::{
+    EvaluatedBatchStream, SendableEvaluatedBatchStream,
+};
+use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
 use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
 use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
+use arrow_schema::SchemaRef;
+use datafusion_common::{DataFusionError, Result, SharedResult};
+use datafusion_common_runtime::JoinSet;
+use datafusion_execution::memory_pool::MemoryReservation;
+use datafusion_expr::JoinType;
+use futures::{Stream, StreamExt};
+use parking_lot::Mutex;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
 
 pub(crate) struct PartitionedIndexProvider {
     schema: SchemaRef,
@@ -75,6 +81,7 @@ impl PartitionedIndexProvider {
         let index_cells = (0..num_partitions)
             .map(|_| DisposableAsyncCell::new())
             .collect();
+
         Self {
             schema,
             spatial_predicate,
@@ -267,7 +274,7 @@ impl PartitionedIndexProvider {
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -279,17 +286,17 @@ impl PartitionedIndexProvider {
         for build_partition in build_partitions {
             let stream = build_partition.build_side_batch_stream;
             let geo_statistics = build_partition.geo_statistics;
-            index_builder.add_stream(stream, geo_statistics).await?;
+            builder.add_stream(stream, geo_statistics).await?;
         }
 
-        index_builder.finish()
+        builder.finish()
     }
 
     async fn build_index_for_spilled_partition(
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut index_builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -301,7 +308,7 @@ impl PartitionedIndexProvider {
         // Spawn tasks to load indexed batches from spilled files concurrently
         let (spill_files, geo_statistics, _) = spilled_partition.into_inner();
         let mut join_set: JoinSet<Result<(), DataFusionError>> = JoinSet::new();
-        let (tx, mut rx) = mpsc::channel(spill_files.len() * 2 + 1);
+        let (tx, rx) = mpsc::channel(spill_files.len() * 2 + 1);
         for spill_file in spill_files {
             let tx = tx.clone();
             join_set.spawn(async move {
@@ -324,12 +331,6 @@ impl PartitionedIndexProvider {
         }
         drop(tx);
 
-        // Collect the loaded indexed batches and add them to the index builder
-        while let Some(res) = rx.recv().await {
-            let batch = res?;
-            index_builder.add_batch(batch)?;
-        }
-
         // Ensure all tasks completed successfully
         while let Some(res) = join_set.join_next().await {
             if let Err(e) = res {
@@ -339,10 +340,18 @@ impl PartitionedIndexProvider {
                 return Err(DataFusionError::External(Box::new(e)));
             }
         }
+        // Collect the loaded indexed batches and add them to the index builder
+        // 1. Package the receiver into your new stream struct
+        let batch_stream = ReceiverBatchStream::new(rx, self.schema.clone(), true);
 
-        index_builder.merge_stats(geo_statistics);
+        // 2. Box and pin it to match the `SendableEvaluatedBatchStream` type alias
+        // `Box::pin` automatically coerces to the `Pin<Box<dyn Trait + Send>>` alias
+        let sendable_stream: SendableEvaluatedBatchStream = Box::pin(batch_stream);
 
-        index_builder.finish()
+        // 3. Pass it directly to the builder
+        builder.add_stream(sendable_stream, geo_statistics).await?;
+
+        builder.finish()
     }
 }
 
@@ -353,6 +362,40 @@ async fn get_index_from_cell(
         Some(Ok(index)) => Some(Ok(index)),
         Some(Err(shared_err)) => Some(Err(DataFusionError::Shared(shared_err))),
         None => None,
+    }
+}
+struct ReceiverBatchStream {
+    rx: Receiver<Result<EvaluatedBatch>>, // Or Result<EvaluatedBatch, DataFusionError>
+    schema: SchemaRef,
+    is_external: bool,
+}
+
+impl ReceiverBatchStream {
+    pub fn new(rx: Receiver<Result<EvaluatedBatch>>, schema: SchemaRef, is_external: bool) -> Self {
+        Self {
+            rx,
+            schema,
+            is_external,
+        }
+    }
+}
+
+impl Stream for ReceiverBatchStream {
+    type Item = Result<EvaluatedBatch>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Delegate the streaming to the receiver's poll_recv method
+        self.rx.poll_recv(cx)
+    }
+}
+
+impl EvaluatedBatchStream for ReceiverBatchStream {
+    fn is_external(&self) -> bool {
+        self.is_external
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }
 

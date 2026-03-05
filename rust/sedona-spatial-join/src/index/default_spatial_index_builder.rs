@@ -54,7 +54,7 @@ const RTREE_MEMORY_ESTIMATE_PER_RECT: usize = 60;
 /// 2. Building the spatial R-tree index
 /// 3. Setting up memory tracking and visited bitmaps
 /// 4. Configuring prepared geometries based on execution mode
-pub struct DefaultSpatialIndexBuilder {
+pub(crate) struct DefaultSpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
     options: SpatialJoinOptions,
@@ -181,11 +181,28 @@ impl DefaultSpatialIndexBuilder {
         self.memory_used += bytes;
         self.metrics.build_mem_used.set_max(self.memory_used);
     }
+
+    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
+        let in_mem_size = indexed_batch.in_mem_size()?;
+        self.indexed_batches.push(indexed_batch);
+        self.record_memory_usage(in_mem_size);
+        Ok(())
+    }
+    /// Add a geometry batch to be indexed.
+    /// This method accumulates geometry batches that will be used to build the spatial index.
+    /// Each batch contains processed geometry data along with memory usage information.
+    // fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()>;
+    /// Merge the provided GeoStatistics with the statistics of the batches added so far.
+    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
+        self.stats.merge(&stats);
+        self
+    }
 }
 
 #[async_trait]
 impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
     fn estimate_extra_memory_usage(
+        &self,
         geo_stats: &GeoStatistics,
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
@@ -213,18 +230,6 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
 
         // The final estimation is the sum of all above
         refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
-    }
-
-    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()> {
-        let in_mem_size = indexed_batch.in_mem_size()?;
-        self.indexed_batches.push(indexed_batch);
-        self.record_memory_usage(in_mem_size);
-        Ok(())
-    }
-
-    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
-        self.stats.merge(&stats);
-        self
     }
 
     fn finish(mut self) -> Result<SpatialIndexRef> {

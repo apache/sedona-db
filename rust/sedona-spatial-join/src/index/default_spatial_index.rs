@@ -100,7 +100,7 @@ struct DefaultSpatialIndexInner {
 }
 
 #[derive(Clone)]
-pub struct DefaultSpatialIndex {
+pub(crate) struct DefaultSpatialIndex {
     inner: Arc<DefaultSpatialIndexInner>,
 }
 
@@ -297,23 +297,12 @@ impl SpatialIndex for DefaultSpatialIndex {
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch {
         &self.inner.indexed_batches[batch_idx].batch
     }
-    ///
-    /// This method implements a two-phase spatial join query:
+
+    /// This method implements [`SpatialIndex::query`], which is a two-phase spatial join:
     /// 1. **Filter phase**: Uses the R-tree index with the probe geometry's bounding rectangle
     ///    to quickly identify candidate geometries that might satisfy the spatial predicate
     /// 2. **Refinement phase**: Evaluates the exact spatial predicate on candidates to determine
     ///    actual matches
-    ///
-    /// # Arguments
-    /// * `probe_wkb` - The probe geometry in WKB format
-    /// * `probe_rect` - The minimum bounding rectangle of the probe geometry
-    /// * `distance` - Optional distance parameter for distance-based spatial predicates
-    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
-    ///   pairs for each matching build-side geometry
-    ///
-    /// # Returns
-    /// * `JoinResultMetrics` containing the number of actual matches (`count`) and the number
-    ///   of candidates from the filter phase (`candidate_count`)
     fn query(
         &self,
         probe_wkb: &Wkb,
@@ -340,24 +329,10 @@ impl SpatialIndex for DefaultSpatialIndex {
         self.refine(probe_wkb, &candidates, distance, build_batch_positions)
     }
 
-    ///
-    /// This method finds the k nearest neighbors to the probe geometry using:
+    /// This method implements [`SpatialIndex::query_knn`] by:
     /// 1. R-tree's built-in neighbors() method for efficient KNN search
     /// 2. Distance refinement using actual geometry calculations
     /// 3. Tie-breaker handling when enabled
-    ///
-    /// # Arguments
-    ///
-    /// * `probe_wkb` - WKB representation of the probe geometry
-    /// * `k` - Number of nearest neighbors to find
-    /// * `use_spheroid` - Whether to use spheroid distance calculation
-    /// * `include_tie_breakers` - Whether to include additional results with same distance as kth neighbor
-    /// * `build_batch_positions` - Output vector for matched positions
-    /// * `distances` - Optional output vector for distances to matched neighbors, aligned with `build_batch_positions`
-    ///
-    /// # Returns
-    ///
-    /// * `JoinResultMetrics` containing the number of actual matches and candidates processed
     fn query_knn(
         &self,
         probe_wkb: &Wkb,
@@ -556,30 +531,13 @@ impl SpatialIndex for DefaultSpatialIndex {
         })
     }
 
-    ///
-    /// This method iterates over the probe geometries in the given range of the evaluated batch.
+    /// This method implements [`SpatialIndex::query_batch`] by iterating over the probe geometries in the given range of the evaluated batch.
     /// For each probe geometry, it performs the two-phase spatial join query:
     /// 1. **Filter phase**: Uses the R-tree index with the probe geometry's bounding rectangle
     ///    to quickly identify candidate geometries.
     /// 2. **Refinement phase**: Evaluates the exact spatial predicate on candidates to determine
     ///    actual matches.
     ///
-    /// # Arguments
-    /// * `evaluated_batch` - The batch containing probe geometries and their bounding rectangles
-    /// * `range` - The range of rows in the evaluated batch to process.
-    /// * `max_result_size` - The maximum number of results to collect before stopping. If the
-    ///   number of results exceeds this limit, the method returns early.
-    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
-    ///   pairs for each matching build-side geometry.
-    /// * `probe_indices` - Output vector that will be populated with the probe row index (in
-    ///   `evaluated_batch`) for each match appended to `build_batch_positions`.
-    ///   This means the probe index is repeated `N` times when a probe geometry produces `N` matches,
-    ///   keeping `probe_indices.len()` in sync with `build_batch_positions.len()`.
-    ///
-    /// # Returns
-    /// * A tuple containing:
-    ///   - `QueryResultMetrics`: Aggregated metrics (total matches and candidates) for the processed rows
-    ///   - `usize`: The index of the next row to process (exclusive end of the processed range)
     async fn query_batch(
         &self,
         evaluated_batch: &Arc<EvaluatedBatch>,
@@ -708,8 +666,13 @@ mod tests {
         operand_evaluator::EvaluatedGeometryArray,
         spatial_predicate::{KNNPredicate, RelationPredicate, SpatialRelationType},
     };
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     use super::*;
+    use crate::evaluated_batch::evaluated_batch_stream::{
+        EvaluatedBatchStream, SendableEvaluatedBatchStream,
+    };
     use crate::index::spatial_index::SpatialIndexRef;
     use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
     use crate::index::DefaultSpatialIndexBuilder;
@@ -718,11 +681,61 @@ mod tests {
     use datafusion_common::JoinSide;
     use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
+    use futures::Stream;
     use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
     use sedona_geometry::wkb_factory::write_wkb_empty_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
+
+    pub struct SingleBatchStream {
+        // We use an Option so we can `take()` it on the first poll,
+        // leaving `None` for subsequent polls to signal the end of the stream.
+        batch: Option<EvaluatedBatch>,
+        schema: SchemaRef,
+    }
+
+    impl SingleBatchStream {
+        pub fn new(batch: EvaluatedBatch, schema: SchemaRef) -> Self {
+            Self {
+                batch: Some(batch),
+                schema,
+            }
+        }
+    }
+
+    impl Stream for SingleBatchStream {
+        type Item = Result<EvaluatedBatch>; // Or Result<EvaluatedBatch, DataFusionError>
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            // `take()` removes the value from the Option, leaving `None` in its place.
+            // If there is a batch, it maps it to `Some(Ok(batch))`.
+            // If it's already empty, it returns `None`.
+            Poll::Ready(self.batch.take().map(Ok))
+        }
+    }
+
+    impl EvaluatedBatchStream for SingleBatchStream {
+        fn is_external(&self) -> bool {
+            false
+        }
+
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    async fn build_index(
+        mut builder: DefaultSpatialIndexBuilder,
+        indexed_batch: EvaluatedBatch,
+        schema: SchemaRef,
+    ) -> SpatialIndexRef {
+        let single_batch_stream = SingleBatchStream::new(indexed_batch, schema);
+        let sendable_stream: SendableEvaluatedBatchStream = Box::pin(single_batch_stream);
+        let stats = GeoStatistics::empty();
+        builder.add_stream(sendable_stream, stats).await.unwrap();
+        builder.finish().unwrap()
+    }
 
     #[test]
     fn test_spatial_index_builder_empty() {
@@ -754,8 +767,8 @@ mod tests {
         assert_eq!(index.num_indexed_batches(), 0);
     }
 
-    #[test]
-    fn test_spatial_index_builder_add_batch() {
+    #[tokio::test]
+    async fn test_spatial_index_builder_add_batch() {
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
             ..Default::default()
@@ -775,7 +788,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -795,19 +808,19 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
+
         let indexed_batch = EvaluatedBatch {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
-        let index = builder.finish().unwrap();
         assert_eq!(index.schema(), schema);
         assert_eq!(index.num_indexed_batches(), 1);
     }
 
-    #[test]
-    fn test_knn_query_execution_with_sample_data() {
+    #[tokio::test]
+    async fn test_knn_query_execution_with_sample_data() {
         // Create a spatial index with sample geometry data
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -830,7 +843,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -860,9 +873,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Create a query geometry at origin (0, 0)
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
@@ -907,8 +918,8 @@ mod tests {
         assert_eq!(found_indices, expected_sorted);
     }
 
-    #[test]
-    fn test_knn_query_execution_with_different_k_values() {
+    #[tokio::test]
+    async fn test_knn_query_execution_with_different_k_values() {
         // Create spatial index with more data points
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -930,7 +941,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -963,9 +974,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Query point at origin
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
@@ -1006,8 +1015,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_knn_query_execution_with_spheroid_distance() {
+    #[tokio::test]
+    async fn test_knn_query_execution_with_spheroid_distance() {
         // Create spatial index
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1029,7 +1038,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1057,9 +1066,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Query point at NYC
         let query_geom = create_array(&[Some("POINT (-74.0 40.7)")], &WKB_GEOMETRY);
@@ -1106,8 +1113,8 @@ mod tests {
         assert!(spheroid_distances.iter().all(|dist| dist.is_finite()));
     }
 
-    #[test]
-    fn test_knn_query_execution_edge_cases() {
+    #[tokio::test]
+    async fn test_knn_query_execution_edge_cases() {
         // Create spatial index
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1129,7 +1136,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1156,9 +1163,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
         let query_array = EvaluatedGeometryArray::try_new(query_geom, &WKB_GEOMETRY).unwrap();
@@ -1257,8 +1262,8 @@ mod tests {
         assert_eq!(distances.len(), 0);
     }
 
-    #[test]
-    fn test_knn_query_execution_with_tie_breakers() {
+    #[tokio::test]
+    async fn test_knn_query_execution_with_tie_breakers() {
         // Create a spatial index with sample geometry data
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1280,7 +1285,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1312,9 +1317,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Query point at the origin (0.0, 0.0)
         let query_geom = create_array(&[Some("POINT (0.0 0.0)")], &WKB_GEOMETRY);
@@ -1375,8 +1378,8 @@ mod tests {
         assert!(tie_distances.iter().all(|dist| dist.is_finite()));
     }
 
-    #[test]
-    fn test_query_knn_with_geometry_distance() {
+    #[tokio::test]
+    async fn test_query_knn_with_geometry_distance() {
         // Create a spatial index with sample geometry data
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1399,7 +1402,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1429,9 +1432,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Create a query geometry at origin (0, 0)
         let query_geom = create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY);
@@ -1461,8 +1462,8 @@ mod tests {
         assert!(distances.iter().all(|dist| dist.is_finite()));
     }
 
-    #[test]
-    fn test_query_knn_with_mixed_geometries() {
+    #[tokio::test]
+    async fn test_query_knn_with_mixed_geometries() {
         // Create a spatial index with complex geometries where geometry-based
         // distance should differ from centroid-based distance
         let options = SpatialJoinOptions {
@@ -1486,7 +1487,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1513,9 +1514,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Query point close to the linestring
         let query_geom = create_array(&[Some("POINT (2.1 1.0)")], &WKB_GEOMETRY);
@@ -1543,8 +1542,8 @@ mod tests {
         assert!(result.count > 0);
     }
 
-    #[test]
-    fn test_query_knn_with_tie_breakers_geometry_distance() {
+    #[tokio::test]
+    async fn test_query_knn_with_tie_breakers_geometry_distance() {
         // Create a spatial index with geometries that have identical distances for tie-breaker testing
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1566,7 +1565,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1596,9 +1595,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Query point at the origin (0.0, 0.0)
         let query_geom = create_array(&[Some("POINT (0.0 0.0)")], &WKB_GEOMETRY);
@@ -1668,8 +1665,8 @@ mod tests {
         assert!(result_with_ties.count == 4);
     }
 
-    #[test]
-    fn test_knn_query_with_empty_geometry() {
+    #[tokio::test]
+    async fn test_knn_query_with_empty_geometry() {
         // Create a spatial index with sample geometry data like other tests
         let options = SpatialJoinOptions {
             execution_mode: ExecutionMode::PrepareBuild,
@@ -1692,7 +1689,7 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1716,9 +1713,7 @@ mod tests {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
         };
-        builder.add_batch(indexed_batch).unwrap();
-
-        let index = builder.finish().unwrap();
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
 
         // Create an empty point WKB
         let mut empty_point_wkb = Vec::new();
@@ -1761,8 +1756,8 @@ mod tests {
             true,
         )]));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
-            schema,
+        let builder = DefaultSpatialIndexBuilder::new(
+            schema.clone(),
             spatial_predicate,
             options,
             JoinType::Inner,
@@ -1786,8 +1781,7 @@ mod tests {
             geom_array: EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY).unwrap(),
         };
 
-        builder.add_batch(evaluated_batch).unwrap();
-        builder.finish().unwrap()
+        build_index(builder, evaluated_batch, schema).await
     }
 
     fn create_probe_batch(probe_geoms: &[Option<&str>]) -> Arc<EvaluatedBatch> {

@@ -46,6 +46,16 @@ pub(crate) trait SpatialIndex {
     /// Get the batch at the given index.
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
     /// Query the spatial index with a probe geometry to find matching build-side geometries.
+    /// # Arguments
+    /// * `probe_wkb` - The probe geometry in WKB format
+    /// * `probe_rect` - The minimum bounding rectangle of the probe geometry
+    /// * `distance` - Optional distance parameter for distance-based spatial predicates
+    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
+    ///   pairs for each matching build-side geometry
+    ///
+    /// # Returns
+    /// * `JoinResultMetrics` containing the number of actual matches (`count`) and the number
+    ///   of candidates from the filter phase (`candidate_count`)
     #[allow(unused)]
     fn query(
         &self,
@@ -55,6 +65,18 @@ pub(crate) trait SpatialIndex {
         build_batch_positions: &mut Vec<(i32, i32)>,
     ) -> Result<QueryResultMetrics>;
     /// Query the spatial index for k nearest neighbors of a given geometry.
+    /// # Arguments
+    ///
+    /// * `probe_wkb` - WKB representation of the probe geometry
+    /// * `k` - Number of nearest neighbors to find
+    /// * `use_spheroid` - Whether to use spheroid distance calculation
+    /// * `include_tie_breakers` - Whether to include additional results with same distance as kth neighbor
+    /// * `build_batch_positions` - Output vector for matched positions
+    /// * `distances` - Optional output vector for distances to matched neighbors, aligned with `build_batch_positions`
+    ///
+    /// # Returns
+    ///
+    /// * `JoinResultMetrics` containing the number of actual matches and candidates processed
     fn query_knn(
         &self,
         probe_wkb: &Wkb,
@@ -65,6 +87,22 @@ pub(crate) trait SpatialIndex {
         distances: Option<&mut Vec<f64>>,
     ) -> Result<QueryResultMetrics>;
     /// Query the spatial index with a batch of probe geometries to find matching build-side geometries.
+    /// # Arguments
+    /// * `evaluated_batch` - The batch containing probe geometries and their bounding rectangles
+    /// * `range` - The range of rows in the evaluated batch to process.
+    /// * `max_result_size` - The maximum number of results to collect before stopping. If the
+    ///   number of results exceeds this limit, the method returns early.
+    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
+    ///   pairs for each matching build-side geometry.
+    /// * `probe_indices` - Output vector that will be populated with the probe row index (in
+    ///   `evaluated_batch`) for each match appended to `build_batch_positions`.
+    ///   This means the probe index is repeated `N` times when a probe geometry produces `N` matches,
+    ///   keeping `probe_indices.len()` in sync with `build_batch_positions.len()`.
+    ///
+    /// # Returns
+    /// * A tuple containing:
+    ///   - `QueryResultMetrics`: Aggregated metrics (total matches and candidates) for the processed rows
+    ///   - `usize`: The index of the next row to process (exclusive end of the processed range)
     async fn query_batch(
         &self,
         evaluated_batch: &Arc<EvaluatedBatch>,

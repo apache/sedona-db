@@ -18,10 +18,11 @@
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
+use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::{
-    evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
+    evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream,
     spatial_predicate::SpatialPredicate,
 };
 use async_trait::async_trait;
@@ -34,16 +35,12 @@ pub(crate) trait SpatialIndexBuilder {
     /// The estimated memory usage does not include the memory required for holding the build side
     /// batches.
     fn estimate_extra_memory_usage(
+        &self,
         geo_stats: &GeoStatistics,
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
     ) -> usize;
-    /// Add a geometry batch to be indexed.
-    /// This method accumulates geometry batches that will be used to build the spatial index.
-    /// Each batch contains processed geometry data along with memory usage information.
-    fn add_batch(&mut self, indexed_batch: EvaluatedBatch) -> Result<()>;
-    /// Merge the provided GeoStatistics with the statistics of the batches added so far.
-    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self;
+
     /// Finish building and return the completed SpatialIndex.
     fn finish(self) -> Result<SpatialIndexRef>;
     async fn add_stream(
@@ -55,7 +52,7 @@ pub(crate) trait SpatialIndexBuilder {
 
 /// Metrics for the build phase of the spatial join.
 #[derive(Clone, Debug, Default)]
-pub struct SpatialJoinBuildMetrics {
+pub(crate) struct SpatialJoinBuildMetrics {
     /// Total time for collecting build-side of join
     pub(crate) build_time: metrics::Time,
     /// Memory used by the spatial-index in bytes
@@ -70,3 +67,5 @@ impl SpatialJoinBuildMetrics {
         }
     }
 }
+
+pub(crate) type SpatialIndexBuilderRef = Arc<dyn SpatialIndexBuilder + Send + Sync>;

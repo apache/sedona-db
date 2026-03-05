@@ -38,7 +38,6 @@ pub use planner::register_planner;
 pub use planner::probe_shuffle_exec::ProbeShuffleExec;
 
 // Re-export types needed for external usage (e.g., in Comet)
-pub use index::{SpatialIndex, SpatialJoinBuildMetrics};
 pub use spatial_predicate::SpatialPredicate;
 
 // Re-export option types from sedona-common for convenience
