@@ -331,6 +331,10 @@ impl PartitionedIndexProvider {
         }
         drop(tx);
 
+        // Collect the loaded indexed batches and add them to the index builder
+        let batch_stream = ReceiverBatchStream::new(rx, self.schema.clone(), true);
+        let sendable_stream: SendableEvaluatedBatchStream = Box::pin(batch_stream);
+        builder.add_stream(sendable_stream, geo_statistics).await?;
         // Ensure all tasks completed successfully
         while let Some(res) = join_set.join_next().await {
             if let Err(e) = res {
@@ -340,17 +344,6 @@ impl PartitionedIndexProvider {
                 return Err(DataFusionError::External(Box::new(e)));
             }
         }
-        // Collect the loaded indexed batches and add them to the index builder
-        // 1. Package the receiver into your new stream struct
-        let batch_stream = ReceiverBatchStream::new(rx, self.schema.clone(), true);
-
-        // 2. Box and pin it to match the `SendableEvaluatedBatchStream` type alias
-        // `Box::pin` automatically coerces to the `Pin<Box<dyn Trait + Send>>` alias
-        let sendable_stream: SendableEvaluatedBatchStream = Box::pin(batch_stream);
-
-        // 3. Pass it directly to the builder
-        builder.add_stream(sendable_stream, geo_statistics).await?;
-
         builder.finish()
     }
 }
@@ -384,6 +377,7 @@ impl Stream for ReceiverBatchStream {
     type Item = Result<EvaluatedBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        println!("Polling KNN Join Stream...");
         // Delegate the streaming to the receiver's poll_recv method
         self.rx.poll_recv(cx)
     }

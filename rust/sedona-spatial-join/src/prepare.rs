@@ -32,7 +32,7 @@ use sedona_common::{sedona_internal_err, NumSpatialPartitionsConfig, SedonaOptio
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::index::spatial_index_builder::{SpatialIndexBuilderRef, SpatialJoinBuildMetrics};
+use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
 use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
     index::{
@@ -75,7 +75,6 @@ pub(crate) struct SpatialJoinComponentsBuilder {
     metrics: ExecutionPlanMetricsSet,
     seed: u64,
     sedona_options: SedonaOptions,
-    spatial_index_builder: SpatialIndexBuilderRef,
 }
 
 impl SpatialJoinComponentsBuilder {
@@ -97,18 +96,6 @@ impl SpatialJoinComponentsBuilder {
             .get::<SedonaOptions>()
             .cloned()
             .unwrap_or_default();
-        let join_metrics = SpatialJoinBuildMetrics::new(0, &metrics);
-        let spatial_index_builder = Arc::new(
-            DefaultSpatialIndexBuilder::new(
-                build_schema.clone(),
-                spatial_predicate.clone(),
-                sedona_options.spatial_join.clone(),
-                join_type,
-                probe_threads_count,
-                join_metrics.clone(),
-            )
-            .unwrap(),
-        ); // fixme: handle error instead of unwrap
         Self {
             context,
             build_schema,
@@ -118,7 +105,6 @@ impl SpatialJoinComponentsBuilder {
             metrics,
             seed,
             sedona_options,
-            spatial_index_builder,
         }
     }
 
@@ -230,13 +216,21 @@ impl SpatialJoinComponentsBuilder {
             reservations.push(reservation);
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
-
+        let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
+        let builder = Arc::new(DefaultSpatialIndexBuilder::new(
+            self.build_schema.clone(),
+            self.spatial_predicate.clone(),
+            self.sedona_options.spatial_join.clone(),
+            self.join_type,
+            self.probe_threads_count,
+            join_metrics.clone(),
+        )?);
         let collector = BuildSideBatchesCollector::new(
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             Arc::clone(&runtime_env),
             spill_compression,
-            self.spatial_index_builder.clone(),
+            builder,
         );
         let build_partitions = collector
             .collect_all(
