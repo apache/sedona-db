@@ -24,4 +24,4 @@ pub mod errors;
 
 // --- Core API ---
 pub mod gdal_api;
-pub mod register;
+pub mod global;

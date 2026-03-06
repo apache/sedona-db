@@ -36,7 +36,7 @@ const MIN_GDAL_VERSION_NUM: i32 =
 /// # Examples
 ///
 /// ```no_run
-/// use sedona_gdal::register::{GdalApiBuilder, configure_global_gdal_api};
+/// use sedona_gdal::global::{GdalApiBuilder, configure_global_gdal_api};
 ///
 /// // Configure with a specific shared library path
 /// let builder = GdalApiBuilder::default()
@@ -177,6 +177,12 @@ pub fn configure_global_gdal_api(builder: GdalApiBuilder) -> Result<(), GdalInit
     Ok(())
 }
 
+/// Return whether the global [`GdalApi`] has been initialized.
+///
+/// This returns `true` only after [`get_global_gdal_api`] (directly or via
+/// [`with_global_gdal_api`]) has successfully initialized and stored the API.
+/// It does not indicate whether a builder was previously set through
+/// [`configure_global_gdal_api`].
 pub fn is_gdal_api_configured() -> bool {
     GDAL_API.get().is_some()
 }

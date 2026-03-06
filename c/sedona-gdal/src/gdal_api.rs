@@ -48,7 +48,7 @@ pub struct GdalApi {
     pub(crate) inner: SedonaGdalApi,
     /// The dynamically loaded GDAL library. Kept alive for the lifetime of the
     /// function pointers in `inner`. This is never dropped because the `GdalApi`
-    /// lives in a `static OnceLock` (see `register.rs`).
+    /// lives in a `static OnceLock` (see `global.rs`).
     _lib: Library,
     name: String,
 }
