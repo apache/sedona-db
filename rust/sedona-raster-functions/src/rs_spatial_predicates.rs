@@ -22,7 +22,7 @@
 //! and (raster, raster). Rasters are compared via their convex hulls.
 //!
 //! CRS transformation rules:
-//! - If a raster or geometry does not have a defined SRID, it is assumed to be in WGS84
+//! - If either side has no CRS, the comparison is performed directly without CRS transformation
 //! - If both sides are in the same CRS, perform the relationship test directly
 //! - For raster/geometry pairs, the geometry is transformed into the raster's CRS
 //! - For raster/raster pairs, the second raster is transformed into the first's CRS
@@ -31,7 +31,6 @@
 use std::sync::Arc;
 
 use crate::crs_utils::crs_transform_wkb;
-use crate::crs_utils::default_crs;
 use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use arrow_array::builder::BooleanBuilder;
@@ -41,9 +40,12 @@ use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::wkb_factory::write_wkb_polygon;
+use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
+use sedona_schema::crs::{lnglat, Crs};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_tg::tg;
 
@@ -185,24 +187,28 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, maybe_geom_crs| {
-            match (raster_opt, maybe_wkb) {
-                (Some(raster), Some(geom_wkb)) => {
-                    raster_wkb.clear();
-                    write_convexhull_wkb(raster, &mut raster_wkb)?;
+        with_global_proj_engine(|engine| {
+            executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
+                match (raster_opt, maybe_wkb) {
+                    (Some(raster), Some(geom_wkb)) => {
+                        raster_wkb.clear();
+                        write_convexhull_wkb(raster, &mut raster_wkb)?;
 
-                    let result = evaluate_predicate_with_crs::<Op>(
-                        &raster_wkb,
-                        raster.crs(),
-                        geom_wkb,
-                        maybe_geom_crs,
-                        false,
-                    )?;
-                    builder.append_value(result);
+                        let raster_crs = resolve_crs(raster.crs())?;
+                        let result = evaluate_predicate_with_crs::<Op>(
+                            &raster_wkb,
+                            &raster_crs,
+                            geom_wkb,
+                            &geom_crs,
+                            false,
+                            engine,
+                        )?;
+                        builder.append_value(result);
+                    }
+                    _ => builder.append_null(),
                 }
-                _ => builder.append_null(),
-            }
-            Ok(())
+                Ok(())
+            })
         })?;
 
         executor.finish(Arc::new(builder.finish()))
@@ -221,25 +227,29 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, maybe_geom_crs| {
-            match (raster_opt, maybe_wkb) {
-                (Some(raster), Some(geom_wkb)) => {
-                    raster_wkb.clear();
-                    write_convexhull_wkb(raster, &mut raster_wkb)?;
+        with_global_proj_engine(|engine| {
+            executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
+                match (raster_opt, maybe_wkb) {
+                    (Some(raster), Some(geom_wkb)) => {
+                        raster_wkb.clear();
+                        write_convexhull_wkb(raster, &mut raster_wkb)?;
 
-                    // Note: order is geometry, raster for the predicate
-                    let result = evaluate_predicate_with_crs::<Op>(
-                        geom_wkb,
-                        maybe_geom_crs,
-                        &raster_wkb,
-                        raster.crs(),
-                        true,
-                    )?;
-                    builder.append_value(result);
+                        let raster_crs = resolve_crs(raster.crs())?;
+                        // Note: order is geometry, raster for the predicate
+                        let result = evaluate_predicate_with_crs::<Op>(
+                            geom_wkb,
+                            &geom_crs,
+                            &raster_wkb,
+                            &raster_crs,
+                            true,
+                            engine,
+                        )?;
+                        builder.append_value(result);
+                    }
+                    _ => builder.append_null(),
                 }
-                _ => builder.append_null(),
-            }
-            Ok(())
+                Ok(())
+            })
         })?;
 
         executor.finish(Arc::new(builder.finish()))
@@ -259,21 +269,26 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut wkb0 = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
         let mut wkb1 = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        executor.execute_raster_raster_void(|_i, r0_opt, r1_opt| {
-            match (r0_opt, r1_opt) {
-                (Some(r0), Some(r1)) => {
-                    wkb0.clear();
-                    wkb1.clear();
-                    write_convexhull_wkb(r0, &mut wkb0)?;
-                    write_convexhull_wkb(r1, &mut wkb1)?;
+        with_global_proj_engine(|engine| {
+            executor.execute_raster_raster_void(|_i, r0_opt, r1_opt| {
+                match (r0_opt, r1_opt) {
+                    (Some(r0), Some(r1)) => {
+                        wkb0.clear();
+                        wkb1.clear();
+                        write_convexhull_wkb(r0, &mut wkb0)?;
+                        write_convexhull_wkb(r1, &mut wkb1)?;
 
-                    let result =
-                        evaluate_predicate_with_crs::<Op>(&wkb0, r0.crs(), &wkb1, r1.crs(), false)?;
-                    builder.append_value(result);
+                        let crs0 = resolve_crs(r0.crs())?;
+                        let crs1 = resolve_crs(r1.crs())?;
+                        let result = evaluate_predicate_with_crs::<Op>(
+                            &wkb0, &crs0, &wkb1, &crs1, false, engine,
+                        )?;
+                        builder.append_value(result);
+                    }
+                    _ => builder.append_null(),
                 }
-                _ => builder.append_null(),
-            }
-            Ok(())
+                Ok(())
+            })
         })?;
 
         executor.finish(Arc::new(builder.finish()))
@@ -283,40 +298,44 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
 /// Evaluate a spatial predicate with CRS handling
 ///
 /// Rules:
-/// - If no CRS defined, assume WGS84
+/// - If either side has no CRS, compare directly without transformation
 /// - If both same CRS, compare directly
 /// - Otherwise, try transforming one side to the other's CRS for comparison.
 ///   If that fails, transform both to WGS84 and compare.
 fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
     wkb_a: &[u8],
-    crs_a: Option<&str>,
+    crs_a: &Crs,
     wkb_b: &[u8],
-    crs_b: Option<&str>,
+    crs_b: &Crs,
     from_a_to_b: bool,
+    engine: &dyn CrsEngine,
 ) -> Result<bool> {
-    let crs_a = resolve_crs(crs_a)?;
-    let crs_b = resolve_crs(crs_b)?;
+    // If either side has no CRS, compare directly without transformation.
+    let (crs_a, crs_b) = match (crs_a, crs_b) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return evaluate_predicate::<Op>(wkb_a, wkb_b),
+    };
 
+    // If both CRSes are equal, compare directly.
     if crs_a.crs_equals(crs_b.as_ref()) {
         return evaluate_predicate::<Op>(wkb_a, wkb_b);
     }
 
+    // Try preferred transformation direction.
     if from_a_to_b {
-        // Transform A to B's CRS for comparison
-        if let Ok(wkb_a) = crs_transform_wkb(wkb_a, crs_a.as_ref(), crs_b.as_ref()) {
+        if let Ok(wkb_a) = crs_transform_wkb(wkb_a, crs_a.as_ref(), crs_b.as_ref(), engine) {
             return evaluate_predicate::<Op>(&wkb_a, wkb_b);
         }
     } else {
-        // Transform B to A's CRS for comparison
-        if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b.as_ref(), crs_a.as_ref()) {
+        if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b.as_ref(), crs_a.as_ref(), engine) {
             return evaluate_predicate::<Op>(wkb_a, &wkb_b);
         }
     }
 
-    // If CRS transformation fails, fall back to transforming both to default CRS (WGS84) for comparison
-    let default_crs = default_crs();
-    let wkb_a = crs_transform_wkb(wkb_a, crs_a.as_ref(), default_crs)?;
-    let wkb_b = crs_transform_wkb(wkb_b, crs_b.as_ref(), default_crs)?;
+    // Fallback: transform both sides to WGS84 for comparison.
+    let default_crs = lnglat().expect("lnglat() should always return Some");
+    let wkb_a = crs_transform_wkb(wkb_a, crs_a.as_ref(), default_crs.as_ref(), engine)?;
+    let wkb_b = crs_transform_wkb(wkb_b, crs_b.as_ref(), default_crs.as_ref(), engine)?;
     evaluate_predicate::<Op>(&wkb_a, &wkb_b)
 }
 
@@ -434,7 +453,10 @@ mod tests {
         let tester = ScalarUdfTester::new(udf.into(), vec![RASTER, geom_type.clone()]);
 
         let rasters = generate_test_rasters(3, Some(0)).unwrap();
-        let (x, y) = crs_transform_coord((2.15, 2.75), "OGC:CRS84", "EPSG:3857").unwrap();
+        let (x, y) = with_global_proj_engine(|engine| {
+            crs_transform_coord((2.15, 2.75), "OGC:CRS84", "EPSG:3857", engine)
+        })
+        .unwrap();
         let point_3857 = format!("POINT ({} {})", x, y);
         let wkt_values: [Option<&str>; 3] = [None, Some(point_3857.as_str()), Some("POINT (0 0)")];
 
