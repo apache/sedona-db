@@ -48,6 +48,7 @@ sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }
 sedona-schema = { workspace = true }
+sedona-gdal = { workspace = true }
 sedona-proj = { workspace = true }
 sedona-tg = { workspace = true }
 serde_json = { workspace = true }

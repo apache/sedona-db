@@ -14,19 +14,29 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from sedonadb import _lib
-from sedonadb.context import connect, configure_proj, configure_gdal, gdal_version
 
-__version__ = _lib.sedona_python_version()
+[package]
+name = "sedona-gdal"
+version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
-__features__ = _lib.sedona_python_features()
+[dependencies]
+gdal-sys = { version = "0.12.0", optional = true }
+libloading = { workspace = true }
+thiserror = { workspace = true }
 
-__all__ = ["connect", "options", "gdal_version"]
+[features]
+default = ["gdal-sys"]
+gdal-sys = ["dep:gdal-sys"]
 
-# Attempt to configure PROJ and GDAL on import. This will warn if PROJ
-# or GDAL can't be configured but should never error. The auto-configured
-# values can be overridden as long as configure_proj() is called before
-# creating a transform and configure_gdal() is called before any
-# GDAL-backed operation (e.g., raster I/O).
-configure_proj("auto")
-configure_gdal(preset="auto")
+[dev-dependencies]
+sedona-testing = { workspace = true }

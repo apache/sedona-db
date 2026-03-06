@@ -22,7 +22,12 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
-from sedonadb._lib import InternalContext, configure_proj_shared
+from sedonadb._lib import (
+    InternalContext,
+    configure_gdal_shared,
+    configure_proj_shared,
+    gdal_version as _gdal_version,
+)
 from sedonadb._options import Options
 from sedonadb.dataframe import DataFrame, _create_data_frame
 from sedonadb.functions import Functions
@@ -585,13 +590,18 @@ def _configure_proj_pyproj():
     )
 
 
-def _configure_proj_system():
+def _proj_lib_name() -> str:
+    if sys.platform == "darwin":
+        return "libproj.dylib"
+    if sys.platform.startswith("linux"):
+        return "libproj.so"
     if sys.platform == "win32":
-        configure_proj(shared_library="proj.dll")
-    elif sys.platform == "darwin":
-        configure_proj(shared_library="libproj.dylib")
-    else:
-        configure_proj(shared_library="libproj.so")
+        return "proj.dll"
+    raise ValueError(f"Unsupported platform: {sys.platform}")
+
+
+def _configure_proj_system():
+    configure_proj(shared_library=_proj_lib_name())
 
 
 def _configure_proj_prefix(prefix: str):
@@ -599,8 +609,214 @@ def _configure_proj_prefix(prefix: str):
     if not prefix.exists():
         raise ValueError(f"Can't configure PROJ from prefix '{prefix}': does not exist")
 
+    if sys.platform == "win32":
+        shared_library = prefix / "Library" / "bin" / _proj_lib_name()
+    else:
+        shared_library = prefix / "lib" / _proj_lib_name()
+
     configure_proj(
-        shared_library=Path(prefix) / "lib" / "libproj.dylib",
-        database_path=Path(prefix) / "share" / "proj" / "proj.db",
-        search_path=Path(prefix) / "share" / "proj",
+        shared_library=shared_library,
+        database_path=prefix / "share" / "proj" / "proj.db",
+        search_path=prefix / "share" / "proj",
     )
+
+
+def configure_gdal(
+    preset: Optional[
+        Literal["auto", "pyogrio", "rasterio", "conda", "homebrew", "system"]
+    ] = None,
+    *,
+    shared_library: Optional[Union[str, Path]] = None,
+    verbose: bool = False,
+) -> None:
+    """Configure GDAL source
+
+    SedonaDB loads GDAL dynamically at runtime. This is normally configured
+    on package load but may need additional configuration (particularly if the
+    automatic configuration fails).
+
+    This function may be called at any time; however, once a GDAL-backed
+    operation has been performed, subsequent configuration has no effect.
+
+    Args:
+        preset: One of:
+            - None: Use a custom `shared_library` path.
+            - auto: Try all presets in the order pyogrio, rasterio, conda,
+              homebrew, system and warn if none succeeded.
+            - pyogrio: Attempt to use the GDAL shared library bundled with
+              pyogrio. This aligns the GDAL version with the one used by
+              `read_pyogrio()` / `geopandas.read_file()`.
+            - rasterio: Attempt to use the GDAL shared library bundled with
+              rasterio.
+            - conda: Attempt to load libgdal installed via
+              `conda install libgdal`.
+            - homebrew: Attempt to load libgdal installed via
+              `brew install gdal`.
+            - system: Attempt to load libgdal from a directory already on
+              LD_LIBRARY_PATH (Linux), DYLD_LIBRARY_PATH (macOS), or PATH
+              (Windows).
+
+        shared_library: Path to a GDAL shared library.
+        verbose: If True, print information about the configuration process.
+
+    Examples:
+
+        >>> sedona.db.configure_gdal("auto")
+    """
+    if preset is not None:
+        if preset == "pyogrio":
+            _configure_gdal_pyogrio()
+            return
+        elif preset == "rasterio":
+            _configure_gdal_rasterio()
+            return
+        elif preset == "conda":
+            _configure_gdal_conda()
+            return
+        elif preset == "homebrew":
+            prefix = os.environ.get("HOMEBREW_PREFIX", "/opt/homebrew")
+            shared_library = Path(prefix) / "lib" / _gdal_lib_name()
+        elif preset == "system":
+            shared_library = _gdal_lib_name()
+        elif preset == "auto":
+            tried = ["pyogrio", "rasterio", "conda", "homebrew", "system"]
+            errors = []
+            for option in tried:
+                try:
+                    configure_gdal(preset=option)
+
+                    if verbose:
+                        print(f"Configured GDAL using '{option}'")
+
+                    return
+                except Exception as e:
+                    if verbose:
+                        print(f"Failed to configure GDAL using '{option}': {e}")
+                    else:
+                        errors.append(f"{option}: {e}")
+
+            import warnings
+
+            all_errors = "\n".join(errors)
+            warnings.warn(
+                "Failed to configure GDAL. Is pyogrio, rasterio, or a system install of GDAL available?"
+                f"\nDetails: tried {tried}\n{all_errors}"
+            )
+            return
+        else:
+            raise ValueError(f"Unknown preset: {preset}")
+
+    if shared_library is None:
+        raise ValueError("Must provide shared_library or preset")
+
+    shared_library = Path(shared_library)
+    try:
+        import ctypes
+
+        ctypes.CDLL(str(shared_library))
+    except OSError as e:
+        raise ValueError(f"Can't load GDAL shared library '{shared_library}': {e}")
+
+    configure_gdal_shared(str(shared_library))
+
+
+def _gdal_lib_name() -> str:
+    if sys.platform == "darwin":
+        return "libgdal.dylib"
+    if sys.platform.startswith("linux"):
+        return "libgdal.so"
+    if sys.platform == "win32":
+        return "gdal.dll"
+    raise ValueError(f"Unsupported platform: {sys.platform}")
+
+
+def _find_gdal_in_package(pkg_name: str) -> Path:
+    """Locate the bundled GDAL shared library inside a pip-installed package.
+
+    Pip wheels on macOS place vendored dylibs in `<package>/.dylibs/`,
+    while on Linux `auditwheel` places them in `<package>.libs/` next
+    to the package directory. Windows wheels use the same `.libs` layout.
+
+    Returns the path to the single matching GDAL library file.
+
+    Raises:
+        ValueError: If the package cannot be imported, the expected
+            directory does not exist, or exactly one GDAL library
+            cannot be found.
+    """
+    import importlib
+
+    pkg = importlib.import_module(pkg_name)
+    pkg_dir = Path(pkg.__file__).parent
+
+    if sys.platform == "darwin":
+        dylibs_dir = pkg_dir / ".dylibs"
+        if not dylibs_dir.exists():
+            raise ValueError(
+                f"Expected GDAL dylib directory '{dylibs_dir}' does not exist"
+            )
+        possible_files = list(dylibs_dir.glob("libgdal*.dylib*"))
+    else:
+        dylibs_dir = pkg_dir.parent / f"{pkg_name}.libs"
+        if not dylibs_dir.exists():
+            raise ValueError(
+                f"Expected GDAL dll/so directory '{dylibs_dir}' does not exist"
+            )
+        possible_files = list(dylibs_dir.glob("gdal*.dll"))
+        possible_files.extend(dylibs_dir.glob("libgdal*.so*"))
+
+    if len(possible_files) != 1:
+        all_files = "\n".join(str(s) for s in dylibs_dir.iterdir())
+        raise ValueError(
+            f"Can't find exactly one GDAL shared library in '{dylibs_dir}'. "
+            f"{len(possible_files)} possible matches:\n{all_files}"
+        )
+
+    return possible_files[0]
+
+
+def _configure_gdal_pyogrio():
+    configure_gdal(shared_library=_find_gdal_in_package("pyogrio"))
+
+
+def _configure_gdal_rasterio():
+    configure_gdal(shared_library=_find_gdal_in_package("rasterio"))
+
+
+def _configure_gdal_conda():
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        raise ValueError("CONDA_PREFIX environment variable is not set")
+
+    prefix = Path(conda_prefix)
+    if not prefix.exists():
+        raise ValueError(
+            f"Can't configure GDAL from CONDA_PREFIX '{prefix}': does not exist"
+        )
+
+    if sys.platform == "win32":
+        shared_library = prefix / "Library" / "bin" / "gdal.dll"
+    else:
+        shared_library = prefix / "lib" / _gdal_lib_name()
+
+    configure_gdal(shared_library=shared_library)
+
+
+def gdal_version() -> Optional[str]:
+    """Return the GDAL release version string, or ``None`` if GDAL is not loaded.
+
+    This function triggers lazy GDAL initialization if ``configure_gdal()``
+    was previously called but the library has not yet been loaded. If GDAL
+    cannot be loaded, ``None`` is returned instead of raising an error.
+
+    Returns:
+        A version string such as ``"3.8.4"``, or ``None`` if GDAL is
+        not available.
+
+    Examples:
+
+        >>> import sedonadb
+        >>> sedonadb.gdal_version()  # doctest: +SKIP
+        '3.8.4'
+    """
+    return _gdal_version()
