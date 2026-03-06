@@ -19,9 +19,6 @@
 //! <https://github.com/georust/gdal/blob/v0.19.0/src/errors.rs>.
 //! Original code is licensed under MIT.
 
-use std::ffi::NulError;
-use std::num::TryFromIntError;
-
 use thiserror::Error;
 
 /// Error type for the sedona-gdal crate initialization and library loading.
@@ -67,5 +64,3 @@ pub enum GdalError {
     #[error("Buffer length {0} does not match raster size {1:?}")]
     BufferSizeMismatch(usize, (usize, usize)),
 }
-
-pub type Result<T> = std::result::Result<T, GdalError>;
