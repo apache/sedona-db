@@ -346,10 +346,8 @@ fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
         if let Ok(wkb_a) = crs_transform_wkb(wkb_a, crs_a, crs_b, engine) {
             return evaluate_predicate::<Op>(&wkb_a, wkb_b);
         }
-    } else {
-        if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b, crs_a, engine) {
-            return evaluate_predicate::<Op>(wkb_a, &wkb_b);
-        }
+    } else if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b, crs_a, engine) {
+        return evaluate_predicate::<Op>(wkb_a, &wkb_b);
     }
 
     // Fallback: transform both sides to WGS84 for comparison.

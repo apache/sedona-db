@@ -40,6 +40,12 @@ pub struct RasterExecutor<'a, 'b> {
     num_iterations: usize,
 }
 
+// The accessor types below use enum-based dispatch to handle different Arrow
+// array representations (Binary vs BinaryView, etc.) rather than trait objects
+// like `Box<dyn Iterator>`. Both approaches involve dynamic dispatch, but the
+// enum variant is simpler and avoids an extra heap allocation. Since raster
+// operations are expensive relative to per-element dispatch overhead, the cost
+// of matching on each access is negligible in practice.
 #[derive(Clone)]
 enum ItemWkbAccessor {
     Binary(BinaryArray),
@@ -68,6 +74,8 @@ impl ItemWkbAccessor {
     }
 }
 
+// Same enum-dispatch rationale as `ItemWkbAccessor` above: the per-element
+// match cost is dwarfed by the raster and CRS operations performed on each row.
 enum GeomWkbCrsAccessor {
     WkbArray {
         wkb: ItemWkbAccessor,
