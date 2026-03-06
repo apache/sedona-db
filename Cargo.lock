@@ -5522,6 +5522,7 @@ dependencies = [
  "rstest",
  "sedona-common",
  "sedona-expr",
+ "sedona-functions",
  "sedona-geometry",
  "sedona-proj",
  "sedona-raster",

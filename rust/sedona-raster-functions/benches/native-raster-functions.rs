@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use criterion::{criterion_group, criterion_main, Criterion};
+use sedona_functions::st_setsrid::st_apply_default_crs_udf;
 use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -171,7 +172,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native-raster",
         "rs_intersects",
-        BenchmarkArgs::ArrayArray(Raster(64, 64), Point),
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Point), st_apply_default_crs_udf().into()),
+        ),
     );
     // RS_Intersects(raster, geometry) - polygon
     benchmark::scalar(
@@ -179,7 +183,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native-raster",
         "rs_intersects",
-        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+        ),
     );
     // RS_Intersects(raster, raster)
     benchmark::scalar(
@@ -195,7 +202,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native-raster",
         "rs_contains",
-        BenchmarkArgs::ArrayArray(Raster(64, 64), Point),
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Point), st_apply_default_crs_udf().into()),
+        ),
     );
     // RS_Contains(raster, geometry) - polygon
     benchmark::scalar(
@@ -203,7 +213,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native-raster",
         "rs_contains",
-        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+        ),
     );
     // RS_Within(raster, geometry) - polygon
     benchmark::scalar(
@@ -211,7 +224,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "native-raster",
         "rs_within",
-        BenchmarkArgs::ArrayArray(Raster(64, 64), Polygon(4)),
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+        ),
     );
 }
 
