@@ -223,7 +223,7 @@ impl SedonaContext {
     fn register_s2geography(&mut self) -> Result<()> {
         use sedona_proj::sd_order_lnglat;
 
-        self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels().into_iter())?;
+        self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels()?.into_iter())?;
 
         let sd_order_kernel = sd_order_lnglat::OrderLngLat::new(
             sedona_s2geography::s2geography::s2_cell_id_from_lnglat,
