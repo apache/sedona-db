@@ -49,6 +49,7 @@ wkb = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 geo-traits = { workspace = true }
+sedona-functions = { workspace = true }
 sedona-testing = { workspace = true, features = ["criterion"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 rstest = { workspace = true }

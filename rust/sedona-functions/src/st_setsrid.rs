@@ -39,7 +39,7 @@ use sedona_expr::{
 };
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{
-    crs::{deserialize_crs, CachedCrsNormalization, CachedSRIDToCrs},
+    crs::{deserialize_crs, lnglat, CachedCrsNormalization, CachedSRIDToCrs, Crs},
     datatypes::SedonaType,
     matchers::ArgMatcher,
 };
@@ -86,6 +86,69 @@ pub fn st_set_srid_udf() -> SedonaScalarUDF {
 /// See [st_set_crs_with_engine_udf] for a validating version of this function
 pub fn st_set_crs_udf() -> SedonaScalarUDF {
     st_set_crs_with_engine_udf(None)
+}
+
+/// ST_ApplyDefaultCRS() scalar UDF implementation
+///
+/// A single-argument UDF that stamps a default CRS onto geometries that don't
+/// already have one. If the input geometry already has a CRS, it is passed
+/// through unchanged. The CRS is applied at the type level only — the geometry
+/// bytes are never modified.
+///
+/// Uses [lnglat] (OGC:CRS84) as the default CRS and no engine validation.
+pub fn st_apply_default_crs_udf() -> SedonaScalarUDF {
+    st_apply_default_crs_with_crs_udf(lnglat())
+}
+
+/// ST_ApplyDefaultCRS() scalar UDF with a custom CRS and no engine validation.
+///
+/// Useful for creating benchmarking geometries with a custom CRS.
+pub fn st_apply_default_crs_with_crs_udf(crs: Crs) -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_applydefaultcrs",
+        vec![Arc::new(STApplyDefaultCRS { crs })],
+        Volatility::Immutable,
+    )
+}
+
+/// Stamps a default CRS onto geometries that have no CRS.
+///
+/// If the input geometry already carries a CRS, the type and data are passed
+/// through unchanged. Otherwise the configured default CRS is applied at the
+/// type level (the geometry bytes are never modified).
+///
+/// TODO: This function does not support item CRS types. We'll add support for
+/// it in the future.
+#[derive(Debug)]
+struct STApplyDefaultCRS {
+    crs: Crs,
+}
+
+impl SedonaScalarKernel for STApplyDefaultCRS {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        if args.len() != 1 {
+            return Ok(None);
+        }
+        match &args[0] {
+            SedonaType::Wkb(edges, crs) if crs.is_none() => {
+                Ok(Some(SedonaType::Wkb(*edges, self.crs.clone())))
+            }
+            SedonaType::WkbView(edges, crs) if crs.is_none() => {
+                Ok(Some(SedonaType::WkbView(*edges, self.crs.clone())))
+            }
+            SedonaType::Wkb(..) | SedonaType::WkbView(..) => Ok(Some(args[0].clone())),
+            _ => Ok(None),
+        }
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        // CRS is type-level metadata — the geometry bytes are unchanged.
+        Ok(args[0].clone())
+    }
 }
 
 #[derive(Debug)]
@@ -563,6 +626,49 @@ mod test {
 
         let udf: ScalarUDF = st_set_crs_udf().into();
         assert_eq!(udf.name(), "st_setcrs");
+
+        let udf: ScalarUDF = st_apply_default_crs_udf().into();
+        assert_eq!(udf.name(), "st_applydefaultcrs");
+    }
+
+    #[test]
+    fn udf_apply_default_crs_stamps_lnglat_on_no_crs() {
+        let wkb_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
+
+        let tester = ScalarUdfTester::new(st_apply_default_crs_udf().into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(wkb_lnglat.clone());
+        tester.assert_scalar_result_equals_with_return_type(
+            "POINT (0 1)",
+            "POINT (0 1)",
+            wkb_lnglat.clone(),
+        );
+
+        let input = create_array(
+            &[Some("POINT (0 1)"), Some("POINT (2 3)"), None],
+            &WKB_GEOMETRY,
+        );
+        let output = tester.invoke_array(input.clone()).unwrap();
+        assert_eq!(&input, &output);
+    }
+
+    #[test]
+    fn udf_apply_default_crs_passthrough_existing_crs() {
+        let epsg_3857 = deserialize_crs("EPSG:3857").unwrap();
+        let wkb_3857 = SedonaType::Wkb(Edges::Planar, epsg_3857);
+
+        let tester =
+            ScalarUdfTester::new(st_apply_default_crs_udf().into(), vec![wkb_3857.clone()]);
+        // Input already has CRS — return type preserves it (not overwritten with lnglat)
+        tester.assert_return_type(wkb_3857.clone());
+        tester.assert_scalar_result_equals_with_return_type(
+            "POINT (0 1)",
+            "POINT (0 1)",
+            wkb_3857.clone(),
+        );
+
+        let input = create_array(&[Some("POINT (0 1)"), Some("POINT (2 3)"), None], &wkb_3857);
+        let output = tester.invoke_array(input.clone()).unwrap();
+        assert_eq!(&input, &output);
     }
 
     #[test]
