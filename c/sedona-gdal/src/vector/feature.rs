@@ -60,6 +60,7 @@ impl<'a> Feature<'a> {
             None
         } else {
             Some(BorrowedGeometry {
+                api: self.api,
                 c_geom,
                 _lifetime: PhantomData,
             })
@@ -126,6 +127,7 @@ impl<'a> Feature<'a> {
 
 /// A geometry borrowed from a feature (not owned — will NOT be destroyed).
 pub struct BorrowedGeometry<'a> {
+    api: &'static GdalApi,
     c_geom: OGRGeometryH,
     _lifetime: PhantomData<&'a ()>,
 }
@@ -136,9 +138,9 @@ impl<'a> BorrowedGeometry<'a> {
         self.c_geom
     }
 
-    /// Export to ISO WKB using the provided API.
-    pub fn wkb(&self, api: &'static GdalApi) -> Result<Vec<u8>> {
-        let size = unsafe { call_gdal_api!(api, OGR_G_WkbSize, self.c_geom) };
+    /// Export to ISO WKB.
+    pub fn wkb(&self) -> Result<Vec<u8>> {
+        let size = unsafe { call_gdal_api!(self.api, OGR_G_WkbSize, self.c_geom) };
         if size < 0 {
             return Err(crate::errors::GdalError::BadArgument(format!(
                 "OGR_G_WkbSize returned negative size: {size}"
@@ -147,7 +149,7 @@ impl<'a> BorrowedGeometry<'a> {
         let mut buf = vec![0u8; size as usize];
         let rv = unsafe {
             call_gdal_api!(
-                api,
+                self.api,
                 OGR_G_ExportToIsoWkb,
                 self.c_geom,
                 wkbNDR,
@@ -164,14 +166,14 @@ impl<'a> BorrowedGeometry<'a> {
     }
 
     /// Get the bounding envelope.
-    pub fn envelope(&self, api: &'static GdalApi) -> crate::vector::Envelope {
+    pub fn envelope(&self) -> crate::vector::Envelope {
         let mut env = OGREnvelope {
             MinX: 0.0,
             MaxX: 0.0,
             MinY: 0.0,
             MaxY: 0.0,
         };
-        unsafe { call_gdal_api!(api, OGR_G_GetEnvelope, self.c_geom, &mut env) };
+        unsafe { call_gdal_api!(self.api, OGR_G_GetEnvelope, self.c_geom, &mut env) };
         crate::vector::Envelope {
             MinX: env.MinX,
             MaxX: env.MaxX,

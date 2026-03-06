@@ -23,6 +23,7 @@ pub mod gdal_dyn_bindgen;
 pub mod errors;
 
 // --- Core API ---
+pub mod gdal;
 pub mod gdal_api;
 pub mod global;
 
