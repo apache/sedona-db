@@ -25,9 +25,11 @@ use datafusion_common::{exec_err, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::{RasterRefImpl, RasterStructArray};
-use sedona_schema::crs::{deserialize_crs, Crs};
+use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::datatypes::RASTER;
+
+use crate::crs_utils::crs_as_ref;
 
 /// Helper for writing raster kernel implementations
 ///
@@ -82,19 +84,21 @@ enum GeomWkbCrsAccessor {
         item: ItemWkbAccessor,
         crs: StringViewArray,
         item_static_crs: Crs,
+        resolved_crs: Crs,
     },
     ItemCrsScalar {
         struct_array: StructArray,
         item: ItemWkbAccessor,
         crs: StringViewArray,
         item_static_crs: Crs,
+        resolved_crs: Crs,
     },
     Null,
 }
 
 impl GeomWkbCrsAccessor {
     #[inline]
-    fn get(&self, i: usize) -> Result<(Option<&[u8]>, Crs)> {
+    fn get(&mut self, i: usize) -> Result<(Option<&[u8]>, Option<&dyn CoordinateReferenceSystem>)> {
         match self {
             Self::Null => Ok((None, None)),
             Self::WkbArray { wkb, static_crs } => {
@@ -102,20 +106,21 @@ impl GeomWkbCrsAccessor {
                 if maybe_wkb.is_none() {
                     return Ok((None, None));
                 }
-                Ok((maybe_wkb, static_crs.clone()))
+                Ok((maybe_wkb, crs_as_ref(static_crs)))
             }
             Self::WkbScalar { wkb, static_crs } => {
                 if wkb.is_none() {
                     return Ok((None, None));
                 }
                 let _ = i;
-                Ok((wkb.as_deref(), static_crs.clone()))
+                Ok((wkb.as_deref(), crs_as_ref(static_crs)))
             }
             Self::ItemCrsArray {
                 struct_array,
                 item,
                 crs,
                 item_static_crs,
+                resolved_crs,
             } => {
                 if struct_array.is_null(i) {
                     return Ok((None, None));
@@ -131,14 +136,15 @@ impl GeomWkbCrsAccessor {
                 } else {
                     Some(crs.value(i))
                 };
-                let crs_out = resolve_item_crs(item_crs_str, item_static_crs)?;
-                Ok((maybe_wkb, crs_out))
+                *resolved_crs = resolve_item_crs(item_crs_str, item_static_crs)?;
+                Ok((maybe_wkb, crs_as_ref(resolved_crs)))
             }
             Self::ItemCrsScalar {
                 struct_array,
                 item,
                 crs,
                 item_static_crs,
+                resolved_crs,
             } => {
                 if struct_array.is_null(0) {
                     return Ok((None, None));
@@ -154,9 +160,9 @@ impl GeomWkbCrsAccessor {
                 } else {
                     Some(crs.value(0))
                 };
-                let crs_out = resolve_item_crs(item_crs_str, item_static_crs)?;
+                *resolved_crs = resolve_item_crs(item_crs_str, item_static_crs)?;
                 let _ = i;
-                Ok((maybe_wkb, crs_out))
+                Ok((maybe_wkb, crs_as_ref(resolved_crs)))
             }
         }
     }
@@ -471,7 +477,11 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// The closure is invoked for each row with `(raster, wkb_bytes, crs_str)`.
     pub fn execute_raster_wkb_crs_void<F>(&self, mut func: F) -> Result<()>
     where
-        F: FnMut(Option<&RasterRefImpl<'_>>, Option<&[u8]>, Crs) -> Result<()>,
+        F: FnMut(
+            Option<&RasterRefImpl<'_>>,
+            Option<&[u8]>,
+            Option<&dyn CoordinateReferenceSystem>,
+        ) -> Result<()>,
     {
         if self.arg_types.first() != Some(&RASTER) {
             return sedona_internal_err!("First argument must be a raster type");
@@ -480,7 +490,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             return sedona_internal_err!("Expected at least 2 arguments (raster, geom)");
         }
 
-        let geom_accessor = self.make_geom_wkb_crs_accessor(1)?;
+        let mut geom_accessor = self.make_geom_wkb_crs_accessor(1)?;
 
         match &self.args[0] {
             ColumnarValue::Array(array) => {
@@ -581,6 +591,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         item: item_accessor,
                         crs: crs_array,
                         item_static_crs,
+                        resolved_crs: None,
                     })
                 }
                 ColumnarValue::Scalar(ScalarValue::Struct(struct_scalar)) => {
@@ -613,6 +624,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         item: item_accessor,
                         crs: crs_array,
                         item_static_crs,
+                        resolved_crs: None,
                     })
                 }
                 ColumnarValue::Scalar(ScalarValue::Null) => Ok(GeomWkbCrsAccessor::Null),
@@ -837,19 +849,19 @@ mod tests {
         let arg_types = vec![RASTER, geom_type];
         let executor = RasterExecutor::new(&arg_types, &args);
 
-        let mut out_crs: Vec<Crs> = Vec::with_capacity(executor.num_iterations());
+        let expected_crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let mut out_crs_matches: Vec<Option<bool>> = Vec::with_capacity(executor.num_iterations());
         let mut out_has_wkb: Vec<bool> = Vec::with_capacity(executor.num_iterations());
         executor
             .execute_raster_wkb_crs_void(|_raster, wkb, crs| {
                 out_has_wkb.push(wkb.is_some());
-                out_crs.push(crs);
+                out_crs_matches.push(crs.map(|c| c.crs_equals(expected_crs.as_ref())));
                 Ok(())
             })
             .unwrap();
 
         assert_eq!(out_has_wkb, vec![true, false]);
-        assert!(out_crs[1].is_none());
-        assert_eq!(out_crs[0], deserialize_crs("EPSG:4326").unwrap());
+        assert_eq!(out_crs_matches, vec![Some(true), None]);
     }
 
     #[test]
@@ -873,16 +885,16 @@ mod tests {
         let arg_types = vec![RASTER, geom_type];
         let executor = RasterExecutor::new(&arg_types, &args);
 
-        let mut out_crs: Vec<Crs> = Vec::with_capacity(executor.num_iterations());
+        let expected_crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let mut out_crs_matches: Vec<Option<bool>> = Vec::with_capacity(executor.num_iterations());
         executor
             .execute_raster_wkb_crs_void(|_raster, _wkb, crs| {
-                out_crs.push(crs);
+                out_crs_matches.push(crs.map(|c| c.crs_equals(expected_crs.as_ref())));
                 Ok(())
             })
             .unwrap();
 
-        assert_eq!(out_crs[0], deserialize_crs("EPSG:4326").unwrap());
-        assert!(out_crs[1].is_none());
+        assert_eq!(out_crs_matches, vec![Some(true), None]);
     }
 
     #[test]
@@ -908,16 +920,16 @@ mod tests {
         let executor = RasterExecutor::new(&arg_types, &args);
         assert_eq!(executor.num_iterations(), 2);
 
-        let mut out_crs: Vec<Crs> = Vec::with_capacity(executor.num_iterations());
+        let expected_crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let mut out_crs_matches: Vec<Option<bool>> = Vec::with_capacity(executor.num_iterations());
         executor
             .execute_raster_wkb_crs_void(|_raster, _wkb, crs| {
-                out_crs.push(crs);
+                out_crs_matches.push(crs.map(|c| c.crs_equals(expected_crs.as_ref())));
                 Ok(())
             })
             .unwrap();
 
-        assert_eq!(out_crs[0], deserialize_crs("EPSG:4326").unwrap());
-        assert_eq!(out_crs[1], deserialize_crs("EPSG:4326").unwrap());
+        assert_eq!(out_crs_matches, vec![Some(true), Some(true)]);
     }
 
     #[test]

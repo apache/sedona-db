@@ -20,6 +20,17 @@ use sedona_geometry::transform::{transform, CrsEngine};
 use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs};
 use wkb::reader::read_wkb;
 
+/// Convert a [`Crs`] reference to `Option<&dyn CoordinateReferenceSystem>`.
+///
+/// This strips the `Arc` wrapper and the `Send + Sync` auto-trait bounds,
+/// yielding a plain trait-object reference suitable for CRS comparison and
+/// transformation APIs.
+#[inline]
+pub fn crs_as_ref(crs: &Crs) -> Option<&dyn CoordinateReferenceSystem> {
+    crs.as_ref()
+        .map(|c| c.as_ref() as &dyn CoordinateReferenceSystem)
+}
+
 /// Resolve an optional CRS string to a concrete CRS object.
 ///
 /// - If `crs_str` is `Some` and deserializes to a known CRS, that CRS is returned.
