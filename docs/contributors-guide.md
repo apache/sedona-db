@@ -66,12 +66,16 @@ Your first step is to create a personal copy of the repository and connect it to
         upstream  https://github.com/apache/sedona-db.git (fetch)
         upstream  https://github.com/apache/sedona-db.git (push)
         ```
+
 ## System dependencies
 
-Some crates in the workspace wrap native libraries and require system dependencies (GEOS, PROJ, Abseil, OpenSSL, CMake, etc.). We recommend using:
+Some crates in the workspace wrap native libraries and require system dependencies (GEOS, GDAL, PROJ, Abseil, OpenSSL, CMake, etc.). We recommend using:
 
 ### macOS: Homebrew
-``` bash brew install abseil openssl cmake geos proj ```
+
+```bash
+brew install abseil openssl cmake geos gdal proj
+```
 
 Ensure Homebrew-installed tools are on your PATH (Homebrew usually does this automatically).
 
@@ -110,7 +114,7 @@ cd C:\dev\vcpkg
 Next, install the required libraries with vcpkg:
 
 ```powershell
-C:\dev\vcpkg\vcpkg.exe install geos proj abseil openssl
+C:\dev\vcpkg\vcpkg.exe install geos gdal proj abseil openssl
 ```
 
 Configure environment variables (PowerShell example — update paths as needed):
@@ -153,7 +157,7 @@ Linux users may install system dependencies from a system package manager. Note 
 Ubuntu/Debian (Ubuntu 24.04 LTS is too old; however, later versions have the required version of Abseil)
 
 ```shell
-sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev python3-dev libabsl-dev
+sudo apt-get install -y build-essential cmake libssl-dev libproj-dev libgeos-dev libgdal-dev python3-dev libabsl-dev
 ```
 
 ## Rust
