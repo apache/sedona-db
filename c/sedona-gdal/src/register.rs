@@ -97,7 +97,7 @@ static GDAL_API: OnceLock<GdalApi> = OnceLock::new();
 /// [`GdalApiBuilder::default()`] if none was configured) and calls its `build()`
 /// method to create the [`GdalApi`]. The result is stored in a process-global
 /// `OnceLock` and reused for all subsequent calls.
-pub fn get_global_gdal_api() -> Result<&'static GdalApi, GdalInitLibraryError> {
+fn get_global_gdal_api() -> Result<&'static GdalApi, GdalInitLibraryError> {
     if let Some(api) = GDAL_API.get() {
         return Ok(api);
     }
@@ -166,6 +166,13 @@ pub fn is_gdal_api_configured() -> bool {
     GDAL_API.get().is_some()
 }
 
+/// Execute a closure with the process-global [`GdalApi`].
+///
+/// This helper ensures the global API is initialized (lazily) and then passes a
+/// shared `'static` reference to the provided closure.
+///
+/// If initialization succeeds, the closure's result is returned unchanged; otherwise
+/// returns an error from the initialization attempt.
 pub fn with_global_gdal_api<F, R>(func: F) -> Result<R, GdalInitLibraryError>
 where
     F: FnOnce(&'static GdalApi) -> Result<R, GdalInitLibraryError>,

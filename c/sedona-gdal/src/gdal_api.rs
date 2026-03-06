@@ -43,10 +43,6 @@ macro_rules! call_gdal_api {
     };
 }
 
-// Re-export for use in other modules in this crate
-#[allow(unused_imports)]
-pub(crate) use call_gdal_api;
-
 #[derive(Debug)]
 pub struct GdalApi {
     pub(crate) inner: SedonaGdalApi,
