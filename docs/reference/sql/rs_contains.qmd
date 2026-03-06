@@ -44,7 +44,8 @@ If the arguments have different CRSes, the geometry is transformed into the
 raster's CRS before evaluating the predicate. For two rasters, the second
 raster's extent is transformed into the first raster's CRS. If the preferred
 transformation fails, the extent of both sides are transformed to WGS 84 as a fallback.
-If either argument has no CRS set, WGS 84 is assumed.
+If either argument has no CRS set, the comparison is performed directly without
+CRS transformation.
 
 ## Examples
 
