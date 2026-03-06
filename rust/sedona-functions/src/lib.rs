@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 mod barrier;
+pub mod st_relate;
 mod distance;
 pub mod executor;
 mod overlay;
