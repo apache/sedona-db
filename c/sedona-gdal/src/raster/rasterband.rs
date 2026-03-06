@@ -26,7 +26,7 @@ use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::GdalApi;
 use crate::raster::types::{Buffer, GdalType, ResampleAlg};
-use crate::{gdal_dyn_bindgen::*, GdalDataType};
+use crate::{gdal_dyn_bindgen::*, raster::types::GdalDataType};
 
 /// A raster band of a dataset.
 pub struct RasterBand<'a> {
@@ -281,7 +281,7 @@ mod tests {
     use crate::dataset::Dataset;
     use crate::driver::DriverManager;
     use crate::gdal_dyn_bindgen::*;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
     use crate::raster::types::ResampleAlg;
 
     fn fixture(name: &str) -> String {
@@ -290,71 +290,80 @@ mod tests {
 
     #[test]
     fn test_read_raster() {
-        let api = get_global_gdal_api().unwrap();
-        let path = fixture("tinymarble.tif");
-        let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
-        let rb = dataset.rasterband(1).unwrap();
-        let rv = rb.read_as::<u8>((20, 30), (2, 3), (2, 3), None).unwrap();
-        assert_eq!(rv.shape, (2, 3));
-        assert_eq!(rv.data(), [7, 7, 7, 10, 8, 12]);
+        with_global_gdal_api(|api| {
+            let path = fixture("tinymarble.tif");
+            let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
+            let rb = dataset.rasterband(1).unwrap();
+            let rv = rb.read_as::<u8>((20, 30), (2, 3), (2, 3), None).unwrap();
+            assert_eq!(rv.shape, (2, 3));
+            assert_eq!(rv.data(), [7, 7, 7, 10, 8, 12]);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_read_raster_with_default_resample() {
-        let api = get_global_gdal_api().unwrap();
-        let path = fixture("tinymarble.tif");
-        let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
-        let rb = dataset.rasterband(1).unwrap();
-        let rv = rb.read_as::<u8>((20, 30), (4, 4), (2, 2), None).unwrap();
-        assert_eq!(rv.shape, (2, 2));
-        // Default is NearestNeighbour; exact values are GDAL-version-dependent
-        // when downsampling from 4x4 to 2x2. Just verify shape and non-emptiness.
-        assert_eq!(rv.data().len(), 4);
+        with_global_gdal_api(|api| {
+            let path = fixture("tinymarble.tif");
+            let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
+            let rb = dataset.rasterband(1).unwrap();
+            let rv = rb.read_as::<u8>((20, 30), (4, 4), (2, 2), None).unwrap();
+            assert_eq!(rv.shape, (2, 2));
+            // Default is NearestNeighbour; exact values are GDAL-version-dependent
+            // when downsampling from 4x4 to 2x2. Just verify shape and non-emptiness.
+            assert_eq!(rv.data().len(), 4);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_read_raster_with_average_resample() {
-        let api = get_global_gdal_api().unwrap();
-        let path = fixture("tinymarble.tif");
-        let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
-        let rb = dataset.rasterband(1).unwrap();
-        let rv = rb
-            .read_as::<u8>((20, 30), (4, 4), (2, 2), Some(ResampleAlg::Average))
-            .unwrap();
-        assert_eq!(rv.shape, (2, 2));
-        // Average resampling; exact values are GDAL-version-dependent.
-        // Verify shape and that results differ from the non-resampled full read.
-        assert_eq!(rv.data().len(), 4);
+        with_global_gdal_api(|api| {
+            let path = fixture("tinymarble.tif");
+            let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
+            let rb = dataset.rasterband(1).unwrap();
+            let rv = rb
+                .read_as::<u8>((20, 30), (4, 4), (2, 2), Some(ResampleAlg::Average))
+                .unwrap();
+            assert_eq!(rv.shape, (2, 2));
+            // Average resampling; exact values are GDAL-version-dependent.
+            // Verify shape and that results differ from the non-resampled full read.
+            assert_eq!(rv.data().len(), 4);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_get_no_data_value() {
-        let api = get_global_gdal_api().unwrap();
+        with_global_gdal_api(|api| {
+            // tinymarble.tif has no nodata
+            let path = fixture("tinymarble.tif");
+            let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
+            let rb = dataset.rasterband(1).unwrap();
+            assert!(rb.no_data_value().is_none());
 
-        // tinymarble.tif has no nodata
-        let path = fixture("tinymarble.tif");
-        let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
-        let rb = dataset.rasterband(1).unwrap();
-        assert!(rb.no_data_value().is_none());
-
-        // labels.tif has nodata=255
-        let path = fixture("labels.tif");
-        let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
-        let rb = dataset.rasterband(1).unwrap();
-        assert_eq!(rb.no_data_value(), Some(255.0));
+            // labels.tif has nodata=255
+            let path = fixture("labels.tif");
+            let dataset = Dataset::open_ex(api, &path, GDAL_OF_READONLY, None, None, None).unwrap();
+            let rb = dataset.rasterband(1).unwrap();
+            assert_eq!(rb.no_data_value(), Some(255.0));
+        })
+        .unwrap();
     }
 
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_set_no_data_value() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let dataset = driver.create("", 20, 10, 1).unwrap();
-        let rasterband = dataset.rasterband(1).unwrap();
-        assert_eq!(rasterband.no_data_value(), None);
-        assert!(rasterband.set_no_data_value(Some(1.23)).is_ok());
-        assert_eq!(rasterband.no_data_value(), Some(1.23));
-        assert!(rasterband.set_no_data_value(None).is_ok());
-        assert_eq!(rasterband.no_data_value(), None);
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create("", 20, 10, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            assert_eq!(rasterband.no_data_value(), None);
+            assert!(rasterband.set_no_data_value(Some(1.23)).is_ok());
+            assert_eq!(rasterband.no_data_value(), Some(1.23));
+            assert!(rasterband.set_no_data_value(None).is_ok());
+            assert_eq!(rasterband.no_data_value(), None);
+        })
+        .unwrap();
     }
 }

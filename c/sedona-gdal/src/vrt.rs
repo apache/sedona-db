@@ -27,7 +27,7 @@ use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::GdalApi;
 use crate::raster::RasterBand;
-use crate::{gdal_dyn_bindgen::*, GdalDataType};
+use crate::{gdal_dyn_bindgen::*, raster::types::GdalDataType};
 
 /// Special value indicating that nodata is not set for a VRT source.
 /// Matches `VRT_NODATA_UNSET` from GDAL's `gdal_vrt.h`.
@@ -225,9 +225,9 @@ impl<'a> AsRef<RasterBand<'a>> for VrtRasterBand<'a> {
 mod tests {
     use crate::dataset::Dataset;
     use crate::gdal_dyn_bindgen::GDAL_OF_READONLY;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
+    use crate::raster::types::GdalDataType;
     use crate::vrt::{VrtDataset, NODATA_UNSET};
-    use crate::GdalDataType;
 
     fn fixture(name: &str) -> String {
         sedona_testing::data::test_raster(name).unwrap()
@@ -235,76 +235,86 @@ mod tests {
 
     #[test]
     fn test_vrt_create() {
-        let api = get_global_gdal_api().unwrap();
-        let vrt = VrtDataset::create(api, 100, 100).unwrap();
-        assert_eq!(vrt.raster_count(), 0);
-        assert!(!vrt.c_dataset().is_null());
+        with_global_gdal_api(|api| {
+            let vrt = VrtDataset::create(api, 100, 100).unwrap();
+            assert_eq!(vrt.raster_count(), 0);
+            assert!(!vrt.c_dataset().is_null());
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_vrt_add_band() {
-        let api = get_global_gdal_api().unwrap();
-        let mut vrt = VrtDataset::create(api, 100, 100).unwrap();
-        let band_idx = vrt.add_band(GdalDataType::Float32, None).unwrap();
-        assert_eq!(band_idx, 1);
-        assert_eq!(vrt.raster_count(), 1);
+        with_global_gdal_api(|api| {
+            let mut vrt = VrtDataset::create(api, 100, 100).unwrap();
+            let band_idx = vrt.add_band(GdalDataType::Float32, None).unwrap();
+            assert_eq!(band_idx, 1);
+            assert_eq!(vrt.raster_count(), 1);
 
-        let band_idx = vrt.add_band(GdalDataType::UInt8, None).unwrap();
-        assert_eq!(band_idx, 2);
-        assert_eq!(vrt.raster_count(), 2);
+            let band_idx = vrt.add_band(GdalDataType::UInt8, None).unwrap();
+            assert_eq!(band_idx, 2);
+            assert_eq!(vrt.raster_count(), 2);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_vrt_set_geo_transform() {
-        let api = get_global_gdal_api().unwrap();
-        let vrt = VrtDataset::create(api, 100, 100).unwrap();
-        let transform = [0.0, 1.0, 0.0, 100.0, 0.0, -1.0];
-        vrt.set_geo_transform(&transform).unwrap();
-        assert_eq!(vrt.geo_transform().unwrap(), transform);
+        with_global_gdal_api(|api| {
+            let vrt = VrtDataset::create(api, 100, 100).unwrap();
+            let transform = [0.0, 1.0, 0.0, 100.0, 0.0, -1.0];
+            vrt.set_geo_transform(&transform).unwrap();
+            assert_eq!(vrt.geo_transform().unwrap(), transform);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_vrt_set_projection() {
-        let api = get_global_gdal_api().unwrap();
-        let vrt = VrtDataset::create(api, 100, 100).unwrap();
-        vrt.set_projection("EPSG:4326").unwrap();
-        assert!(vrt.projection().contains("4326"));
+        with_global_gdal_api(|api| {
+            let vrt = VrtDataset::create(api, 100, 100).unwrap();
+            vrt.set_projection("EPSG:4326").unwrap();
+            assert!(vrt.projection().contains("4326"));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_vrt_add_simple_source() {
-        let api = get_global_gdal_api().unwrap();
-        let source = Dataset::open_ex(
-            api,
-            &fixture("tinymarble.tif"),
-            GDAL_OF_READONLY,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let source_band_type = source.rasterband(1).unwrap().band_type();
-
-        let mut vrt = VrtDataset::create(api, 1, 1).unwrap();
-        vrt.add_band(source_band_type, None).unwrap();
-
-        let source_band = source.rasterband(1).unwrap();
-        let vrt_band = vrt.rasterband(1).unwrap();
-
-        vrt_band
-            .add_simple_source(&source_band, (0, 0, 1, 1), (0, 0, 1, 1), None, None)
+        with_global_gdal_api(|api| {
+            let source = Dataset::open_ex(
+                api,
+                &fixture("tinymarble.tif"),
+                GDAL_OF_READONLY,
+                None,
+                None,
+                None,
+            )
             .unwrap();
+            let source_band_type = source.rasterband(1).unwrap().band_type();
 
-        let source_px = source_band
-            .read_as::<f64>((0, 0), (1, 1), (1, 1), None)
-            .unwrap()
-            .data()[0];
-        let vrt_px = vrt_band
-            .read_as::<f64>((0, 0), (1, 1), (1, 1), None)
-            .unwrap()
-            .data()[0];
+            let mut vrt = VrtDataset::create(api, 1, 1).unwrap();
+            vrt.add_band(source_band_type, None).unwrap();
 
-        assert_eq!(vrt_px, source_px);
+            let source_band = source.rasterband(1).unwrap();
+            let vrt_band = vrt.rasterband(1).unwrap();
+
+            vrt_band
+                .add_simple_source(&source_band, (0, 0, 1, 1), (0, 0, 1, 1), None, None)
+                .unwrap();
+
+            let source_px = source_band
+                .read_as::<f64>((0, 0), (1, 1), (1, 1), None)
+                .unwrap()
+                .data()[0];
+            let vrt_px = vrt_band
+                .read_as::<f64>((0, 0), (1, 1), (1, 1), None)
+                .unwrap()
+                .data()[0];
+
+            assert_eq!(vrt_px, source_px);
+        })
+        .unwrap();
     }
 
     #[test]
@@ -315,11 +325,13 @@ mod tests {
     #[test]
     #[allow(clippy::float_cmp)]
     fn test_vrt_set_no_data_value() {
-        let api = get_global_gdal_api().unwrap();
-        let mut vrt = VrtDataset::create(api, 1, 1).unwrap();
-        vrt.add_band(GdalDataType::UInt8, None).unwrap();
-        let band = vrt.rasterband(1).unwrap();
-        band.set_no_data_value(-9999.0).unwrap();
-        assert_eq!(band.no_data_value(), Some(-9999.0));
+        with_global_gdal_api(|api| {
+            let mut vrt = VrtDataset::create(api, 1, 1).unwrap();
+            vrt.add_band(GdalDataType::UInt8, None).unwrap();
+            let band = vrt.rasterband(1).unwrap();
+            band.set_no_data_value(-9999.0).unwrap();
+            assert_eq!(band.no_data_value(), Some(-9999.0));
+        })
+        .unwrap();
     }
 }

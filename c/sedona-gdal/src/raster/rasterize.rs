@@ -238,23 +238,25 @@ mod tests {
     #[cfg(feature = "gdal-sys")]
     #[test]
     fn test_rasterize() {
-        let api = crate::global::get_global_gdal_api().unwrap();
-        let wkt = "POLYGON ((2 2, 2 4.25, 4.25 4.25, 4.25 2, 2 2))";
-        let poly = Geometry::from_wkt(api, wkt).unwrap();
+        crate::global::with_global_gdal_api(|api| {
+            let wkt = "POLYGON ((2 2, 2 4.25, 4.25 4.25, 4.25 2, 2 2))";
+            let poly = Geometry::from_wkt(api, wkt).unwrap();
 
-        let driver = crate::driver::DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let dataset = driver.create("", 5, 5, 1).unwrap();
+            let driver = crate::driver::DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create("", 5, 5, 1).unwrap();
 
-        let bands = [1];
-        let geometries = [&poly];
-        let burn_values = [1.0];
-        rasterize(api, &dataset, &bands, &geometries, &burn_values, None).unwrap();
+            let bands = [1];
+            let geometries = [&poly];
+            let burn_values = [1.0];
+            rasterize(api, &dataset, &bands, &geometries, &burn_values, None).unwrap();
 
-        let rb = dataset.rasterband(1).unwrap();
-        let values = rb.read_as::<u8>((0, 0), (5, 5), (5, 5), None).unwrap();
-        assert_eq!(
-            values.data(),
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0]
-        );
+            let rb = dataset.rasterband(1).unwrap();
+            let values = rb.read_as::<u8>((0, 0), (5, 5), (5, 5), None).unwrap();
+            assert_eq!(
+                values.data(),
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0]
+            );
+        })
+        .unwrap();
     }
 }

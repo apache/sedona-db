@@ -207,9 +207,17 @@ impl MemDatasetBuilder {
     /// the `add_band*` methods. The caller must ensure all data pointers remain valid
     /// for the lifetime of the returned [`Dataset`].
     pub unsafe fn build(self) -> Result<Dataset> {
-        let api = crate::global::get_global_gdal_api()
-            .map_err(|e| GdalError::BadArgument(e.to_string()))?;
+        crate::global::with_global_gdal_api(|api| unsafe { self.build_with_api(api) })
+            .map_err(|e| GdalError::BadArgument(e.to_string()))?
+    }
 
+    /// Internal helper that performs the actual dataset construction given an API handle.
+    ///
+    /// # Safety
+    ///
+    /// Same safety requirements as [`build`](Self::build): all data pointers provided
+    /// via `add_band*` must remain valid for the lifetime of the returned [`Dataset`].
+    unsafe fn build_with_api(self, api: &'static crate::gdal_api::GdalApi) -> Result<Dataset> {
         // Create an initial MEM dataset via MEMDataset::Create directly,
         // bypassing GDAL's open-dataset-list mutex.
         let empty_filename = c"";

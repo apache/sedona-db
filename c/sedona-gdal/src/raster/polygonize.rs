@@ -136,81 +136,83 @@ mod tests {
     fn test_polygonize_connectivity_affects_regions() {
         use crate::dataset::LayerOptions;
         use crate::driver::DriverManager;
-        use crate::global::get_global_gdal_api;
+        use crate::global::with_global_gdal_api;
         use crate::raster::Buffer;
         use crate::vector::FieldDefn;
 
-        let api = get_global_gdal_api().unwrap();
-        let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let raster_ds = mem_driver.create("", 3, 3, 1).unwrap();
-        let band = raster_ds.rasterband(1).unwrap();
+        with_global_gdal_api(|api| {
+            let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let raster_ds = mem_driver.create("", 3, 3, 1).unwrap();
+            let band = raster_ds.rasterband(1).unwrap();
 
-        // 3x3 raster with diagonal 1s:
-        // 1 0 0
-        // 0 1 0
-        // 0 0 1
-        let mut data = Buffer::new((3, 3), vec![1u8, 0, 0, 0, 1, 0, 0, 0, 1]);
-        band.write((0, 0), (3, 3), &mut data).unwrap();
+            // 3x3 raster with diagonal 1s:
+            // 1 0 0
+            // 0 1 0
+            // 0 0 1
+            let mut data = Buffer::new((3, 3), vec![1u8, 0, 0, 0, 1, 0, 0, 0, 1]);
+            band.write((0, 0), (3, 3), &mut data).unwrap();
 
-        let gpkg_path = "/vsimem/test_polygonize_connectivity.gpkg";
-        let gpkg_driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
-        let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
+            let gpkg_path = "/vsimem/test_polygonize_connectivity.gpkg";
+            let gpkg_driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
+            let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
 
-        // 4-connected output
-        let layer_4 = vector_ds
-            .create_layer(LayerOptions {
-                name: "four",
-                srs: None,
-                ty: OGRwkbGeometryType::wkbPolygon,
-                options: None,
-            })
+            // 4-connected output
+            let layer_4 = vector_ds
+                .create_layer(LayerOptions {
+                    name: "four",
+                    srs: None,
+                    ty: OGRwkbGeometryType::wkbPolygon,
+                    options: None,
+                })
+                .unwrap();
+            let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
+            layer_4.create_field(&field_defn).unwrap();
+
+            polygonize(api, &band, None, &layer_4, 0, &PolygonizeOptions::default()).unwrap();
+
+            let ones_4 = layer_4
+                .features()
+                .filter_map(|f| f.field_as_integer(0))
+                .filter(|v| *v == 1)
+                .count();
+            assert_eq!(ones_4, 3);
+
+            // 8-connected output
+            let layer_8 = vector_ds
+                .create_layer(LayerOptions {
+                    name: "eight",
+                    srs: None,
+                    ty: OGRwkbGeometryType::wkbPolygon,
+                    options: None,
+                })
+                .unwrap();
+            let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
+            layer_8.create_field(&field_defn).unwrap();
+
+            polygonize(
+                api,
+                &band,
+                None,
+                &layer_8,
+                0,
+                &PolygonizeOptions {
+                    eight_connected: true,
+                    dataset_for_georef: None,
+                    commit_interval: None,
+                },
+            )
             .unwrap();
-        let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
-        layer_4.create_field(&field_defn).unwrap();
 
-        polygonize(api, &band, None, &layer_4, 0, &PolygonizeOptions::default()).unwrap();
+            let ones_8 = layer_8
+                .features()
+                .filter_map(|f| f.field_as_integer(0))
+                .filter(|v| *v == 1)
+                .count();
+            assert_eq!(ones_8, 1);
 
-        let ones_4 = layer_4
-            .features()
-            .filter_map(|f| f.field_as_integer(0))
-            .filter(|v| *v == 1)
-            .count();
-        assert_eq!(ones_4, 3);
-
-        // 8-connected output
-        let layer_8 = vector_ds
-            .create_layer(LayerOptions {
-                name: "eight",
-                srs: None,
-                ty: OGRwkbGeometryType::wkbPolygon,
-                options: None,
-            })
-            .unwrap();
-        let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
-        layer_8.create_field(&field_defn).unwrap();
-
-        polygonize(
-            api,
-            &band,
-            None,
-            &layer_8,
-            0,
-            &PolygonizeOptions {
-                eight_connected: true,
-                dataset_for_georef: None,
-                commit_interval: None,
-            },
-        )
+            crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
+        })
         .unwrap();
-
-        let ones_8 = layer_8
-            .features()
-            .filter_map(|f| f.field_as_integer(0))
-            .filter(|v| *v == 1)
-            .count();
-        assert_eq!(ones_8, 1);
-
-        crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
     }
 
     #[cfg(feature = "gdal-sys")]
@@ -218,54 +220,56 @@ mod tests {
     fn test_polygonize_with_mask_band_restricts_output() {
         use crate::dataset::LayerOptions;
         use crate::driver::DriverManager;
-        use crate::global::get_global_gdal_api;
+        use crate::global::with_global_gdal_api;
         use crate::raster::Buffer;
         use crate::vector::FieldDefn;
 
-        let api = get_global_gdal_api().unwrap();
-        let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let raster_ds = mem_driver.create("", 3, 3, 2).unwrap();
+        with_global_gdal_api(|api| {
+            let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let raster_ds = mem_driver.create("", 3, 3, 2).unwrap();
 
-        let value_band = raster_ds.rasterband(1).unwrap();
-        let mask_band = raster_ds.rasterband(2).unwrap();
+            let value_band = raster_ds.rasterband(1).unwrap();
+            let mask_band = raster_ds.rasterband(2).unwrap();
 
-        // Value band: all 7s.
-        let mut values = Buffer::new((3, 3), vec![7u8; 9]);
-        value_band.write((0, 0), (3, 3), &mut values).unwrap();
+            // Value band: all 7s.
+            let mut values = Buffer::new((3, 3), vec![7u8; 9]);
+            value_band.write((0, 0), (3, 3), &mut values).unwrap();
 
-        // Mask: only the center pixel is included.
-        let mut mask = Buffer::new((3, 3), vec![0u8, 0, 0, 0, 1, 0, 0, 0, 0]);
-        mask_band.write((0, 0), (3, 3), &mut mask).unwrap();
+            // Mask: only the center pixel is included.
+            let mut mask = Buffer::new((3, 3), vec![0u8, 0, 0, 0, 1, 0, 0, 0, 0]);
+            mask_band.write((0, 0), (3, 3), &mut mask).unwrap();
 
-        let gpkg_path = "/vsimem/test_polygonize_mask.gpkg";
-        let gpkg_driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
-        let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
+            let gpkg_path = "/vsimem/test_polygonize_mask.gpkg";
+            let gpkg_driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
+            let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
 
-        let layer = vector_ds
-            .create_layer(LayerOptions {
-                name: "masked",
-                srs: None,
-                ty: OGRwkbGeometryType::wkbPolygon,
-                options: None,
-            })
+            let layer = vector_ds
+                .create_layer(LayerOptions {
+                    name: "masked",
+                    srs: None,
+                    ty: OGRwkbGeometryType::wkbPolygon,
+                    options: None,
+                })
+                .unwrap();
+            let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
+            layer.create_field(&field_defn).unwrap();
+
+            polygonize(
+                api,
+                &value_band,
+                Some(&mask_band),
+                &layer,
+                0,
+                &PolygonizeOptions::default(),
+            )
             .unwrap();
-        let field_defn = FieldDefn::new(api, "val", OGRFieldType::OFTInteger).unwrap();
-        layer.create_field(&field_defn).unwrap();
 
-        polygonize(
-            api,
-            &value_band,
-            Some(&mask_band),
-            &layer,
-            0,
-            &PolygonizeOptions::default(),
-        )
+            assert_eq!(layer.feature_count(true), 1);
+            let only_val = layer.features().next().unwrap().field_as_integer(0);
+            assert_eq!(only_val, Some(7));
+
+            crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
+        })
         .unwrap();
-
-        assert_eq!(layer.feature_count(true), 1);
-        let only_val = layer.features().next().unwrap().field_as_integer(0);
-        assert_eq!(only_val, Some(7));
-
-        crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
     }
 }

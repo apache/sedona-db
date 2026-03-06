@@ -38,19 +38,3 @@ pub mod spatial_ref;
 pub mod vector;
 pub mod vrt;
 pub mod vsi;
-
-// --- Re-exports for convenient use ---
-pub use config::set_thread_local_config_option;
-pub use cpl::{CslStringList, CslStringListEntry};
-pub use dataset::{Dataset, LayerOptions};
-pub use driver::{Driver, DriverManager};
-pub use errors::GdalError;
-pub use gdal_api::GdalApi;
-pub use geo_transform::{GeoTransform, GeoTransformEx};
-pub use global::{
-    configure_global_gdal_api, is_gdal_api_configured, with_global_gdal_api, GdalApiBuilder,
-};
-pub use mem::{MemDatasetBuilder, Nodata};
-pub use raster::GdalDataType;
-pub use spatial_ref::SpatialRef;
-pub use vrt::{VrtDataset, VrtRasterBand, NODATA_UNSET};

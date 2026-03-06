@@ -134,49 +134,55 @@ pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> R
 #[cfg(all(test, feature = "gdal-sys"))]
 mod tests {
     use super::*;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
 
     #[test]
     fn create_and_retrieve_mem_file() {
         let file_name = "/vsimem/525ebf24-a030-4677-bb4e-a921741cabe0";
 
-        let api = get_global_gdal_api().unwrap();
-        create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
+        with_global_gdal_api(|api| {
+            create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
 
-        let bytes = get_vsi_mem_file_bytes_owned(api, file_name).unwrap();
+            let bytes = get_vsi_mem_file_bytes_owned(api, file_name).unwrap();
 
-        assert_eq!(bytes, vec![1_u8, 2, 3, 4]);
+            assert_eq!(bytes, vec![1_u8, 2, 3, 4]);
 
-        // mem file must not be there anymore
-        assert!(matches!(
-            unlink_mem_file(api, file_name).unwrap_err(),
-            GdalError::UnlinkMemFile {
-                file_name: err_file_name
-            }
-            if err_file_name == file_name
-        ));
+            // mem file must not be there anymore
+            assert!(matches!(
+                unlink_mem_file(api, file_name).unwrap_err(),
+                GdalError::UnlinkMemFile {
+                    file_name: err_file_name
+                }
+                if err_file_name == file_name
+            ));
+        })
+        .unwrap();
     }
 
     #[test]
     fn create_and_unlink_mem_file() {
         let file_name = "/vsimem/bbf5f1d6-c1e9-4469-a33b-02cd9173132d";
 
-        let api = get_global_gdal_api().unwrap();
-        create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
+        with_global_gdal_api(|api| {
+            create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
 
-        unlink_mem_file(api, file_name).unwrap();
+            unlink_mem_file(api, file_name).unwrap();
+        })
+        .unwrap();
     }
 
     #[test]
     fn no_mem_file() {
-        let api = get_global_gdal_api().unwrap();
-        assert!(matches!(
-            get_vsi_mem_file_bytes_owned(api, "foobar").unwrap_err(),
-            GdalError::NullPointer {
-                method_name: "VSIGetMemFileBuffer",
-                msg,
-            }
-            if msg.is_empty()
-        ));
+        with_global_gdal_api(|api| {
+            assert!(matches!(
+                get_vsi_mem_file_bytes_owned(api, "foobar").unwrap_err(),
+                GdalError::NullPointer {
+                    method_name: "VSIGetMemFileBuffer",
+                    msg,
+                }
+                if msg.is_empty()
+            ));
+        })
+        .unwrap();
     }
 }
