@@ -269,6 +269,12 @@ pub fn lnglat() -> Crs {
 /// equality (for binary operators).
 pub type Crs = Option<Arc<dyn CoordinateReferenceSystem + Send + Sync>>;
 
+/// Borrowed form of [`Crs`] — a reference to a CRS trait object.
+///
+/// Returned by `Crs::as_deref()` and used in function signatures that only
+/// need to inspect a CRS without taking ownership.
+pub type CrsRef<'a> = Option<&'a (dyn CoordinateReferenceSystem + Send + Sync)>;
+
 impl Display for dyn CoordinateReferenceSystem + Send + Sync {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Ok(Some(auth_code)) = self.to_authority_code() {

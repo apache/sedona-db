@@ -31,7 +31,7 @@
 use std::sync::Arc;
 
 use crate::crs_utils::crs_transform_wkb;
-use crate::crs_utils::{crs_as_ref, resolve_crs};
+use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
@@ -45,7 +45,7 @@ use sedona_geometry::wkb_factory::write_wkb_polygon;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
-use sedona_schema::crs::{lnglat, CoordinateReferenceSystem};
+use sedona_schema::crs::{lnglat, CrsRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_tg::tg;
 
@@ -197,7 +197,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                         let raster_crs = resolve_crs(raster.crs())?;
                         let result = evaluate_predicate_with_crs::<Op>(
                             &raster_wkb,
-                            crs_as_ref(&raster_crs),
+                            raster_crs.as_deref(),
                             geom_wkb,
                             geom_crs,
                             false,
@@ -240,7 +240,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                             geom_wkb,
                             geom_crs,
                             &raster_wkb,
-                            crs_as_ref(&raster_crs),
+                            raster_crs.as_deref(),
                             true,
                             engine,
                         )?;
@@ -282,9 +282,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                         let crs1 = resolve_crs(r1.crs())?;
                         let result = evaluate_predicate_with_crs::<Op>(
                             &wkb0,
-                            crs_as_ref(&crs0),
+                            crs0.as_deref(),
                             &wkb1,
-                            crs_as_ref(&crs1),
+                            crs1.as_deref(),
                             false,
                             engine,
                         )?;
@@ -309,9 +309,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
 ///   If that fails, transform both to WGS84 and compare.
 fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
     wkb_a: &[u8],
-    crs_a: Option<&dyn CoordinateReferenceSystem>,
+    crs_a: CrsRef<'_>,
     wkb_b: &[u8],
-    crs_b: Option<&dyn CoordinateReferenceSystem>,
+    crs_b: CrsRef<'_>,
     from_a_to_b: bool,
     engine: &dyn CrsEngine,
 ) -> Result<bool> {
