@@ -31,7 +31,7 @@
 use std::sync::Arc;
 
 use crate::crs_utils::crs_transform_wkb;
-use crate::crs_utils::resolve_crs;
+use crate::crs_utils::{crs_as_ref, resolve_crs};
 use crate::executor::RasterExecutor;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
@@ -45,7 +45,7 @@ use sedona_geometry::wkb_factory::write_wkb_polygon;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
-use sedona_schema::crs::{lnglat, Crs};
+use sedona_schema::crs::{lnglat, CoordinateReferenceSystem};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_tg::tg;
 
@@ -197,9 +197,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                         let raster_crs = resolve_crs(raster.crs())?;
                         let result = evaluate_predicate_with_crs::<Op>(
                             &raster_wkb,
-                            &raster_crs,
+                            crs_as_ref(&raster_crs),
                             geom_wkb,
-                            &geom_crs,
+                            geom_crs,
                             false,
                             engine,
                         )?;
@@ -238,9 +238,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                         // Note: order is geometry, raster for the predicate
                         let result = evaluate_predicate_with_crs::<Op>(
                             geom_wkb,
-                            &geom_crs,
+                            geom_crs,
                             &raster_wkb,
-                            &raster_crs,
+                            crs_as_ref(&raster_crs),
                             true,
                             engine,
                         )?;
@@ -281,7 +281,12 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                         let crs0 = resolve_crs(r0.crs())?;
                         let crs1 = resolve_crs(r1.crs())?;
                         let result = evaluate_predicate_with_crs::<Op>(
-                            &wkb0, &crs0, &wkb1, &crs1, false, engine,
+                            &wkb0,
+                            crs_as_ref(&crs0),
+                            &wkb1,
+                            crs_as_ref(&crs1),
+                            false,
+                            engine,
                         )?;
                         builder.append_value(result);
                     }
@@ -304,9 +309,9 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
 ///   If that fails, transform both to WGS84 and compare.
 fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
     wkb_a: &[u8],
-    crs_a: &Crs,
+    crs_a: Option<&dyn CoordinateReferenceSystem>,
     wkb_b: &[u8],
-    crs_b: &Crs,
+    crs_b: Option<&dyn CoordinateReferenceSystem>,
     from_a_to_b: bool,
     engine: &dyn CrsEngine,
 ) -> Result<bool> {
@@ -317,25 +322,25 @@ fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
     };
 
     // If both CRSes are equal, compare directly.
-    if crs_a.crs_equals(crs_b.as_ref()) {
+    if crs_a.crs_equals(crs_b) {
         return evaluate_predicate::<Op>(wkb_a, wkb_b);
     }
 
     // Try preferred transformation direction.
     if from_a_to_b {
-        if let Ok(wkb_a) = crs_transform_wkb(wkb_a, crs_a.as_ref(), crs_b.as_ref(), engine) {
+        if let Ok(wkb_a) = crs_transform_wkb(wkb_a, crs_a, crs_b, engine) {
             return evaluate_predicate::<Op>(&wkb_a, wkb_b);
         }
     } else {
-        if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b.as_ref(), crs_a.as_ref(), engine) {
+        if let Ok(wkb_b) = crs_transform_wkb(wkb_b, crs_b, crs_a, engine) {
             return evaluate_predicate::<Op>(wkb_a, &wkb_b);
         }
     }
 
     // Fallback: transform both sides to WGS84 for comparison.
     let default_crs = lnglat().expect("lnglat() should always return Some");
-    let wkb_a = crs_transform_wkb(wkb_a, crs_a.as_ref(), default_crs.as_ref(), engine)?;
-    let wkb_b = crs_transform_wkb(wkb_b, crs_b.as_ref(), default_crs.as_ref(), engine)?;
+    let wkb_a = crs_transform_wkb(wkb_a, crs_a, default_crs.as_ref(), engine)?;
+    let wkb_b = crs_transform_wkb(wkb_b, crs_b, default_crs.as_ref(), engine)?;
     evaluate_predicate::<Op>(&wkb_a, &wkb_b)
 }
 
