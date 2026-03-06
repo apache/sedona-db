@@ -50,7 +50,7 @@ CRS transformation.
 ## Examples
 
 ```sql
-SELECT RS_Contains(RS_Example(), ST_Point(0.5, 0.5));
+SELECT RS_Contains(RS_Example(), ST_Point(0.5, 0.5, 4326));
 ```
 
 ```sql
