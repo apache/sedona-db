@@ -197,10 +197,10 @@ pub fn is_gdal_api_configured() -> bool {
 /// returns an error from the initialization attempt.
 pub fn with_global_gdal_api<F, R>(func: F) -> Result<R, GdalInitLibraryError>
 where
-    F: FnOnce(&'static GdalApi) -> Result<R, GdalInitLibraryError>,
+    F: FnOnce(&'static GdalApi) -> R,
 {
     let api = get_global_gdal_api()?;
-    func(api)
+    Ok(func(api))
 }
 
 /// Verify that the GDAL library meets the minimum version requirement.
@@ -306,7 +306,7 @@ mod test {
     /// `with_global_gdal_api` should pass a valid reference to the closure.
     #[test]
     fn test_with_global_gdal_api() {
-        let name = with_global_gdal_api(|api| Ok(api.name().to_string()))
+        let name = with_global_gdal_api(|api| api.name().to_string())
             .expect("with_global_gdal_api should succeed");
         assert!(!name.is_empty(), "API name should not be empty");
     }
