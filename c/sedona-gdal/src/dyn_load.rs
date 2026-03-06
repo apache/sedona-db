@@ -186,14 +186,12 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
             b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePPc\0",
             // macOS (char**)
             b"__ZN10MEMDataset6CreateEPKciii12GDALDataTypePPc\0",
+            // MSVC (char**)
+            b"?Create@MEMDataset@@SAPEAV1@PEBDHHHW4GDALDataType@@PEAPEAD@Z\0",
             // Linux (const char**)
             b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePPKc\0",
             // macOS (const char**)
             b"__ZN10MEMDataset6CreateEPKciii12GDALDataTypePPKc\0",
-            // MSVC (char**)
-            b"?Create@MEMDataset@@SAPEAV1@PEBDHHH4GDALDataType@@PEAPEAD@Z\0",
-            // MSVC (const char**)
-            b"?Create@MEMDataset@@SAPEAV1@PEBDHHH4GDALDataType@@PEAPEBAD@Z\0",
         ]
     );
 
