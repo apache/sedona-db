@@ -17,7 +17,6 @@
 
 use crate::errors::GdalInitLibraryError;
 use crate::gdal_api::GdalApi;
-use std::ffi::CStr;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -84,7 +83,9 @@ impl GdalApiBuilder {
             // via `dlsym` on the current process) can find them at runtime.
             let c_arg = std::ffi::CString::new(arg).unwrap();
             let c_version = gdal_sys::GDALVersionInfo(c_arg.as_ptr());
-            CStr::from_ptr(c_version).to_string_lossy().into_owned()
+            std::ffi::CStr::from_ptr(c_version)
+                .to_string_lossy()
+                .into_owned()
         };
 
         #[cfg(not(feature = "gdal-sys"))]
