@@ -44,17 +44,16 @@ pub fn resolve_crs(crs_str: Option<&str>) -> Result<Crs> {
 /// **Errors**
 /// - Returns an error if WKB parsing fails, PROJ cannot build the CRS-to-CRS transform,
 ///   or if the coordinate transformation itself fails.
+///
+/// **Note**
+/// - For best performance, verify that `from_crs` and `to_crs` are different before calling this function
+///   to avoid unnecessary WKB parsing and reprojection when CRSes are equivalent.
 pub fn crs_transform_wkb(
     wkb: &[u8],
     from_crs: &dyn CoordinateReferenceSystem,
     to_crs: &dyn CoordinateReferenceSystem,
     engine: &dyn CrsEngine,
 ) -> Result<Vec<u8>> {
-    // Fast-path: if the CRS is identical, avoid WKB decoding + transform setup.
-    if from_crs.crs_equals(to_crs) {
-        return Ok(wkb.to_vec());
-    }
-
     let crs_transform = engine
         .get_transform_crs_to_crs(&from_crs.to_crs_string(), &to_crs.to_crs_string(), None, "")
         .map_err(|e| exec_datafusion_err!("CRS transform error: {}", e))?;
@@ -63,23 +62,6 @@ pub fn crs_transform_wkb(
     transform(geom, crs_transform.as_ref(), &mut out)
         .map_err(|e| exec_datafusion_err!("Transform error: {}", e))?;
     Ok(out)
-}
-
-/// Transform a coordinate from one CRS to another, using the provided CRS engine.
-pub fn crs_transform_coord(
-    coord: (f64, f64),
-    from_crs: &str,
-    to_crs: &str,
-    engine: &dyn CrsEngine,
-) -> Result<(f64, f64)> {
-    let trans = engine
-        .get_transform_crs_to_crs(from_crs, to_crs, None, "")
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let mut coord = coord;
-    trans
-        .transform_coord(&mut coord)
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    Ok(coord)
 }
 
 #[cfg(test)]
