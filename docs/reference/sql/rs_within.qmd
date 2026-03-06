@@ -53,7 +53,7 @@ CRS transformation.
 
 ```sql
 SELECT RS_Within(
-    ST_Point(0.5, 0.5),
+    ST_Point(0.5, 0.5, 4326),
     RS_Example()
 );
 ```
