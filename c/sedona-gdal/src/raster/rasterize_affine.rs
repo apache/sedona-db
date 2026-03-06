@@ -27,9 +27,9 @@
 use std::ffi::{c_int, c_void};
 use std::ptr;
 
+use crate::call_gdal_api;
 use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
-use crate::call_gdal_api;
 use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::{CE_Failure, CE_None};
 use crate::geo_transform::{GeoTransform, GeoTransformEx};
@@ -178,9 +178,9 @@ mod tests {
     use super::*;
 
     use crate::driver::DriverManager;
+    use crate::global::get_global_gdal_api;
     use crate::raster::rasterize;
     use crate::raster::types::Buffer;
-    use crate::global::get_global_gdal_api;
     use crate::Driver;
 
     fn api() -> &'static GdalApi {
