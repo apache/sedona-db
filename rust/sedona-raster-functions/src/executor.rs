@@ -25,11 +25,9 @@ use datafusion_common::{exec_err, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::{RasterRefImpl, RasterStructArray};
-use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs};
+use sedona_schema::crs::{deserialize_crs, Crs, CrsRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::datatypes::RASTER;
-
-use crate::crs_utils::crs_as_ref;
 
 /// Helper for writing raster kernel implementations
 ///
@@ -98,7 +96,7 @@ enum GeomWkbCrsAccessor {
 
 impl GeomWkbCrsAccessor {
     #[inline]
-    fn get(&mut self, i: usize) -> Result<(Option<&[u8]>, Option<&dyn CoordinateReferenceSystem>)> {
+    fn get(&mut self, i: usize) -> Result<(Option<&[u8]>, CrsRef<'_>)> {
         match self {
             Self::Null => Ok((None, None)),
             Self::WkbArray { wkb, static_crs } => {
@@ -106,14 +104,14 @@ impl GeomWkbCrsAccessor {
                 if maybe_wkb.is_none() {
                     return Ok((None, None));
                 }
-                Ok((maybe_wkb, crs_as_ref(static_crs)))
+                Ok((maybe_wkb, static_crs.as_deref()))
             }
             Self::WkbScalar { wkb, static_crs } => {
                 if wkb.is_none() {
                     return Ok((None, None));
                 }
                 let _ = i;
-                Ok((wkb.as_deref(), crs_as_ref(static_crs)))
+                Ok((wkb.as_deref(), static_crs.as_deref()))
             }
             Self::ItemCrsArray {
                 struct_array,
@@ -137,7 +135,7 @@ impl GeomWkbCrsAccessor {
                     Some(crs.value(i))
                 };
                 *resolved_crs = resolve_item_crs(item_crs_str, item_static_crs)?;
-                Ok((maybe_wkb, crs_as_ref(resolved_crs)))
+                Ok((maybe_wkb, resolved_crs.as_deref()))
             }
             Self::ItemCrsScalar {
                 struct_array,
@@ -162,7 +160,7 @@ impl GeomWkbCrsAccessor {
                 };
                 *resolved_crs = resolve_item_crs(item_crs_str, item_static_crs)?;
                 let _ = i;
-                Ok((maybe_wkb, crs_as_ref(resolved_crs)))
+                Ok((maybe_wkb, resolved_crs.as_deref()))
             }
         }
     }
@@ -477,11 +475,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// The closure is invoked for each row with `(raster, wkb_bytes, crs_str)`.
     pub fn execute_raster_wkb_crs_void<F>(&self, mut func: F) -> Result<()>
     where
-        F: FnMut(
-            Option<&RasterRefImpl<'_>>,
-            Option<&[u8]>,
-            Option<&dyn CoordinateReferenceSystem>,
-        ) -> Result<()>,
+        F: FnMut(Option<&RasterRefImpl<'_>>, Option<&[u8]>, CrsRef<'_>) -> Result<()>,
     {
         if self.arg_types.first() != Some(&RASTER) {
             return sedona_internal_err!("First argument must be a raster type");
