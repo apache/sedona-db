@@ -177,22 +177,22 @@ pub fn rasterize_affine(
 mod tests {
     use super::*;
 
-    use crate::driver::DriverManager;
-    use crate::global::get_global_gdal_api;
+    use crate::driver::{Driver, DriverManager};
+    use crate::global::with_global_gdal_api;
     use crate::raster::rasterize;
     use crate::raster::types::Buffer;
-    use crate::Driver;
 
-    fn api() -> &'static GdalApi {
-        get_global_gdal_api().unwrap()
+    fn mem_driver(api: &'static GdalApi) -> Driver {
+        DriverManager::get_driver_by_name(api, "MEM").unwrap()
     }
 
-    fn mem_driver() -> Driver {
-        DriverManager::get_driver_by_name(api(), "MEM").unwrap()
-    }
-
-    fn make_dataset_u8(width: usize, height: usize, gt: GeoTransform) -> Result<Dataset> {
-        let driver = mem_driver();
+    fn make_dataset_u8(
+        api: &'static GdalApi,
+        width: usize,
+        height: usize,
+        gt: GeoTransform,
+    ) -> Result<Dataset> {
+        let driver = mem_driver(api);
         let ds = driver.create_with_band_type::<u8>("", width, height, 1)?;
         ds.set_geo_transform(&gt)?;
         let band = ds.rasterband(1)?;
@@ -209,8 +209,14 @@ mod tests {
         buf.data().to_vec()
     }
 
-    fn poly_from_pixel_rect(gt: &GeoTransform, x0: f64, y0: f64, x1: f64, y1: f64) -> Geometry {
-        let api = api();
+    fn poly_from_pixel_rect(
+        api: &'static GdalApi,
+        gt: &GeoTransform,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+    ) -> Geometry {
         let (wx0, wy0) = gt.apply(x0, y0);
         let (wx1, wy1) = gt.apply(x1, y0);
         let (wx2, wy2) = gt.apply(x1, y1);
@@ -220,8 +226,11 @@ mod tests {
         Geometry::from_wkt(api, &wkt).unwrap()
     }
 
-    fn line_from_pixel_points(gt: &GeoTransform, pts: &[(f64, f64)]) -> Geometry {
-        let api = api();
+    fn line_from_pixel_points(
+        api: &'static GdalApi,
+        gt: &GeoTransform,
+        pts: &[(f64, f64)],
+    ) -> Geometry {
         assert!(pts.len() >= 2);
         let mut s = String::from("LINESTRING (");
         for (i, (px, py)) in pts.iter().copied().enumerate() {
@@ -237,116 +246,124 @@ mod tests {
 
     #[test]
     fn test_rasterize_affine_matches_baseline_north_up() {
-        let api = api();
-        let (w, h) = (32usize, 24usize);
-        let gt: GeoTransform = [100.0, 2.0, 0.0, 200.0, 0.0, -2.0];
+        with_global_gdal_api(|api| {
+            let (w, h) = (32usize, 24usize);
+            let gt: GeoTransform = [100.0, 2.0, 0.0, 200.0, 0.0, -2.0];
 
-        let geom_baseline = poly_from_pixel_rect(&gt, 3.2, 4.7, 20.4, 18.1);
-        let geom_affine = poly_from_pixel_rect(&gt, 3.2, 4.7, 20.4, 18.1);
+            let geom_baseline = poly_from_pixel_rect(api, &gt, 3.2, 4.7, 20.4, 18.1);
+            let geom_affine = poly_from_pixel_rect(api, &gt, 3.2, 4.7, 20.4, 18.1);
 
-        let ds_baseline = make_dataset_u8(w, h, gt).unwrap();
-        let ds_affine = make_dataset_u8(w, h, gt).unwrap();
+            let ds_baseline = make_dataset_u8(api, w, h, gt).unwrap();
+            let ds_affine = make_dataset_u8(api, w, h, gt).unwrap();
 
-        let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
-        rasterize(api, &ds_baseline, &[1], &geom_refs, &[1.0], None).unwrap();
-        rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], false).unwrap();
+            let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
+            rasterize(api, &ds_baseline, &[1], &geom_refs, &[1.0], None).unwrap();
+            rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], false).unwrap();
 
-        assert_eq!(read_u8(&ds_affine, w, h), read_u8(&ds_baseline, w, h));
+            assert_eq!(read_u8(&ds_affine, w, h), read_u8(&ds_baseline, w, h));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_rasterize_affine_matches_baseline_rotated_gt_all_touched() {
-        let api = api();
-        let (w, h) = (40usize, 28usize);
-        // Rotated/skewed GeoTransform.
-        let gt: GeoTransform = [10.0, 1.2, 0.15, 50.0, -0.1, -1.1];
+        with_global_gdal_api(|api| {
+            let (w, h) = (40usize, 28usize);
+            // Rotated/skewed GeoTransform.
+            let gt: GeoTransform = [10.0, 1.2, 0.15, 50.0, -0.1, -1.1];
 
-        let geom_baseline = poly_from_pixel_rect(&gt, 5.25, 4.5, 25.75, 20.25);
-        let geom_affine = poly_from_pixel_rect(&gt, 5.25, 4.5, 25.75, 20.25);
+            let geom_baseline = poly_from_pixel_rect(api, &gt, 5.25, 4.5, 25.75, 20.25);
+            let geom_affine = poly_from_pixel_rect(api, &gt, 5.25, 4.5, 25.75, 20.25);
 
-        let ds_baseline = make_dataset_u8(w, h, gt).unwrap();
-        let ds_affine = make_dataset_u8(w, h, gt).unwrap();
+            let ds_baseline = make_dataset_u8(api, w, h, gt).unwrap();
+            let ds_affine = make_dataset_u8(api, w, h, gt).unwrap();
 
-        let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
-        rasterize(
-            api,
-            &ds_baseline,
-            &[1],
-            &geom_refs,
-            &[1.0],
-            Some(crate::raster::RasterizeOptions {
-                all_touched: true,
-                ..Default::default()
-            }),
-        )
+            let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
+            rasterize(
+                api,
+                &ds_baseline,
+                &[1],
+                &geom_refs,
+                &[1.0],
+                Some(crate::raster::RasterizeOptions {
+                    all_touched: true,
+                    ..Default::default()
+                }),
+            )
+            .unwrap();
+            rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], true).unwrap();
+
+            assert_eq!(read_u8(&ds_affine, w, h), read_u8(&ds_baseline, w, h));
+        })
         .unwrap();
-        rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], true).unwrap();
-
-        assert_eq!(read_u8(&ds_affine, w, h), read_u8(&ds_baseline, w, h));
     }
 
     #[test]
     fn test_rasterize_affine_matches_baseline_linestring() {
-        let api = api();
-        let (w, h) = (64usize, 48usize);
-        // Rotated/skewed GeoTransform.
-        let gt: GeoTransform = [5.0, 1.0, 0.2, 100.0, -0.15, -1.05];
+        with_global_gdal_api(|api| {
+            let (w, h) = (64usize, 48usize);
+            // Rotated/skewed GeoTransform.
+            let gt: GeoTransform = [5.0, 1.0, 0.2, 100.0, -0.15, -1.05];
 
-        // A polyline with many vertices, defined in pixel/line space.
-        let mut pts: Vec<(f64, f64)> = Vec::new();
-        for i in 0..200 {
-            let t = i as f64 / 199.0;
-            let x = 2.625 + t * ((w as f64) - 5.25);
-            let y = 5.25 + (t * 6.0).sin() * 8.0 + t * ((h as f64) - 12.25);
-            pts.push((x, y));
-        }
-        let geom_baseline = line_from_pixel_points(&gt, &pts);
-        let geom_affine = line_from_pixel_points(&gt, &pts);
-
-        let ds_baseline = make_dataset_u8(w, h, gt).unwrap();
-        let ds_affine = make_dataset_u8(w, h, gt).unwrap();
-
-        let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
-        rasterize(api, &ds_baseline, &[1], &geom_refs, &[1.0], None).unwrap();
-        rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], false).unwrap();
-
-        let got = read_u8(&ds_affine, w, h);
-        let expected = read_u8(&ds_baseline, w, h);
-        if got != expected {
-            let mut diffs = Vec::new();
-            for (i, (a, b)) in got
-                .iter()
-                .copied()
-                .zip(expected.iter().copied())
-                .enumerate()
-            {
-                if a != b {
-                    let x = i % w;
-                    let y = i / w;
-                    diffs.push((x, y, a, b));
-                }
+            // A polyline with many vertices, defined in pixel/line space.
+            let mut pts: Vec<(f64, f64)> = Vec::new();
+            for i in 0..200 {
+                let t = i as f64 / 199.0;
+                let x = 2.625 + t * ((w as f64) - 5.25);
+                let y = 5.25 + (t * 6.0).sin() * 8.0 + t * ((h as f64) - 12.25);
+                pts.push((x, y));
             }
-            panic!(
-                "raster mismatch: {} differing pixels; first 10: {:?}",
-                diffs.len(),
-                &diffs[..diffs.len().min(10)]
-            );
-        }
+            let geom_baseline = line_from_pixel_points(api, &gt, &pts);
+            let geom_affine = line_from_pixel_points(api, &gt, &pts);
+
+            let ds_baseline = make_dataset_u8(api, w, h, gt).unwrap();
+            let ds_affine = make_dataset_u8(api, w, h, gt).unwrap();
+
+            let geom_refs: Vec<&Geometry> = vec![&geom_baseline];
+            rasterize(api, &ds_baseline, &[1], &geom_refs, &[1.0], None).unwrap();
+            rasterize_affine(api, &ds_affine, &[1], &[geom_affine], &[1.0], false).unwrap();
+
+            let got = read_u8(&ds_affine, w, h);
+            let expected = read_u8(&ds_baseline, w, h);
+            if got != expected {
+                let mut diffs = Vec::new();
+                for (i, (a, b)) in got
+                    .iter()
+                    .copied()
+                    .zip(expected.iter().copied())
+                    .enumerate()
+                {
+                    if a != b {
+                        let x = i % w;
+                        let y = i / w;
+                        diffs.push((x, y, a, b));
+                    }
+                }
+                panic!(
+                    "raster mismatch: {} differing pixels; first 10: {:?}",
+                    diffs.len(),
+                    &diffs[..diffs.len().min(10)]
+                );
+            }
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_rasterize_affine_fails_on_noninvertible_gt() {
-        let api = api();
-        let (w, h) = (8usize, 8usize);
-        let gt: GeoTransform = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let ds = make_dataset_u8(w, h, gt).unwrap();
-        let geom = Geometry::from_wkt(api, "POINT (0 0)").unwrap();
-        let err = rasterize_affine(api, &ds, &[1], &[geom], &[1.0], true).unwrap_err();
-        match err {
-            GdalError::BadArgument(msg) => {
-                assert!(msg.contains("Non-invertible geotransform"));
+        with_global_gdal_api(|api| {
+            let (w, h) = (8usize, 8usize);
+            let gt: GeoTransform = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let ds = make_dataset_u8(api, w, h, gt).unwrap();
+            let geom = Geometry::from_wkt(api, "POINT (0 0)").unwrap();
+            let err = rasterize_affine(api, &ds, &[1], &[geom], &[1.0], true).unwrap_err();
+            match err {
+                GdalError::BadArgument(msg) => {
+                    assert!(msg.contains("Non-invertible geotransform"));
+                }
+                other => panic!("Unexpected error: {other:?}"),
             }
-            other => panic!("Unexpected error: {other:?}"),
-        }
+        })
+        .unwrap();
     }
 }

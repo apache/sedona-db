@@ -108,41 +108,49 @@ impl SpatialRef {
 #[cfg(all(test, feature = "gdal-sys"))]
 mod tests {
     use crate::errors::GdalError;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
     use crate::spatial_ref::SpatialRef;
 
     const WGS84_WKT: &str = r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#;
 
     #[test]
     fn test_from_wkt() {
-        let api = get_global_gdal_api().unwrap();
-        let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
-        assert!(!srs.c_srs().is_null());
+        with_global_gdal_api(|api| {
+            let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
+            assert!(!srs.c_srs().is_null());
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_from_wkt_invalid() {
-        let api = get_global_gdal_api().unwrap();
-        let err = SpatialRef::from_wkt(api, "WGS\u{0}84");
-        assert!(matches!(err, Err(GdalError::FfiNulError(_))));
+        with_global_gdal_api(|api| {
+            let err = SpatialRef::from_wkt(api, "WGS\u{0}84");
+            assert!(matches!(err, Err(GdalError::FfiNulError(_))));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_to_projjson() {
-        let api = get_global_gdal_api().unwrap();
-        let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
-        let projjson = srs.to_projjson().unwrap();
-        assert!(
-            projjson.contains("WGS 84"),
-            "unexpected projjson: {projjson}"
-        );
+        with_global_gdal_api(|api| {
+            let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
+            let projjson = srs.to_projjson().unwrap();
+            assert!(
+                projjson.contains("WGS 84"),
+                "unexpected projjson: {projjson}"
+            );
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_from_c_srs_clone() {
-        let api = get_global_gdal_api().unwrap();
-        let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
-        let cloned = unsafe { SpatialRef::from_c_srs_clone(api, srs.c_srs()) }.unwrap();
-        assert_eq!(srs.to_projjson().unwrap(), cloned.to_projjson().unwrap());
+        with_global_gdal_api(|api| {
+            let srs = SpatialRef::from_wkt(api, WGS84_WKT).unwrap();
+            let cloned = unsafe { SpatialRef::from_c_srs_clone(api, srs.c_srs()) }.unwrap();
+            assert_eq!(srs.to_projjson().unwrap(), cloned.to_projjson().unwrap());
+        })
+        .unwrap();
     }
 }

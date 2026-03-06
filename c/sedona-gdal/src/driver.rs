@@ -174,62 +174,74 @@ impl DriverManager {
 mod tests {
     use crate::driver::DriverManager;
     use crate::errors::GdalError;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
     use crate::raster::types::GdalDataType;
 
     #[test]
     fn test_get_driver_by_name() {
-        let api = get_global_gdal_api().unwrap();
-        let gtiff = DriverManager::get_driver_by_name(api, "GTiff").unwrap();
-        assert!(!gtiff.c_driver().is_null());
-        let mem = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        assert!(!mem.c_driver().is_null());
+        with_global_gdal_api(|api| {
+            let gtiff = DriverManager::get_driver_by_name(api, "GTiff").unwrap();
+            assert!(!gtiff.c_driver().is_null());
+            let mem = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            assert!(!mem.c_driver().is_null());
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_get_driver_by_name_invalid() {
-        let api = get_global_gdal_api().unwrap();
-        let err = DriverManager::get_driver_by_name(api, "NO_SUCH_DRIVER");
-        assert!(matches!(err, Err(GdalError::NullPointer { .. })));
+        with_global_gdal_api(|api| {
+            let err = DriverManager::get_driver_by_name(api, "NO_SUCH_DRIVER");
+            assert!(matches!(err, Err(GdalError::NullPointer { .. })));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_driver_create() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create("", 32, 16, 2).unwrap();
-        assert_eq!(ds.raster_size(), (32, 16));
-        assert_eq!(ds.raster_count(), 2);
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create("", 32, 16, 2).unwrap();
+            assert_eq!(ds.raster_size(), (32, 16));
+            assert_eq!(ds.raster_count(), 2);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_driver_create_with_band_type() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create_with_band_type::<u8>("", 10, 20, 1).unwrap();
-        assert_eq!(ds.raster_count(), 1);
-        let ds = driver.create_with_band_type::<f32>("", 10, 20, 2).unwrap();
-        assert_eq!(ds.raster_count(), 2);
-        let ds = driver.create_with_band_type::<i16>("", 10, 20, 3).unwrap();
-        assert_eq!(ds.raster_count(), 3);
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create_with_band_type::<u8>("", 10, 20, 1).unwrap();
+            assert_eq!(ds.raster_count(), 1);
+            let ds = driver.create_with_band_type::<f32>("", 10, 20, 2).unwrap();
+            assert_eq!(ds.raster_count(), 2);
+            let ds = driver.create_with_band_type::<i16>("", 10, 20, 3).unwrap();
+            assert_eq!(ds.raster_count(), 3);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_driver_create_with_data_type() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver
-            .create_with_data_type("", 8, 8, 1, GdalDataType::UInt16)
-            .unwrap();
-        assert_eq!(ds.raster_count(), 1);
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver
+                .create_with_data_type("", 8, 8, 1, GdalDataType::UInt16)
+                .unwrap();
+            assert_eq!(ds.raster_count(), 1);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_driver_create_vector_only() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create_vector_only("").unwrap();
-        assert_eq!(ds.raster_count(), 0);
-        assert_eq!(ds.raster_size(), (1, 1));
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create_vector_only("").unwrap();
+            assert_eq!(ds.raster_count(), 0);
+            assert_eq!(ds.raster_size(), (1, 1));
+        })
+        .unwrap();
     }
 }

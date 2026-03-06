@@ -402,60 +402,70 @@ impl Default for LayerOptions<'_> {
 #[cfg(all(test, feature = "gdal-sys"))]
 mod tests {
     use crate::driver::DriverManager;
-    use crate::global::get_global_gdal_api;
+    use crate::global::with_global_gdal_api;
 
     #[test]
     fn test_geo_transform_roundtrip() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create("", 256, 256, 1).unwrap();
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create("", 256, 256, 1).unwrap();
 
-        let gt = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        ds.set_geo_transform(&gt).unwrap();
-        let got = ds.geo_transform().unwrap();
-        assert_eq!(gt, got);
+            let gt = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+            ds.set_geo_transform(&gt).unwrap();
+            let got = ds.geo_transform().unwrap();
+            assert_eq!(gt, got);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_geo_transform_unset() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create("", 256, 256, 1).unwrap();
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create("", 256, 256, 1).unwrap();
 
-        // MEM driver without an explicit set_geo_transform returns an error
-        assert!(ds.geo_transform().is_err());
+            // MEM driver without an explicit set_geo_transform returns an error
+            assert!(ds.geo_transform().is_err());
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_set_projection_roundtrip() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create("", 256, 256, 1).unwrap();
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create("", 256, 256, 1).unwrap();
 
-        let wkt = r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#;
-        ds.set_projection(wkt).unwrap();
-        let got = ds.projection();
-        // The returned WKT may be reformatted by GDAL, so just check it contains WGS 84
-        assert!(got.contains("WGS 84"), "Expected WGS 84 in: {got}");
+            let wkt = r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#;
+            ds.set_projection(wkt).unwrap();
+            let got = ds.projection();
+            // The returned WKT may be reformatted by GDAL, so just check it contains WGS 84
+            assert!(got.contains("WGS 84"), "Expected WGS 84 in: {got}");
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_dataset_raster_count() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
 
-        let ds1 = driver.create("", 64, 64, 1).unwrap();
-        assert_eq!(ds1.raster_count(), 1);
+            let ds1 = driver.create("", 64, 64, 1).unwrap();
+            assert_eq!(ds1.raster_count(), 1);
 
-        let ds3 = driver.create("", 64, 64, 3).unwrap();
-        assert_eq!(ds3.raster_count(), 3);
+            let ds3 = driver.create("", 64, 64, 3).unwrap();
+            assert_eq!(ds3.raster_count(), 3);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_dataset_raster_size() {
-        let api = get_global_gdal_api().unwrap();
-        let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
-        let ds = driver.create("", 123, 456, 1).unwrap();
-        assert_eq!(ds.raster_size(), (123, 456));
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let ds = driver.create("", 123, 456, 1).unwrap();
+            assert_eq!(ds.raster_size(), (123, 456));
+        })
+        .unwrap();
     }
 }
