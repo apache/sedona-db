@@ -55,6 +55,16 @@ SEXP handle_result(SEXP res_) {
   return (SEXP)res;
 }
 
+SEXP savvy_apply_crses_to_sf_stream__impl(SEXP c_arg__stream_in_xptr,
+                                          SEXP c_arg__geometry_column_names,
+                                          SEXP c_arg__geometry_column_crses,
+                                          SEXP c_arg__stream_out_xptr) {
+  SEXP res = savvy_apply_crses_to_sf_stream__ffi(
+      c_arg__stream_in_xptr, c_arg__geometry_column_names,
+      c_arg__geometry_column_crses, c_arg__stream_out_xptr);
+  return handle_result(res);
+}
+
 SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
                                        SEXP c_arg__database_path,
                                        SEXP c_arg__search_path) {
@@ -101,8 +111,15 @@ SEXP savvy_InternalContext_deregister_table__impl(SEXP self__,
   return handle_result(res);
 }
 
-SEXP savvy_InternalContext_new__impl(void) {
-  SEXP res = savvy_InternalContext_new__ffi();
+SEXP savvy_InternalContext_list_functions__impl(SEXP self__) {
+  SEXP res = savvy_InternalContext_list_functions__ffi(self__);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalContext_new__impl(SEXP c_arg__option_keys,
+                                     SEXP c_arg__option_values) {
+  SEXP res =
+      savvy_InternalContext_new__ffi(c_arg__option_keys, c_arg__option_values);
   return handle_result(res);
 }
 
@@ -131,6 +148,21 @@ SEXP savvy_InternalContext_sql__impl(SEXP self__, SEXP c_arg__query) {
 
 SEXP savvy_InternalContext_view__impl(SEXP self__, SEXP c_arg__table_ref) {
   SEXP res = savvy_InternalContext_view__ffi(self__, c_arg__table_ref);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalDataFrame_aggregate__impl(SEXP self__,
+                                             SEXP c_arg__group_by_exprs_sexp,
+                                             SEXP c_arg__exprs_sexp) {
+  SEXP res = savvy_InternalDataFrame_aggregate__ffi(
+      self__, c_arg__group_by_exprs_sexp, c_arg__exprs_sexp);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalDataFrame_arrange__impl(SEXP self__, SEXP c_arg__exprs_sexp,
+                                           SEXP c_arg__is_descending_sexp) {
+  SEXP res = savvy_InternalDataFrame_arrange__ffi(self__, c_arg__exprs_sexp,
+                                                  c_arg__is_descending_sexp);
   return handle_result(res);
 }
 
@@ -199,13 +231,12 @@ SEXP savvy_InternalDataFrame_to_arrow_stream__impl(
 }
 
 SEXP savvy_InternalDataFrame_to_parquet__impl(
-    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
-    SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
-    SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version) {
+    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__option_keys,
+    SEXP c_arg__option_values, SEXP c_arg__partition_by, SEXP c_arg__sort_by,
+    SEXP c_arg__single_file_output) {
   SEXP res = savvy_InternalDataFrame_to_parquet__ffi(
-      self__, c_arg__ctx, c_arg__path, c_arg__partition_by, c_arg__sort_by,
-      c_arg__single_file_output, c_arg__overwrite_bbox_columns,
-      c_arg__geoparquet_version);
+      self__, c_arg__ctx, c_arg__path, c_arg__option_keys, c_arg__option_values,
+      c_arg__partition_by, c_arg__sort_by, c_arg__single_file_output);
   return handle_result(res);
 }
 
@@ -219,6 +250,13 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
                                            SEXP c_arg__overwrite) {
   SEXP res = savvy_InternalDataFrame_to_view__ffi(
       self__, c_arg__ctx, c_arg__table_ref, c_arg__overwrite);
+  return handle_result(res);
+}
+
+SEXP savvy_InternalDataFrame_with_params__impl(SEXP self__,
+                                               SEXP c_arg__params_sexp) {
+  SEXP res =
+      savvy_InternalDataFrame_with_params__ffi(self__, c_arg__params_sexp);
   return handle_result(res);
 }
 
@@ -257,6 +295,14 @@ SEXP savvy_SedonaDBExprFactory_aggregate_function__impl(SEXP self__,
   return handle_result(res);
 }
 
+SEXP savvy_SedonaDBExprFactory_any_function__impl(SEXP self__, SEXP c_arg__name,
+                                                  SEXP c_arg__args,
+                                                  SEXP c_arg__na_rm) {
+  SEXP res = savvy_SedonaDBExprFactory_any_function__ffi(
+      self__, c_arg__name, c_arg__args, c_arg__na_rm);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExprFactory_binary__impl(SEXP self__, SEXP c_arg__op,
                                             SEXP c_arg__lhs, SEXP c_arg__rhs) {
   SEXP res = savvy_SedonaDBExprFactory_binary__ffi(self__, c_arg__op,
@@ -292,6 +338,8 @@ SEXP savvy_SedonaDBExprFactory_scalar_function__impl(SEXP self__,
 }
 
 static const R_CallMethodDef CallEntries[] = {
+    {"savvy_apply_crses_to_sf_stream__impl",
+     (DL_FUNC)&savvy_apply_crses_to_sf_stream__impl, 4},
     {"savvy_configure_proj_shared__impl",
      (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
     {"savvy_init_r_runtime_interrupts__impl",
@@ -304,8 +352,10 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalContext_data_frame_from_table_provider__impl, 2},
     {"savvy_InternalContext_deregister_table__impl",
      (DL_FUNC)&savvy_InternalContext_deregister_table__impl, 2},
+    {"savvy_InternalContext_list_functions__impl",
+     (DL_FUNC)&savvy_InternalContext_list_functions__impl, 1},
     {"savvy_InternalContext_new__impl",
-     (DL_FUNC)&savvy_InternalContext_new__impl, 0},
+     (DL_FUNC)&savvy_InternalContext_new__impl, 2},
     {"savvy_InternalContext_read_parquet__impl",
      (DL_FUNC)&savvy_InternalContext_read_parquet__impl, 2},
     {"savvy_InternalContext_register_scalar_udf__impl",
@@ -316,6 +366,10 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalContext_sql__impl, 2},
     {"savvy_InternalContext_view__impl",
      (DL_FUNC)&savvy_InternalContext_view__impl, 2},
+    {"savvy_InternalDataFrame_aggregate__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_aggregate__impl, 3},
+    {"savvy_InternalDataFrame_arrange__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_arrange__impl, 3},
     {"savvy_InternalDataFrame_collect__impl",
      (DL_FUNC)&savvy_InternalDataFrame_collect__impl, 2},
     {"savvy_InternalDataFrame_compute__impl",
@@ -344,6 +398,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_InternalDataFrame_with_params__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_with_params__impl, 2},
     {"savvy_SedonaDBExpr_alias__impl", (DL_FUNC)&savvy_SedonaDBExpr_alias__impl,
      2},
     {"savvy_SedonaDBExpr_cast__impl", (DL_FUNC)&savvy_SedonaDBExpr_cast__impl,
@@ -356,6 +412,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExpr_negate__impl, 1},
     {"savvy_SedonaDBExprFactory_aggregate_function__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_aggregate_function__impl, 5},
+    {"savvy_SedonaDBExprFactory_any_function__impl",
+     (DL_FUNC)&savvy_SedonaDBExprFactory_any_function__impl, 4},
     {"savvy_SedonaDBExprFactory_binary__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_binary__impl, 4},
     {"savvy_SedonaDBExprFactory_column__impl",

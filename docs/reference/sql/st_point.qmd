@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Point
-description: Construct a Point Geometry from X and Y.
+description: Constructs a Point Geometry from X and Y.
 kernels:
   - returns: geometry
     args:
@@ -25,10 +25,28 @@ kernels:
       type: double
     - name: y
       type: double
+    - name: srid
+      type: crs
 ---
+
+## Description
+
+Constructs a Point geometry from X and Y coordinates. An optional SRID or CRS can be provided as a third argument.
 
 ## Examples
 
 ```sql
 SELECT ST_AsText(ST_Point(-74.0060, 40.7128));
+```
+
+With an SRID:
+
+```sql
+SELECT ST_Point(-74.0060, 40.7128, 4326);
+```
+
+With a CRS:
+
+```sql
+SELECT ST_Point(-74.0060, 40.7128, 'EPSG:3857');
 ```

@@ -21,6 +21,8 @@ description: Returns a new geometry with the X and Y coordinates of each vertex 
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Examples

@@ -37,6 +37,10 @@ kernels:
       type: double
 ---
 
+## Description
+
+Translates (shifts) a geometry by the given deltaX and deltaY offsets. A 3D variant accepts `deltaZ`.
+
 ## Examples
 
 ```sql

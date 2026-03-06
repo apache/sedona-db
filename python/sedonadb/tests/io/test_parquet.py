@@ -332,6 +332,58 @@ def test_write_geoparquet_options(geoarrow_data):
         metadata = parquet.read_metadata(tmp_parquet)
         assert metadata.row_group(0).num_rows == 1024
 
+        # Set via keyword arg and ensure that value is respected
+        con.sql(
+            "SET datafusion.execution.parquet.max_row_group_size = 1000000"
+        ).execute()
+        con.create_data_frame(gdf).to_parquet(
+            tmp_parquet,
+            max_row_group_size=1024,
+        )
+
+        gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
+        geopandas.testing.assert_geodataframe_equal(gdf_roundtrip, gdf)
+
+        metadata = parquet.read_metadata(tmp_parquet)
+        assert metadata.row_group(0).num_rows == 1024
+
+        # Ensure compression is respected
+        size_with_default_compression = tmp_parquet.stat().st_size
+        con.create_data_frame(gdf).to_parquet(
+            tmp_parquet,
+            compression="uncompressed",
+        )
+        assert tmp_parquet.stat().st_size > (size_with_default_compression * 2)
+
+
+def test_write_sort_by_geometry(con):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Ordering currently requires build with feature s2geography")
+
+    con.funcs.table.sd_random_geometry(
+        "Point", 10000, seed=948, bounds=[-50, -50, 50, 50]
+    ).to_view("pts", overwrite=True)
+    df = con.sql("SELECT id, ST_SetSRID(geometry, 4326) AS geometry FROM pts")
+
+    # Write sorted and unsorted output and ensure we have improved the locality
+    with tempfile.TemporaryDirectory() as td:
+        df.to_parquet(Path(td) / "unsorted.parquet")
+        df.to_parquet(Path(td) / "sorted.parquet", sort_by="geometry")
+
+        gdf_unsorted = geopandas.read_parquet(Path(td) / "unsorted.parquet").to_crs(
+            3857
+        )
+        gdf_sorted = geopandas.read_parquet(Path(td) / "sorted.parquet").to_crs(3857)
+
+        neighbour_distance_unsorted = gdf_unsorted.geometry.distance(
+            gdf_unsorted.geometry.shift(1)
+        ).median()
+        neighbour_distance_sorted = gdf_sorted.geometry.distance(
+            gdf_sorted.geometry.shift(1)
+        ).median()
+
+        assert neighbour_distance_sorted < (neighbour_distance_unsorted / 20)
+
 
 def test_write_geoparquet_1_1(con, geoarrow_data):
     # Checks GeoParquet 1.1 support specifically
@@ -386,6 +438,22 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         )
         df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
         assert "bbox" in df_roundtrip.columns
+
+
+def test_write_geoparquet_ensure_projjson_crs(con):
+    df = con.sql("SELECT ST_Point(1, 2, 'EPSG:3857') AS geometry")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        df.to_parquet(tmp_parquet)
+
+        file_kv_metadata = parquet.ParquetFile(tmp_parquet).metadata.metadata
+        assert b"geo" in file_kv_metadata
+        geo_metadata = json.loads(file_kv_metadata[b"geo"])
+        crs = geo_metadata["columns"]["geometry"]["crs"]
+        assert crs != "EPSG:3857"
+        assert crs["id"]["authority"] == "EPSG"
+        assert crs["id"]["code"] == 3857
 
 
 def test_write_geoparquet_unknown(con):

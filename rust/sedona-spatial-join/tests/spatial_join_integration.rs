@@ -21,23 +21,30 @@ use arrow_array::{Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion::{
     catalog::{MemTable, TableProvider},
+    datasource::empty::EmptyTable,
     execution::SessionStateBuilder,
     prelude::{SessionConfig, SessionContext},
 };
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion_common::Result;
+use datafusion_common::{JoinSide, Result};
 use datafusion_expr::{ColumnarValue, JoinType};
+use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
 use datafusion_physical_plan::ExecutionPlan;
 use geo::{Distance, Euclidean};
 use geo_types::{Coord, Rect};
 use rstest::rstest;
 use sedona_common::SedonaOptions;
+use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 use sedona_geo::to_geo::GeoTypesExecutor;
 use sedona_geometry::types::GeometryTypeId;
-use sedona_schema::datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 use sedona_spatial_join::{
-    register_planner, spatial_predicate::RelationPredicate, SpatialJoinExec, SpatialPredicate,
+    register_planner, spatial_predicate::RelationPredicate, ProbeShuffleExec, SpatialJoinExec,
+    SpatialPredicate,
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
@@ -142,7 +149,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     session_config = add_sedona_option_extension(session_config);
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
-        state_builder = register_planner(state_builder);
+        state_builder = register_planner(state_builder)?;
         let opts = session_config
             .options_mut()
             .extensions
@@ -512,6 +519,16 @@ async fn test_geography_join_is_not_optimized() -> Result<()> {
     let options = SpatialJoinOptions::default();
     let ctx = setup_context(Some(options), 10)?;
 
+    let stub_impl = SimpleSedonaScalarKernel::new_ref(
+        ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_geography()],
+            SedonaType::Arrow(DataType::Boolean),
+        ),
+        Arc::new(|_arg_types, _args| unreachable!("Should not be executed")),
+    );
+    let st_intersects_udf = SedonaScalarUDF::from_impl("st_intersects", stub_impl);
+    ctx.register_udf(st_intersects_udf.into());
+
     // Prepare geography tables
     let ((left_schema, left_partitions), (right_schema, right_partitions)) =
         create_test_data_with_size_range((0.1, 10.0), WKB_GEOGRAPHY)?;
@@ -785,6 +802,7 @@ async fn run_spatial_join_query(
     )?);
 
     let is_optimized_spatial_join = options.is_some();
+    let repartition_probe_side = options.as_ref().is_some_and(|o| o.repartition_probe_side);
     let ctx = setup_context(options, batch_size)?;
     ctx.register_table("L", Arc::clone(&mem_table_left))?;
     ctx.register_table("R", Arc::clone(&mem_table_right))?;
@@ -794,6 +812,9 @@ async fn run_spatial_join_query(
     let spatial_join_execs = collect_spatial_join_exec(&plan)?;
     if is_optimized_spatial_join {
         assert_eq!(spatial_join_execs.len(), 1);
+        if repartition_probe_side {
+            probe_side_of_spatial_join_exec_should_be_shuffled(spatial_join_execs[0]);
+        }
     } else {
         assert!(spatial_join_execs.is_empty());
     }
@@ -811,6 +832,20 @@ fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&Spati
         Ok(TreeNodeRecursion::Continue)
     })?;
     Ok(spatial_join_execs)
+}
+
+fn probe_side_of_spatial_join_exec_should_be_shuffled(sj: &SpatialJoinExec) {
+    let probe_child = match &sj.on {
+        SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
+            JoinSide::Left => &sj.left,
+            _ => &sj.right,
+        },
+        _ => &sj.right, // non-KNN: probe is always right after swap
+    };
+    assert!(
+        subtree_contains_probe_shuffle_exec(probe_child),
+        "ProbeShuffleExec should be present on the probe side of SpatialJoinExec"
+    );
 }
 
 async fn test_mark_join(
@@ -1088,72 +1123,95 @@ async fn test_knn_join_with_filter_correctness(
     };
 
     let k = 3;
-    let sql = format!(
-        "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND (L.id % 7) = (R.id % 7)",
-        k
-    );
+    let sqls = [
+        format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND (L.id % 7) = (R.id % 7)",
+            k
+        ),
+        format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND L.id % 7 = 0",
+            k
+        ),
+        format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND R.id % 7 = 0",
+            k
+        ),
+        format!(
+            "SELECT L.id AS l_id, R.id AS r_id FROM L JOIN R ON ST_KNN(L.geometry, R.geometry, {}, false) AND L.id % 7 = 0 AND R.id % 7 = 0",
+            k
+        ),
+    ];
 
-    let batches = run_spatial_join_query(
-        &left_schema,
-        &right_schema,
-        left_partitions.clone(),
-        right_partitions.clone(),
-        Some(options),
-        max_batch_size,
-        &sql,
-    )
-    .await?;
+    for (idx, sql) in sqls.iter().enumerate() {
+        let batches = run_spatial_join_query(
+            &left_schema,
+            &right_schema,
+            left_partitions.clone(),
+            right_partitions.clone(),
+            Some(options.clone()),
+            max_batch_size,
+            sql,
+        )
+        .await?;
 
-    let mut actual_results = Vec::new();
-    let combined_batch = arrow::compute::concat_batches(&batches.schema(), &[batches])?;
-    let l_ids = combined_batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
-    let r_ids = combined_batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
+        let mut actual_results = Vec::new();
+        let combined_batch = arrow::compute::concat_batches(&batches.schema(), &[batches])?;
+        let l_ids = combined_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
+        let r_ids = combined_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap();
 
-    for i in 0..combined_batch.num_rows() {
-        actual_results.push((l_ids.value(i), r_ids.value(i)));
-    }
-    actual_results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        for i in 0..combined_batch.num_rows() {
+            actual_results.push((l_ids.value(i), r_ids.value(i)));
+        }
+        actual_results.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
-    // Prove the test actually exercises the "< K rows after filtering" case.
-    // Build a list of all probe-side IDs and count how many results each has.
-    let all_left_ids: Vec<i32> = extract_geoms_and_ids(&left_partitions)
+        // Prove the test actually exercises the "< K rows after filtering" case.
+        // Build a list of all probe-side IDs and count how many results each has.
+        let all_left_ids: Vec<i32> = extract_geoms_and_ids(&left_partitions)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let mut per_left_counts: std::collections::HashMap<i32, usize> =
+            std::collections::HashMap::new();
+        for (l_id, _) in &actual_results {
+            *per_left_counts.entry(*l_id).or_default() += 1;
+        }
+        let min_count = all_left_ids
+            .iter()
+            .map(|l_id| *per_left_counts.get(l_id).unwrap_or(&0))
+            .min()
+            .unwrap_or(0);
+        assert!(
+            min_count < k,
+            "expected at least one probe row to produce < K rows after filtering; min_count={min_count}, k={k}"
+        );
+
+        let filter_closure = match idx {
+            0 => |l_id: i32, r_id: i32| (l_id.rem_euclid(7)) == (r_id.rem_euclid(7)),
+            1 => |l_id: i32, _r_id: i32| l_id.rem_euclid(7) == 0,
+            2 => |_l_id: i32, r_id: i32| r_id.rem_euclid(7) == 0,
+            3 => |l_id: i32, r_id: i32| l_id.rem_euclid(7) == 0 && r_id.rem_euclid(7) == 0,
+            _ => unreachable!(),
+        };
+        let expected_results = compute_knn_ground_truth_with_pair_filter(
+            &left_partitions,
+            &right_partitions,
+            k,
+            filter_closure,
+        )
         .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    let mut per_left_counts: std::collections::HashMap<i32, usize> =
-        std::collections::HashMap::new();
-    for (l_id, _) in &actual_results {
-        *per_left_counts.entry(*l_id).or_default() += 1;
+        .map(|(l, r, _)| (l, r))
+        .collect::<Vec<_>>();
+
+        assert_eq!(actual_results, expected_results);
     }
-    let min_count = all_left_ids
-        .iter()
-        .map(|l_id| *per_left_counts.get(l_id).unwrap_or(&0))
-        .min()
-        .unwrap_or(0);
-    assert!(
-        min_count < k,
-        "expected at least one probe row to produce < K rows after filtering; min_count={min_count}, k={k}"
-    );
-
-    let expected_results = compute_knn_ground_truth_with_pair_filter(
-        &left_partitions,
-        &right_partitions,
-        k,
-        |l_id, r_id| (l_id.rem_euclid(7)) == (r_id.rem_euclid(7)),
-    )
-    .into_iter()
-    .map(|(l, r, _)| (l, r))
-    .collect::<Vec<_>>();
-
-    assert_eq!(actual_results, expected_results);
 
     Ok(())
 }
@@ -1367,4 +1425,245 @@ async fn test_knn_join_include_tie_breakers(
     }
 
     Ok(())
+}
+
+/// Verify that a filter on the *object* (build / right) side of a KNN join is NOT pushed down
+/// into the build side subtree.
+///
+/// If `PushDownFilter` incorrectly pushes `R.id > 5` below the spatial join, the set of objects
+/// considered for the KNN search changes, yielding wrong nearest-neighbor results.
+#[tokio::test]
+async fn test_knn_join_object_side_filter_not_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // The build (right / object) side must NOT have a FilterExec pushed into it.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that for a *non-KNN* spatial join, a filter on the build side IS pushed down
+/// (the normal, desirable behaviour).
+#[tokio::test]
+async fn test_non_knn_join_object_side_filter_is_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_Intersects(ST_Buffer(ST_Point(L.x, 0), 1.5), ST_Point(R.x, 1)) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // For non-KNN joins, the filter SHOULD be pushed down to the build side.
+    assert!(
+        subtree_contains_filter_exec(&sj.right),
+        "FilterExec should be pushed into the object (right/build) side of a non-KNN spatial join"
+    );
+
+    Ok(())
+}
+
+/// Verify that a filter on the *query* (probe / left) side of a KNN join IS automatically pushed
+/// down into the query-side subtree.
+#[tokio::test]
+async fn test_knn_join_query_side_filter_is_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE L.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // The query (left / probe) side MUST have a FilterExec pushed into it.
+    assert!(
+        subtree_contains_filter_exec(&sj.left),
+        "FilterExec should be pushed into the query (left/probe) side of a KNN join"
+    );
+
+    // The build (right / object) side must NOT have a FilterExec.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that when the query side is the *right* child of the join, query-side filters are
+/// still correctly pushed down to that side.
+#[tokio::test]
+async fn test_knn_join_query_side_filter_pushed_down_when_query_is_right() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(R.x, 0), ST_Point(L.x, 1), 3, false) \
+               WHERE R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // In this case, the query (probe) side is the right child. R.id > 5 should be in the right child.
+    assert!(
+        subtree_contains_filter_exec(&sj.right),
+        "FilterExec should be pushed into the query (right/probe) side of a KNN join"
+    );
+
+    // The left (object/build) side must NOT have a FilterExec.
+    assert!(
+        !subtree_contains_filter_exec(&sj.left),
+        "FilterExec should NOT be pushed into the object (left/build) side of a KNN join"
+    );
+
+    Ok(())
+}
+
+/// Verify that when a WHERE clause has both query-side and object-side filters, only the
+/// query-side filter is pushed down. The object-side filter must remain above the spatial join.
+#[tokio::test]
+async fn test_knn_join_mixed_filter_only_query_side_pushed_down() -> Result<()> {
+    let sql = "SELECT L.id, R.id \
+               FROM L JOIN R ON ST_KNN(ST_Point(L.x, 0), ST_Point(R.x, 1), 3, false) \
+               WHERE L.id > 5 AND R.id > 5";
+    let plan = plan_for_filter_pushdown_test(sql).await?;
+
+    let spatial_joins = collect_spatial_join_exec(&plan)?;
+    assert_eq!(
+        spatial_joins.len(),
+        1,
+        "expected exactly one SpatialJoinExec"
+    );
+    let sj = spatial_joins[0];
+
+    // Query side (left) should have the L.id > 5 filter pushed in.
+    assert!(
+        subtree_contains_filter_exec(&sj.left),
+        "FilterExec should be pushed into the query (left/probe) side for L.id > 5"
+    );
+
+    // Object side (right) must NOT have R.id > 5 pushed in.
+    assert!(
+        !subtree_contains_filter_exec(&sj.right),
+        "FilterExec should NOT be pushed into the object (right/build) side of a KNN join"
+    );
+
+    // The R.id > 5 filter should remain above the SpatialJoinExec as a FilterExec.
+    // We verify this by checking that the root plan contains a FilterExec above SpatialJoinExec.
+    assert!(
+        has_filter_exec_above_spatial_join(&plan),
+        "R.id > 5 should remain as a FilterExec above SpatialJoinExec"
+    );
+
+    Ok(())
+}
+
+/// Check if there is a `FilterExec` node that is an ancestor of a `SpatialJoinExec`.
+fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    if plan.as_any().downcast_ref::<FilterExec>().is_some() {
+        // Check if any descendant of this FilterExec is a SpatialJoinExec
+        for child in plan.children() {
+            if contains_spatial_join_exec(child) {
+                return true;
+            }
+        }
+    }
+    // Recurse into children
+    for child in plan.children() {
+        if has_filter_exec_above_spatial_join(child) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if the plan tree contains a `SpatialJoinExec`.
+fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
+}
+
+/// Recursively check whether any node in the physical plan tree is a `FilterExec`.
+fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<FilterExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
+}
+
+/// Recursively check whether any node in the physical plan tree is a `ProbeShuffleExec`.
+fn subtree_contains_probe_shuffle_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    let mut found = false;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<ProbeShuffleExec>().is_some() {
+            found = true;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })
+    .expect("failed to walk plan");
+    found
+}
+
+/// Create a session context with two small tables for filter-pushdown tests.
+///
+/// L(id INT, x DOUBLE) and R(id INT, x DOUBLE) are all empty, this is just for exercising the
+/// plan optimizer and physical planner.
+/// Geometry is constructed in SQL via ST_Point so no geometry column exists on the table itself.
+async fn plan_for_filter_pushdown_test(sql: &str) -> Result<Arc<dyn ExecutionPlan>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("x", DataType::Float64, false),
+    ]));
+
+    let options = SpatialJoinOptions::default();
+    let ctx = setup_context(Some(options), 100)?;
+    let empty_l: Arc<dyn TableProvider> = Arc::new(EmptyTable::new(schema.clone()));
+    let empty_r: Arc<dyn TableProvider> = Arc::new(EmptyTable::new(schema.clone()));
+    ctx.register_table("L", empty_l)?;
+    ctx.register_table("R", empty_r)?;
+
+    let df = ctx.sql(sql).await?;
+    df.create_physical_plan().await
 }

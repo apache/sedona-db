@@ -2,12 +2,17 @@
 % Please edit documentation in R/context.R
 \name{sd_register_udf}
 \alias{sd_register_udf}
+\alias{sd_ctx_register_udf}
 \title{Register a user-defined function}
 \usage{
 sd_register_udf(udf)
+
+sd_ctx_register_udf(ctx, udf)
 }
 \arguments{
 \item{udf}{An object of class 'datafusion_scalar_udf'}
+
+\item{ctx}{A SedonaDB context.}
 }
 \value{
 NULL, invisibly

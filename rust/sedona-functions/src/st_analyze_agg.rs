@@ -28,11 +28,10 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     ScalarValue,
 };
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
+use datafusion_expr::Volatility;
 use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
-use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
-use sedona_expr::aggregate_udf::SedonaAggregateUDF;
+use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometrySummary;
@@ -43,7 +42,7 @@ use wkb::reader::Wkb;
 
 use crate::executor::WkbExecutor;
 
-/// ST_Analyze_Agg() aggregate UDF implementation
+/// ST_Analyze_Agg() aggregate UDF
 ///
 /// This function computes comprehensive statistics for a collection of geometries.
 /// It returns a struct containing various metrics such as count, min/max coordinates,
@@ -51,24 +50,14 @@ use crate::executor::WkbExecutor;
 pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_analyze_agg",
-        ItemCrsSedonaAccumulator::wrap_impl(STAnalyzeAgg {}),
+        ItemCrsSedonaAccumulator::wrap_impl(st_analyze_agg_impl()),
         Volatility::Immutable,
-        Some(st_analyze_agg_doc()),
     )
 }
 
-fn st_analyze_agg_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the statistics of geometries for geom.",
-        "ST_Analyze_Agg (A: Geometry)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_sql_example("
-        SELECT ST_Analyze_Agg(ST_GeomFromText('MULTIPOINT(1.1 101.1,2.1 102.1,3.1 103.1,4.1 104.1,5.1 105.1,6.1 106.1,7.1 107.1,8.1 108.1,9.1 109.1,10.1 110.1)'))")
-    .build()
-}
 /// ST_Analyze_Agg() implementation
+///
+/// This wrapper is exposed because it is used by the spatial join implementation.
 pub fn st_analyze_agg_impl() -> SedonaAccumulatorRef {
     Arc::new(STAnalyzeAgg {})
 }
@@ -499,8 +488,7 @@ mod test {
 
     #[rstest]
     fn basic_analyze_cases(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
-        udaf.add_kernel(st_analyze_agg_impl());
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -542,8 +530,7 @@ mod test {
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
-        let mut udaf = st_analyze_agg_udf();
-        udaf.add_kernel(st_analyze_agg_impl());
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -582,8 +569,7 @@ mod test {
 
     #[rstest]
     fn analyze_polygon(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
-        udaf.add_kernel(st_analyze_agg_impl());
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -624,8 +610,7 @@ mod test {
     fn analyze_mixed_geometries(
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
-        let mut udaf = st_analyze_agg_udf();
-        udaf.add_kernel(st_analyze_agg_impl());
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 
@@ -666,8 +651,7 @@ mod test {
 
     #[rstest]
     fn analyze_empty_input(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let mut udaf = st_analyze_agg_udf();
-        udaf.add_kernel(st_analyze_agg_impl());
+        let udaf = st_analyze_agg_udf();
 
         let tester = AggregateUdfTester::new(udaf.into(), vec![sedona_type.clone()]);
 

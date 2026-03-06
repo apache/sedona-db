@@ -103,23 +103,16 @@ Start by establishing a connection:
 
 ```python
 import sedona.db
-import os
+
 sd = sedona.db.connect()
-```
-
-Set some AWS environment variables to access the data:
-
-```python
-import os
-os.environ["AWS_SKIP_SIGNATURE"] = "true"
-os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 ```
 
 Read the dataset into a Python SedonaDB `DataFrame`. This is lazy: even though the Overture buildings table contains millions of rows, SedonaDB will only fetch the data required for the query.
 
 ```python
 df = sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=buildings/type=building/"
+    "s3://overturemaps-us-west-2/release/2026-02-18.0/theme=buildings/type=building/",
+    options={"aws.skip_signature": True, "aws.region": "us-west-2"},
 )
 df.to_view("buildings")
 ```

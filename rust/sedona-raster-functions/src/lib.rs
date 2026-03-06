@@ -17,11 +17,17 @@
 
 mod executor;
 pub mod register;
+pub mod rs_band_accessors;
+pub mod rs_bandpath;
 pub mod rs_convexhull;
 pub mod rs_envelope;
 pub mod rs_example;
+pub mod rs_georeference;
 pub mod rs_geotransform;
+pub mod rs_numbands;
+pub mod rs_pixel_functions;
 pub mod rs_rastercoordinate;
+pub mod rs_setsrid;
 pub mod rs_size;
 pub mod rs_srid;
 pub mod rs_worldcoordinate;

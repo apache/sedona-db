@@ -14,15 +14,19 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::udf::FFI_ScalarUDF;
-use savvy::{savvy, savvy_err, IntoExtPtrSexp, Result};
+use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
 
-use sedona::{context::SedonaContext, record_batch_reader_provider::RecordBatchReaderProvider};
+use sedona::{
+    context::SedonaContext, context_builder::SedonaContextBuilder,
+    record_batch_reader_provider::RecordBatchReaderProvider,
+};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
 use tokio::runtime::Runtime;
 
@@ -40,12 +44,26 @@ pub struct InternalContext {
 
 #[savvy]
 impl InternalContext {
-    pub fn new() -> Result<Self> {
+    pub fn new(option_keys: savvy::Sexp, option_values: savvy::Sexp) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
 
-        let inner = wait_for_future_captured_r(&runtime, SedonaContext::new_local_interactive())??;
+        let keys = savvy::StringSexp::try_from(option_keys)?;
+        let values = savvy::StringSexp::try_from(option_values)?;
+
+        let options: HashMap<String, String> = keys
+            .iter()
+            .zip(values.iter())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        let inner = if options.is_empty() {
+            wait_for_future_captured_r(&runtime, SedonaContext::new_local_interactive())??
+        } else {
+            let builder = SedonaContextBuilder::from_options(&options)?;
+            wait_for_future_captured_r(&runtime, builder.build())??
+        };
 
         Ok(Self {
             inner: Arc::new(inner),
@@ -121,6 +139,16 @@ impl InternalContext {
     pub fn deregister_table(&self, table_ref: &str) -> savvy::Result<()> {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
+    }
+
+    pub fn list_functions(&self) -> savvy::Result<savvy::Sexp> {
+        let mut fn_names = Vec::new();
+        let state = self.inner.ctx.state();
+        fn_names.extend(state.scalar_functions().keys());
+        fn_names.extend(state.aggregate_functions().keys());
+
+        let fn_names_sexp = OwnedStringSexp::try_from(fn_names.as_slice())?;
+        fn_names_sexp.into()
     }
 
     pub fn scalar_udf_xptr(&self, name: &str) -> savvy::Result<savvy::Sexp> {

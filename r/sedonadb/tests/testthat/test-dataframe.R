@@ -83,6 +83,41 @@ test_that("dataframe rows can be counted", {
   expect_identical(sd_count(df), 1)
 })
 
+test_that("sd_with_params() fills in placeholder values", {
+  df <- sd_sql("SELECT $1 + 1 AS two") |> sd_with_params(1)
+  expect_identical(sd_collect(df), data.frame(two = 2))
+
+  df <- sd_sql("SELECT $x + 1 AS two") |> sd_with_params(x = 1)
+  expect_identical(sd_collect(df), data.frame(two = 2))
+
+  # Check multiple parameters
+  df <- sd_sql("SELECT 'one' || $1 || $2 AS onetwothree") |>
+    sd_with_params("two", "three")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  df <- sd_sql("SELECT 'one' || $x || $y AS onetwothree") |>
+    sd_with_params(x = "two", y = "three")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  # Check order (first name wins, like an R list)
+  df <- sd_sql("SELECT 'one' || $x || $y AS onetwothree") |>
+    sd_with_params(x = "two", y = "three", x = "gazornenplat")
+  expect_identical(sd_collect(df), data.frame(onetwothree = "onetwothree"))
+
+  # Check that an error occurs for missing parameters
+  expect_snapshot_error(
+    sd_sql("SELECT $x + 1 AS two") |> sd_with_params()
+  )
+  expect_snapshot_error(
+    sd_sql("SELECT $1 + 1 AS two") |> sd_with_params()
+  )
+
+  # Check error for mixed named/unnamed
+  expect_snapshot_error(
+    sd_sql("SELECT $x + 1 AS two") |> sd_with_params(x = 1, 2)
+  )
+})
+
 test_that("dataframe can be computed", {
   df <- sd_sql("SELECT 1 as one, 'two' as two")
   df_computed <- sd_compute(df)
@@ -127,7 +162,10 @@ test_that("dataframe can be converted to an array stream", {
 
 test_that("dataframe can be printed", {
   df <- sd_sql("SELECT ST_Point(0, 1) as pt")
-  expect_output(expect_identical(print(df), df), "POINT")
+  expect_snapshot(print(df))
+
+  grouped <- df |> sd_group_by(x = .fns$st_x(pt))
+  expect_snapshot(print(grouped))
 })
 
 test_that("dataframe print uses ASCII when requested", {
@@ -281,9 +319,72 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
   )
 
   # Invalid version should error
-  expect_error(
+  expect_snapshot_error(
     sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "2.0"),
-    "geoparquet_version must be"
+  )
+})
+
+test_that("sd_write_parquet accepts max_row_group_size parameter", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_tiny_groups <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_tiny_groups)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(df, tmp_parquet_file_tiny_groups, max_row_group_size = 100)
+
+  # Check file size (tiny row groups have more metadata)
+  expect_gt(
+    file.size(tmp_parquet_file_tiny_groups),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet accepts compression parameter", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_uncompressed <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_uncompressed)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(df, tmp_parquet_file_uncompressed, compression = "uncompressed")
+
+  expect_gt(
+    file.size(tmp_parquet_file_uncompressed),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet accepts options parameter", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  tmp_parquet_file_uncompressed <- tempfile(fileext = ".parquet")
+  on.exit(unlink(c(tmp_parquet_file, tmp_parquet_file_uncompressed)))
+
+  df <- data.frame(x = 1:1e5)
+  sd_write_parquet(df, tmp_parquet_file)
+  sd_write_parquet(
+    df,
+    tmp_parquet_file_uncompressed,
+    options = list(compression = "uncompressed")
+  )
+
+  expect_gt(
+    file.size(tmp_parquet_file_uncompressed),
+    file.size(tmp_parquet_file)
+  )
+})
+
+test_that("sd_write_parquet() errors for inappropriately sized options", {
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  on.exit(unlink(tmp_parquet_file))
+
+  df <- data.frame(x = 1:10)
+  expect_snapshot_error(
+    sd_write_parquet(df, tmp_parquet_file, options = list(foofy = character(0)))
+  )
+
+  expect_snapshot_error(
+    sd_write_parquet(df, tmp_parquet_file, options = list("option without name"))
   )
 })
 
@@ -352,5 +453,73 @@ test_that("sd_filter() works with dplyr-like filter syntax", {
   expect_identical(
     df_in |> sd_filter(x >= NA_integer_) |> sd_collect(),
     data.frame(x = integer())
+  )
+})
+
+test_that("sd_arrange() works with dplyr-like arrange syntax", {
+  df_in <- data.frame(x = 1:10, y = letters[10:1])
+
+  # Zero conditions
+  expect_identical(
+    df_in |> sd_filter() |> sd_collect(),
+    df_in
+  )
+
+  # One condition
+  expect_identical(
+    df_in |> sd_arrange(x) |> sd_collect(),
+    df_in
+  )
+
+  # Check descending with desc()
+  expect_identical(
+    df_in |> sd_arrange(desc(x)) |> sd_collect(),
+    data.frame(x = 10:1, y = letters[1:10])
+  )
+
+  # Check descending with dplyr::desc()
+  expect_identical(
+    df_in |> sd_arrange(dplyr::desc(x)) |> sd_collect(),
+    data.frame(x = 10:1, y = letters[1:10])
+  )
+})
+
+test_that("sd_group_by() and sd_ungroup() modify .data$group_by", {
+  df_in <- data.frame(letter = letters[1:10], x = 1:10)
+
+  # Check that we can group
+  grouped <- df_in |> sd_group_by(letter, x)
+  expect_identical(names(grouped$group_by), c("letter", "x"))
+
+  # Check that we can ungroup
+  expect_identical(names(sd_ungroup(grouped)$group_by), NULL)
+
+  # Check that we can ungroup using sd_group_by()
+  expect_identical(names(sd_group_by(grouped)$group_by), NULL)
+})
+
+test_that("sd_summarise() + sd_group_by() works as expected", {
+  df_in <- data.frame(letter = c(rep("a", 3), rep("b", 4), rep("c", 3)), x = 1:10)
+
+  expect_identical(
+    df_in |>
+      sd_group_by(letter) |>
+      sd_summarise(x = sum(x), n = n()) |>
+      sd_arrange(letter) |>
+      sd_collect(),
+    data.frame(
+      letter = c("a", "b", "c"),
+      x = c(1 + 2 + 3, 4 + 5 + 6 + 7, 8 + 9 + 10),
+      n = c(3, 4, 3)
+    )
+  )
+})
+
+test_that("sd_summarise() works with dplyr-like summarise syntax", {
+  df_in <- data.frame(x = as.double(1:10))
+
+  expect_identical(
+    df_in |> sd_summarise(x = sum(x)) |> sd_collect(),
+    data.frame(x = sum(as.double(1:10)))
   )
 })

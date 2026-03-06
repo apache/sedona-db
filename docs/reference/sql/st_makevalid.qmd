@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_MakeValid
-description: Given an invalid geometry, create a valid representation of the geometry.
+description: Creates a valid representation of an invalid geometry.
 kernels:
   - returns: geometry
     args: [geometry]

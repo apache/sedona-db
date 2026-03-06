@@ -63,5 +63,9 @@ regex = { workspace = true }
 rustyline = "15.0"
 sedona = { workspace = true, features = ["aws", "gcp", "http", "proj"] }
 sedona-common = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-raster-functions = { workspace = true }
 sedona-tg = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "parking_lot", "signal"] }

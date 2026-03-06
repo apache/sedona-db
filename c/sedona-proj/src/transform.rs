@@ -14,16 +14,20 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
+use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
 use geo_traits::Dimensions;
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
-use sedona_geometry::transform::{CrsEngine, CrsTransform};
-use std::cell::RefCell;
+use sedona_geometry::transform::{CachingCrsEngine, CrsEngine, CrsTransform};
+use std::cell::{OnceCell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::RwLock;
 
 /// Builder for a [ProjCrsEngine]
 ///
@@ -133,12 +137,98 @@ impl ProjCrsEngineBuilder {
     }
 }
 
+/// Configure the global PROJ engine
+///
+/// Provides an opportunity for a calling application to provide the
+/// [ProjCrsEngineBuilder] whose `build()` method will be used to create
+/// a set of thread local [CrsEngine]s which in turn will perform the actual
+/// computations. This provides an opportunity to configure locations of
+/// various files in addition to network CDN access preferences.
+///
+/// This configuration can be set more than once; however, once the engines
+/// are constructed they cannot currently be reconfigured. This code is structured
+/// deliberately to ensure that if an error occurs creating an engine that the
+/// configuration can be set again. Notably, this will occur if this crate was
+/// built without proj-sys the first time somebody calls st_transform.
+pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()> {
+    let mut global_builder = PROJ_ENGINE_BUILDER.try_write().map_err(|_| {
+        DataFusionError::Configuration(
+            "Failed to acquire write lock for global PROJ configuration".to_string(),
+        )
+    })?;
+    global_builder.replace(builder);
+    Ok(())
+}
+
+/// Do something with the global thread-local PROJ engine, creating it if it has not
+/// already been created.
+pub(crate) fn with_global_proj_engine<
+    R,
+    F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>,
+>(
+    mut func: F,
+) -> Result<R> {
+    PROJ_ENGINE.with(|engine_cell| {
+        // If there is already an engine, use it!
+        if let Some(engine) = engine_cell.get() {
+            return func(engine);
+        }
+
+        // Otherwise, attempt to get the builder
+        let maybe_builder = PROJ_ENGINE_BUILDER.read().map_err(|_| {
+            // Highly unlikely (can only occur when a panic occurred during set)
+            sedona_internal_datafusion_err!(
+                "Failed to acquire read lock for global PROJ configuration"
+            )
+        })?;
+
+        // ...and build the engine. This will use a default configuration
+        // (i.e., proj_sys or error) if the builder was never set.
+        let proj_engine = maybe_builder
+            .as_ref()
+            .unwrap_or(&ProjCrsEngineBuilder::default())
+            .build()
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        engine_cell
+            .set(CachingCrsEngine::new(proj_engine))
+            .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
+        func(engine_cell.get().unwrap())
+    })
+}
+
+/// Global builder as a thread-safe RwLock. Normally set once on application start
+/// or never set to use all default settings.
+static PROJ_ENGINE_BUILDER: RwLock<Option<ProjCrsEngineBuilder>> =
+    RwLock::<Option<ProjCrsEngineBuilder>>::new(None);
+
+// CrsTransform backed by PROJ is not thread safe, so we define the cache as thread-local
+// to avoid race conditions.
+thread_local! {
+    static PROJ_ENGINE: OnceCell<CachingCrsEngine<ProjCrsEngine>> = const {
+        OnceCell::<CachingCrsEngine<ProjCrsEngine>>::new()
+    };
+}
+
 /// A [CrsEngine] implemented using PROJ
 ///
 /// Use the [ProjCrsEngineBuilder] to create this object.
 #[derive(Debug)]
 pub struct ProjCrsEngine {
     ctx: Rc<ProjContext>,
+}
+
+impl ProjCrsEngine {
+    /// Resolve the CRS represented by this object to a PROJJSON string
+    pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
+        let source_crs = Proj::try_new(self.ctx.clone(), crs_string).map_err(|e| {
+            exec_datafusion_err!("Failed to create CRS from source '{crs_string}': {e}")
+        })?;
+
+        source_crs
+            .to_projjson()
+            .map_err(|e| exec_datafusion_err!("Failed to export '{crs_string}' as PROJJSON: {e}"))
+    }
 }
 
 impl CrsEngine for ProjCrsEngine {
@@ -255,6 +345,22 @@ mod test {
     use geo_types::Point;
     use sedona_geometry::transform::transform;
     use wkb::reader::read_wkb;
+
+    #[test]
+    fn proj_as_projjson() {
+        let engine = ProjCrsEngineBuilder::default().build().unwrap();
+        let projjson = engine.to_projjson("EPSG:3857").unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+
+        let err = engine.to_projjson("gazornenplat").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Failed to create CRS from source 'gazornenplat': Invalid PROJ string syntax"
+        );
+    }
 
     #[test]
     fn proj_crs_to_crs() {

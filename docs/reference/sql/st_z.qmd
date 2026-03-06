@@ -23,6 +23,10 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns NULL if the geometry has no Z dimension or for non-point geometries.
+
 ## Examples
 
 ```sql

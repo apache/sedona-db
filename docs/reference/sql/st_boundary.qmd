@@ -23,6 +23,10 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+For a polygon, the boundary is the exterior and interior rings; for a linestring it is the endpoints.
+
 ## Examples
 
 ```sql

@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+SEXP savvy_apply_crses_to_sf_stream__ffi(SEXP c_arg__stream_in_xptr,
+                                         SEXP c_arg__geometry_column_names,
+                                         SEXP c_arg__geometry_column_crses,
+                                         SEXP c_arg__stream_out_xptr);
 SEXP savvy_configure_proj_shared__ffi(SEXP c_arg__shared_library_path,
                                       SEXP c_arg__database_path,
                                       SEXP c_arg__search_path);
@@ -30,7 +34,9 @@ SEXP savvy_InternalContext_data_frame_from_table_provider__ffi(
     SEXP self__, SEXP c_arg__provider_xptr);
 SEXP savvy_InternalContext_deregister_table__ffi(SEXP self__,
                                                  SEXP c_arg__table_ref);
-SEXP savvy_InternalContext_new__ffi(void);
+SEXP savvy_InternalContext_list_functions__ffi(SEXP self__);
+SEXP savvy_InternalContext_new__ffi(SEXP c_arg__option_keys,
+                                    SEXP c_arg__option_values);
 SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths);
 SEXP savvy_InternalContext_register_scalar_udf__ffi(
     SEXP self__, SEXP c_arg__scalar_udf_xptr);
@@ -39,6 +45,11 @@ SEXP savvy_InternalContext_sql__ffi(SEXP self__, SEXP c_arg__query);
 SEXP savvy_InternalContext_view__ffi(SEXP self__, SEXP c_arg__table_ref);
 
 // methods and associated functions for InternalDataFrame
+SEXP savvy_InternalDataFrame_aggregate__ffi(SEXP self__,
+                                            SEXP c_arg__group_by_exprs_sexp,
+                                            SEXP c_arg__exprs_sexp);
+SEXP savvy_InternalDataFrame_arrange__ffi(SEXP self__, SEXP c_arg__exprs_sexp,
+                                          SEXP c_arg__is_descending_sexp);
 SEXP savvy_InternalDataFrame_collect__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_compute__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_count__ffi(SEXP self__);
@@ -55,13 +66,15 @@ SEXP savvy_InternalDataFrame_to_arrow_schema__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_to_arrow_stream__ffi(
     SEXP self__, SEXP c_arg__out, SEXP c_arg__requested_schema_xptr);
 SEXP savvy_InternalDataFrame_to_parquet__ffi(
-    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__partition_by,
-    SEXP c_arg__sort_by, SEXP c_arg__single_file_output,
-    SEXP c_arg__overwrite_bbox_columns, SEXP c_arg__geoparquet_version);
+    SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__option_keys,
+    SEXP c_arg__option_values, SEXP c_arg__partition_by, SEXP c_arg__sort_by,
+    SEXP c_arg__single_file_output);
 SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);
+SEXP savvy_InternalDataFrame_with_params__ffi(SEXP self__,
+                                              SEXP c_arg__params_sexp);
 
 // methods and associated functions for SedonaDBExpr
 SEXP savvy_SedonaDBExpr_alias__ffi(SEXP self__, SEXP c_arg__name);
@@ -76,6 +89,9 @@ SEXP savvy_SedonaDBExprFactory_aggregate_function__ffi(SEXP self__,
                                                        SEXP c_arg__args,
                                                        SEXP c_arg__na_rm,
                                                        SEXP c_arg__distinct);
+SEXP savvy_SedonaDBExprFactory_any_function__ffi(SEXP self__, SEXP c_arg__name,
+                                                 SEXP c_arg__args,
+                                                 SEXP c_arg__na_rm);
 SEXP savvy_SedonaDBExprFactory_binary__ffi(SEXP self__, SEXP c_arg__op,
                                            SEXP c_arg__lhs, SEXP c_arg__rhs);
 SEXP savvy_SedonaDBExprFactory_column__ffi(SEXP self__, SEXP c_arg__name,

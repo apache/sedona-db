@@ -18,7 +18,7 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_char, c_int, c_uint};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -84,7 +84,7 @@ pub struct PJ_INFO {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct ProjApi {
     pub proj_area_create: Option<unsafe extern "C" fn() -> *mut PJ_AREA>,
     pub proj_area_destroy: Option<unsafe extern "C" fn(area: *mut PJ_AREA)>,
@@ -145,15 +145,12 @@ pub struct ProjApi {
             coord: *mut PJ_COORD,
         ) -> PJ_COORD,
     >,
+    pub proj_as_projjson: Option<
+        unsafe extern "C" fn(
+            ctx: *mut PJ_CONTEXT,
+            obj: *const PJ,
+            options: *const *const c_char,
+        ) -> *const c_char,
+    >,
     pub release: Option<unsafe extern "C" fn(arg1: *mut ProjApi)>,
-    pub private_data: *mut c_void,
-}
-
-unsafe extern "C" {
-    pub fn proj_dyn_api_init(
-        api: *mut ProjApi,
-        shared_object_path: *const c_char,
-        err_msg: *mut c_char,
-        len: c_int,
-    ) -> c_int;
 }

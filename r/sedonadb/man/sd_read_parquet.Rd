@@ -2,12 +2,17 @@
 % Please edit documentation in R/context.R
 \name{sd_read_parquet}
 \alias{sd_read_parquet}
+\alias{sd_ctx_read_parquet}
 \title{Create a DataFrame from one or more Parquet files}
 \usage{
 sd_read_parquet(path)
+
+sd_ctx_read_parquet(ctx, path)
 }
 \arguments{
 \item{path}{One or more paths or URIs to Parquet files}
+
+\item{ctx}{A SedonaDB context.}
 }
 \value{
 A sedonadb_dataframe

@@ -23,6 +23,10 @@ kernels:
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns the part of geometry A that does not intersect with geometry B.
+
 ## Examples
 
 ```sql

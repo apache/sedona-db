@@ -28,7 +28,6 @@ use crate::{
 };
 use arrow_array::RecordBatch;
 use async_trait::async_trait;
-use datafusion::dataframe::DataFrameWriteOptions;
 use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
     common::plan_err,
@@ -41,12 +40,16 @@ use datafusion::{
     prelude::{DataFrame, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
+use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
 use datafusion_common::not_impl_err;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
 use parking_lot::Mutex;
-use sedona_common::option::add_sedona_option_extension;
+use sedona_common::{
+    option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
+    SedonaOptions,
+};
 use sedona_datasource::provider::external_listing_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::IntoScalarKernelRefs;
@@ -57,9 +60,9 @@ use sedona_geoparquet::{
     provider::{geoparquet_listing_table, GeoParquetReadOptions},
 };
 #[cfg(feature = "pointcloud")]
-use sedona_pointcloud::{
-    laz::{format::LazFormatFactory, options::LasExtraBytes},
-    options::{GeometryEncoding, PointcloudOptions},
+use sedona_pointcloud::las::{
+    format::{Extension, LasFormatFactory},
+    options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
 
 /// Sedona SessionContext wrapper
@@ -100,10 +103,35 @@ impl SedonaContext {
         // and perhaps for all of these initializing them optionally from environment
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
-        let session_config = add_sedona_option_extension(session_config);
+        let mut session_config = add_sedona_option_extension(session_config);
+        let target_partitions = session_config.target_partitions();
+
+        // Always register the PROJ CrsProvider by default (if PROJ is not configured
+        // before it is used an error will be raised).
+        let opts = session_config
+            .options_mut()
+            .extensions
+            .get_mut::<SedonaOptions>()
+            .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
+        opts.crs_provider =
+            CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
+
+        // Set the spilled batch in-memory size threshold to 5% of the per-partition memory limit,
+        // with a minimum of 10MB. Batches larger than this threshold will be broken into smaller batches
+        // before writing to spill files. This is to avoid overshooting memory limit when reading super
+        // large spilled batches.
+        const SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR: usize = 20; // 5% == 1 / 20
+        const MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES: usize = 10 * 1024 * 1024; // 10MB
+        if let MemoryLimit::Finite(memory_limit) = runtime_env.memory_pool.memory_limit() {
+            let per_partition_memory_limit = memory_limit.div_ceil(target_partitions);
+            opts.spatial_join.spilled_batch_in_memory_size_threshold = per_partition_memory_limit
+                .div_ceil(SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR)
+                .max(MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES);
+        }
+
         #[cfg(feature = "pointcloud")]
         let session_config = session_config.with_option_extension(
-            PointcloudOptions::default()
+            LasOptions::default()
                 .with_geometry_encoding(GeometryEncoding::Wkb)
                 .with_las_extra_bytes(LasExtraBytes::Typed),
         );
@@ -117,14 +145,15 @@ impl SedonaContext {
         // Register the spatial join planner extension
         #[cfg(feature = "spatial-join")]
         {
-            state_builder = sedona_spatial_join::register_planner(state_builder);
+            state_builder = sedona_spatial_join::register_planner(state_builder)?;
         }
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
         #[cfg(feature = "pointcloud")]
         {
-            state.register_file_format(Arc::new(LazFormatFactory::new()), false)?;
+            state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Laz)), false)?;
+            state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Las)), false)?;
         }
 
         // Enable dynamic file query (i.e., select * from 'filename')
@@ -557,7 +586,7 @@ mod tests {
     use datafusion::assert_batches_eq;
     use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_schema::{
-        crs::lnglat,
+        crs::{deserialize_crs, lnglat},
         datatypes::{Edges, SedonaType},
         schema::SedonaSchema,
     };
@@ -783,5 +812,78 @@ mod tests {
         )
         .await
         .expect("should succeed because aws and gcs options were stripped");
+    }
+
+    #[tokio::test]
+    async fn format_from_external_table() {
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let example = test_geoparquet("example", "geometry").unwrap();
+        ctx.sql(&format!(
+            r#"
+            CREATE EXTERNAL TABLE test
+            STORED AS PARQUET
+            LOCATION '{example}'
+            OPTIONS ('geometry_columns' '{{"geometry": {{"encoding": "WKB", "crs": "EPSG:3857"}}}}');
+            "#
+        ))
+        .await
+        .unwrap();
+
+        let df = ctx.ctx.table("test").await.unwrap();
+
+        // Check that the logical plan resulting from a read has the correct schema
+        assert_eq!(
+            df.schema().clone().strip_qualifiers().field_names(),
+            ["wkt", "geometry"]
+        );
+
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_configure_spilled_batch_threshold() {
+        use crate::context_builder::SedonaContextBuilder;
+        use sedona_common::option::SedonaOptions;
+
+        // Specify a memory limit (10GB), spilled batch threshold will also be limited,
+        // but no lower than 10MB due to the minimum floor.
+        let memory_limit: usize = 10 * 1024 * 1024 * 1024;
+        let ctx = SedonaContextBuilder::new()
+            .with_memory_limit(memory_limit)
+            .build()
+            .await
+            .unwrap();
+        let state = ctx.ctx.state();
+        let opts = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions not found");
+        assert!(opts.spatial_join.spilled_batch_in_memory_size_threshold >= 10 * 1024 * 1024);
+
+        // Explicitly disable the memory limit; spilled batch threshold should be unlimited
+        // (0 means unlimited)
+        let ctx = SedonaContextBuilder::new()
+            .without_memory_limit()
+            .build()
+            .await
+            .unwrap();
+        let state = ctx.ctx.state();
+        let opts = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions not found");
+        assert_eq!(opts.spatial_join.spilled_batch_in_memory_size_threshold, 0);
     }
 }

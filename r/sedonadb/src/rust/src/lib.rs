@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-// Example functions
 
 use std::ffi::c_void;
 
@@ -26,6 +25,7 @@ use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 
 mod context;
 mod dataframe;
+mod datasource;
 mod error;
 mod expression;
 mod ffi;

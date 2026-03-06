@@ -1,0 +1,44 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_GeoReference
+description: >
+  Returns the georeference metadata of raster as a string in GDAL or ESRI format
+  as commonly seen in a world file. Default is GDAL if not specified. Both formats
+  output six lines: scalex, skewy, skewx, scaley, upperleftx, upperlefty. In GDAL
+  format the upper-left coordinates refer to the corner of the upper-left pixel,
+  while in ESRI format they are shifted to the center of the upper-left pixel.
+kernels:
+  - returns: utf8
+    args: [raster]
+  - returns: utf8
+    args:
+    - raster
+    - name: format
+      type: utf8
+      description: >
+        Output format, either 'GDAL' (default) or 'ESRI'. GDAL reports the
+        upper-left corner of the upper-left pixel; ESRI shifts the coordinates
+        to the center of the upper-left pixel.
+---
+
+## Examples
+
+```sql
+SELECT RS_GeoReference(RS_Example());
+```

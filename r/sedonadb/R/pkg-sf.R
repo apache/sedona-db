@@ -16,6 +16,31 @@
 # under the License.
 
 #' @export
+as_sedonadb_literal.sfc <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.sfg <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.bbox <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.crs <- function(x, ..., type = NULL) {
+  projjson <- wk::wk_crs_projjson(x)
+  if (identical(projjson, NA_character_)) {
+    as_sedonadb_literal(NULL)
+  } else {
+    as_sedonadb_literal(projjson)
+  }
+}
+
+#' @export
 as_sedonadb_dataframe.sf <- function(x, ..., schema = NULL) {
   stream <- nanoarrow::as_nanoarrow_array_stream(
     x,

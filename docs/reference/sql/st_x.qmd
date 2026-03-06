@@ -23,8 +23,13 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns NULL for non-point geometries or NULL input.
+
 ## Examples
 
 ```sql
 SELECT ST_X(ST_Point(-74.0060, 40.7128));
+-- Returns: -74.006
 ```

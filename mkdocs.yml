@@ -37,6 +37,8 @@ nav:
       - Home: index.md
       - Quickstart: quickstart-python.md
       - Programming Guide: programming-guide.md
+      - Configurations:
+        - Memory Management and Spilling: memory-management.md
       - API:
         - Python: reference/python.md
         - SQL: reference/sql/index.md

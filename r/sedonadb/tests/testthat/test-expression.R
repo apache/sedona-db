@@ -58,6 +58,32 @@ test_that("function calls with a translation become function calls", {
   expect_snapshot(sd_eval_expr(quote(base::abs(-1L))))
 })
 
+test_that("function calls explicitly referencing DataFusion functions work", {
+  # Scalar function
+  expect_snapshot(sd_eval_expr(quote(.fns$abs(-1L))))
+
+  # Aggregate function
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L))))
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L, na.rm = TRUE))))
+  expect_snapshot(sd_eval_expr(quote(.fns$sum(-1L, na.rm = FALSE))))
+
+  # Check for a reasonable error if this is not a valid name or we have
+  # named arguments
+  expect_snapshot_error(sd_eval_expr(quote(.fns$absolutely_not(-1L))))
+  expect_snapshot_error(sd_eval_expr(quote(.fns$absolutely_not(x = -1L))))
+})
+
+test_that("function calls referencing SedonaDB SQL functions work", {
+  expect_snapshot(sd_eval_expr(quote(st_point(0, 1))))
+  expect_snapshot(sd_eval_expr(quote(st_envelope_agg(st_point(0, 1)))))
+  expect_snapshot(
+    sd_eval_expr(quote(st_envelope_agg(st_point(0, 1), na.rm = TRUE)))
+  )
+
+  # Check for reasonable errors (named arguments are not allowed)
+  expect_snapshot_error(sd_eval_expr(quote(st_point(1, y = 2))))
+})
+
 test_that("function calls without a translation are evaluated in R", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(function_without_a_translation(1L))))
@@ -77,4 +103,14 @@ test_that("function calls that map to binary expressions are translated", {
 test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
+})
+
+test_that("unwrap_desc() can unwrap calls to desc()", {
+  expect_identical(
+    unwrap_desc(list(quote(desc(a)), quote(dplyr::desc(b)), quote(c))),
+    list(
+      inner_exprs = list(quote(a), quote(b), quote(c)),
+      is_descending = c(TRUE, TRUE, FALSE)
+    )
+  )
 })

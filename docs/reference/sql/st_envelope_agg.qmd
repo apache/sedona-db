@@ -23,8 +23,17 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+An aggregate function that computes the collective bounding box (envelope) of all geometries in a group.
+
 ## Examples
 
 ```sql
-SELECT ST_Envelope_Agg(ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'))
+SELECT ST_Envelope_Agg(geom) FROM (
+    VALUES
+        (ST_Point(0, 0)),
+        (ST_Point(5, 5)),
+        (ST_Point(10, 2))
+) AS t(geom);
 ```

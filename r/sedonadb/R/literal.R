@@ -38,6 +38,14 @@ as_sedonadb_literal <- function(x, ..., type = NULL, factory = NULL) {
 }
 
 #' @export
+as_sedonadb_literal.SedonaDBExpr <- function(x, ..., type = NULL) {
+  # Technically this could be a different type of expression but for
+  # now we just need as_sedonadb_literal(as_sedonadb_literal(...)) not
+  # to error.
+  x
+}
+
+#' @export
 as_sedonadb_literal.NULL <- function(x, ..., type = NULL) {
   na <- nanoarrow::nanoarrow_array_init(nanoarrow::na_na()) |>
     nanoarrow::nanoarrow_array_modify(list(length = 1L, null_count = 1L))
@@ -65,8 +73,43 @@ as_sedonadb_literal.raw <- function(x, ..., type = NULL) {
 }
 
 #' @export
+as_sedonadb_literal.data.frame <- function(x, ..., type = NULL) {
+  if (nrow(x) != 1 || ncol(x) != 1) {
+    stop(
+      sprintf(
+        "Can't convert data.frame with dimensions %d x %d to SedonaDB literal",
+        nrow(x),
+        ncol(x)
+      )
+    )
+  }
+
+  as_sedonadb_literal(x[[1]], type = type)
+}
+
+#' @export
 as_sedonadb_literal.wk_wkb <- function(x, ..., type = NULL) {
   as_sedonadb_literal_from_nanoarrow(x, ..., type = type)
+}
+
+#' @export
+as_sedonadb_literal.wk_wkt <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.wk_xy <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.wk_rct <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
+}
+
+#' @export
+as_sedonadb_literal.wk_crc <- function(x, ..., type = NULL) {
+  as_sedonadb_literal(wk::as_wkb(x), type = type)
 }
 
 as_sedonadb_literal_from_nanoarrow <- function(x, ..., type = NULL) {

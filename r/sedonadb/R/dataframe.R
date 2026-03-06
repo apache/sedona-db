@@ -18,6 +18,8 @@
 #' Convert an object to a DataFrame
 #'
 #' @param x An object to convert
+#' @param ctx A SedonaDB context. This should always be passed to inner calls
+#'   to SedonaDB functions; NULL implies the global context.
 #' @param ... Extra arguments passed to/from methods
 #' @param schema The requested schema
 #'
@@ -27,29 +29,37 @@
 #' @examples
 #' as_sedonadb_dataframe(data.frame(x = 1:3))
 #'
-as_sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   UseMethod("as_sedonadb_dataframe")
 }
 
 #' @export
-as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.sedonadb_dataframe <- function(x, ..., schema = NULL, ctx = NULL) {
   # In the future, schema can be handled with a cast
   x
 }
 
 #' @export
-as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.data.frame <- function(x, ..., schema = NULL, ctx = NULL) {
   array <- nanoarrow::as_nanoarrow_array(x, schema = schema)
   stream <- nanoarrow::basic_array_stream(list(array))
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
   new_sedonadb_dataframe(ctx, df)
 }
 
 #' @export
-as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL) {
+as_sedonadb_dataframe.nanoarrow_array <- function(x, ..., schema = NULL, ctx = NULL) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = TRUE)
 
   # Verify schema is handled
@@ -61,10 +71,15 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
   x,
   ...,
   schema = NULL,
-  lazy = TRUE
+  lazy = TRUE,
+  ctx = NULL
 ) {
   stream <- nanoarrow::as_nanoarrow_array_stream(x, schema = schema)
-  ctx <- ctx()
+
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_array_stream(stream, collect_now = !lazy)
 
   # Verify schema is handled
@@ -72,8 +87,16 @@ as_sedonadb_dataframe.nanoarrow_array_stream <- function(
 }
 
 #' @export
-as_sedonadb_dataframe.datafusion_table_provider <- function(x, ..., schema = NULL) {
-  ctx <- ctx()
+as_sedonadb_dataframe.datafusion_table_provider <- function(
+  x,
+  ...,
+  schema = NULL,
+  ctx = NULL
+) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
   df <- ctx$data_frame_from_table_provider(x)
   new_sedonadb_dataframe(ctx, df)
 }
@@ -93,6 +116,31 @@ sd_count <- function(.data) {
   .data$df$count()
 }
 
+#' Fill in placeholders
+#'
+#' This is a slightly more verbose form of [sd_sql()] with `params` that is
+#' useful if a data frame is to be repeatedly queried.
+#'
+#' @inheritParams sd_count
+#' @param ... Named or unnamed parameters that will be coerced to literals
+#'   with [as_sedonadb_literal()].
+#'
+#' @returns A sedonadb_dataframe with the provided parameters filled into the query
+#' @export
+#'
+#' @examples
+#' sd_sql("SELECT ST_Point($1, $2) as pt") |>
+#'   sd_with_params(11, 12)
+#' sd_sql("SELECT ST_Point($x, $y) as pt") |>
+#'   sd_with_params(x = 11, y = 12)
+#'
+sd_with_params <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  params <- lapply(list(...), as_sedonadb_literal)
+  df <- .data$df$with_params(params)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
 #' Register a DataFrame as a named view
 #'
 #' This is useful for creating a view that can be referenced in a SQL
@@ -109,8 +157,12 @@ sd_count <- function(.data) {
 #' sd_sql("SELECT 1 as one") |> sd_to_view("foofy")
 #' sd_sql("SELECT * FROM foofy")
 #'
-sd_to_view <- function(.data, table_ref, overwrite = FALSE) {
-  .data <- as_sedonadb_dataframe(.data)
+sd_to_view <- function(.data, table_ref, overwrite = FALSE, ctx = NULL) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
+  .data <- as_sedonadb_dataframe(.data, ctx = ctx)
   .data$df$to_view(.data$ctx, table_ref, overwrite)
   invisible(.data)
 }
@@ -188,6 +240,27 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
     ascii = ascii
   )
 
+  schema <- nanoarrow::infer_nanoarrow_schema(.data)
+  if (is.null(.data$group_by)) {
+    grouped_label <- ""
+    grouped_vars <- ""
+  } else {
+    grouped_label <- "grouped "
+    grouped_vars <- sprintf(
+      " | [%s]",
+      paste0("`", names(.data$group_by), "`", collapse = ", ")
+    )
+  }
+
+  cat(
+    sprintf(
+      "<%ssedonab_dataframe: NA x %d%s>\n",
+      grouped_label,
+      length(schema$children),
+      grouped_vars
+    )
+  )
+
   cat(content)
   cat(paste0("Preview of up to ", n, " row(s)\n"))
 
@@ -207,6 +280,10 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 #'
 sd_select <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_select() does not support grouped input")
+  }
+
   schema <- nanoarrow::infer_nanoarrow_schema(.data)
   ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
   loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
@@ -231,10 +308,14 @@ sd_select <- function(.data, ...) {
 #'
 sd_transmute <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_transmute() does not support grouped input")
+  }
+
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
@@ -266,17 +347,153 @@ sd_transmute <- function(.data, ...) {
 #'
 sd_filter <- function(.data, ...) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_filter() does not support grouped input")
+  }
+
   rlang::check_dots_unnamed()
 
   expr_quos <- rlang::enquos(...)
   env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
   sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
   df <- .data$df$filter(sd_exprs)
   new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' Order rows of a SedonaDB data frame using column values
+#'
+#' @inheritParams sd_count
+#' @param ... Unnamed expressions for arrange expressions. These are evaluated
+#'   in the same way as [dplyr::arrange()] except does not support extra
+#'   dplyr features such as `across()`, `.by_group`, or `.locale`.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = c(10:1, NA)) |> sd_arrange(x)
+#' data.frame(x = c(1:10, NA)) |> sd_arrange(desc(x))
+#'
+sd_arrange <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_arrange() does not support grouped input")
+  }
+
+  rlang::check_dots_unnamed()
+
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
+  r_exprs <- expr_quos |> lapply(rlang::quo_get_expr)
+
+  # Specifically for sd_arrange(), we need to unwrap desc() calls
+  unwrapped <- unwrap_desc(r_exprs)
+
+  sd_exprs <- lapply(
+    unwrapped$inner_exprs,
+    sd_eval_expr,
+    expr_ctx = expr_ctx,
+    env = env
+  )
+
+  df <- .data$df$arrange(sd_exprs, unwrapped$is_descending)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' Group SedonaDB DataFrames by one or more expressions
+#'
+#' Note that unlike [dplyr::group_by()], these groups are dropped after
+#' any transformations.
+#'
+#' @inheritParams sd_count
+#' @param ... Named expressions whose unique combination will be used as
+#'   groups to potentially compute a future aggregate expression. These are
+#'   evaluated in the same way as [dplyr::group_by()] except `.add` nor
+#'   `.drop` are supported.
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(letter = c(rep("a", 3), rep("b", 4), rep("c", 3)), x = 1:10) |>
+#'   sd_group_by(letter) |>
+#'   sd_summarise(x = sum(x))
+#'
+sd_group_by <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
+  r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  # Ensure inputs are given aliases to account for the expected column name
+  exprs_names <- names(r_exprs)
+  for (i in seq_along(sd_exprs)) {
+    name <- exprs_names[i]
+    if (!is.na(name) && name != "") {
+      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+    }
+  }
+
+  new_sedonadb_dataframe(.data$ctx, .data$df, group_by = sd_exprs)
+}
+
+#' @rdname sd_group_by
+#' @export
+sd_ungroup <- function(.data) {
+  .data <- as_sedonadb_dataframe(.data)
+  .data$group_by <- NULL
+  .data
+}
+
+#' Aggregate SedonaDB DataFrames to a single row per group
+#'
+#' @inheritParams sd_count
+#' @param ... Aggregate expressions. These are evaluated in the same way as
+#'   [dplyr::summarise()] except the outer expression must be an aggregate
+#'   expression (e.g., `sum(x) + 1` is not currently possible).
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' data.frame(x = c(10:1, NA)) |> sd_summarise(x = sum(x, na.rm = TRUE))
+#'
+sd_summarise <- function(.data, ...) {
+  .data <- as_sedonadb_dataframe(.data)
+
+  expr_quos <- rlang::enquos(...)
+  env <- parent.frame()
+
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
+  r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+
+  # Ensure inputs are given aliases to account for the expected column name
+  exprs_names <- names(r_exprs)
+  for (i in seq_along(sd_exprs)) {
+    name <- exprs_names[i]
+    if (!is.na(name) && name != "") {
+      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+    }
+  }
+
+  df <- .data$df$aggregate(as.list(.data$group_by), sd_exprs)
+  new_sedonadb_dataframe(.data$ctx, df)
+}
+
+#' @rdname sd_summarise
+#' @export
+sd_summarize <- function(.data, ...) {
+  sd_summarise(.data, ...)
 }
 
 #' Write DataFrame to (Geo)Parquet files
@@ -288,6 +505,12 @@ sd_filter <- function(.data, ...) {
 #'
 #' @inheritParams sd_count
 #' @param path A filename or directory to which parquet file(s) should be written
+#' @param options A named list of key/value options to be used when constructing
+#'   a parquet writer. Common options are exposed as other arguments to
+#'   `sd_write_parquet()`; however, this argument allows setting any DataFusion
+#'   Parquet writer option. If an option is specified here and by another
+#'   argument to this function, the value specified as an explicit argument
+#'   takes precedence.
 #' @param partition_by A character vector of column names to partition by. If non-empty,
 #'   applies hive-style partitioning to the output
 #' @param sort_by A character vector of column names to sort by. Currently only
@@ -310,6 +533,11 @@ sd_filter <- function(.data, ...) {
 #'   that already exist in the input. This is useful in a read -> modify
 #'   -> write scenario to ensure these columns are up-to-date. If FALSE
 #'   (the default), an error will be raised if a bbox column already exists
+#' @param max_row_group_size Target maximum number of rows in each row group.
+#'   Defaults to the global configuration value (1M rows).
+#' @param compression Sets the Parquet compression codec. Valid values are:
+#'   uncompressed, snappy, gzip(level), brotli(level), lz4, zstd(level), and
+#'   lz4_raw. Defaults to the global configuration value (zstd(3)).
 #'
 #' @returns The input, invisibly
 #' @export
@@ -326,42 +554,83 @@ sd_filter <- function(.data, ...) {
 sd_write_parquet <- function(
   .data,
   path,
+  options = NULL,
   partition_by = character(0),
   sort_by = character(0),
   single_file_output = NULL,
   geoparquet_version = "1.0",
-  overwrite_bbox_columns = FALSE
+  overwrite_bbox_columns = FALSE,
+  max_row_group_size = NULL,
+  compression = NULL
 ) {
   .data <- as_sedonadb_dataframe(.data)
+  if (!is.null(.data$group_by)) {
+    stop("sd_write_parquet() does not support grouped input")
+  }
 
   # Determine single_file_output default based on path and partition_by
   if (is.null(single_file_output)) {
     single_file_output <- length(partition_by) == 0 && grepl("\\.parquet$", path)
   }
 
-  # Validate geoparquet_version
+  # Build the options list: start with user-provided options, then override
+  # with explicitly-specified arguments
+  if (is.null(options)) {
+    options <- list()
+  } else {
+    options <- as.list(options)
+  }
+
+  if (!is.null(max_row_group_size)) {
+    options[["max_row_group_size"]] <- as.character(as.integer(max_row_group_size))
+  }
+
+  if (!is.null(compression)) {
+    options[["compression"]] <- as.character(compression)
+  }
+
+  # Validate and apply geoparquet_version
   if (!is.null(geoparquet_version)) {
-    if (!geoparquet_version %in% c("1.0", "1.1")) {
-      stop("geoparquet_version must be '1.0' or '1.1'")
-    }
+    options[["geoparquet_version"]] <- as.character(geoparquet_version)
+  }
+
+  options[["overwrite_bbox_columns"]] <- tolower(as.character(overwrite_bbox_columns))
+
+  # Convert options to parallel character vectors for Rust
+  option_keys <- names(options)
+  option_values <- as.character(unlist(options, use.names = FALSE))
+
+  if (is.null(option_keys) || any(is.na(option_keys)) || any(option_keys == "")) {
+    stop("All option values must be named")
+  }
+
+  if (length(option_keys) != length(option_values)) {
+    stop("All option values must be length 1")
   }
 
   # Call the underlying Rust method
   .data$df$to_parquet(
     ctx = .data$ctx,
     path = path,
+    option_keys = option_keys,
+    option_values = option_values,
     partition_by = partition_by,
     sort_by = sort_by,
-    single_file_output = single_file_output,
-    overwrite_bbox_columns = overwrite_bbox_columns,
-    geoparquet_version = geoparquet_version
+    single_file_output = single_file_output
   )
 
   invisible(.data)
 }
 
-new_sedonadb_dataframe <- function(ctx, internal_df) {
-  structure(list(ctx = ctx, df = internal_df), class = "sedonadb_dataframe")
+new_sedonadb_dataframe <- function(ctx, internal_df, ..., group_by = NULL) {
+  if (length(group_by) == 0) {
+    group_by <- NULL
+  }
+
+  structure(
+    list(ctx = ctx, df = internal_df, group_by = group_by),
+    class = "sedonadb_dataframe"
+  )
 }
 
 #' @importFrom utils head

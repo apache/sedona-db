@@ -263,7 +263,8 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
             let mut geoparquet_options =
                 TableGeoParquetOptions::from(parquet_format.options().clone());
             if let Some(geometry_columns) = &self.geometry_columns {
-                geoparquet_options.geometry_columns = Some(geometry_columns.clone());
+                geoparquet_options.geometry_columns =
+                    crate::options::GeometryColumns::from_map(geometry_columns.clone());
             }
             geoparquet_options.validate = self.validate;
             options.format = Arc::new(GeoParquetFormat::new(geoparquet_options));

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Intersects
-description: Return true if geomA intersects geomB.
+description: Returns true if geomA intersects geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
@@ -26,5 +26,8 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_Intersects(ST_Point(0.25, 0.25), ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')) AS val;
+SELECT ST_Intersects(
+    ST_Point(0.25, 0.25),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
+) AS val;
 ```

@@ -17,14 +17,21 @@
 # under the License.
 
 title: ST_Overlaps
-description: Return true if A overlaps B.
+description: Returns true if A overlaps B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if the two geometries share space and have the same dimension, but are not completely contained by each other.
+
 ## Examples
 
 ```sql
-SELECT ST_Overlaps(ST_GeomFromWKT('POLYGON((2.5 2.5, 2.5 4.5, 4.5 4.5, 4.5 2.5, 2.5 2.5))'), ST_GeomFromWKT('POLYGON((4 4, 4 6, 6 6, 6 4, 4 4))'));
+SELECT ST_Overlaps(
+    ST_GeomFromWKT('POLYGON((2.5 2.5, 2.5 4.5, 4.5 4.5, 4.5 2.5, 2.5 2.5))'),
+    ST_GeomFromWKT('POLYGON((4 4, 4 6, 6 6, 6 4, 4 4))')
+);
 ```

@@ -23,7 +23,16 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Extracts the M (measure) coordinate from a Point geometry or geography. Returns
+NULL if the geometry has no M dimension or for non-point geometries.
+
 ## Examples
+
+```sql
+SELECT ST_M(ST_PointM(1.0, 2.0, 42.0));
+```
 
 ```sql
 SELECT ST_M(ST_Point(1.0, 2.0));

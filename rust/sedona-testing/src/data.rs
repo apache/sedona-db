@@ -125,12 +125,36 @@ pub fn sedona_testing_dir() -> Result<String> {
     )
 }
 
+/// Get the path to a raster test file from the sedona-testing data directory.
+pub fn test_raster(name: &str) -> Result<String> {
+    let base = sedona_testing_dir()?;
+    let path = format!("{}/data/raster/{}", base, name);
+    if fs::exists(&path)? {
+        Ok(path)
+    } else {
+        sedona_internal_err!(
+            "sedona-testing raster file '{}' not found at '{}', \
+             run submodules/download-assets.py or check the file name",
+            name,
+            path
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::sync::Mutex;
+
+    // These tests mutate global states including environment variables so they must
+    // run serially. The SERIAL_TEST mutex ensures that only one test executes at a time,
+    // preventing race conditions when modifying and restoring environment variables.
+    static SERIAL_TEST: Mutex<()> = Mutex::new(());
 
     #[test]
     fn example_files() {
+        let _guard = SERIAL_TEST.lock().unwrap();
+
         // By default this should resolve, since we are in a test!
         assert!(geoarrow_data_dir().is_ok());
         assert!(test_geoparquet("natural-earth", "countries").is_ok());
@@ -157,6 +181,8 @@ mod test {
 
     #[test]
     fn sedona_testing_dir_resolves() {
+        let _guard = SERIAL_TEST.lock().unwrap();
+
         assert!(sedona_testing_dir().is_ok());
 
         env::set_var("SEDONA_TESTING_DIR", "this_directory_does_not_exist");
@@ -171,5 +197,21 @@ mod test {
         let maybe_dir = sedona_testing_dir();
         env::remove_var("SEDONA_TESTING_DIR");
         assert!(maybe_dir.is_ok());
+    }
+
+    #[test]
+    fn test_raster_resolves() {
+        let _guard = SERIAL_TEST.lock().unwrap();
+
+        // Test that test_raster can find existing raster files
+        let path = test_raster("test4.tiff");
+        assert!(path.is_ok(), "Failed to find test4.tiff: {:?}", path.err());
+        let path_str = path.unwrap();
+        assert!(path_str.ends_with("test4.tiff"));
+        assert!(fs::exists(&path_str).unwrap());
+
+        // Test that non-existent files return an error
+        let err = test_raster("nonexistent.tiff");
+        assert!(err.is_err());
     }
 }

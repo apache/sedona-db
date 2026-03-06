@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
@@ -219,7 +220,9 @@ class DataFrame:
         Args:
             requested_schema: A PyCapsule representing the desired output schema.
         """
-        return self._impl.__arrow_c_stream__(requested_schema=requested_schema)
+        return self._impl.to_stream(self._ctx, simplify=False).__arrow_c_stream__(
+            requested_schema=requested_schema
+        )
 
     def to_view(self, name: str, overwrite: bool = False):
         """Create a view based on the query represented by this object
@@ -338,11 +341,14 @@ class DataFrame:
         self,
         path: Union[str, Path],
         *,
+        options: Optional[Dict[str, Any]] = None,
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1"] = "1.0",
-        overwrite_bbox_columns: bool = False,
+        geoparquet_version: Literal["1.0", "1.1", None] = None,
+        overwrite_bbox_columns: Optional[bool] = None,
+        max_row_group_size: Optional[int] = None,
+        compression: Optional[str] = None,
     ):
         """Write this DataFrame to one or more (Geo)Parquet files
 
@@ -353,6 +359,11 @@ class DataFrame:
 
         Args:
             path: A filename or directory to which parquet file(s) should be written.
+            options: Key/value options to be used when constructing a parquet writer.
+                Common options are exposed as other arguments to `to_parquet()`; however,
+                this argument allows setting any DataFusion Parquet writer option. If
+                an option is specified here and by an argument to this function, the
+                value specified as a keyword argument takes precedence.
             partition_by: A vector of column names to partition by. If non-empty,
                 applies hive-style partitioning to the output.
             sort_by: A vector of column names to sort by. Currently only ascending
@@ -376,6 +387,11 @@ class DataFrame:
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
                 (the default), an error will be raised if a bbox column already exists.
+            max_row_group_size: Target maximum number of rows in each row group. Defaults
+                to the global configuration value (1M rows).
+            compression: Sets the Parquet compression codec. Valid values are: uncompressed,
+                snappy, gzip(level), brotli(level), lz4, zstd(level), and lz4_raw. Defaults
+                to the global configuration value (zstd(3)).
 
         Examples:
 
@@ -388,6 +404,23 @@ class DataFrame:
         """
 
         path = Path(path)
+
+        if options is not None:
+            options = {k: str(v) for k, v in options.items()}
+        else:
+            options = {}
+
+        if max_row_group_size is not None:
+            options["max_row_group_size"] = str(max_row_group_size)
+
+        if compression is not None:
+            options["compression"] = str(compression)
+
+        if geoparquet_version is not None:
+            options["geoparquet_version"] = str(geoparquet_version)
+
+        if overwrite_bbox_columns is not None:
+            options["overwrite_bbox_columns"] = str(overwrite_bbox_columns)
 
         if single_file_output is None:
             single_file_output = partition_by is None and str(path).endswith(".parquet")
@@ -409,11 +442,102 @@ class DataFrame:
         self._impl.to_parquet(
             self._ctx,
             str(path),
+            options,
             partition_by,
             sort_by,
             single_file_output,
-            geoparquet_version,
-            overwrite_bbox_columns,
+        )
+
+    def to_pyogrio(
+        self,
+        path: Union[str, Path, io.BytesIO],
+        *,
+        driver: Optional[str] = None,
+        geometry_type: Optional[str] = None,
+        geometry_name: Optional[str] = None,
+        crs: Optional[str] = None,
+        append: bool = False,
+        **kwargs: Dict[str, Any],
+    ):
+        """Write using GDAL/OGR via pyogrio
+
+        Writes this DataFrame batchwise to a file using GDAL/OGR using the
+        implementation provided by the pyogrio package. This is the same backend
+        used by GeoPandas and this function is a light wrapper around
+        `pyogrio.raw.write_arrow()` that fills in default values using
+        information available to the DataFrame (e.g., geometry column and CRS).
+
+        Args:
+            path: An output path or `BytesIO` output buffer.
+            driver: An explicit GDAL OGR driver. Usually inferred from `path` but
+                must be provided if path is a `BytesIO`. Not all drivers support
+                writing to `BytesIO`.
+            geometry_type: A GeoJSON-style geometry type or `None` to provide an
+                inferred default value (which may be `"Unknown"`). This is required
+                to write some types of output (e.g. Shapefiles) and may provide
+                files that are more efficiently read.
+            geometry_name: The column to write as the primary geometry column. If
+                `None`, the name of the geometry column will be inferred.
+            crs: An optional string overriding the CRS of `geometry_name`.
+            append: Use `True` to append to the file for drivers that support
+                appending.
+            kwargs: Extra arguments passed to `pyogrio.raw.write_arrow()`.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> sd.sql("SELECT ST_Point(0, 1, 3857)").to_pyogrio(f"{td.name}/tmp.fgb")
+            >>> sd.read_pyogrio(f"{td.name}/tmp.fgb").show()
+            ┌──────────────┐
+            │ wkb_geometry │
+            │   geometry   │
+            ╞══════════════╡
+            │ POINT(0 1)   │
+            └──────────────┘
+        """
+        if geometry_name is None:
+            geometry_name = self._impl.primary_geometry_column()
+
+        if crs is None and geometry_name is not None:
+            inferred_crs = self.schema.field(geometry_name).type.crs
+            crs = None if inferred_crs is None else inferred_crs.to_json()
+
+        if geometry_type is None:
+            # This is required for pyogrio.raw.write_arrow(). We could try harder
+            # to infer this because some drivers need this information.
+            geometry_type = "Unknown"
+
+        if isinstance(path, Path):
+            path = str(path)
+
+        if isinstance(path, io.BytesIO) and driver is None:
+            raise ValueError("driver must be provided when path is a BytesIO")
+
+        # There may be more endings worth special-casing here but zipped FlatGeoBuf
+        # is particularly useful and isn't automatically recognized
+        if driver is None and isinstance(path, str) and path.endswith(".fgb.zip"):
+            driver = "FlatGeoBuf"
+
+        # GDAL does not support newer Arrow types like string views util 3.14, so we export a
+        # reader with simpler types here
+        self_simplified = self._impl.to_stream(self._ctx, simplify=True)
+
+        # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/raw.py#L755-L897
+        # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/_io.pyx#L2858-L2980
+        import pyogrio.raw
+
+        pyogrio.raw.write_arrow(
+            self_simplified,
+            path,
+            driver=driver,
+            geometry_type=geometry_type,
+            geometry_name=geometry_name,
+            crs=crs,
+            append=append,
+            **kwargs,
         )
 
     def show(
@@ -497,6 +621,11 @@ class DataFrame:
             return self._impl.show(self._ctx, 10, width, ascii=False).strip()
         else:
             return super().__repr__()
+
+    def _simplify_storage_types(self):
+        return DataFrame(
+            self._ctx, self._impl.simplify_storage_types(self._ctx), self._options
+        )
 
     def _out_width(self, width=None) -> int:
         if width is None:

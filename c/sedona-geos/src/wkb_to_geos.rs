@@ -18,7 +18,7 @@ use std::cell::RefCell;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use geo_traits::*;
-use geos::GResult;
+use geos::{CoordType, GResult};
 use wkb::{reader::*, Endianness};
 
 /// A factory for converting WKB to GEOS geometries.
@@ -215,11 +215,11 @@ fn create_coord_sequence_from_raw_parts(
     num_coords: usize,
     scratch: &mut Vec<f64>,
 ) -> GResult<geos::CoordSeq> {
-    let (has_z, has_m, dim_size) = match dim {
-        Dimension::Xy => (false, false, 2),
-        Dimension::Xyz => (true, false, 3),
-        Dimension::Xym => (false, true, 3),
-        Dimension::Xyzm => (true, true, 4),
+    let (coord_type, dim_size) = match dim {
+        Dimension::Xy => (CoordType::XY, 2),
+        Dimension::Xyz => (CoordType::XYZ, 3),
+        Dimension::Xym => (CoordType::XYM, 3),
+        Dimension::Xyzm => (CoordType::XYZM, 4),
     };
     let num_ordinates = dim_size * num_coords;
 
@@ -233,7 +233,7 @@ fn create_coord_sequence_from_raw_parts(
         {
             let coords_f64 =
                 unsafe { &*core::ptr::slice_from_raw_parts(ptr as *const f64, num_ordinates) };
-            geos::CoordSeq::new_from_buffer(coords_f64, num_coords, has_z, has_m)
+            geos::CoordSeq::new_from_buffer(coords_f64, num_coords, coord_type)
         }
 
         // On platforms without unaligned memory access support, we need to copy the data to the
@@ -249,7 +249,7 @@ fn create_coord_sequence_from_raw_parts(
                     scratch.as_mut_ptr() as *mut u8,
                     num_ordinates * std::mem::size_of::<f64>(),
                 );
-                geos::CoordSeq::new_from_buffer(scratch.as_slice(), num_coords, has_z, has_m)
+                geos::CoordSeq::new_from_buffer(scratch.as_slice(), num_coords, coord_type)
             }
         }
     } else {
@@ -262,7 +262,7 @@ fn create_coord_sequence_from_raw_parts(
                 save_f64_to_scratch::<LittleEndian>(scratch, buf, num_ordinates);
             }
         }
-        geos::CoordSeq::new_from_buffer(scratch.as_slice(), num_coords, has_z, has_m)
+        geos::CoordSeq::new_from_buffer(scratch.as_slice(), num_coords, coord_type)
     }
 }
 

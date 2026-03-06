@@ -55,6 +55,22 @@ NULL
 }
 
 
+`apply_crses_to_sf_stream` <- function(
+  `stream_in_xptr`,
+  `geometry_column_names`,
+  `geometry_column_crses`,
+  `stream_out_xptr`
+) {
+  invisible(.Call(
+    savvy_apply_crses_to_sf_stream__impl,
+    `stream_in_xptr`,
+    `geometry_column_names`,
+    `geometry_column_crses`,
+    `stream_out_xptr`
+  ))
+}
+
+
 `configure_proj_shared` <- function(
   `shared_library_path` = NULL,
   `database_path` = NULL,
@@ -104,6 +120,12 @@ NULL
 `InternalContext_deregister_table` <- function(self) {
   function(`table_ref`) {
     invisible(.Call(savvy_InternalContext_deregister_table__impl, `self`, `table_ref`))
+  }
+}
+
+`InternalContext_list_functions` <- function(self) {
+  function() {
+    .Call(savvy_InternalContext_list_functions__impl, `self`)
   }
 }
 
@@ -157,6 +179,7 @@ NULL
     ptr
   )
   e$`deregister_table` <- `InternalContext_deregister_table`(ptr)
+  e$`list_functions` <- `InternalContext_list_functions`(ptr)
   e$`read_parquet` <- `InternalContext_read_parquet`(ptr)
   e$`register_scalar_udf` <- `InternalContext_register_scalar_udf`(ptr)
   e$`scalar_udf_xptr` <- `InternalContext_scalar_udf_xptr`(ptr)
@@ -172,8 +195,12 @@ NULL
 
 ### associated functions for InternalContext
 
-`InternalContext`$`new` <- function() {
-  .savvy_wrap_InternalContext(.Call(savvy_InternalContext_new__impl))
+`InternalContext`$`new` <- function(`option_keys`, `option_values`) {
+  .savvy_wrap_InternalContext(.Call(
+    savvy_InternalContext_new__impl,
+    `option_keys`,
+    `option_values`
+  ))
 }
 
 
@@ -188,6 +215,28 @@ class(`InternalContext`) <- c(
 }
 
 ### wrapper functions for InternalDataFrame
+
+`InternalDataFrame_aggregate` <- function(self) {
+  function(`group_by_exprs_sexp`, `exprs_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_aggregate__impl,
+      `self`,
+      `group_by_exprs_sexp`,
+      `exprs_sexp`
+    ))
+  }
+}
+
+`InternalDataFrame_arrange` <- function(self) {
+  function(`exprs_sexp`, `is_descending_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_arrange__impl,
+      `self`,
+      `exprs_sexp`,
+      `is_descending_sexp`
+    ))
+  }
+}
 
 `InternalDataFrame_collect` <- function(self) {
   function(`out`) {
@@ -290,11 +339,11 @@ class(`InternalContext`) <- c(
   function(
     `ctx`,
     `path`,
+    `option_keys`,
+    `option_values`,
     `partition_by`,
     `sort_by`,
-    `single_file_output`,
-    `overwrite_bbox_columns`,
-    `geoparquet_version` = NULL
+    `single_file_output`
   ) {
     `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
     invisible(.Call(
@@ -302,11 +351,11 @@ class(`InternalContext`) <- c(
       `self`,
       `ctx`,
       `path`,
+      `option_keys`,
+      `option_values`,
       `partition_by`,
       `sort_by`,
-      `single_file_output`,
-      `overwrite_bbox_columns`,
-      `geoparquet_version`
+      `single_file_output`
     ))
   }
 }
@@ -330,9 +379,21 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_with_params` <- function(self) {
+  function(`params_sexp`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_with_params__impl,
+      `self`,
+      `params_sexp`
+    ))
+  }
+}
+
 `.savvy_wrap_InternalDataFrame` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
+  e$`aggregate` <- `InternalDataFrame_aggregate`(ptr)
+  e$`arrange` <- `InternalDataFrame_arrange`(ptr)
   e$`collect` <- `InternalDataFrame_collect`(ptr)
   e$`compute` <- `InternalDataFrame_compute`(ptr)
   e$`count` <- `InternalDataFrame_count`(ptr)
@@ -349,6 +410,7 @@ class(`InternalContext`) <- c(
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
+  e$`with_params` <- `InternalDataFrame_with_params`(ptr)
 
   class(e) <- c(
     "sedonadb::InternalDataFrame",
@@ -445,6 +507,18 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
   }
 }
 
+`SedonaDBExprFactory_any_function` <- function(self) {
+  function(`name`, `args`, `na_rm` = NULL) {
+    .savvy_wrap_SedonaDBExpr(.Call(
+      savvy_SedonaDBExprFactory_any_function__impl,
+      `self`,
+      `name`,
+      `args`,
+      `na_rm`
+    ))
+  }
+}
+
 `SedonaDBExprFactory_binary` <- function(self) {
   function(`op`, `lhs`, `rhs`) {
     `lhs` <- .savvy_extract_ptr(`lhs`, "sedonadb::SedonaDBExpr")
@@ -485,6 +559,7 @@ class(`SedonaDBExpr`) <- c("sedonadb::SedonaDBExpr__bundle", "savvy_sedonadb__se
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
   e$`aggregate_function` <- `SedonaDBExprFactory_aggregate_function`(ptr)
+  e$`any_function` <- `SedonaDBExprFactory_any_function`(ptr)
   e$`binary` <- `SedonaDBExprFactory_binary`(ptr)
   e$`column` <- `SedonaDBExprFactory_column`(ptr)
   e$`scalar_function` <- `SedonaDBExprFactory_scalar_function`(ptr)

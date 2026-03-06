@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -23,17 +23,20 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
+use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
+use futures::lock::Mutex;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
+use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
-use sedona_geoparquet::options::{GeoParquetVersion, TableGeoParquetOptions};
+use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use tokio::runtime::Runtime;
 
@@ -45,10 +48,12 @@ use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
 
 #[pyclass]
+#[derive(Clone)]
 pub struct InternalDataFrame {
     pub inner: DataFrame,
     pub runtime: Arc<Runtime>,
 }
+
 impl InternalDataFrame {
     pub fn new(inner: DataFrame, runtime: Arc<Runtime>) -> Self {
         Self { inner, runtime }
@@ -175,40 +180,94 @@ impl InternalDataFrame {
         Ok(batches)
     }
 
+    fn to_stream<'py>(
+        &self,
+        py: Python<'py>,
+        ctx: &InternalContext,
+        simplify: Option<bool>,
+    ) -> Result<StreamingResult, PySedonaError> {
+        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
+        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
+        let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+
+        if simplify.unwrap_or(false) {
+            reader = simplify_record_batch_reader(&ctx.inner.ctx.state(), reader)?;
+        }
+
+        Ok(StreamingResult {
+            inner: Some(reader).into(),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn to_parquet<'py>(
         &self,
         py: Python<'py>,
         ctx: &InternalContext,
         path: String,
+        options: Bound<'py, PyDict>,
         partition_by: Vec<String>,
         sort_by: Vec<String>,
         single_file_output: bool,
-        geoparquet_version: Option<String>,
-        overwrite_bbox_columns: bool,
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
+        // We need to special-case geometry columns until we have a logical optimizer rule or
+        // sorting for user-defined types is supported.
+        let geometry_column_indices = self.inner.schema().geometry_column_indices()?;
+        let geometry_column_names = geometry_column_indices
+            .iter()
+            .map(|i| self.inner.schema().field(*i).name().as_str())
+            .collect::<HashSet<&str>>();
+
+        #[cfg(feature = "s2geography")]
+        let has_geography = true;
+        #[cfg(not(feature = "s2geography"))]
+        let has_geography = false;
+
         let sort_by_expr = sort_by
             .into_iter()
             .map(|name| {
-                let column = Expr::Column(Column::new_unqualified(name));
-                SortExpr::new(column, true, false)
+                let column = Expr::Column(Column::new_unqualified(name.clone()));
+                if geometry_column_names.contains(name.as_str()) {
+                    // Create the call sd_order(column). If we're ordering by geometry but don't have
+                    // the required feature for high quality sort output, give an error. This is mostly
+                    // an issue when using maturin develop because geography is not a default feature.
+                    if has_geography {
+                        let state = ctx.inner.ctx.state();
+                        let order_udf_opt = state.scalar_functions().get("sd_order");
+                        if let Some(order_udf) = order_udf_opt {
+                            Ok(SortExpr::new(order_udf.call(vec![column]), true, false))
+                        } else {
+                            Err(PySedonaError::SedonaPython(
+                                "Can't order by geometry field when sd_order() is not available"
+                                    .to_string(),
+                            ))
+                        }
+                    } else {
+                        Err(PySedonaError::SedonaPython(
+                                "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
+                                    .to_string(),
+                            ))
+                    }
+                } else {
+                    Ok(SortExpr::new(column, true, false))
+                }
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let options = SedonaWriteOptions::new()
+        let write_options = SedonaWriteOptions::new()
             .with_partition_by(partition_by)
             .with_sort_by(sort_by_expr)
             .with_single_file_output(single_file_output);
 
-        let mut writer_options = TableGeoParquetOptions::new();
-        writer_options.overwrite_bbox_columns = overwrite_bbox_columns;
-        if let Some(geoparquet_version) = geoparquet_version {
-            writer_options.geoparquet_version = geoparquet_version.parse()?;
-        } else {
-            writer_options.geoparquet_version = GeoParquetVersion::Omitted;
-        }
+        let options_map = options
+            .iter()
+            .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
+            .collect::<Result<HashMap<_, _>, PySedonaError>>()?;
+
+        // Create GeoParquet options
+        let mut writer_options = TableGeoParquetOptions::default();
 
         // Resolve writer options from the context configuration
         let global_parquet_options = ctx
@@ -222,12 +281,20 @@ impl InternalDataFrame {
             .clone();
         writer_options.inner.global = global_parquet_options;
 
+        // Set values from options dictionary
+        for (k, v) in &options_map {
+            writer_options.set(k, v)?;
+        }
+
         wait_for_future(
             py,
             &self.runtime,
-            self.inner
-                .clone()
-                .write_geoparquet(&ctx.inner, &path, options, Some(writer_options)),
+            self.inner.clone().write_geoparquet(
+                &ctx.inner,
+                &path,
+                write_options,
+                Some(writer_options),
+            ),
         )??;
         Ok(())
     }
@@ -327,23 +394,6 @@ impl InternalDataFrame {
             FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
         Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
     }
-
-    #[pyo3(signature = (requested_schema=None))]
-    fn __arrow_c_stream__<'py>(
-        &self,
-        py: Python<'py>,
-        requested_schema: Option<Bound<'py, PyAny>>,
-    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        check_py_requested_schema(requested_schema, self.inner.schema().as_arrow())?;
-
-        let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
-        let reader = PySedonaStreamReader::new(self.runtime.clone(), stream);
-        let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
-
-        let ffi_stream = FFI_ArrowArrayStream::new(reader);
-        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
-    }
 }
 
 #[pyclass]
@@ -371,6 +421,39 @@ impl Batches {
         let ffi_stream = FFI_ArrowArrayStream::new(reader);
         let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
         Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+    }
+}
+
+#[pyclass]
+pub struct StreamingResult {
+    inner: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
+}
+
+#[pymethods]
+impl StreamingResult {
+    #[pyo3(signature = (requested_schema=None))]
+    fn __arrow_c_stream__<'py>(
+        &self,
+        py: Python<'py>,
+        requested_schema: Option<Bound<'py, PyAny>>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        let Some(mut reader_opt) = self.inner.try_lock() else {
+            return Err(PySedonaError::SedonaPython(
+                "SedonaDB DataFrame streaming result may only be consumed from a single thread"
+                    .to_string(),
+            ));
+        };
+
+        if let Some(reader) = reader_opt.take() {
+            check_py_requested_schema(requested_schema, &reader.schema())?;
+            let ffi_stream = FFI_ArrowArrayStream::new(reader);
+            let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
+            Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+        } else {
+            Err(PySedonaError::SedonaPython(
+                "SedonaDB DataFrame streaming result may only be consumed once".to_string(),
+            ))
+        }
     }
 }
 

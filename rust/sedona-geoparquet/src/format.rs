@@ -24,7 +24,7 @@ use std::{
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
-    config::ConfigOptions,
+    config::{ConfigField, ConfigOptions},
     datasource::{
         file_format::{
             file_compression_type::FileCompressionType,
@@ -40,6 +40,7 @@ use datafusion::{
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
+use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
@@ -47,7 +48,7 @@ use datafusion_physical_plan::{
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 use sedona_schema::extension_type::ExtensionType;
 
@@ -97,8 +98,16 @@ impl FileFormatFactory for GeoParquetFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         let mut options_mut = self.options.clone().unwrap_or_default();
         let mut format_options_mut = format_options.clone();
-        if let Some(version_string) = format_options_mut.remove("geoparquet_version") {
-            options_mut.geoparquet_version = version_string.parse()?;
+
+        // Remove GeoParquet-specific options that will cause an error if passed
+        // to inner.create() and ensure they are reflected by the GeoParquet
+        // options. These are prefixed with `format` when passed by
+        // DataFusion SQL. DataFusion takes care of lowercasing these values before
+        // they are passed here.
+        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
+            if let Some(value) = format_options_mut.remove(key) {
+                options_mut.set(key.strip_prefix("format.").unwrap(), &value)?;
+            }
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
@@ -189,16 +198,22 @@ impl FileFormat for GeoParquetFormat {
         let inner_schema_without_metadata =
             self.inner().infer_schema(state, store, objects).await?;
 
+        let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+
         // Collect metadata separately. We can in theory do our own schema
         // inference too to save an extra server request, but then we have to
         // copy more ParquetFormat code. It may be that caching at the object
         // store level is the way to go here.
         let metadatas: Vec<_> = futures::stream::iter(objects)
-            .map(|object| async move {
-                DFParquetMetadata::new(store.as_ref(), object)
-                    .with_metadata_size_hint(self.inner().metadata_size_hint())
-                    .fetch_metadata()
-                    .await
+            .map(|object| {
+                let metadata_cache = file_metadata_cache.clone();
+                async move {
+                    DFParquetMetadata::new(store.as_ref(), object)
+                        .with_metadata_size_hint(self.inner().metadata_size_hint())
+                        .with_file_metadata_cache(Some(metadata_cache))
+                        .fetch_metadata()
+                        .await
+                }
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
             .buffered(state.config_options().execution.meta_fetch_concurrency)
@@ -215,7 +230,7 @@ impl FileFormat for GeoParquetFormat {
         for metadata in &metadatas {
             let this_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
                 metadata,
-                self.options.geometry_columns.as_ref(),
+                self.options.geometry_columns.inner(),
             )?;
 
             match (geoparquet_metadata.as_mut(), this_geoparquet_metadata) {
@@ -297,7 +312,7 @@ impl FileFormat for GeoParquetFormat {
 
     async fn create_physical_plan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         config: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // A copy of ParquetSource::create_physical_plan() that ensures the underlying
@@ -308,12 +323,21 @@ impl FileFormat for GeoParquetFormat {
             metadata_size_hint = Some(metadata);
         }
 
-        let mut source = GeoParquetFileSource::new(self.options.clone());
+        let mut source = config
+            .file_source()
+            .as_any()
+            .downcast_ref::<GeoParquetFileSource>()
+            .cloned()
+            .ok_or_else(|| sedona_internal_datafusion_err!("Expected GeoParquetFileSource"))?;
+
+        source = source.with_options(self.options.clone());
 
         if let Some(metadata_size_hint) = metadata_size_hint {
             source = source.with_metadata_size_hint(metadata_size_hint)
         }
 
+        let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+        source.metadata_cache = Some(file_metadata_cache.clone());
         let conf = FileScanConfigBuilder::from(config)
             .with_source(Arc::new(source))
             .build();
@@ -363,6 +387,7 @@ pub struct GeoParquetFileSource {
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     options: TableGeoParquetOptions,
+    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
 }
 
 impl GeoParquetFileSource {
@@ -373,6 +398,14 @@ impl GeoParquetFileSource {
             metadata_size_hint: None,
             predicate: None,
             options,
+            metadata_cache: None,
+        }
+    }
+
+    pub fn with_options(&self, options: TableGeoParquetOptions) -> Self {
+        Self {
+            options,
+            ..self.clone()
         }
     }
 
@@ -423,6 +456,7 @@ impl GeoParquetFileSource {
                 options: TableGeoParquetOptions::from(
                     parquet_source.table_parquet_options().clone(),
                 ),
+                metadata_cache: None,
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -436,6 +470,7 @@ impl GeoParquetFileSource {
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
             options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
         }
     }
 
@@ -461,6 +496,7 @@ impl GeoParquetFileSource {
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
             options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
         }
     }
 
@@ -471,6 +507,7 @@ impl GeoParquetFileSource {
             metadata_size_hint: Some(hint),
             predicate: self.predicate.clone(),
             options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
         }
     }
 }
@@ -496,11 +533,12 @@ impl FileSource for GeoParquetFileSource {
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
             file_schema: base_config.file_schema().clone(),
-            enable_pruning: self.inner.table_parquet_options().global.pruning,
+            enable_pruning: self.options.inner.global.pruning,
             // HACK: Since there is no public API to set inner's metrics, so we use
             // inner's metrics as the ExecutionPlan-global metrics
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
             options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
         })
     }
 
@@ -519,6 +557,7 @@ impl FileSource for GeoParquetFileSource {
                     None,
                 )?;
                 updated_inner.options = self.options.clone();
+                updated_inner.metadata_cache = self.metadata_cache.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),
@@ -536,6 +575,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -546,6 +586,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -556,6 +597,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -566,6 +608,7 @@ impl FileSource for GeoParquetFileSource {
             self.predicate.clone(),
         );
         source.options = self.options.clone();
+        source.metadata_cache = self.metadata_cache.clone();
         Arc::new(source)
     }
 
@@ -605,7 +648,7 @@ mod test {
     use datafusion_physical_expr::PhysicalExpr;
 
     use rstest::rstest;
-    use sedona_schema::crs::lnglat;
+    use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
@@ -614,7 +657,7 @@ mod test {
     use super::*;
 
     fn setup_context() -> SessionContext {
-        let mut state = SessionStateBuilder::new().build();
+        let mut state = SessionStateBuilder::new_with_default_features().build();
         state
             .register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)
             .unwrap();
@@ -747,6 +790,42 @@ mod test {
         assert_eq!(
             err.message(),
             "failed to resolve schema: file_does_not_exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn format_from_external_table() {
+        let ctx = setup_context();
+        let example = test_geoparquet("example", "geometry").unwrap();
+        ctx.sql(&format!(
+            r#"
+            CREATE EXTERNAL TABLE test
+            STORED AS PARQUET
+            LOCATION '{example}'
+            OPTIONS ('geometry_columns' '{{"geometry": {{"encoding": "WKB", "crs": "EPSG:3857"}}}}');
+            "#
+        ))
+        .await
+        .unwrap();
+
+        let df = ctx.table("test").await.unwrap();
+
+        // Check that the logical plan resulting from a read has the correct schema
+        assert_eq!(
+            df.schema().clone().strip_qualifiers().field_names(),
+            ["wkt", "geometry"]
+        );
+
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(sedona_types.len(), 2);
+        assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
+        assert_eq!(
+            sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
         );
     }
 

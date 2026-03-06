@@ -23,7 +23,15 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns the minimum axis-aligned bounding box of a geometry. This is usually a polygon but can be a linestring for perfectly vertical or horizontal input.
+
 ## Examples
+
+```sql
+SELECT ST_Envelope(ST_GeomFromWKT('LINESTRING(0 0, 3 4)'));
+```
 
 ```sql
 SELECT ST_Envelope(ST_Point(1.0, 2.0));

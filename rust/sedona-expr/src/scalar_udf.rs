@@ -70,7 +70,6 @@ pub struct SedonaScalarUDF {
     name: String,
     signature: Signature,
     kernels: Vec<ScalarKernelRef>,
-    documentation: Option<Documentation>,
     aliases: Vec<String>,
 }
 
@@ -185,14 +184,12 @@ impl SedonaScalarUDF {
         name: &str,
         kernels: Vec<ScalarKernelRef>,
         volatility: Volatility,
-        documentation: Option<Documentation>,
     ) -> SedonaScalarUDF {
         let signature = Signature::user_defined(volatility);
         Self {
             name: name.to_string(),
             signature,
             kernels,
-            documentation,
             aliases: vec![],
         }
     }
@@ -203,32 +200,8 @@ impl SedonaScalarUDF {
             name: self.name,
             signature: self.signature,
             kernels: self.kernels,
-            documentation: self.documentation,
             aliases,
         }
-    }
-
-    /// Create a new stub function
-    ///
-    /// Creates a new function that calculates a return type but fails when invoked with
-    /// arguments. This is useful to create stub functions when it is expected that the
-    /// actual functionality will be registered from one or more independent crates
-    /// (e.g., ST_Intersects(), which may be implemented in sedona-geo or sedona-geography).
-    pub fn new_stub(
-        name: &str,
-        arg_matcher: ArgMatcher,
-        volatility: Volatility,
-        documentation: Option<Documentation>,
-    ) -> Self {
-        let name_string = name.to_string();
-        let stub_kernel = SimpleSedonaScalarKernel::new_ref(
-            arg_matcher,
-            Arc::new(move |arg_types, _| {
-                not_impl_err!("Implementation for {name_string}({arg_types:?}) was not registered")
-            }),
-        );
-
-        Self::new(name, vec![stub_kernel], volatility, documentation)
     }
 
     /// Create a SedonaScalarUDF from a single kernel
@@ -240,7 +213,6 @@ impl SedonaScalarUDF {
             name,
             kernels.into_scalar_kernel_refs(),
             Volatility::Immutable,
-            None,
         )
     }
 
@@ -266,7 +238,16 @@ impl SedonaScalarUDF {
             }
         }
 
-        not_impl_err!("{}({:?}): No kernel matching arguments", self.name, args)
+        let args_display = args
+            .iter()
+            .map(|arg| arg.logical_type_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        not_impl_err!(
+            "{}({args_display}): No kernel matching arguments",
+            self.name
+        )
     }
 }
 
@@ -284,7 +265,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
     }
 
     fn documentation(&self) -> Option<&Documentation> {
-        self.documentation.as_ref()
+        None
     }
 
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
@@ -341,6 +322,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 
 #[cfg(test)]
 mod tests {
+
     use datafusion_common::{scalar::ScalarValue, DFSchema};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -355,20 +337,17 @@ mod tests {
     #[test]
     fn udf_empty() -> Result<()> {
         // UDF with no implementations
-        let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable, None);
+        let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable);
         assert_eq!(udf.name(), "empty");
         assert_eq!(udf.coerce_types(&[])?, vec![]);
 
         let tester = ScalarUdfTester::new(udf.into(), vec![]);
 
         let err = tester.return_type().unwrap_err();
-        assert_eq!(err.message(), "empty([]): No kernel matching arguments");
+        assert_eq!(err.message(), "empty(): No kernel matching arguments");
 
         let batch_err = tester.invoke_arrays(vec![]).unwrap_err();
-        assert_eq!(
-            batch_err.message(),
-            "empty([]): No kernel matching arguments"
-        );
+        assert_eq!(batch_err.message(), "empty(): No kernel matching arguments");
 
         Ok(())
     }
@@ -397,7 +376,6 @@ mod tests {
             "simple_udf",
             vec![kernel_geo, kernel_arrow],
             Volatility::Immutable,
-            None,
         );
 
         // Calling with a geo type should return a Null type
@@ -438,35 +416,16 @@ mod tests {
     }
 
     #[test]
-    fn stub() {
-        let stub = SedonaScalarUDF::new_stub(
-            "stubby",
-            ArgMatcher::new(vec![], SedonaType::Arrow(DataType::Boolean)),
-            Volatility::Immutable,
-            None,
-        );
-        let tester = ScalarUdfTester::new(stub.into(), vec![]);
-        tester.assert_return_type(DataType::Boolean);
-
-        let err = tester.invoke_arrays(vec![]).unwrap_err();
-        assert_eq!(
-            err.message(),
-            "Implementation for stubby([]) was not registered"
-        );
-    }
-
-    #[test]
     fn crs_propagation() {
         let geom_lnglat = SedonaType::Wkb(Edges::Planar, lnglat());
-        let predicate_stub = SedonaScalarUDF::new_stub(
-            "stubby",
+        let predicate_stub_impl = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
                 SedonaType::Arrow(DataType::Boolean),
             ),
-            Volatility::Immutable,
-            None,
+            Arc::new(|_arg_types, _args| unreachable!("Should not be executed")),
         );
+        let predicate_stub = SedonaScalarUDF::from_impl("foofy", predicate_stub_impl);
 
         // None CRS to None CRS is OK
         let tester = ScalarUdfTester::new(
@@ -491,15 +450,14 @@ mod tests {
         assert!(err.message().starts_with("Mismatched CRS arguments"));
 
         // When geometry is output, it should match the crses of the inputs
-        let geom_out_stub = SedonaScalarUDF::new_stub(
-            "stubby",
+        let geom_out_impl = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
                 WKB_GEOMETRY,
             ),
-            Volatility::Immutable,
-            None,
+            Arc::new(|_arg_types, args| Ok(args[0].clone())),
         );
+        let geom_out_stub = SedonaScalarUDF::from_impl("foofy", geom_out_impl);
 
         let tester = ScalarUdfTester::new(
             geom_out_stub.clone().into(),

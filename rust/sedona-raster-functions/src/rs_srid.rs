@@ -21,9 +21,7 @@ use arrow_array::builder::StringBuilder;
 use arrow_array::builder::UInt32Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::CachedCrsToSRIDMapping;
@@ -33,46 +31,14 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 ///
 /// Extract the SRID (Spatial Reference ID) of the raster
 pub fn rs_srid_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "rs_srid",
-        vec![Arc::new(RsSrid {})],
-        Volatility::Immutable,
-        Some(rs_srid_doc()),
-    )
+    SedonaScalarUDF::new("rs_srid", vec![Arc::new(RsSrid {})], Volatility::Immutable)
 }
 
 /// RS_CRS() scalar UDF implementation
 ///
 /// Extract the CRS (Coordinate Reference System) of the raster
 pub fn rs_crs_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "rs_crs",
-        vec![Arc::new(RsCrs {})],
-        Volatility::Immutable,
-        Some(rs_crs_doc()),
-    )
-}
-
-fn rs_srid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the spatial reference system identifier (SRID) of the raster".to_string(),
-        "RS_SRID(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_SRID(RS_Example())".to_string())
-    .build()
-}
-
-fn rs_crs_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return the coordinate reference system (CRS) of the raster".to_string(),
-        "RS_CRS(raster: Raster)".to_string(),
-    )
-    .with_argument("raster", "Raster: Input raster")
-    .with_sql_example("SELECT RS_CRS(RS_Example())".to_string())
-    .build()
+    SedonaScalarUDF::new("rs_crs", vec![Arc::new(RsCrs {})], Volatility::Immutable)
 }
 
 #[derive(Debug)]
@@ -171,11 +137,9 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_srid_udf().into();
         assert_eq!(udf.name(), "rs_srid");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = rs_crs_udf().into();
         assert_eq!(udf.name(), "rs_crs");
-        assert!(udf.documentation().is_some());
     }
 
     #[test]

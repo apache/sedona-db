@@ -23,6 +23,12 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns `true` if the geometry is well-formed according to OGC rules. Use
+`ST_IsValidReason` to get a diagnostic message for invalid geometries and
+`ST_MakeValid` to attempt to repair them.
+
 ## Examples
 
 ```sql

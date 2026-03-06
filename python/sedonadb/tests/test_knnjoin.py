@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import pandas as pd
 import pytest
 import json
 from sedonadb.testing import PostGIS, SedonaDB, random_geometry
@@ -47,7 +48,7 @@ def test_knn_join_basic(k):
                 t.id as target_id,
                 ST_Distance(q.geometry, t.geometry) as distance
             FROM knn_query_points q
-            JOIN knn_target_points t ON ST_KNN(q.geometry, t.geometry, {k}, FALSE)
+            JOIN knn_target_points t ON ST_KNN(q.geometry, t.geometry, {k})
             ORDER BY query_id, distance
         """
 
@@ -117,7 +118,7 @@ def test_knn_join_with_polygons():
                 pol.id as polygon_id,
                 ST_Distance(p.geometry, pol.geometry) as distance
             FROM knn_points p
-            JOIN knn_polygons pol ON ST_KNN(p.geometry, pol.geometry, {k}, FALSE)
+            JOIN knn_polygons pol ON ST_KNN(p.geometry, pol.geometry, {k})
             ORDER BY point_id, distance
         """
 
@@ -182,7 +183,7 @@ def test_knn_join_edge_cases():
                 t.id as target_id,
                 ST_Distance(q.geometry, t.geometry) as distance
             FROM knn_query_small q
-            JOIN knn_target_small t ON ST_KNN(q.geometry, t.geometry, {k}, FALSE)
+            JOIN knn_target_small t ON ST_KNN(q.geometry, t.geometry, {k})
             ORDER BY query_id, distance
         """
 
@@ -272,7 +273,7 @@ def test_knn_join_with_attributes():
                 t.target_value,
                 ST_Distance(q.geometry, t.geometry) as distance
             FROM knn_points_attr q
-            JOIN knn_targets_attr t ON ST_KNN(q.geometry, t.geometry, {k}, FALSE)
+            JOIN knn_targets_attr t ON ST_KNN(q.geometry, t.geometry, {k})
             ORDER BY query_id, distance
         """
 
@@ -338,7 +339,7 @@ def test_knn_join_correctness_known_points():
                 t.id as target_id,
                 ST_Distance(q.geometry, t.geometry) as distance
             FROM knn_known q
-            JOIN knn_target_known t ON ST_KNN(q.geometry, t.geometry, {k}, FALSE)
+            JOIN knn_target_known t ON ST_KNN(q.geometry, t.geometry, {k})
             WHERE q.id = 0  -- Query from first point (synthetic data uses 0-based IDs)
             ORDER BY distance
         """
@@ -374,3 +375,21 @@ def test_knn_join_correctness_known_points():
         """
 
         eng_postgis.assert_query_result(postgis_sql, sedonadb_results)
+
+
+def test_knn_join_default_k(con):
+    con.funcs.table.sd_random_geometry("Point", 100, seed=9483).to_view(
+        "l", overwrite=True
+    )
+    con.funcs.table.sd_random_geometry("Point", 100, seed=2983).to_view(
+        "r", overwrite=True
+    )
+
+    nearest_default_k = con.sql(
+        "SELECT l.id as lid, r.id as rid FROM l JOIN r ON ST_KNN(l.geometry, r.geometry) ORDER BY lid, rid"
+    ).to_pandas()
+    nearest_explicit_k = con.sql(
+        "SELECT l.id as lid, r.id as rid FROM l JOIN r ON ST_KNN(l.geometry, r.geometry, 1) ORDER BY lid, rid"
+    ).to_pandas()
+
+    pd.testing.assert_frame_equal(nearest_default_k, nearest_explicit_k)

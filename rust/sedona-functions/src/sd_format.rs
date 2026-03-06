@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{sync::Arc, vec};
+use std::{fmt::Write, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use arrow_array::{
@@ -26,10 +26,10 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     internal_err, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::array::RasterStructArray;
+use sedona_raster::display::RasterDisplay;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// SD_Format() scalar UDF implementation
@@ -42,30 +42,7 @@ pub fn sd_format_udf() -> SedonaScalarUDF {
         "sd_format",
         vec![Arc::new(SDFormatDefault {})],
         Volatility::Immutable,
-        Some(sd_format_doc()),
     )
-}
-
-fn sd_format_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Return a version of value suitable for formatting/display with
-         the options provided. This is used to inject custom behaviour for a
-         SedonaType specifically for formatting values.",
-        "SD_Format (value: Any, [options: String])",
-    )
-    .with_argument("value", "Any: Any input value")
-    .with_argument(
-        "options",
-        "
-    String: JSON-encoded options. The following options are currently supported:
-
-    - width_hint (numeric): The approximate width of the output. The value provided will
-      typically be an overestimate and the value may be further abrevidated by
-      the renderer. This value is purely a hint and may be ignored.",
-    )
-    .with_sql_example("SELECT SD_Format(ST_Point(1.0, 2.0, '{}'))")
-    .build()
 }
 
 /// Default implementation that returns its input (i.e., by default, just
@@ -149,7 +126,7 @@ fn sedona_type_to_formatted_type(sedona_type: &SedonaType) -> Result<SedonaType>
                 _ => Ok(sedona_type.clone()),
             }
         }
-        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
+        SedonaType::Raster => Ok(SedonaType::Arrow(DataType::Utf8)),
     }
 }
 
@@ -167,6 +144,7 @@ fn columnar_value_to_formatted_value(
         SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => {
             geospatial_value_to_formatted_value(sedona_type, columnar_value, maybe_width_hint)
         }
+        SedonaType::Raster => raster_value_to_formatted_value(columnar_value, maybe_width_hint),
         SedonaType::Arrow(arrow_type) => match arrow_type {
             DataType::Struct(fields) => match columnar_value {
                 ColumnarValue::Array(array) => {
@@ -211,7 +189,6 @@ fn columnar_value_to_formatted_value(
             },
             _ => Ok(columnar_value.clone()),
         },
-        SedonaType::Raster => internal_err!("SD_Format does not support Raster types"),
     }
 }
 
@@ -356,6 +333,53 @@ fn list_view_value_to_formatted_value<OffsetSize: OffsetSizeTrait>(
     ))
 }
 
+fn raster_value_to_formatted_value(
+    columnar_value: &ColumnarValue,
+    maybe_width_hint: Option<usize>,
+) -> Result<ColumnarValue> {
+    match columnar_value {
+        ColumnarValue::Array(array) => {
+            let struct_array = array.as_struct();
+            let raster_array = RasterStructArray::new(struct_array);
+            let min_output_size = match maybe_width_hint {
+                Some(width_hint) => raster_array.len() * width_hint,
+                None => raster_array.len() * 48,
+            };
+            let mut builder =
+                StringBuilder::with_capacity(raster_array.len(), min_output_size.max(1));
+
+            for i in 0..raster_array.len() {
+                if raster_array.is_null(i) {
+                    builder.append_null();
+                    continue;
+                }
+
+                let raster = raster_array.get(i)?;
+                let mut limited_output =
+                    LimitedSizeOutput::new(&mut builder, maybe_width_hint.unwrap_or(usize::MAX));
+                let _ = write!(limited_output, "{}", RasterDisplay(&raster));
+                builder.append_value("");
+            }
+
+            Ok(ColumnarValue::Array(Arc::new(builder.finish())))
+        }
+        ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
+            let formatted = raster_value_to_formatted_value(
+                &ColumnarValue::Array(Arc::new(struct_array.as_ref().clone())),
+                maybe_width_hint,
+            )?;
+            if let ColumnarValue::Array(array) = formatted {
+                Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                    &array, 0,
+                )?))
+            } else {
+                internal_err!("Expected array formatted value for raster scalar")
+            }
+        }
+        _ => internal_err!("Unsupported raster columnar value"),
+    }
+}
+
 struct LimitedSizeOutput<'a, T> {
     inner: &'a mut T,
     current_item_size: usize,
@@ -395,9 +419,11 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
-    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+    use sedona_testing::{
+        create::create_array, rasters::generate_test_rasters, testers::ScalarUdfTester,
+    };
     use std::sync::Arc;
 
     use super::*;
@@ -406,7 +432,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = sd_format_udf().into();
         assert_eq!(udf.name(), "sd_format");
-        assert!(udf.documentation().is_some())
     }
 
     #[rstest]
@@ -554,6 +579,62 @@ mod tests {
                 assert_eq!(&result, &test_array, "Failed for test case: {description}");
             }
         }
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns() {
+        let udf = sd_format_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
+        let raster_array = generate_test_rasters(3, Some(1)).unwrap();
+        let result = tester.invoke_array(Arc::new(raster_array.clone())).unwrap();
+        let formatted = result.as_string::<i32>();
+
+        // Index 0: valid raster (no skew)
+        assert_eq!(formatted.value(0), "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+        // Index 1: null raster should produce null output
+        assert!(formatted.is_null(1));
+        // Index 2: valid raster (with skew)
+        assert_eq!(
+            formatted.value(2),
+            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+        );
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns_with_null() {
+        let udf = sd_format_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER]);
+
+        // Generate 3 rasters with a null at index 1
+        let raster_array = generate_test_rasters(3, Some(1)).unwrap();
+        let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
+        let formatted = result.as_string::<i32>();
+
+        // Index 0: valid raster (no skew)
+        assert!(formatted.value(0).starts_with("[1x2/"));
+        // Index 1: null raster should produce null output
+        assert!(formatted.is_null(1));
+        // Index 2: valid raster (with skew)
+        assert!(formatted.value(2).starts_with("[3x4/"));
+    }
+
+    #[test]
+    fn sd_format_formats_raster_columns_with_width_hint() {
+        let udf = sd_format_udf();
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+
+        let raster_array = generate_test_rasters(2, None).unwrap();
+        let result = tester
+            .invoke_array_scalar(Arc::new(raster_array), r#"{"width_hint": 10}"#)
+            .unwrap();
+        let formatted = result.as_string::<i32>();
+
+        // With a small width_hint, output should be truncated
+        let full_output = "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84";
+        assert!(formatted.value(0).starts_with("["));
+        assert!(formatted.value(0).len() < full_output.len());
     }
 
     #[rstest]

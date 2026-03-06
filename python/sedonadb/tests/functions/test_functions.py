@@ -1174,10 +1174,10 @@ def test_st_unaryunion(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
-        # Skip M tests because geos rust isn't capable of writing XYM geometries yet
-        # https://github.com/apache/sedona-db/issues/481
+        ("POINT M EMPTY", "POINT M EMPTY"),
         ("POINT Z EMPTY", "POINT Z EMPTY"),
         ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("POINT M (0 1 2)", "POINT M(0 1 2)"),
         ("POINT Z (0 0 0)", "POINT Z(0 0 0)"),
         ("POINT ZM (1 2 3 4)", "POINT ZM(1 2 3 4)"),
         ("LINESTRING Z (0 0 0, 1 1 1)", "LINESTRING Z(0 0 0,1 1 1)"),

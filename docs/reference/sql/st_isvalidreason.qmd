@@ -23,6 +23,10 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns a text string explaining why a geometry is invalid, or `"Valid Geometry"` if the geometry is valid. Useful for debugging geometry construction.
+
 ## Examples
 
 ```sql

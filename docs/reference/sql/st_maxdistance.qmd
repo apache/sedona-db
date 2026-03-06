@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_MaxDistance
-description: Calculates the maximum distance between two geometries.
+description: Returns the maximum distance between any pair of points in two geometries.
 kernels:
   - returns: double
     args: [geometry, geometry]

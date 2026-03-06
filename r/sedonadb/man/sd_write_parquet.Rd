@@ -7,17 +7,27 @@
 sd_write_parquet(
   .data,
   path,
+  options = NULL,
   partition_by = character(0),
   sort_by = character(0),
   single_file_output = NULL,
   geoparquet_version = "1.0",
-  overwrite_bbox_columns = FALSE
+  overwrite_bbox_columns = FALSE,
+  max_row_group_size = NULL,
+  compression = NULL
 )
 }
 \arguments{
 \item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
 
 \item{path}{A filename or directory to which parquet file(s) should be written}
+
+\item{options}{A named list of key/value options to be used when constructing
+a parquet writer. Common options are exposed as other arguments to
+\code{sd_write_parquet()}; however, this argument allows setting any DataFusion
+Parquet writer option. If an option is specified here and by another
+argument to this function, the value specified as an explicit argument
+takes precedence.}
 
 \item{partition_by}{A character vector of column names to partition by. If non-empty,
 applies hive-style partitioning to the output}
@@ -45,6 +55,13 @@ will be named "[geom_col_name]_bbox" for all geometry columns except
 that already exist in the input. This is useful in a read -> modify
 -> write scenario to ensure these columns are up-to-date. If FALSE
 (the default), an error will be raised if a bbox column already exists}
+
+\item{max_row_group_size}{Target maximum number of rows in each row group.
+Defaults to the global configuration value (1M rows).}
+
+\item{compression}{Sets the Parquet compression codec. Valid values are:
+uncompressed, snappy, gzip(level), brotli(level), lz4, zstd(level), and
+lz4_raw. Defaults to the global configuration value (zstd(3)).}
 }
 \value{
 The input, invisibly

@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeometryN
-description: Return the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
+description: Returns the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
 kernels:
   - returns: geometry
     args:
@@ -26,8 +26,15 @@ kernels:
       type: integer
 ---
 
+## Description
+
+Returns NULL if the index is out of range.
+
 ## Examples
 
 ```sql
-SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'), 1);
+SELECT ST_GeometryN(
+    ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'),
+    1
+);
 ```

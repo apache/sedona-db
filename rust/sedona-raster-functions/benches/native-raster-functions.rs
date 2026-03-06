@@ -20,10 +20,73 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
 
+    // RS_BandNoDataValue
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandnodatavalue",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+    // RS_BandPath
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandpath",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandpath",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), Int32(1, 2)),
+    );
+    // RS_BandPixelType
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_bandpixeltype",
+        BenchmarkArgs::Array(Raster(64, 64)),
+    );
+
     benchmark::scalar(c, &f, "native-raster", "rs_convexhull", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_crs", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_envelope", Raster(64, 64));
+    benchmark::scalar(c, &f, "native-raster", "rs_georeference", Raster(64, 64));
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_georeference",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), String("ESRI".to_string())),
+    );
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
+    benchmark::scalar(c, &f, "native-raster", "rs_numbands", Raster(64, 64));
+    // RS_PixelAsPoint, RS_PixelAsCentroid, RS_PixelAsPolygon
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelaspoint",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelascentroid",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_pixelaspolygon",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
     benchmark::scalar(
         c,
         &f,
@@ -46,6 +109,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(0, 63), Int32(0, 63)),
     );
     benchmark::scalar(c, &f, "native-raster", "rs_rotation", Raster(64, 64));
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_setcrs",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), String("EPSG:3857".to_string())),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_setsrid",
+        BenchmarkArgs::ArrayScalar(Raster(64, 64), Int32(3857, 3858)),
+    );
     benchmark::scalar(c, &f, "native-raster", "rs_scalex", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_scaley", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_skewx", Raster(64, 64));

@@ -184,6 +184,43 @@ pub fn build_noninvertible_raster() -> StructArray {
     builder.finish().expect("finish")
 }
 
+/// Builds a single-band raster from raw bytes for tests.
+pub fn raster_from_single_band(
+    width: usize,
+    height: usize,
+    data_type: BandDataType,
+    band_bytes: &[u8],
+    crs: Option<&str>,
+) -> StructArray {
+    let mut builder = RasterBuilder::new(1);
+    let metadata = RasterMetadata {
+        width: width as u64,
+        height: height as u64,
+        upperleft_x: 0.0,
+        upperleft_y: 0.0,
+        scale_x: 1.0,
+        scale_y: -1.0,
+        skew_x: 0.0,
+        skew_y: 0.0,
+    };
+
+    builder.start_raster(&metadata, crs).expect("start raster");
+    builder
+        .start_band(BandMetadata {
+            datatype: data_type,
+            nodata_value: None,
+            storage_type: StorageType::InDb,
+            outdb_url: None,
+            outdb_band_id: None,
+        })
+        .expect("start band");
+    builder.band_data_writer().append_value(band_bytes);
+    builder.finish_band().expect("finish band");
+    builder.finish_raster().expect("finish raster");
+
+    builder.finish().expect("finish")
+}
+
 /// Determine if this tile contains a corner of the overall grid and return its position
 /// Returns Some(position) if this tile contains a corner, None otherwise
 fn get_corner_position(

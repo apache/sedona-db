@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_GeogFromWKT
-description: Construct a Geography from WKT.
+description: Constructs a Geography from WKT.
 kernels:
   - returns: geography
     args:
@@ -30,6 +30,10 @@ kernels:
     - name: srid
       type: integer
 ---
+
+## Description
+
+Alias: `ST_GeogFromText`.
 
 ## Examples
 

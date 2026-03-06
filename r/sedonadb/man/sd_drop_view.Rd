@@ -2,15 +2,23 @@
 % Please edit documentation in R/context.R
 \name{sd_drop_view}
 \alias{sd_drop_view}
+\alias{sd_ctx_drop_view}
 \alias{sd_view}
+\alias{sd_ctx_view}
 \title{Create or Drop a named view}
 \usage{
 sd_drop_view(table_ref)
 
+sd_ctx_drop_view(ctx, table_ref)
+
 sd_view(table_ref)
+
+sd_ctx_view(ctx, table_ref)
 }
 \arguments{
 \item{table_ref}{The name of the view reference}
+
+\item{ctx}{A SedonaDB context.}
 }
 \value{
 The context, invisibly

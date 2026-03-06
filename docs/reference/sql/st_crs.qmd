@@ -23,8 +23,13 @@ kernels:
     args: [geometry]
 ---
 
+## Description
+
+Returns the CRS (Coordinate Reference System) string associated with a geometry
+or geography. This is abbreviated as an authority/code if possible (e.g., `'EPSG:3857'`).
+
 ## Examples
 
 ```sql
-SELECT ST_CRS(ST_Point(0.25, 0.25, 4326)) as crs_info;
+SELECT ST_CRS(ST_Point(0.25, 0.25, 4326)) AS crs_info;
 ```

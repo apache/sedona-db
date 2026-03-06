@@ -17,14 +17,22 @@
 # under the License.
 
 title: ST_Crosses
-description: Return true if A crosses B.
+description: Returns true if A crosses B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
 ---
 
+## Description
+
+Returns `true` if the two geometries have some (but not all) interior points in
+common and the dimension of the intersection is less than that of either input.
+
 ## Examples
 
 ```sql
-SELECT ST_Crosses(ST_GeomFromWKT('POLYGON((1 1, 4 1, 4 4, 1 4, 1 1))'),ST_GeomFromWKT('POLYGON((2 2, 5 2, 5 5, 2 5, 2 2))'));
+SELECT ST_Crosses(
+    ST_GeomFromWKT('LINESTRING(0 0, 2 2)'),
+    ST_GeomFromWKT('LINESTRING(0 2, 2 0)')
+);
 ```

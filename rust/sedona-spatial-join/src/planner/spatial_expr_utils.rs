@@ -25,9 +25,10 @@ use arrow_schema::Schema;
 use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
-    JoinSide,
+    Column as LogicalColumn, JoinSide,
 };
-use datafusion_common::{HashMap, Result};
+use datafusion_common::{DFSchema, HashMap, Result};
+use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
@@ -96,13 +97,6 @@ pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
     let mut acc = HashSet::new();
     collect(expr, &mut acc);
     acc
-}
-
-/// Check if a given logical expression contains a spatial predicate component or not. We assume that the given
-/// `expr` evaluates to a boolean value and originates from a filter logical node.
-pub(crate) fn is_spatial_predicate(expr: &Expr) -> bool {
-    let pred_names = collect_spatial_predicate_names(expr);
-    !pred_names.is_empty()
 }
 
 /// Transform the join filter to a spatial predicate and a remainder.
@@ -346,18 +340,36 @@ fn match_knn_predicate(
     }
 
     let args = scalar_fn.args();
-    if args.len() < 4 {
-        return None; // ST_KNN requires 4 arguments: (queries_geom, objects_geom, k, use_spheroid)
+
+    if args.len() < 2 {
+        return None;
     }
 
     let queries_geom = &args[0];
     let objects_geom = &args[1];
-    let k_expr = &args[2];
-    let use_spheroid_expr = &args[3];
 
-    // Extract literal values for k and use_spheroid
-    let k = extract_literal_u32(k_expr)?;
-    let use_spheroid = extract_literal_bool(use_spheroid_expr)?;
+    let (k, use_spheroid) = match args.len() {
+        2 => {
+            // Apply default k (1) and use_spheroid (false)
+            (1, false)
+        }
+        3 => {
+            // Extract literal values for k and apply default use_spheroid (false)
+            let k_expr = &args[2];
+            let k = extract_literal_u32(k_expr)?;
+            (k, false)
+        }
+        4 => {
+            // Extract literal values for k and use_spheroid
+            let k_expr = &args[2];
+            let k = extract_literal_u32(k_expr)?;
+
+            let use_spheroid_expr = &args[3];
+            let use_spheroid = extract_literal_bool(use_spheroid_expr)?;
+            (k, use_spheroid)
+        }
+        _ => return None,
+    };
 
     // Collect column references for geometry arguments
     let queries_refs = collect_column_references(queries_geom, column_indices);
@@ -594,6 +606,61 @@ pub(crate) fn is_spatial_predicate_supported(
             Ok(is_geometry_type_supported(left, left_schema)?
                 && is_geometry_type_supported(right, right_schema)?)
         }
+    }
+}
+
+/// Which side of the join is the query (probe) side for KNN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KNNJoinQuerySide {
+    Left,
+    Right,
+}
+
+/// Find the query side of a KNN join by examining the first argument of the `ST_KNN` call
+/// in the join filter expression.
+///
+/// The first argument of `ST_KNN(query_geom, object_geom, k, use_spheroid)` identifies the
+/// query side. We collect all column references from that argument and check which child's
+/// schema they belong to.
+pub(crate) fn find_knn_query_side(
+    filter_expr: &Expr,
+    left_schema: &DFSchema,
+    right_schema: &DFSchema,
+) -> Option<KNNJoinQuerySide> {
+    let knn_call = find_st_knn_call(filter_expr)?;
+
+    // The first argument is the query geometry expression
+    let query_geom_expr = knn_call.args.first()?;
+
+    // Collect all column references from the query geometry argument
+    let col_refs: HashSet<&LogicalColumn> = query_geom_expr.column_refs();
+
+    if col_refs.is_empty() {
+        return None;
+    }
+
+    let all_in_left = col_refs.iter().all(|col| left_schema.has_column(col));
+    let all_in_right = col_refs.iter().all(|col| right_schema.has_column(col));
+
+    match (all_in_left, all_in_right) {
+        (true, false) => Some(KNNJoinQuerySide::Left),
+        (false, true) => Some(KNNJoinQuerySide::Right),
+        _ => None, // Ambiguous or references both sides
+    }
+}
+
+/// Recursively find the `ST_KNN` scalar function call in an expression tree.
+///
+/// Searches through `AND` binary expressions to find the `ST_KNN` function call.
+pub(crate) fn find_st_knn_call(expr: &Expr) -> Option<&ScalarFunction> {
+    match expr {
+        Expr::ScalarFunction(func) if func.func.name().eq_ignore_ascii_case("st_knn") => Some(func),
+        Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr { left, right, op })
+            if *op == Operator::And =>
+        {
+            find_st_knn_call(left).or_else(|| find_st_knn_call(right))
+        }
+        _ => None,
     }
 }
 
@@ -1614,22 +1681,20 @@ mod tests {
     fn test_match_knn_predicate_basic() {
         let column_indices = create_test_column_indices();
 
-        // Create ST_KNN(left_geom, right_geom, 5, false)
+        // Create ST_KNN(left_geom, right_geom, 5, true)
         let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
         let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
         let k_literal =
             Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
         let use_spheroid_literal =
-            Arc::new(Literal::new(ScalarValue::Boolean(Some(false)))) as Arc<dyn PhysicalExpr>;
+            Arc::new(Literal::new(ScalarValue::Boolean(Some(true)))) as Arc<dyn PhysicalExpr>;
 
         let st_knn_udf = create_dummy_st_knn_udf();
         let args = vec![left_geom, right_geom, k_literal, use_spheroid_literal];
         let st_knn = create_spatial_function_expr(st_knn_udf, args);
 
-        let predicate = match_knn_predicate(&st_knn, &column_indices);
-        assert!(predicate.is_some());
+        let pred = match_knn_predicate(&st_knn, &column_indices).unwrap();
 
-        let pred = predicate.unwrap();
         // Verify left argument is reprojected to left side
         let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
@@ -1643,7 +1708,51 @@ mod tests {
         // Verify k is literal value 5
         assert_eq!(pred.k, 5);
 
-        // Verify use_spheroid is literal value false
+        // Verify use_spheroid is literal value true
+        assert!(pred.use_spheroid);
+    }
+
+    #[test]
+    fn test_match_knn_predicate_default_use_spheroid() {
+        let column_indices = create_test_column_indices();
+
+        // Create ST_KNN(left_geom, right_geom, 5)
+        let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
+        let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
+        let k_literal =
+            Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let args = vec![left_geom, right_geom, k_literal];
+        let st_knn = create_spatial_function_expr(st_knn_udf, args);
+
+        let pred = match_knn_predicate(&st_knn, &column_indices).unwrap();
+
+        // Verify k is literal value 5
+        assert_eq!(pred.k, 5);
+
+        // Verify use_spheroid is literal value false (default)
+        assert!(!pred.use_spheroid);
+    }
+
+    #[test]
+    fn test_match_knn_predicate_default_k() {
+        let column_indices = create_test_column_indices();
+
+        // Create ST_KNN(left_geom, right_geom)
+        let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
+        let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let args = vec![left_geom, right_geom];
+        let st_knn = create_spatial_function_expr(st_knn_udf, args);
+
+        let pred = match_knn_predicate(&st_knn, &column_indices).unwrap();
+
+        // Verify k is literal value 1 (default)
+        assert_eq!(pred.k, 1);
+
+        // Verify use_spheroid is literal value false (default)
         assert!(!pred.use_spheroid);
     }
 
@@ -1875,14 +1984,11 @@ mod tests {
     fn test_match_knn_predicate_insufficient_args() {
         let column_indices = create_test_column_indices();
 
-        // Create ST_KNN with only 3 arguments (insufficient - needs 4)
+        // Create ST_KNN with only 1 arguments (insufficient - needs 2)
         let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
-        let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
-        let k_literal =
-            Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
 
         let st_knn_udf = create_dummy_st_knn_udf();
-        let args = vec![left_geom, right_geom, k_literal]; // Missing use_spheroid arg
+        let args = vec![left_geom];
         let st_knn = create_spatial_function_expr(st_knn_udf, args);
 
         let predicate = match_knn_predicate(&st_knn, &column_indices);
@@ -2244,16 +2350,17 @@ mod tests {
     }
 
     #[test]
-    fn test_is_spatial_predicate() {
-        // Test 1: ST_ functions should return true
+    fn test_collect_spatial_predicate_names() {
+        // ST_Intersects should be collected
         let st_intersects_udf = create_dummy_st_intersects_udf();
         let st_intersects_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
             func: st_intersects_udf,
             args: vec![col("geom1"), col("geom2")],
         });
-        assert!(is_spatial_predicate(&st_intersects_expr));
+        let names = collect_spatial_predicate_names(&st_intersects_expr);
+        assert_eq!(names, HashSet::from(["st_intersects".to_string()]));
 
-        // ST_Distance(geom1, geom2) < 100 should return true
+        // ST_Distance(geom1, geom2) < 100 should be collected as st_dwithin
         let st_distance_udf = create_dummy_st_distance_udf();
         let st_distance_expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
             func: st_distance_udf,
@@ -2264,29 +2371,33 @@ mod tests {
             op: Operator::Lt,
             right: Box::new(lit(100.0)),
         });
-        assert!(is_spatial_predicate(&distance_lt_expr));
+        let names = collect_spatial_predicate_names(&distance_lt_expr);
+        assert_eq!(names, HashSet::from(["st_dwithin".to_string()]));
 
-        // ST_Distance(geom1, geom2) > 100 should return false
+        // ST_Distance(geom1, geom2) > 100 should not be collected (wrong comparison direction)
         let distance_gt_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
             left: Box::new(st_distance_expr.clone()),
             op: Operator::Gt,
             right: Box::new(lit(100.0)),
         });
-        assert!(!is_spatial_predicate(&distance_gt_expr));
+        let names = collect_spatial_predicate_names(&distance_gt_expr);
+        assert!(names.is_empty());
 
-        // AND expressions with spatial predicates should return true
+        // AND expression: spatial predicate should be collected through conjunction
         let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
             left: Box::new(st_intersects_expr.clone()),
             op: Operator::And,
             right: Box::new(col("id").eq(lit(1))),
         });
-        assert!(is_spatial_predicate(&and_expr));
+        let names = collect_spatial_predicate_names(&and_expr);
+        assert_eq!(names, HashSet::from(["st_intersects".to_string()]));
 
-        // Non-spatial expressions should return false
+        // Non-spatial expressions should return empty set
 
         // Simple column comparison
         let non_spatial_expr = col("id").eq(lit(1));
-        assert!(!is_spatial_predicate(&non_spatial_expr));
+        let names = collect_spatial_predicate_names(&non_spatial_expr);
+        assert!(names.is_empty());
 
         // Not a spatial relationship function
         let non_st_func = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
@@ -2299,7 +2410,8 @@ mod tests {
             ))),
             args: vec![col("id")],
         });
-        assert!(!is_spatial_predicate(&non_st_func));
+        let names = collect_spatial_predicate_names(&non_st_func);
+        assert!(names.is_empty());
 
         // AND expression with no spatial predicates
         let non_spatial_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -2307,6 +2419,172 @@ mod tests {
             op: Operator::And,
             right: Box::new(col("name").eq(lit("test"))),
         });
-        assert!(!is_spatial_predicate(&non_spatial_and));
+        let names = collect_spatial_predicate_names(&non_spatial_and);
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_find_st_knn_call_simple() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        let result = find_st_knn_call(&expr);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_nested_in_and() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        // ST_KNN(...) AND l.id > 5
+        let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(knn_expr),
+            op: Operator::And,
+            right: Box::new(col("l.id").gt(lit(5))),
+        });
+
+        let result = find_st_knn_call(&and_expr);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_deeply_nested() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        // (l.id > 5 AND r.id > 3) AND ST_KNN(...)
+        let inner_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(col("l.id").gt(lit(5))),
+            op: Operator::And,
+            right: Box::new(col("r.id").gt(lit(3))),
+        });
+        let outer_and = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(inner_and),
+            op: Operator::And,
+            right: Box::new(knn_expr),
+        });
+
+        let result = find_st_knn_call(&outer_and);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().func.name(), "st_knn");
+    }
+
+    #[test]
+    fn test_find_st_knn_call_returns_none_for_non_knn() {
+        let st_intersects_udf = create_dummy_st_intersects_udf();
+        let expr = st_intersects_udf.call(vec![col("l.geom"), col("r.geom")]);
+
+        assert!(find_st_knn_call(&expr).is_none());
+    }
+
+    #[test]
+    fn test_find_st_knn_call_returns_none_for_non_and_binary() {
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        // ST_KNN(...) OR l.id > 5 — should NOT descend into OR
+        let or_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(knn_expr),
+            op: Operator::Or,
+            right: Box::new(col("l.id").gt(lit(5))),
+        });
+
+        assert!(find_st_knn_call(&or_expr).is_none());
+    }
+
+    /// Helper: build a DFSchema with the given qualified table name and column names.
+    fn make_df_schema(table: &str, columns: &[(&str, DataType)]) -> DFSchema {
+        use arrow::datatypes::{Field, Schema};
+        use datafusion_common::TableReference;
+
+        let fields: Vec<Field> = columns
+            .iter()
+            .map(|(name, dt)| Field::new(*name, dt.clone(), true))
+            .collect();
+        let schema = Schema::new(fields);
+        DFSchema::try_from_qualified_schema(TableReference::bare(table), &schema).unwrap()
+    }
+
+    #[test]
+    fn test_find_knn_query_side_left() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // ST_KNN(l.geom, r.geom, 5, false)  →  query side = left
+        let expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Left));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_right() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // ST_KNN(r.geom, l.geom, 5, false)  →  query side = right
+        let expr = st_knn_udf.call(vec![col("r.geom"), col("l.geom"), lit(5i32), lit(false)]);
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Right));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_nested_in_and() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let knn_expr = st_knn_udf.call(vec![col("l.geom"), col("r.geom"), lit(5i32), lit(false)]);
+
+        // l.id = r.id AND ST_KNN(l.geom, r.geom, 5, false)
+        let and_expr = Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
+            left: Box::new(col("l.id").eq(col("r.id"))),
+            op: Operator::And,
+            right: Box::new(knn_expr),
+        });
+
+        let result = find_knn_query_side(&and_expr, &left_schema, &right_schema);
+        assert_eq!(result, Some(KNNJoinQuerySide::Left));
+    }
+
+    #[test]
+    fn test_find_knn_query_side_no_knn_returns_none() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        // Non-KNN expression
+        let expr = col("l.id").eq(col("r.id"));
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_knn_query_side_literal_first_arg_returns_none() {
+        let left_schema =
+            make_df_schema("l", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+        let right_schema =
+            make_df_schema("r", &[("id", DataType::Int32), ("geom", DataType::Binary)]);
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        // First argument is a literal, not a column reference
+        let expr = st_knn_udf.call(vec![lit(42), col("r.geom"), lit(5i32), lit(false)]);
+
+        let result = find_knn_query_side(&expr, &left_schema, &right_schema);
+        assert_eq!(result, None);
     }
 }

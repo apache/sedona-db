@@ -42,7 +42,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::{error::SedonaProjError, proj_dyn_bindgen};
+use libloading::Library;
+
+use crate::{dyn_load, error::SedonaProjError, proj_dyn_bindgen};
 
 /// A macro to safely call a function pointer from a ProjApi
 ///
@@ -300,6 +302,27 @@ impl Proj {
         Ok(Self { inner, ctx })
     }
 
+    pub(crate) fn to_projjson(&self) -> Result<String, SedonaProjError> {
+        let inner = unsafe {
+            call_proj_api!(
+                self.ctx.api,
+                proj_as_projjson,
+                self.ctx.inner,
+                self.inner,
+                ptr::null()
+            )
+        };
+
+        if inner.is_null() {
+            return Err(SedonaProjError::Invalid(
+                "proj_as_projjson returned null".to_string(),
+            ));
+        }
+
+        let c_str = unsafe { CStr::from_ptr(inner) };
+        Ok(c_str.to_string_lossy().to_string())
+    }
+
     /// Create a transformation between two coordinate reference systems.
     ///
     /// This creates a transformation pipeline that converts coordinates from
@@ -428,24 +451,16 @@ impl Proj {
 /// loaded using C code; however, this could be migrated to Rust which also
 /// provides dynamic library loading capabilities.
 ///
-/// This API is thread safe and is marked as such; however, clients must not
-/// call the inner release callback. Doing so will set function pointers to
-/// null, which will cause subsequent calls to panic.
-#[derive(Default)]
+/// This API is thread safe and is marked as such. When loading PROJ from a
+/// shared library, the `_lib` field holds the `Library` handle, ensuring that
+/// the underlying library and its function pointers remain valid for the
+/// lifetime of this `ProjApi` instance.
 struct ProjApi {
     inner: proj_dyn_bindgen::ProjApi,
     name: String,
-}
-
-unsafe impl Send for ProjApi {}
-unsafe impl Sync for ProjApi {}
-
-impl Drop for ProjApi {
-    fn drop(&mut self) {
-        if let Some(releaser) = self.inner.release {
-            unsafe { releaser(&mut self.inner) }
-        }
-    }
+    /// Keep the dynamically loaded library alive for the lifetime of the function pointers.
+    /// `None` when using `proj-sys` (statically linked), `Some` when loaded from a shared library.
+    _lib: Option<Library>,
 }
 
 impl Debug for ProjApi {
@@ -456,31 +471,12 @@ impl Debug for ProjApi {
 
 impl ProjApi {
     fn try_from_shared_library(shared_library: PathBuf) -> Result<Arc<Self>, SedonaProjError> {
-        let mut inner = proj_dyn_bindgen::ProjApi::default();
-        let mut err_message = (0..1024).map(|_| 0).collect::<Vec<u8>>();
-        let shared_library_c = CString::new(shared_library.to_string_lossy().to_string())
-            .map_err(|_| SedonaProjError::Invalid("embedded nul in Rust string".to_string()))?;
-
-        let err = unsafe {
-            proj_dyn_bindgen::proj_dyn_api_init(
-                &mut inner as _,
-                shared_library_c.as_ptr(),
-                err_message.as_mut_ptr() as _,
-                err_message.len().try_into().unwrap(),
-            )
-        };
-
-        let c_err_message = CStr::from_bytes_until_nul(&err_message)
-            .map_err(|_| SedonaProjError::Invalid("embedded nul in C string".to_string()))?;
-        if err != 0 {
-            return Err(SedonaProjError::LibraryError(
-                c_err_message.to_string_lossy().to_string(),
-            ));
-        }
+        let (lib, inner) = dyn_load::load_proj_from_path(&shared_library)?;
 
         Ok(Arc::new(Self {
             inner,
             name: shared_library.to_string_lossy().to_string(),
+            _lib: Some(lib),
         }))
     }
 
@@ -519,12 +515,12 @@ impl ProjApi {
     #[cfg(feature = "proj-sys")]
     fn from_proj_sys() -> Self {
         use proj_sys::{
-            proj_area_create, proj_area_destroy, proj_area_set_bbox, proj_context_create,
-            proj_context_destroy, proj_context_errno, proj_context_errno_string,
-            proj_context_set_database_path, proj_context_set_search_paths, proj_create,
-            proj_create_crs_to_crs_from_pj, proj_cs_get_axis_count, proj_destroy, proj_errno,
-            proj_errno_reset, proj_info, proj_log_level, proj_normalize_for_visualization,
-            proj_trans, proj_trans_array,
+            proj_area_create, proj_area_destroy, proj_area_set_bbox, proj_as_projjson,
+            proj_context_create, proj_context_destroy, proj_context_errno,
+            proj_context_errno_string, proj_context_set_database_path,
+            proj_context_set_search_paths, proj_create, proj_create_crs_to_crs_from_pj,
+            proj_cs_get_axis_count, proj_destroy, proj_errno, proj_errno_reset, proj_info,
+            proj_log_level, proj_normalize_for_visualization, proj_trans, proj_trans_array,
         };
 
         let mut inner = proj_dyn_bindgen::ProjApi::default();
@@ -595,42 +591,15 @@ impl ProjApi {
             inner.proj_trans_array = Some(std::mem::transmute(
                 proj_trans_array as unsafe extern "C" fn(*mut _, _, usize, *mut _) -> _,
             ));
+            inner.proj_as_projjson = Some(std::mem::transmute(
+                proj_as_projjson as unsafe extern "C" fn(_, _, _) -> _,
+            ));
         }
 
         Self {
             inner,
             name: "proj_sys".to_string(),
-        }
-    }
-}
-
-// We don't have control over this generated source, so we can't derive the implementation
-#[allow(clippy::derivable_impls)]
-impl Default for proj_dyn_bindgen::ProjApi {
-    fn default() -> Self {
-        Self {
-            proj_area_create: Default::default(),
-            proj_area_destroy: Default::default(),
-            proj_area_set_bbox: Default::default(),
-            proj_context_create: Default::default(),
-            proj_context_destroy: Default::default(),
-            proj_context_errno_string: Default::default(),
-            proj_context_errno: Default::default(),
-            proj_context_set_database_path: Default::default(),
-            proj_context_set_search_paths: Default::default(),
-            proj_create_crs_to_crs_from_pj: Default::default(),
-            proj_create: Default::default(),
-            proj_cs_get_axis_count: Default::default(),
-            proj_destroy: Default::default(),
-            proj_errno_reset: Default::default(),
-            proj_errno: Default::default(),
-            proj_info: Default::default(),
-            proj_log_level: Default::default(),
-            proj_normalize_for_visualization: Default::default(),
-            proj_trans: Default::default(),
-            proj_trans_array: Default::default(),
-            release: Default::default(),
-            private_data: ptr::null_mut(),
+            _lib: None,
         }
     }
 }
@@ -639,6 +608,17 @@ impl Default for proj_dyn_bindgen::ProjApi {
 mod test {
     use super::*;
     use approx::assert_relative_eq;
+
+    #[test]
+    fn test_crs_to_projjson() {
+        let ctx = Rc::new(ProjContext::try_from_proj_sys().unwrap());
+        let proj = Proj::try_new(ctx.clone(), "EPSG:3857").unwrap();
+        let projjson = proj.to_projjson().unwrap();
+        assert!(
+            projjson.starts_with("{"),
+            "Unexpected PROJJSON output: {projjson}"
+        );
+    }
 
     /// Test conversion from NAD83 US Survey Feet (EPSG 2230) to NAD83 Metres (EPSG 26946)
     #[test]

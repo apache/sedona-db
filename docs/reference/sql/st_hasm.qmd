@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_HasM
-description: Return true if the geometry has a M dimension.
+description: Returns true if the geometry has a M dimension.
 kernels:
   - returns: boolean
     args: [geometry]
@@ -26,5 +26,9 @@ kernels:
 ## Examples
 
 ```sql
-SELECT ST_HasM(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+SELECT ST_HasM(ST_GeomFromWKT('POINT M (1 2 3)'));
+```
+
+```sql
+SELECT ST_HasM(ST_GeomFromWKT('POINT (1 2)'));
 ```

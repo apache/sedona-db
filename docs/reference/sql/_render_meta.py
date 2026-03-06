@@ -187,6 +187,17 @@ def to_str(v):
             return " "
         elif v["t"] == "Para":
             return "".join(to_str(item) for item in v["c"])
+        if v["t"] == "Quoted":
+            quote_type = v["c"][0]["t"]
+            if quote_type == "SingleQuote":
+                quote_char = "'"
+            elif quote_type == "DoubleQuote":
+                quote_char = '"'
+            else:
+                raise ValueError(f"Unhandled quote type in ast {v}")
+
+            content = "".join(to_str(item) for item in v["c"][1])
+            return f"{quote_char}{content}{quote_char}"
         else:
             raise ValueError(f"Unhandled type in Pandoc ast convert: {v}")
     else:

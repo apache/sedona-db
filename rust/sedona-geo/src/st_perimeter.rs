@@ -79,7 +79,7 @@ mod tests {
     use arrow_array::{create_array, ArrayRef};
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
-    use sedona_functions::register::stubs::st_perimeter_udf;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -90,8 +90,7 @@ mod tests {
         #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
-        let mut udf = st_perimeter_udf();
-        udf.add_kernels(st_perimeter_impl());
+        let udf = SedonaScalarUDF::from_impl("st_perimeter", st_perimeter_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
 
         assert_eq!(
@@ -131,8 +130,7 @@ mod tests {
 
     #[test]
     fn test_polygon_with_hole() {
-        let mut udf = st_perimeter_udf();
-        udf.add_kernels(st_perimeter_impl());
+        let udf = SedonaScalarUDF::from_impl("st_perimeter", st_perimeter_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
 
         // Polygon with a hole: outer ring 40, inner ring 24

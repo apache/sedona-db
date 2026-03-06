@@ -35,3 +35,17 @@ gpu = []
 bindgen = "0.72.1"
 cmake = "0.1"
 which = "8.0"
+
+[dependencies]
+arrow-array = { workspace = true, features = ["ffi"] }
+arrow-schema = { workspace = true }
+thiserror = { workspace = true }
+geo-types = { workspace = true }
+sedona-schema = { workspace = true }
+
+[dev-dependencies]
+wkt = { workspace = true }
+geo = { workspace = true }
+sedona-expr = { path = "../../rust/sedona-expr" }
+sedona-geos = { path = "../sedona-geos" }
+sedona-testing = { path = "../../rust/sedona-testing" }

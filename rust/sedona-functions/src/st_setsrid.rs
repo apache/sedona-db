@@ -14,14 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
     builder::{BinaryBuilder, NullBufferBuilder},
-    ArrayRef, StringViewArray,
+    new_null_array, ArrayRef, StringViewArray,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -31,9 +28,7 @@ use datafusion_common::{
     error::Result,
     DataFusionError, ScalarValue,
 };
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER, ColumnarValue, Documentation, Volatility,
-};
+use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::{
@@ -43,7 +38,11 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    crs::{deserialize_crs, CachedCrsNormalization, CachedSRIDToCrs},
+    datatypes::SedonaType,
+    matchers::ArgMatcher,
+};
 
 /// ST_SetSRID() scalar UDF implementation
 ///
@@ -57,7 +56,6 @@ pub fn st_set_srid_with_engine_udf(
         "st_setsrid",
         vec![Arc::new(STSetSRID { engine })],
         Volatility::Immutable,
-        Some(set_srid_doc()),
     )
 }
 
@@ -73,7 +71,6 @@ pub fn st_set_crs_with_engine_udf(
         "st_setcrs",
         vec![Arc::new(STSetCRS { engine })],
         Volatility::Immutable,
-        Some(set_crs_doc()),
     )
 }
 
@@ -89,35 +86,6 @@ pub fn st_set_srid_udf() -> SedonaScalarUDF {
 /// See [st_set_crs_with_engine_udf] for a validating version of this function
 pub fn st_set_crs_udf() -> SedonaScalarUDF {
     st_set_crs_with_engine_udf(None)
-}
-
-fn set_srid_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Sets the spatial reference system identifier (SRID) of the geometry.",
-        "ST_SetSRID (geom: Geometry, srid: Integer)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_argument("srid", "srid: EPSG code to set (e.g., 4326)")
-    .with_sql_example("SELECT ST_GeomFromWKT('POINT (-64.363049 45.091501)', 4326)".to_string())
-    .build()
-}
-
-fn set_crs_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Set CRS information for a geometry or geography",
-        "ST_SetCrs (geom: Geometry, crs: String)",
-    )
-    .with_argument("geom", "geometry: Input geometry or geography")
-    .with_argument(
-        "crs",
-        "string: Coordinate reference system identifier (e.g., 'OGC:CRS84')",
-    )
-    .with_sql_example(
-        "SELECT ST_SetCrs(ST_GeomFromWKT('POINT (-64.363049 45.091501)'), 'OGC:CRS84')".to_string(),
-    )
-    .build()
 }
 
 #[derive(Debug)]
@@ -151,18 +119,13 @@ impl SedonaScalarKernel for STSetSRID {
         let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
-        let item_crs_matcher = ArgMatcher::is_item_crs();
-        if item_crs_matcher.match_type(return_type) {
-            let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
-            make_item_crs(
-                &item_type,
-                item_arg,
-                &ColumnarValue::Array(normalized_crs_value),
-                crs_input_nulls(&args[1]),
-            )
-        } else {
-            Ok(item_arg)
-        }
+        invoke_set_crs(
+            &item_type,
+            item_arg,
+            &args[1],
+            return_type,
+            self.engine.as_ref(),
+        )
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -211,18 +174,13 @@ impl SedonaScalarKernel for STSetCRS {
         let (item_type, maybe_crs_type) = parse_item_crs_arg_type_strip_crs(&arg_types[0])?;
         let (item_arg, _) = parse_item_crs_arg(&item_type, &maybe_crs_type, &args[0])?;
 
-        let item_crs_matcher = ArgMatcher::is_item_crs();
-        if item_crs_matcher.match_type(return_type) {
-            let normalized_crs_value = normalize_crs_array(&args[1], self.engine.as_ref())?;
-            make_item_crs(
-                &item_type,
-                item_arg,
-                &ColumnarValue::Array(normalized_crs_value),
-                crs_input_nulls(&args[1]),
-            )
-        } else {
-            Ok(item_arg)
-        }
+        invoke_set_crs(
+            &item_type,
+            item_arg,
+            &args[1],
+            return_type,
+            self.engine.as_ref(),
+        )
     }
 
     fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -237,6 +195,45 @@ impl SedonaScalarKernel for STSetCRS {
         _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+    }
+}
+
+/// Shared invoke logic for both STSetSRID and STSetCRS.
+///
+/// When the SRID/CRS is a column (array), builds an `item_crs` struct with per-row CRS.
+/// When the SRID/CRS is a scalar, the CRS is already baked into the return type and the
+/// geometry is returned as-is. If the scalar SRID/CRS is NULL, the result is NULL per
+/// standard SQL NULL propagation semantics.
+fn invoke_set_crs(
+    item_type: &SedonaType,
+    item_arg: ColumnarValue,
+    crs_arg: &ColumnarValue,
+    return_type: &SedonaType,
+    maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
+) -> Result<ColumnarValue> {
+    let item_crs_matcher = ArgMatcher::is_item_crs();
+    if item_crs_matcher.match_type(return_type) {
+        let normalized_crs_value = normalize_crs_array(crs_arg, maybe_engine)?;
+        make_item_crs(
+            item_type,
+            item_arg,
+            &ColumnarValue::Array(normalized_crs_value),
+            crs_input_nulls(crs_arg),
+        )
+    } else if matches!(crs_arg, ColumnarValue::Scalar(sv) if sv.is_null()) {
+        // Scalar NULL SRID/CRS: propagate NULL per SQL NULL semantics.
+        let storage_type = return_type.storage_type();
+        match &item_arg {
+            ColumnarValue::Array(array) => Ok(ColumnarValue::Array(new_null_array(
+                storage_type,
+                array.len(),
+            ))),
+            ColumnarValue::Scalar(_) => {
+                Ok(ColumnarValue::Scalar(ScalarValue::try_from(storage_type)?))
+            }
+        }
+    } else {
+        Ok(item_arg)
     }
 }
 
@@ -475,8 +472,7 @@ fn normalize_crs_array(
         | DataType::UInt16
         | DataType::UInt32
         | DataType::UInt64 => {
-            // Local cache to avoid re-validating inputs
-            let mut known_valid = HashSet::new();
+            let mut srid_to_crs = CachedSRIDToCrs::new();
 
             let int_value = crs_value.cast_to(&DataType::Int64, None)?;
             let int_array_ref = ColumnarValue::values_to_arrays(&[int_value])?;
@@ -485,18 +481,10 @@ fn normalize_crs_array(
                 .iter()
                 .map(|maybe_srid| -> Result<Option<String>> {
                     if let Some(srid) = maybe_srid {
-                        if srid == 0 {
+                        let Some(auth_code) = srid_to_crs.get_crs(srid)? else {
                             return Ok(None);
-                        } else if srid == 4326 {
-                            return Ok(Some("OGC:CRS84".to_string()));
-                        }
-
-                        let auth_code = format!("EPSG:{srid}");
-                        if !known_valid.contains(&srid) {
-                            validate_crs(&auth_code, maybe_engine)?;
-                            known_valid.insert(srid);
-                        }
-
+                        };
+                        validate_crs(&auth_code, maybe_engine)?;
                         Ok(Some(auth_code))
                     } else {
                         Ok(None)
@@ -507,7 +495,7 @@ fn normalize_crs_array(
             Ok(Arc::new(utf8_view_array))
         }
         _ => {
-            let mut known_abbreviated = HashMap::<String, String>::new();
+            let mut crs_norm = CachedCrsNormalization::new();
 
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
@@ -516,25 +504,7 @@ fn normalize_crs_array(
                 .iter()
                 .map(|maybe_crs| -> Result<Option<String>> {
                     if let Some(crs_str) = maybe_crs {
-                        if crs_str == "0" {
-                            return Ok(None);
-                        }
-
-                        if let Some(abbreviated_crs) = known_abbreviated.get(crs_str) {
-                            Ok(Some(abbreviated_crs.clone()))
-                        } else if let Some(crs) = deserialize_crs(crs_str)? {
-                            let abbreviated_crs =
-                                if let Some(auth_code) = crs.to_authority_code()? {
-                                    auth_code
-                                } else {
-                                    crs_str.to_string()
-                                };
-
-                            known_abbreviated.insert(crs.to_string(), abbreviated_crs.clone());
-                            Ok(Some(abbreviated_crs))
-                        } else {
-                            Ok(None)
-                        }
+                        crs_norm.normalize(crs_str)
                     } else {
                         Ok(None)
                     }
@@ -590,11 +560,9 @@ mod test {
     fn udf_metadata() {
         let udf: ScalarUDF = st_set_srid_udf().into();
         assert_eq!(udf.name(), "st_setsrid");
-        assert!(udf.documentation().is_some());
 
         let udf: ScalarUDF = st_set_crs_udf().into();
         assert_eq!(udf.name(), "st_setcrs");
-        assert!(udf.documentation().is_some());
     }
 
     #[test]
@@ -631,7 +599,7 @@ mod test {
         assert_eq!(return_type, WKB_GEOMETRY);
         assert_value_equal(&result, &geom_arg);
 
-        // Call with a null srid (should *not* set the output crs)
+        // Call with a null srid (result should be NULL per SQL NULL propagation)
         let (return_type, result) = call_udf(
             &udf,
             geom_arg.clone(),
@@ -640,7 +608,8 @@ mod test {
         )
         .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
-        assert_value_equal(&result, &geom_arg);
+        let null_geom = create_scalar_value(None, &WKB_GEOMETRY);
+        assert_value_equal(&result, &null_geom);
     }
 
     #[test]
@@ -666,7 +635,7 @@ mod test {
         assert_eq!(return_type, wkb_lnglat);
         assert_value_equal(&result, &geom_lnglat);
 
-        // Call with a null scalar destination (should *not* set the output crs)
+        // Call with a null scalar destination (result should be NULL per SQL NULL propagation)
         let (return_type, result) = call_udf(
             &udf,
             geom_arg.clone(),
@@ -675,7 +644,8 @@ mod test {
         )
         .unwrap();
         assert_eq!(return_type, WKB_GEOMETRY);
-        assert_value_equal(&result, &geom_arg);
+        let null_geom = create_scalar_value(None, &WKB_GEOMETRY);
+        assert_value_equal(&result, &null_geom);
 
         // Ensure that an engine can reject a CRS if the UDF was constructed with one
         let udf_with_validation: ScalarUDF =

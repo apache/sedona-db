@@ -63,6 +63,16 @@ def test_st_setsrid(eng, geom, srid, expected_srid):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_setsrid_null_srid(eng):
+    """NULL SRID should produce NULL geometry per SQL NULL propagation."""
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_SetSrid(ST_GeomFromText('POINT (1 1)'), NULL)",
+        [(None,)],
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "srid", "expected_srid"),
     [
