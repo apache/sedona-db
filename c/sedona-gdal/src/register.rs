@@ -17,14 +17,15 @@
 
 use crate::errors::GdalInitLibraryError;
 use crate::gdal_api::GdalApi;
+use std::ffi::c_char;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 /// Minimum GDAL version required by sedona-gdal.
-#[cfg(feature = "gdal-sys")]
 const MIN_GDAL_VERSION_MAJOR: i32 = 3;
-#[cfg(feature = "gdal-sys")]
-const MIN_GDAL_VERSION_MINOR: i32 = 4;
+const MIN_GDAL_VERSION_MINOR: i32 = 5;
+const MIN_GDAL_VERSION_NUM: i32 =
+    MIN_GDAL_VERSION_MAJOR * 1_000_000 + MIN_GDAL_VERSION_MINOR * 10_000;
 
 /// Builder for the global [`GdalApi`].
 ///
@@ -70,13 +71,26 @@ impl GdalApiBuilder {
     /// resolves symbols from the current process (with an optional
     /// compile-time version check when the `gdal-sys` feature is enabled).
     pub fn build(&self) -> Result<GdalApi, GdalInitLibraryError> {
-        if let Some(shared_library) = &self.shared_library {
-            GdalApi::try_from_shared_library(shared_library.clone())
+        let api = if let Some(shared_library) = &self.shared_library {
+            GdalApi::try_from_shared_library(shared_library.clone())?
         } else {
-            #[cfg(feature = "gdal-sys")]
-            check_gdal_version()?;
-            GdalApi::try_from_current_process()
-        }
+            GdalApi::try_from_current_process()?
+        };
+
+        #[cfg(feature = "gdal-sys")]
+        let get_gdal_version_info = |arg: *const c_char| unsafe {
+            // Calling into `gdal-sys` also forces the linker to include GDAL
+            // symbols, so that `try_from_current_process` (which resolves function pointers
+            // via `dlsym` on the current process) can find them at runtime.
+            gdal_sys::GDALVersionInfo(arg)
+        };
+
+        #[cfg(not(feature = "gdal-sys"))]
+        let get_gdal_version_info =
+            |arg: *const c_char| unsafe { call_gdal_api!(api, GDALVersionInfo, arg) };
+
+        check_gdal_version(get_gdal_version_info)?;
+        Ok(api)
     }
 }
 
@@ -181,23 +195,18 @@ where
     func(api)
 }
 
-/// Verify that the compile-time-linked GDAL library meets the minimum version
-/// requirement. Calling into `gdal-sys` also forces the linker to include GDAL
-/// symbols, so that `try_from_current_process` (which resolves function pointers
-/// via `dlsym` on the current process) can find them at runtime.
+/// Verify that the GDAL library meets the minimum version requirement.
 ///
 /// We use `GDALVersionInfo("VERSION_NUM")` instead of `GDALCheckVersion` because
 /// the latter performs an **exact** major.minor match and rejects newer versions
 /// (e.g. GDAL 3.12 fails a check for 3.4), whereas we need a **minimum** version
 /// check (>=).
-#[cfg(feature = "gdal-sys")]
-fn check_gdal_version() -> Result<(), GdalInitLibraryError> {
+fn check_gdal_version(
+    mut gdal_version_info: impl FnMut(*const c_char) -> *const c_char,
+) -> Result<(), GdalInitLibraryError> {
     use std::ffi::CStr;
 
-    // Matches the GDAL_COMPUTE_VERSION(maj,min,rev) macro: maj*1000000 + min*10000 + rev*100
-    let min_version_num = MIN_GDAL_VERSION_MAJOR * 1_000_000 + MIN_GDAL_VERSION_MINOR * 10_000;
-
-    let version_ptr = unsafe { gdal_sys::GDALVersionInfo(c"VERSION_NUM".as_ptr()) };
+    let version_ptr = gdal_version_info(c"VERSION_NUM".as_ptr());
     if version_ptr.is_null() {
         return Err(GdalInitLibraryError::LibraryError(
             "GDALVersionInfo(\"VERSION_NUM\") returned null".to_string(),
@@ -221,9 +230,9 @@ fn check_gdal_version() -> Result<(), GdalInitLibraryError> {
             ))
         })?;
 
-    if version_num < min_version_num {
+    if version_num < MIN_GDAL_VERSION_NUM {
         // Get the human-readable release name for the error message.
-        let release_ptr = unsafe { gdal_sys::GDALVersionInfo(c"RELEASE_NAME".as_ptr()) };
+        let release_ptr = gdal_version_info(c"RELEASE_NAME".as_ptr());
         let release_name = if release_ptr.is_null() {
             format!("version_num={version_num}")
         } else {
