@@ -1,0 +1,3 @@
+[env]
+VCPKG_ROOT = "C:/vcpkg"
+CMAKE_TOOLCHAIN_FILE = "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
