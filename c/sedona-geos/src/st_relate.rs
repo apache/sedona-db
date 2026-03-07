@@ -26,10 +26,7 @@ use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
-use sedona_schema::{
-    datatypes::SedonaType,
-    matchers::ArgMatcher,
-};
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
@@ -59,7 +56,8 @@ impl SedonaScalarKernel for STRelate {
         let executor = GeosExecutor::new(arg_types, args);
 
         // ST_Relate returns a 9-char DE-9IM string per row; 9 bytes * n rows
-        let mut builder = StringBuilder::with_capacity(executor.num_iterations(), 9 * executor.num_iterations());
+        let mut builder =
+            StringBuilder::with_capacity(executor.num_iterations(), 9 * executor.num_iterations());
 
         executor.execute_wkb_wkb_void(|wkb1, wkb2| {
             match (wkb1, wkb2) {
