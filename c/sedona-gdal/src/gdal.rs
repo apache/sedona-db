@@ -27,12 +27,12 @@ use crate::dataset::Dataset;
 use crate::driver::{Driver, DriverManager};
 use crate::errors::Result;
 use crate::gdal_api::GdalApi;
-use crate::gdal_dyn_bindgen::GDALOpenFlags;
-use crate::gdal_dyn_bindgen::OGRFieldType;
+use crate::gdal_dyn_bindgen::{GDALOpenFlags, OGRFieldType};
 use crate::raster::polygonize::{polygonize, PolygonizeOptions};
 use crate::raster::rasterize::{rasterize, RasterizeOptions};
 use crate::raster::rasterize_affine::rasterize_affine;
 use crate::raster::types::DatasetOptions;
+use crate::raster::types::GdalDataType;
 use crate::raster::RasterBand;
 use crate::spatial_ref::SpatialRef;
 use crate::vector::feature::FieldDefn;
@@ -164,6 +164,31 @@ impl Gdal {
     }
 
     // -- Raster operations ---------------------------------------------------
+
+    /// Create a bare in-memory (MEM) GDAL dataset via `MEMDataset::Create`.
+    ///
+    /// This bypasses GDAL's open-dataset-list mutex for better concurrency.
+    /// The returned dataset has `n_owned_bands` bands of type
+    /// `owned_bands_data_type` whose pixel data is owned by GDAL.
+    ///
+    /// For a higher-level builder that also attaches zero-copy external bands,
+    /// geo-transforms, projections, and nodata values, see
+    /// [`MemDatasetBuilder`](crate::mem::MemDatasetBuilder).
+    pub fn create_mem_dataset(
+        &self,
+        width: usize,
+        height: usize,
+        n_owned_bands: usize,
+        owned_bands_data_type: GdalDataType,
+    ) -> Result<Dataset> {
+        crate::mem::create_mem_dataset(
+            self.api,
+            width,
+            height,
+            n_owned_bands,
+            owned_bands_data_type,
+        )
+    }
 
     /// Rasterize geometries with an affine transformer derived from the
     /// destination dataset.

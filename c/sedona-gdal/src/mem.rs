@@ -24,24 +24,29 @@
 //! # Example
 //!
 //! ```rust,ignore
+//! use sedona_gdal::global::with_global_gdal;
 //! use sedona_gdal::mem::{MemDatasetBuilder, Nodata};
 //! use sedona_gdal::GdalDataType;
 //!
-//! let data: Vec<u8> = vec![0u8; 256 * 256];
-//! let dataset = unsafe {
-//!     MemDatasetBuilder::new(256, 256)
-//!         .add_band(GdalDataType::UInt8, data.as_ptr())
-//!         .geo_transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
-//!         .projection("EPSG:4326")
-//!         .build()
-//!         .unwrap()
-//! };
-//! assert_eq!(dataset.raster_count(), 1);
+//! with_global_gdal(|gdal| {
+//!     let data: Vec<u8> = vec![0u8; 256 * 256];
+//!     let dataset = unsafe {
+//!         MemDatasetBuilder::new(256, 256)
+//!             .add_band(GdalDataType::UInt8, data.as_ptr())
+//!             .geo_transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
+//!             .projection("EPSG:4326")
+//!             .build(gdal)
+//!             .unwrap()
+//!     };
+//!     assert_eq!(dataset.raster_count(), 1);
+//! }).unwrap();
 //! ```
 
 use crate::call_gdal_api;
 use crate::dataset::Dataset;
-use crate::errors::{GdalError, Result};
+use crate::errors::Result;
+use crate::gdal::Gdal;
+use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::CE_Failure;
 use crate::raster::types::GdalDataType;
 
@@ -122,15 +127,25 @@ impl MemDatasetBuilder {
         }
     }
 
-    /// Create a MEM dataset with owned bands
+    /// Create a MEM dataset with owned bands.
+    ///
+    /// This is a convenience shortcut equivalent to
+    /// `MemDatasetBuilder::new_with_owned_bands(...).build(gdal)`.
+    ///
+    /// Unlike [`build`](Self::build), this method is safe because datasets created
+    /// with only owned bands do not reference any external memory.
     pub fn create(
+        gdal: &Gdal,
         width: usize,
         height: usize,
         n_owned_bands: usize,
         owned_bands_data_type: GdalDataType,
     ) -> Result<Dataset> {
+        // SAFETY: `new_with_owned_bands` creates a builder with zero external bands,
+        // so no data pointers need to outlive the dataset.
         unsafe {
-            Self::new_with_owned_bands(width, height, n_owned_bands, owned_bands_data_type).build()
+            Self::new_with_owned_bands(width, height, n_owned_bands, owned_bands_data_type)
+                .build(gdal)
         }
     }
 
@@ -197,51 +212,21 @@ impl MemDatasetBuilder {
 
     /// Build the GDAL MEM dataset.
     ///
-    /// This creates an empty MEM dataset using `MEMDataset::Create` (bypassing GDAL's
-    /// open-dataset-list), then attaches bands, sets the geo-transform, projection,
-    /// and per-band nodata values.
+    /// Creates an empty MEM dataset using [`create_mem_dataset`], then attaches
+    /// bands, sets the geo-transform, projection, and per-band nodata values.
     ///
     /// # Safety
     ///
     /// This method is unsafe because the built dataset references memory provided via
     /// the `add_band*` methods. The caller must ensure all data pointers remain valid
     /// for the lifetime of the returned [`Dataset`].
-    pub unsafe fn build(self) -> Result<Dataset> {
-        crate::global::with_global_gdal_api(|api| unsafe { self.build_with_api(api) })
-            .map_err(|e| GdalError::BadArgument(e.to_string()))?
-    }
-
-    /// Internal helper that performs the actual dataset construction given an API handle.
-    ///
-    /// # Safety
-    ///
-    /// Same safety requirements as [`build`](Self::build): all data pointers provided
-    /// via `add_band*` must remain valid for the lifetime of the returned [`Dataset`].
-    unsafe fn build_with_api(self, api: &'static crate::gdal_api::GdalApi) -> Result<Dataset> {
-        // Create an initial MEM dataset via MEMDataset::Create directly,
-        // bypassing GDAL's open-dataset-list mutex.
-        let empty_filename = c"";
-        let owned_bands_data_type = self
-            .owned_bands_data_type
-            .unwrap_or(GdalDataType::UInt8)
-            .to_c();
-        let handle = unsafe {
-            call_gdal_api!(
-                api,
-                MEMDatasetCreate,
-                empty_filename.as_ptr(),
-                self.width.try_into()?,
-                self.height.try_into()?,
-                self.n_owned_bands.try_into()?,
-                owned_bands_data_type,
-                std::ptr::null_mut()
-            )
-        };
-
-        if handle.is_null() {
-            return Err(api.last_cpl_err(CE_Failure as u32));
-        }
-        let dataset = Dataset::new_owned(api, handle);
+    pub unsafe fn build(self, gdal: &Gdal) -> Result<Dataset> {
+        let dataset = gdal.create_mem_dataset(
+            self.width,
+            self.height,
+            self.n_owned_bands,
+            self.owned_bands_data_type.unwrap_or(GdalDataType::UInt8),
+        )?;
 
         // Attach bands (zero-copy via DATAPOINTER).
         for band_spec in &self.bands {
@@ -279,160 +264,224 @@ impl MemDatasetBuilder {
     }
 }
 
+/// Create a bare in-memory (MEM) GDAL dataset via `MEMDataset::Create`.
+///
+/// This bypasses GDAL's open-dataset-list mutex for better concurrency.
+/// The returned dataset has `n_owned_bands` bands of type
+/// `owned_bands_data_type` whose pixel data is owned by GDAL.
+///
+/// For a higher-level builder that also attaches zero-copy external bands,
+/// geo-transforms, projections, and nodata values, see [`MemDatasetBuilder`].
+pub(crate) fn create_mem_dataset(
+    api: &'static GdalApi,
+    width: usize,
+    height: usize,
+    n_owned_bands: usize,
+    owned_bands_data_type: GdalDataType,
+) -> Result<Dataset> {
+    let empty_filename = c"";
+    let c_data_type = owned_bands_data_type.to_c();
+    let handle = unsafe {
+        call_gdal_api!(
+            api,
+            MEMDatasetCreate,
+            empty_filename.as_ptr(),
+            width.try_into()?,
+            height.try_into()?,
+            n_owned_bands.try_into()?,
+            c_data_type,
+            std::ptr::null_mut()
+        )
+    };
+
+    if handle.is_null() {
+        return Err(api.last_cpl_err(CE_Failure as u32));
+    }
+    Ok(Dataset::new_owned(api, handle))
+}
+
 #[cfg(all(test, feature = "gdal-sys"))]
 mod tests {
+    use crate::global::with_global_gdal;
     use crate::mem::{MemDatasetBuilder, Nodata};
     use crate::raster::types::GdalDataType;
 
     #[test]
     fn test_mem_builder_single_band() {
-        let data = vec![42u8; 64 * 64];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(64, 64)
-                .add_band(GdalDataType::UInt8, data.as_ptr())
-                .build()
-                .unwrap()
-        };
-        assert_eq!(dataset.raster_size(), (64, 64));
-        assert_eq!(dataset.raster_count(), 1);
+        with_global_gdal(|gdal| {
+            let data = vec![42u8; 64 * 64];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(64, 64)
+                    .add_band(GdalDataType::UInt8, data.as_ptr())
+                    .build(gdal)
+                    .unwrap()
+            };
+            assert_eq!(dataset.raster_size(), (64, 64));
+            assert_eq!(dataset.raster_count(), 1);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_multi_band() {
-        let band1 = vec![1u16; 32 * 32];
-        let band2 = vec![2u16; 32 * 32];
-        let band3 = vec![3u16; 32 * 32];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(32, 32)
-                .add_band(GdalDataType::UInt16, band1.as_ptr() as *const u8)
-                .add_band(GdalDataType::UInt16, band2.as_ptr() as *const u8)
-                .add_band(GdalDataType::UInt16, band3.as_ptr() as *const u8)
-                .build()
-                .unwrap()
-        };
-        assert_eq!(dataset.raster_count(), 3);
+        with_global_gdal(|gdal| {
+            let band1 = vec![1u16; 32 * 32];
+            let band2 = vec![2u16; 32 * 32];
+            let band3 = vec![3u16; 32 * 32];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(32, 32)
+                    .add_band(GdalDataType::UInt16, band1.as_ptr() as *const u8)
+                    .add_band(GdalDataType::UInt16, band2.as_ptr() as *const u8)
+                    .add_band(GdalDataType::UInt16, band3.as_ptr() as *const u8)
+                    .build(gdal)
+                    .unwrap()
+            };
+            assert_eq!(dataset.raster_count(), 3);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_with_geo_transform() {
-        let data = vec![0f32; 10 * 10];
-        let gt = [100.0, 0.5, 0.0, 200.0, 0.0, -0.5];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(10, 10)
-                .add_band(GdalDataType::Float32, data.as_ptr() as *const u8)
-                .geo_transform(gt)
-                .build()
-                .unwrap()
-        };
-        let got = dataset.geo_transform().unwrap();
-        assert_eq!(gt, got);
+        with_global_gdal(|gdal| {
+            let data = vec![0f32; 10 * 10];
+            let gt = [100.0, 0.5, 0.0, 200.0, 0.0, -0.5];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(10, 10)
+                    .add_band(GdalDataType::Float32, data.as_ptr() as *const u8)
+                    .geo_transform(gt)
+                    .build(gdal)
+                    .unwrap()
+            };
+            let got = dataset.geo_transform().unwrap();
+            assert_eq!(gt, got);
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_with_projection() {
-        let data = [0u8; 8 * 8];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(8, 8)
-                .add_band(GdalDataType::UInt8, data.as_ptr())
-                .projection(r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#)
-                .build()
-                .unwrap()
-        };
-        let proj = dataset.projection();
-        assert!(proj.contains("WGS 84"), "Expected WGS 84 in: {proj}");
+        with_global_gdal(|gdal| {
+            let data = [0u8; 8 * 8];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(8, 8)
+                    .add_band(GdalDataType::UInt8, data.as_ptr())
+                    .projection(r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#)
+                    .build(gdal)
+                    .unwrap()
+            };
+            let proj = dataset.projection();
+            assert!(proj.contains("WGS 84"), "Expected WGS 84 in: {proj}");
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_with_nodata() {
-        let data = [0f64; 4 * 4];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(4, 4)
-                .add_band_with_options(
-                    GdalDataType::Float64,
-                    data.as_ptr() as *const u8,
-                    None,
-                    None,
-                    Some(Nodata::F64(-9999.0)),
-                )
-                .build()
-                .unwrap()
-        };
-        let band = dataset.rasterband(1).unwrap();
-        let nodata = band.no_data_value();
-        assert_eq!(nodata, Some(-9999.0));
+        with_global_gdal(|gdal| {
+            let data = [0f64; 4 * 4];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(4, 4)
+                    .add_band_with_options(
+                        GdalDataType::Float64,
+                        data.as_ptr() as *const u8,
+                        None,
+                        None,
+                        Some(Nodata::F64(-9999.0)),
+                    )
+                    .build(gdal)
+                    .unwrap()
+            };
+            let band = dataset.rasterband(1).unwrap();
+            let nodata = band.no_data_value();
+            assert_eq!(nodata, Some(-9999.0));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_zero_bands() {
-        let dataset = unsafe { MemDatasetBuilder::new(16, 16).build().unwrap() };
-        assert_eq!(dataset.raster_count(), 0);
-        assert_eq!(dataset.raster_size(), (16, 16));
+        with_global_gdal(|gdal| {
+            let dataset = unsafe { MemDatasetBuilder::new(16, 16).build(gdal).unwrap() };
+            assert_eq!(dataset.raster_count(), 0);
+            assert_eq!(dataset.raster_size(), (16, 16));
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_mem_builder_mixed_band_types() {
-        let band_u8 = [0u8; 8 * 8];
-        let band_f64 = vec![0f64; 8 * 8];
-        let dataset = unsafe {
-            MemDatasetBuilder::new(8, 8)
-                .add_band(GdalDataType::UInt8, band_u8.as_ptr())
-                .add_band(GdalDataType::Float64, band_f64.as_ptr() as *const u8)
-                .build()
-                .unwrap()
-        };
-        assert_eq!(dataset.raster_count(), 2);
+        with_global_gdal(|gdal| {
+            let band_u8 = [0u8; 8 * 8];
+            let band_f64 = vec![0f64; 8 * 8];
+            let dataset = unsafe {
+                MemDatasetBuilder::new(8, 8)
+                    .add_band(GdalDataType::UInt8, band_u8.as_ptr())
+                    .add_band(GdalDataType::Float64, band_f64.as_ptr() as *const u8)
+                    .build(gdal)
+                    .unwrap()
+            };
+            assert_eq!(dataset.raster_count(), 2);
+        })
+        .unwrap();
     }
 
     #[test]
     pub fn test_mem_builder_with_owned_bands() {
-        let dataset = unsafe {
-            MemDatasetBuilder::new_with_owned_bands(16, 16, 2, GdalDataType::UInt16)
-                .build()
-                .unwrap()
-        };
-        assert_eq!(dataset.raster_count(), 2);
-        assert_eq!(
-            dataset.rasterband(1).unwrap().band_type(),
-            GdalDataType::UInt16
-        );
-        assert_eq!(
-            dataset.rasterband(2).unwrap().band_type(),
-            GdalDataType::UInt16
-        );
+        with_global_gdal(|gdal| {
+            let dataset = unsafe {
+                MemDatasetBuilder::new_with_owned_bands(16, 16, 2, GdalDataType::UInt16)
+                    .build(gdal)
+                    .unwrap()
+            };
+            assert_eq!(dataset.raster_count(), 2);
+            assert_eq!(
+                dataset.rasterband(1).unwrap().band_type(),
+                GdalDataType::UInt16
+            );
+            assert_eq!(
+                dataset.rasterband(2).unwrap().band_type(),
+                GdalDataType::UInt16
+            );
 
-        let dataset = MemDatasetBuilder::create(10, 8, 1, GdalDataType::Float32).unwrap();
-        assert_eq!(dataset.raster_count(), 1);
-        assert_eq!(
-            dataset.rasterband(1).unwrap().band_type(),
-            GdalDataType::Float32
-        );
+            let dataset = MemDatasetBuilder::create(gdal, 10, 8, 1, GdalDataType::Float32).unwrap();
+            assert_eq!(dataset.raster_count(), 1);
+            assert_eq!(
+                dataset.rasterband(1).unwrap().band_type(),
+                GdalDataType::Float32
+            );
+        })
+        .unwrap();
     }
 
     #[test]
     pub fn test_mem_builder_mixed_owned_and_external_bands() {
-        let external_band = [0u8; 8 * 8];
-        let dataset = unsafe {
-            MemDatasetBuilder::new_with_owned_bands(8, 8, 1, GdalDataType::Float32)
-                .add_band_with_options(
-                    GdalDataType::UInt8,
-                    external_band.as_ptr(),
-                    None,
-                    None,
-                    Some(Nodata::U64(255)),
-                )
-                .build()
-                .unwrap()
-        };
-        assert_eq!(dataset.raster_count(), 2);
-        assert_eq!(
-            dataset.rasterband(1).unwrap().band_type(),
-            GdalDataType::Float32
-        );
-        assert_eq!(
-            dataset.rasterband(2).unwrap().band_type(),
-            GdalDataType::UInt8
-        );
-        let nodata = dataset.rasterband(2).unwrap().no_data_value();
-        assert_eq!(nodata, Some(255.0));
+        with_global_gdal(|gdal| {
+            let external_band = [0u8; 8 * 8];
+            let dataset = unsafe {
+                MemDatasetBuilder::new_with_owned_bands(8, 8, 1, GdalDataType::Float32)
+                    .add_band_with_options(
+                        GdalDataType::UInt8,
+                        external_band.as_ptr(),
+                        None,
+                        None,
+                        Some(Nodata::U64(255)),
+                    )
+                    .build(gdal)
+                    .unwrap()
+            };
+            assert_eq!(dataset.raster_count(), 2);
+            assert_eq!(
+                dataset.rasterband(1).unwrap().band_type(),
+                GdalDataType::Float32
+            );
+            assert_eq!(
+                dataset.rasterband(2).unwrap().band_type(),
+                GdalDataType::UInt8
+            );
+            let nodata = dataset.rasterband(2).unwrap().no_data_value();
+            assert_eq!(nodata, Some(255.0));
+        })
+        .unwrap();
     }
 }
