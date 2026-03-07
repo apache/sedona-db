@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod st_relate;
 mod binary_predicates;
 mod distance;
 mod executor;
@@ -44,6 +43,7 @@ mod st_numpoints;
 mod st_perimeter;
 mod st_polygonize;
 mod st_polygonize_agg;
+pub mod st_relate;
 mod st_simplify;
 mod st_simplifypreservetopology;
 mod st_snap;

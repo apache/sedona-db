@@ -14,11 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_expr::{
-    scalar_doc_sections::DOC_SECTION_OTHER,
-    Documentation,
-    Volatility,
-};
+use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -27,10 +23,7 @@ pub fn st_relate_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new_stub(
         "st_relate",
         ArgMatcher::new(
-            vec![
-                ArgMatcher::is_geometry(),
-                ArgMatcher::is_geometry(),
-            ],
+            vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
             SedonaType::Arrow(arrow_schema::DataType::Utf8),
         ),
         Volatility::Immutable,
