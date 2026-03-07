@@ -39,6 +39,8 @@ macro_rules! define_aggregate_kernels {
 
 pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     define_scalar_kernels!(
+
+        "st_relate" => crate::st_relate::st_relate_impl,
         "st_area" => crate::st_area::st_area_impl,
         "st_boundary" => crate::st_boundary::st_boundary_impl,
         "st_buffer" => crate::st_buffer::st_buffer_impl,

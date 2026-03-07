@@ -43,6 +43,7 @@ mod st_numpoints;
 mod st_perimeter;
 mod st_polygonize;
 mod st_polygonize_agg;
+pub mod st_relate;
 mod st_simplify;
 mod st_simplifypreservetopology;
 mod st_snap;
