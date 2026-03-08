@@ -38,7 +38,6 @@ pub fn default_function_set() -> FunctionSet {
 
     register_scalar_udfs!(
         function_set,
-        crate::barrier::barrier_udf,
         crate::st_relate::st_relate_udf,
         crate::distance::st_distance_sphere_udf,
         crate::distance::st_distance_spheroid_udf,
