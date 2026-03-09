@@ -19,7 +19,9 @@
 //! <https://github.com/georust/gdal/blob/v0.19.0/src/raster/types.rs>.
 //! Original code is licensed under MIT.
 
-use crate::gdal_dyn_bindgen::{self, GDALDataType, GDALRIOResampleAlg};
+use crate::gdal_dyn_bindgen::{
+    self, GDALDataType, GDALOpenFlags, GDALRIOResampleAlg, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR,
+};
 
 /// A Rust-friendly enum mirroring the georust/gdal `GdalDataType` names.
 ///
@@ -181,7 +183,7 @@ impl<T: GdalType + Copy> Buffer<T> {
 
 /// Options for opening a dataset.
 pub struct DatasetOptions<'a> {
-    pub open_flags: crate::gdal_dyn_bindgen::GDALOpenFlags,
+    pub open_flags: GDALOpenFlags,
     pub allowed_drivers: Option<&'a [&'a str]>,
     pub open_options: Option<&'a [&'a str]>,
     pub sibling_files: Option<&'a [&'a str]>,
@@ -190,8 +192,7 @@ pub struct DatasetOptions<'a> {
 impl<'a> Default for DatasetOptions<'a> {
     fn default() -> Self {
         Self {
-            open_flags: crate::gdal_dyn_bindgen::GDAL_OF_READONLY
-                | crate::gdal_dyn_bindgen::GDAL_OF_VERBOSE_ERROR,
+            open_flags: GDAL_OF_READONLY | GDAL_OF_VERBOSE_ERROR,
             allowed_drivers: None,
             open_options: None,
             sibling_files: None,
