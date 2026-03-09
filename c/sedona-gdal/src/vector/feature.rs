@@ -22,9 +22,10 @@
 use std::ffi::CString;
 use std::marker::PhantomData;
 
-use crate::errors::Result;
+use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
+use crate::vector::Envelope;
 
 /// An OGR feature.
 pub struct Feature<'a> {
@@ -78,9 +79,7 @@ impl<'a> Feature<'a> {
             )
         };
         if idx < 0 {
-            return Err(crate::errors::GdalError::BadArgument(format!(
-                "field '{name}' not found"
-            )));
+            return Err(GdalError::BadArgument(format!("field '{name}' not found")));
         }
         Ok(idx)
     }
@@ -141,7 +140,7 @@ impl<'a> BorrowedGeometry<'a> {
     pub fn wkb(&self) -> Result<Vec<u8>> {
         let size = unsafe { call_gdal_api!(self.api, OGR_G_WkbSize, self.c_geom) };
         if size < 0 {
-            return Err(crate::errors::GdalError::BadArgument(format!(
+            return Err(GdalError::BadArgument(format!(
                 "OGR_G_WkbSize returned negative size: {size}"
             )));
         }
@@ -156,7 +155,7 @@ impl<'a> BorrowedGeometry<'a> {
             )
         };
         if rv != OGRERR_NONE {
-            return Err(crate::errors::GdalError::OgrError {
+            return Err(GdalError::OgrError {
                 err: rv,
                 method_name: "OGR_G_ExportToIsoWkb",
             });
@@ -165,7 +164,7 @@ impl<'a> BorrowedGeometry<'a> {
     }
 
     /// Get the bounding envelope.
-    pub fn envelope(&self) -> crate::vector::Envelope {
+    pub fn envelope(&self) -> Envelope {
         let mut env = OGREnvelope {
             MinX: 0.0,
             MaxX: 0.0,
@@ -173,7 +172,7 @@ impl<'a> BorrowedGeometry<'a> {
             MaxY: 0.0,
         };
         unsafe { call_gdal_api!(self.api, OGR_G_GetEnvelope, self.c_geom, &mut env) };
-        crate::vector::Envelope {
+        Envelope {
             MinX: env.MinX,
             MaxX: env.MaxX,
             MinY: env.MinY,
@@ -203,7 +202,7 @@ impl FieldDefn {
         let c_field_defn =
             unsafe { call_gdal_api!(api, OGR_Fld_Create, c_name.as_ptr(), field_type) };
         if c_field_defn.is_null() {
-            return Err(crate::errors::GdalError::NullPointer {
+            return Err(GdalError::NullPointer {
                 method_name: "OGR_Fld_Create",
                 msg: format!("failed to create field definition '{name}'"),
             });
