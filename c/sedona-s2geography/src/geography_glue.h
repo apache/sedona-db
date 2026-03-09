@@ -48,7 +48,7 @@ uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat);
 
 size_t SedonaGeographyGlueNumKernels(void);
 
-int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_bytes);
+int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kernels_size_bytes);
 
 #ifdef __cplusplus
 }
