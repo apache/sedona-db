@@ -17,3 +17,5 @@
 
 pub mod rasterband;
 pub mod types;
+
+pub use rasterband::{actual_block_size, RasterBand};
