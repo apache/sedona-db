@@ -26,6 +26,6 @@ unsafe extern "C" {
     pub fn SedonaGeographyGlueNumKernels() -> usize;
     pub fn SedonaGeographyGlueInitKernels(
         kernels_array: *mut c_void,
-        kerenels_size_bytes: usize,
+        kernels_size_bytes: usize,
     ) -> c_int;
 }
