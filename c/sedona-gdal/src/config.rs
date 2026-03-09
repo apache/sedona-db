@@ -16,37 +16,27 @@
 // under the License.
 
 //! Ported (and contains copied code) from georust/gdal:
-//! <https://github.com/georust/gdal/blob/v0.19.0/src/errors.rs>.
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/config.rs>.
 //! Original code is licensed under MIT.
+//!
+//! GDAL configuration option wrappers.
 
-use std::ffi::NulError;
+use std::ffi::CString;
 
-use thiserror::Error;
+use crate::errors::Result;
+use crate::gdal_api::{call_gdal_api, GdalApi};
 
-/// Error type for the sedona-gdal crate initialization and library loading.
-#[derive(Error, Debug)]
-pub enum GdalInitLibraryError {
-    #[error("{0}")]
-    Invalid(String),
-    #[error("{0}")]
-    LibraryError(String),
+/// Set a GDAL library configuration option with **thread-local** scope.
+pub fn set_thread_local_config_option(api: &'static GdalApi, key: &str, value: &str) -> Result<()> {
+    let c_key = CString::new(key)?;
+    let c_val = CString::new(value)?;
+    unsafe {
+        call_gdal_api!(
+            api,
+            CPLSetThreadLocalConfigOption,
+            c_key.as_ptr(),
+            c_val.as_ptr()
+        );
+    }
+    Ok(())
 }
-
-/// Error type compatible with the georust/gdal error variants used in this codebase.
-#[derive(Clone, Debug, Error)]
-pub enum GdalError {
-    #[error("CPL error class: '{class:?}', error number: '{number}', error msg: '{msg}'")]
-    CplError {
-        class: u32,
-        number: i32,
-        msg: String,
-    },
-
-    #[error("Bad argument: {0}")]
-    BadArgument(String),
-
-    #[error("FFI NUL error: {0}")]
-    FfiNulError(#[from] NulError),
-}
-
-pub type Result<T> = std::result::Result<T, GdalError>;

@@ -15,18 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// --- FFI layer ---
-pub(crate) mod dyn_load;
-pub mod gdal_dyn_bindgen;
+pub mod types;
 
-// --- Error types ---
-pub mod errors;
-
-// --- Core API ---
-pub mod gdal_api;
-pub mod global;
-
-// --- High-level wrappers ---
-pub mod config;
-pub mod cpl;
-pub mod raster;
+pub use types::{
+    Buffer, DatasetOptions, GdalDataType, GdalType, RasterCreationOptions, ResampleAlg,
+};

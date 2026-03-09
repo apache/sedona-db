@@ -43,6 +43,8 @@ macro_rules! call_gdal_api {
     };
 }
 
+pub(crate) use call_gdal_api;
+
 #[derive(Debug)]
 pub struct GdalApi {
     pub(crate) inner: SedonaGdalApi,
