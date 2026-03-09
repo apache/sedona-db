@@ -15,27 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// --- FFI layer ---
-pub(crate) mod dyn_load;
-pub mod gdal_dyn_bindgen;
+pub mod feature;
+pub mod geometry;
+pub mod layer;
 
-// --- Error types ---
-pub mod errors;
-
-// --- Core API ---
-pub mod gdal;
-pub mod gdal_api;
-pub mod global;
-
-// --- High-level wrappers ---
-pub mod config;
-pub mod cpl;
-pub mod dataset;
-pub mod driver;
-pub mod geo_transform;
-pub mod mem;
-pub mod raster;
-pub mod spatial_ref;
-pub mod vector;
-pub mod vrt;
-pub mod vsi;
+pub use feature::{Feature, FieldDefn};
+pub use geometry::{Envelope, Geometry};
+pub use layer::Layer;

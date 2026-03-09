@@ -15,27 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// --- FFI layer ---
-pub(crate) mod dyn_load;
-pub mod gdal_dyn_bindgen;
+pub mod polygonize;
+pub mod rasterband;
+pub mod rasterize;
+pub mod rasterize_affine;
+pub mod types;
 
-// --- Error types ---
-pub mod errors;
-
-// --- Core API ---
-pub mod gdal;
-pub mod gdal_api;
-pub mod global;
-
-// --- High-level wrappers ---
-pub mod config;
-pub mod cpl;
-pub mod dataset;
-pub mod driver;
-pub mod geo_transform;
-pub mod mem;
-pub mod raster;
-pub mod spatial_ref;
-pub mod vector;
-pub mod vrt;
-pub mod vsi;
+pub use polygonize::{polygonize, PolygonizeOptions};
+pub use rasterband::{actual_block_size, RasterBand};
+pub use rasterize::{rasterize, BurnSource, MergeAlgorithm, OptimizeMode, RasterizeOptions};
+pub use rasterize_affine::rasterize_affine;
+pub use types::{
+    Buffer, DatasetOptions, GdalDataType, GdalType, RasterCreationOptions, ResampleAlg,
+};

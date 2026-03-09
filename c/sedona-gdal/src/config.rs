@@ -15,27 +15,29 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// --- FFI layer ---
-pub(crate) mod dyn_load;
-pub mod gdal_dyn_bindgen;
+//! Ported (and contains copied code) from georust/gdal:
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/config.rs>.
+//! Original code is licensed under MIT.
+//!
+//! GDAL configuration option wrappers.
 
-// --- Error types ---
-pub mod errors;
+use std::ffi::CString;
 
-// --- Core API ---
-pub mod gdal;
-pub mod gdal_api;
-pub mod global;
+use crate::call_gdal_api;
+use crate::errors::Result;
+use crate::gdal_api::GdalApi;
 
-// --- High-level wrappers ---
-pub mod config;
-pub mod cpl;
-pub mod dataset;
-pub mod driver;
-pub mod geo_transform;
-pub mod mem;
-pub mod raster;
-pub mod spatial_ref;
-pub mod vector;
-pub mod vrt;
-pub mod vsi;
+/// Set a GDAL library configuration option with **thread-local** scope.
+pub fn set_thread_local_config_option(api: &'static GdalApi, key: &str, value: &str) -> Result<()> {
+    let c_key = CString::new(key)?;
+    let c_val = CString::new(value)?;
+    unsafe {
+        call_gdal_api!(
+            api,
+            CPLSetThreadLocalConfigOption,
+            c_key.as_ptr(),
+            c_val.as_ptr()
+        );
+    }
+    Ok(())
+}
