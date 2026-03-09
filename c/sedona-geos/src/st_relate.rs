@@ -21,7 +21,7 @@ use arrow_array::builder::StringBuilder;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
-use geos::{Geom, Geometry};
+use geos::Geom;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
