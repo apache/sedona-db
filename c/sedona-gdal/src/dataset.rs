@@ -23,6 +23,7 @@ use std::ffi::{CStr, CString};
 use std::ptr;
 
 use crate::cpl::CslStringList;
+use crate::driver::Driver;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
@@ -243,7 +244,7 @@ impl Dataset {
     /// Create a copy of this dataset to a new file using the given driver.
     pub fn create_copy(
         &self,
-        driver: &crate::driver::Driver,
+        driver: &Driver,
         filename: &str,
         options: &[&str],
     ) -> Result<Dataset> {
