@@ -44,7 +44,7 @@ use crate::errors::{GdalError, Result};
 ///
 /// There are a number of ways to populate a [`CslStringList`]:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use sedona_gdal::cpl::{CslStringList, CslStringListEntry};
 ///
 /// let mut sl1 = CslStringList::new();
@@ -52,11 +52,9 @@ use crate::errors::{GdalError, Result};
 /// sl1.set_name_value("COMPRESS", "LZW").unwrap();
 /// sl1.add_string("MAGIC_FLAG").unwrap();
 ///
-/// let sl2: CslStringList = "NUM_THREADS=ALL_CPUS COMPRESS=LZW MAGIC_FLAG".parse().unwrap();
-/// let sl3 = CslStringList::from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"]);
+/// let sl2 = CslStringList::from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"]);
 ///
 /// assert_eq!(sl1.to_string(), sl2.to_string());
-/// assert_eq!(sl2.to_string(), sl3.to_string());
 /// ```
 pub struct CslStringList {
     /// Owned strings.
@@ -81,9 +79,11 @@ impl CslStringList {
 
     /// Create an empty GDAL string list with given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
+        let mut ptrs = Vec::with_capacity(capacity + 1);
+        ptrs.push(ptr::null_mut());
         Self {
             strings: Vec::with_capacity(capacity),
-            ptrs: vec![ptr::null_mut(); capacity + 1],
+            ptrs,
         }
     }
 
