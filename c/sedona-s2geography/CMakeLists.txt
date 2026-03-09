@@ -35,21 +35,6 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-set(NANOARROW_NAMESPACE SedonaGeography)
-fetchcontent_declare(nanoarrow
-                     URL https://github.com/apache/arrow-nanoarrow/archive/8c4e869cc8e4920737a513bc3012780050016bc5.zip
-                     URL_HASH SHA256=1c5c44ab3b67199c873cc8d0c130c27ee94d6c7d91f9a4e269bd26f5646faf6b
-)
-
-set(GEOARROW_NAMESPACE SedonaGeography)
-fetchcontent_declare(geoarrow
-                     URL https://github.com/geoarrow/geoarrow-c/archive/9a4ceeebb6ce4272450df5ff4a56c22cb3111cef.zip
-                     URL_HASH SHA256=479066b3c89dcb86a7b2af04ef8e57ea50254f151f4d6e46fb5e241fce86feb1
-)
-
-fetchcontent_makeavailable(nanoarrow)
-fetchcontent_makeavailable(geoarrow)
-
 # S2's CMake is pretty awful so we just build the library ourselves. We pin the
 # version of s2geometry for predictability (although it is also available on
 # vcpkg and homebrew).
@@ -221,11 +206,9 @@ target_link_libraries(geography_glue
                       s2
                       OpenSSL::SSL
                       OpenSSL::Crypto
-                      ${S2_EXTRA_OPENSSL_LIBS}
-                      geoarrow::geoarrow
-                      nanoarrow::nanoarrow)
+                      ${S2_EXTRA_OPENSSL_LIBS})
 
-install(TARGETS geography_glue nanoarrow_static
+install(TARGETS geography_glue
         EXPORT "geoarrow"
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"

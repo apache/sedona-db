@@ -21,8 +21,6 @@
 
 #include "absl/base/config.h"
 
-#include <geoarrow/geoarrow.h>
-#include <nanoarrow/nanoarrow.h>
 #include <openssl/opensslv.h>
 #include <s2geography.h>
 #include <s2geography/sedona_udf/sedona_extension.h>
@@ -30,10 +28,6 @@
 #include <s2/s2earth.h>
 
 using namespace s2geography;
-
-const char* SedonaGeographyGlueNanoarrowVersion(void) { return ArrowNanoarrowVersion(); }
-
-const char* SedonaGeographyGlueGeoArrowVersion(void) { return GeoArrowVersion(); }
 
 const char* SedonaGeographyGlueOpenSSLVersion(void) {
   static std::string version = std::string() + std::to_string(OPENSSL_VERSION_MAJOR) +

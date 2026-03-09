@@ -18,8 +18,6 @@
 use std::os::raw::{c_char, c_int, c_void};
 
 unsafe extern "C" {
-    pub fn SedonaGeographyGlueNanoarrowVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueGeoArrowVersion() -> *const c_char;
     pub fn SedonaGeographyGlueOpenSSLVersion() -> *const c_char;
     pub fn SedonaGeographyGlueS2GeometryVersion() -> *const c_char;
     pub fn SedonaGeographyGlueAbseilVersion() -> *const c_char;

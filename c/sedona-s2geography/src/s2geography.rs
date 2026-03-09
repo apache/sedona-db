@@ -64,24 +64,6 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
 pub struct Versions {}
 
 impl Versions {
-    /// Return the statically linked nanoarrow version as a string
-    pub fn nanoarrow() -> String {
-        unsafe {
-            let raw_c_str = SedonaGeographyGlueNanoarrowVersion();
-            let c_str = std::ffi::CStr::from_ptr(raw_c_str);
-            c_str.to_string_lossy().into_owned()
-        }
-    }
-
-    /// Return the statically linked geoarrow version as a string
-    pub fn geoarrow() -> String {
-        unsafe {
-            let raw_c_str = SedonaGeographyGlueGeoArrowVersion();
-            let c_str = std::ffi::CStr::from_ptr(raw_c_str);
-            c_str.to_string_lossy().into_owned()
-        }
-    }
-
     /// Return the statically linked s2 version as a string
     pub fn s2geometry() -> String {
         unsafe {
@@ -151,8 +133,6 @@ mod test {
 
     #[test]
     fn test_versions() {
-        assert_eq!(Versions::nanoarrow(), "0.7.0-SNAPSHOT");
-        assert_eq!(Versions::geoarrow(), "0.2.0-SNAPSHOT");
         assert_eq!(Versions::s2geometry(), "0.11.1");
         assert!(Versions::abseil().starts_with("20"));
         assert!(Versions::openssl().contains("."));
