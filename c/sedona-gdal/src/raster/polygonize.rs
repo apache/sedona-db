@@ -138,6 +138,7 @@ mod tests {
         use crate::global::with_global_gdal_api;
         use crate::raster::Buffer;
         use crate::vector::FieldDefn;
+        use crate::vsi::unlink_mem_file;
 
         with_global_gdal_api(|api| {
             let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
@@ -209,7 +210,7 @@ mod tests {
                 .count();
             assert_eq!(ones_8, 1);
 
-            crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
+            unlink_mem_file(api, gpkg_path).unwrap();
         })
         .unwrap();
     }
@@ -222,6 +223,7 @@ mod tests {
         use crate::global::with_global_gdal_api;
         use crate::raster::Buffer;
         use crate::vector::FieldDefn;
+        use crate::vsi::unlink_mem_file;
 
         with_global_gdal_api(|api| {
             let mem_driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
@@ -267,7 +269,7 @@ mod tests {
             let only_val = layer.features().next().unwrap().field_as_integer(0);
             assert_eq!(only_val, Some(7));
 
-            crate::vsi::unlink_mem_file(api, gpkg_path).unwrap();
+            unlink_mem_file(api, gpkg_path).unwrap();
         })
         .unwrap();
     }
