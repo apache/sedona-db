@@ -14,9 +14,57 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::sync::Arc;
+
 use criterion::{criterion_group, criterion_main, Criterion};
-use sedona_functions::st_setsrid::st_apply_default_crs_udf;
+use datafusion_common::error::Result;
+use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_schema::{
+    crs::{lnglat, Crs},
+    datatypes::SedonaType,
+};
 use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
+
+fn sd_apply_default_crs_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "sd_applydefaultcrs",
+        vec![Arc::new(SDApplyDefaultCRS { crs: lnglat() })],
+        Volatility::Immutable,
+    )
+}
+
+#[derive(Debug)]
+struct SDApplyDefaultCRS {
+    crs: Crs,
+}
+
+impl SedonaScalarKernel for SDApplyDefaultCRS {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        if args.len() != 1 {
+            return Ok(None);
+        }
+
+        match &args[0] {
+            SedonaType::Wkb(edges, crs) if crs.is_none() => {
+                Ok(Some(SedonaType::Wkb(*edges, self.crs.clone())))
+            }
+            SedonaType::WkbView(edges, crs) if crs.is_none() => {
+                Ok(Some(SedonaType::WkbView(*edges, self.crs.clone())))
+            }
+            SedonaType::Wkb(..) | SedonaType::WkbView(..) => Ok(Some(args[0].clone())),
+            _ => Ok(None),
+        }
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        Ok(args[0].clone())
+    }
+}
 
 fn criterion_benchmark(c: &mut Criterion) {
     let f = sedona_raster_functions::register::default_function_set();
@@ -174,7 +222,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_intersects",
         BenchmarkArgs::ArrayArray(
             Raster(64, 64),
-            Transformed(Box::new(Point), st_apply_default_crs_udf().into()),
+            Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
         ),
     );
     // RS_Intersects(raster, geometry) - polygon
@@ -185,7 +233,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_intersects",
         BenchmarkArgs::ArrayArray(
             Raster(64, 64),
-            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+            Transformed(Box::new(Polygon(4)), sd_apply_default_crs_udf().into()),
         ),
     );
     // RS_Intersects(raster, raster)
@@ -204,7 +252,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_contains",
         BenchmarkArgs::ArrayArray(
             Raster(64, 64),
-            Transformed(Box::new(Point), st_apply_default_crs_udf().into()),
+            Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
         ),
     );
     // RS_Contains(raster, geometry) - polygon
@@ -215,7 +263,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_contains",
         BenchmarkArgs::ArrayArray(
             Raster(64, 64),
-            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+            Transformed(Box::new(Polygon(4)), sd_apply_default_crs_udf().into()),
         ),
     );
     // RS_Within(raster, geometry) - polygon
@@ -226,7 +274,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "rs_within",
         BenchmarkArgs::ArrayArray(
             Raster(64, 64),
-            Transformed(Box::new(Polygon(4)), st_apply_default_crs_udf().into()),
+            Transformed(Box::new(Polygon(4)), sd_apply_default_crs_udf().into()),
         ),
     );
 }
