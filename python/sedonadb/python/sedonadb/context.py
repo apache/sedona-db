@@ -623,7 +623,7 @@ def _configure_proj_prefix(prefix: str):
 
 def configure_gdal(
     preset: Optional[
-        Literal["auto", "pyogrio", "rasterio", "conda", "homebrew", "system"]
+        Literal["auto", "rasterio", "pyogrio", "conda", "homebrew", "system"]
     ] = None,
     *,
     shared_library: Optional[Union[str, Path]] = None,
@@ -679,7 +679,7 @@ def configure_gdal(
         elif preset == "system":
             shared_library = _gdal_lib_name()
         elif preset == "auto":
-            tried = ["pyogrio", "rasterio", "conda", "homebrew", "system"]
+            tried = ["rasterio", "pyogrio", "conda", "homebrew", "system"]
             errors = []
             for option in tried:
                 try:
@@ -699,7 +699,7 @@ def configure_gdal(
 
             all_errors = "\n".join(errors)
             warnings.warn(
-                "Failed to configure GDAL. Is pyogrio, rasterio, or a system install of GDAL available?"
+                "Failed to configure GDAL. Is rasterio, pyogrio, or a system install of GDAL available?"
                 f"\nDetails: tried {tried}\n{all_errors}"
             )
             return
