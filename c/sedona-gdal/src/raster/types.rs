@@ -102,64 +102,29 @@ pub trait GdalType {
     fn gdal_ordinal() -> GDALDataType;
 }
 
-impl GdalType for u8 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Byte
-    }
+macro_rules! impl_gdal_type {
+    ($($ty:ty => $variant:ident),+ $(,)?) => {
+        $(
+            impl GdalType for $ty {
+                fn gdal_ordinal() -> GDALDataType {
+                    GDALDataType::$variant
+                }
+            }
+        )+
+    };
 }
 
-impl GdalType for i8 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Int8
-    }
-}
-
-impl GdalType for u16 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_UInt16
-    }
-}
-
-impl GdalType for i16 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Int16
-    }
-}
-
-impl GdalType for u32 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_UInt32
-    }
-}
-
-impl GdalType for i32 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Int32
-    }
-}
-
-impl GdalType for u64 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_UInt64
-    }
-}
-
-impl GdalType for i64 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Int64
-    }
-}
-
-impl GdalType for f32 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Float32
-    }
-}
-
-impl GdalType for f64 {
-    fn gdal_ordinal() -> GDALDataType {
-        GDALDataType::GDT_Float64
-    }
+impl_gdal_type! {
+    u8 => GDT_Byte,
+    i8 => GDT_Int8,
+    u16 => GDT_UInt16,
+    i16 => GDT_Int16,
+    u32 => GDT_UInt32,
+    i32 => GDT_Int32,
+    u64 => GDT_UInt64,
+    i64 => GDT_Int64,
+    f32 => GDT_Float32,
+    f64 => GDT_Float64,
 }
 
 /// A 2D raster buffer.
