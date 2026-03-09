@@ -52,7 +52,7 @@ use crate::errors::{GdalError, Result};
 /// sl1.set_name_value("COMPRESS", "LZW").unwrap();
 /// sl1.add_string("MAGIC_FLAG").unwrap();
 ///
-/// let sl2 = CslStringList::from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"]);
+/// let sl2 = CslStringList::try_from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"]).unwrap();
 ///
 /// assert_eq!(sl1.to_string(), sl2.to_string());
 /// ```
@@ -287,15 +287,37 @@ impl CslStringList {
         self.ptrs.as_ptr() as *mut *mut c_char
     }
 
-    /// Construct a `CslStringList` from a fallible iterator of string slices.
-    ///
-    /// Unlike `FromIterator<&str>`, this returns `Err` if any string contains NUL bytes
-    /// instead of panicking.
-    pub fn try_from_iter<'a>(iter: impl IntoIterator<Item = &'a str>) -> Result<Self> {
-        let mut list = Self::new();
-        for s in iter {
-            list.add_string(s)?;
+    /// Truncate the list to at most `len` entries.
+    pub fn truncate(&mut self, len: usize) {
+        self.strings.truncate(len);
+        self.rebuild_ptrs();
+    }
+
+    /// Extend the list from an iterator, rolling back to the original size on error.
+    pub fn try_extend<T, I>(&mut self, iter: I) -> Result<()>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<CslStringListEntry>,
+    {
+        let original_len = self.len();
+        for item in iter {
+            let entry = item.into();
+            if let Err(err) = self.add_entry(&entry) {
+                self.truncate(original_len);
+                return Err(err);
+            }
         }
+        Ok(())
+    }
+
+    /// Construct a `CslStringList` from a fallible iterator of entries.
+    pub fn try_from_iter<T, I>(iter: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<CslStringListEntry>,
+    {
+        let mut list = Self::new();
+        list.try_extend(iter)?;
         Ok(list)
     }
 }
@@ -343,40 +365,6 @@ impl<'a> IntoIterator for &'a CslStringList {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
-    }
-}
-
-impl FromIterator<CslStringListEntry> for CslStringList {
-    fn from_iter<T: IntoIterator<Item = CslStringListEntry>>(iter: T) -> Self {
-        let mut result = Self::default();
-        for e in iter {
-            result.add_entry(&e).unwrap_or_default();
-        }
-        result
-    }
-}
-
-impl<'a> FromIterator<&'a str> for CslStringList {
-    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
-        iter.into_iter()
-            .map(Into::<CslStringListEntry>::into)
-            .collect()
-    }
-}
-
-impl FromIterator<String> for CslStringList {
-    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
-        iter.into_iter()
-            .map(Into::<CslStringListEntry>::into)
-            .collect()
-    }
-}
-
-impl Extend<CslStringListEntry> for CslStringList {
-    fn extend<T: IntoIterator<Item = CslStringListEntry>>(&mut self, iter: T) {
-        for e in iter {
-            self.add_entry(&e).unwrap_or_default();
-        }
     }
 }
 
@@ -484,12 +472,13 @@ mod tests {
         sl1.set_name_value("COMPRESS", "LZW").unwrap();
         sl1.add_string("MAGIC_FLAG").unwrap();
 
-        let sl2 = CslStringList::from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"]);
-        let sl3 = CslStringList::from_iter([
+        let sl2 =
+            CslStringList::try_from_iter(["NUM_THREADS=ALL_CPUS", "COMPRESS=LZW", "MAGIC_FLAG"])?;
+        let sl3 = CslStringList::try_from_iter([
             CslStringListEntry::from(("NUM_THREADS", "ALL_CPUS")),
             CslStringListEntry::from(("COMPRESS", "LZW")),
             CslStringListEntry::from("MAGIC_FLAG"),
-        ]);
+        ])?;
 
         assert_eq!(sl1.to_string(), sl2.to_string());
         assert_eq!(sl2.to_string(), sl3.to_string());
@@ -566,10 +555,50 @@ mod tests {
     }
 
     #[test]
-    fn try_from_impl() -> Result<()> {
-        let l = CslStringList::from_iter(["ONE=1", "TWO=2"]);
+    fn try_from_iter_constructs_list() -> Result<()> {
+        let l = CslStringList::try_from_iter(["ONE=1", "TWO=2"])?;
         assert!(matches!(l.fetch_name_value("ONE"), Some(s) if s == *"1"));
         assert!(matches!(l.fetch_name_value("TWO"), Some(s) if s == *"2"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn try_from_iter_rejects_invalid_entry() {
+        let result = CslStringList::try_from_iter([CslStringListEntry::from(("bad-name", "1"))]);
+        assert!(matches!(result, Err(GdalError::BadArgument(_))));
+    }
+
+    #[test]
+    fn try_extend_is_transactional() -> Result<()> {
+        let mut list = CslStringList::try_from_iter([("ONE", "1"), ("TWO", "2")])?;
+        let before = list.clone();
+
+        let result = list.try_extend([
+            CslStringListEntry::from(("THREE", "3")),
+            CslStringListEntry::from(("bad-name", "4")),
+        ]);
+
+        assert!(matches!(result, Err(GdalError::BadArgument(_))));
+        assert_eq!(list.to_string(), before.to_string());
+
+        Ok(())
+    }
+
+    #[test]
+    fn truncate_preserves_ptr_invariant() -> Result<()> {
+        let mut list = CslStringList::try_from_iter(["A", "B", "C"])?;
+        list.truncate(1);
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.get_field(0), Some(CslStringListEntry::from("A")));
+        assert_eq!(list.get_field(1), None);
+
+        let ptr = list.as_ptr();
+        unsafe {
+            assert!(!(*ptr).is_null());
+            assert!((*ptr.add(1)).is_null());
+        }
 
         Ok(())
     }
