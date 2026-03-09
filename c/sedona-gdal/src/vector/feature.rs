@@ -162,7 +162,11 @@ impl<'a> BorrowedGeometry<'a> {
         Ok(buf)
     }
 
+<<<<<<< HEAD
     /// Fetch the 2D envelope of this geometry.
+=======
+    /// Get the bounding envelope.
+>>>>>>> 46f573c4 (refactor(sedona-gdal): prefer imported core types)
     pub fn envelope(&self) -> Envelope {
         let mut env = OGREnvelope {
             MinX: 0.0,
@@ -201,7 +205,14 @@ impl FieldDefn {
         let c_field_defn =
             unsafe { call_gdal_api!(api, OGR_Fld_Create, c_name.as_ptr(), field_type) };
         if c_field_defn.is_null() {
+<<<<<<< HEAD
             return Err(api.last_null_pointer_err("OGR_Fld_Create"));
+=======
+            return Err(GdalError::NullPointer {
+                method_name: "OGR_Fld_Create",
+                msg: format!("failed to create field definition '{name}'"),
+            });
+>>>>>>> 46f573c4 (refactor(sedona-gdal): prefer imported core types)
         }
         Ok(Self { api, c_field_defn })
     }
