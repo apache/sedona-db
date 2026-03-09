@@ -24,6 +24,7 @@ use std::ptr;
 
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
+use crate::gdal_dyn_bindgen::OGRERR_NONE;
 use crate::gdal_dyn_bindgen::*;
 
 /// An OGR spatial reference system.
@@ -91,7 +92,7 @@ impl SpatialRef {
                 &mut ptr,
                 ptr::null()
             );
-            if rv != crate::gdal_dyn_bindgen::OGRERR_NONE || ptr.is_null() {
+            if rv != OGRERR_NONE || ptr.is_null() {
                 return Err(GdalError::NullPointer {
                     method_name: "OSRExportToPROJJSON",
                     msg: "returned null".to_string(),
