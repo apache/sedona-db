@@ -28,6 +28,7 @@ use crate::driver::{Driver, DriverManager};
 use crate::errors::Result;
 use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::{GDALOpenFlags, OGRFieldType};
+use crate::mem::create_mem_dataset;
 use crate::raster::polygonize::{polygonize, PolygonizeOptions};
 use crate::raster::rasterize::{rasterize, RasterizeOptions};
 use crate::raster::rasterize_affine::rasterize_affine;
@@ -173,7 +174,7 @@ impl Gdal {
     ///
     /// For a higher-level builder that also attaches zero-copy external bands,
     /// geo-transforms, projections, and nodata values, see
-    /// [`MemDatasetBuilder`](crate::mem::MemDatasetBuilder).
+    /// [`MemDatasetBuilder`].
     pub fn create_mem_dataset(
         &self,
         width: usize,
@@ -181,7 +182,7 @@ impl Gdal {
         n_owned_bands: usize,
         owned_bands_data_type: GdalDataType,
     ) -> Result<Dataset> {
-        crate::mem::create_mem_dataset(
+        create_mem_dataset(
             self.api,
             width,
             height,
