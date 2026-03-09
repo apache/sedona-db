@@ -23,7 +23,7 @@ use std::ptr;
 
 use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
-use crate::errors::Result;
+use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
 use crate::vector::Geometry;
@@ -147,12 +147,12 @@ pub fn rasterize(
     options: Option<RasterizeOptions>,
 ) -> Result<()> {
     if band_list.is_empty() {
-        return Err(crate::errors::GdalError::BadArgument(
+        return Err(GdalError::BadArgument(
             "`band_list` must not be empty".to_string(),
         ));
     }
     if burn_values.len() != geometries.len() {
-        return Err(crate::errors::GdalError::BadArgument(format!(
+        return Err(GdalError::BadArgument(format!(
             "burn_values length ({}) must match geometries length ({})",
             burn_values.len(),
             geometries.len()
@@ -162,7 +162,7 @@ pub fn rasterize(
     for &band in band_list {
         let is_good = band > 0 && (band as usize) <= raster_count;
         if !is_good {
-            return Err(crate::errors::GdalError::BadArgument(format!(
+            return Err(GdalError::BadArgument(format!(
                 "Band index {} is out of bounds",
                 band
             )));
@@ -211,6 +211,8 @@ pub fn rasterize(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::DriverManager;
+    use crate::global::with_global_gdal_api;
 
     #[test]
     fn test_rasterizeoptions_as_ptr() {
@@ -237,11 +239,11 @@ mod tests {
     #[cfg(feature = "gdal-sys")]
     #[test]
     fn test_rasterize() {
-        crate::global::with_global_gdal_api(|api| {
+        with_global_gdal_api(|api| {
             let wkt = "POLYGON ((2 2, 2 4.25, 4.25 4.25, 4.25 2, 2 2))";
             let poly = Geometry::from_wkt(api, wkt).unwrap();
 
-            let driver = crate::driver::DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
             let dataset = driver.create("", 5, 5, 1).unwrap();
 
             let bands = [1];
