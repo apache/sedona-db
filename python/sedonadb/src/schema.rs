@@ -205,24 +205,19 @@ impl PySedonaType {
 impl PySedonaType {
     #[getter]
     fn crs<'py>(&self, py: Python<'py>) -> Result<Option<PyObject>, PySedonaError> {
-        match &self.inner {
-            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
-                if let Some(crs) = crs {
-                    let json = py.import("json")?;
-                    let geoarrow_types_crs = py.import("geoarrow.types.crs")?;
+        if let Some(crs) = self.inner.crs() {
+            let json = py.import("json")?;
+            let geoarrow_types_crs = py.import("geoarrow.types.crs")?;
 
-                    // Use geoarrow.types.crs.create() so that we don't have to do that here
-                    // Parse the JSON into a Python object first, because this is what create()
-                    // expects
-                    let crs_string = crs.to_json();
-                    let crs_py = json.getattr("loads")?.call1((crs_string,))?;
-                    let crs_py_obj = geoarrow_types_crs.getattr("create")?.call1((crs_py,))?;
-                    Ok(Some(crs_py_obj.into()))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Ok(None),
+            // Use geoarrow.types.crs.create() so that we don't have to do that here
+            // Parse the JSON into a Python object first, because this is what create()
+            // expects
+            let crs_string = crs.to_json();
+            let crs_py = json.getattr("loads")?.call1((crs_string,))?;
+            let crs_py_obj = geoarrow_types_crs.getattr("create")?.call1((crs_py,))?;
+            Ok(Some(crs_py_obj.into()))
+        } else {
+            Ok(None)
         }
     }
 

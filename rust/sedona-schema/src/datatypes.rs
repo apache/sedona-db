@@ -279,6 +279,23 @@ impl SedonaType {
             _ => false,
         }
     }
+
+    /// Return the CRS associated with a geometry/geography type.
+    pub fn crs(&self) -> &Crs {
+        match self {
+            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs,
+            _ => &Crs::None,
+        }
+    }
+
+    /// Return true if this is an item-level CRS wrapper type.
+    pub fn is_item_crs(&self) -> bool {
+        matches!(
+            self,
+            SedonaType::Arrow(DataType::Struct(fields))
+                if fields.len() == 2 && fields[0].name() == "item" && fields[1].name() == "crs"
+        )
+    }
 }
 
 // Implementation details for type serialization and display
@@ -561,6 +578,20 @@ mod tests {
             .logical_type_name(),
             "binary"
         );
+    }
+
+    #[test]
+    fn sedona_type_crs_and_item_crs_helpers() {
+        let geometry = SedonaType::Wkb(Edges::Planar, lnglat());
+        assert_eq!(geometry.crs(), &lnglat());
+
+        let non_geo = SedonaType::Arrow(DataType::Int32);
+        assert_eq!(non_geo.crs(), &Crs::None);
+
+        let item_crs = SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap();
+        assert!(item_crs.is_item_crs());
+        assert!(!geometry.is_item_crs());
+        assert!(!non_geo.is_item_crs());
     }
 
     #[test]

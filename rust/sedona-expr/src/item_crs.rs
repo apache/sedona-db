@@ -555,8 +555,7 @@ pub fn parse_item_crs_arg_type(
     sedona_type: &SedonaType,
 ) -> Result<(SedonaType, Option<SedonaType>)> {
     if let SedonaType::Arrow(DataType::Struct(fields)) = sedona_type {
-        let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
-        if field_names != ["item", "crs"] {
+        if !sedona_type.is_item_crs() {
             return Ok((sedona_type.clone(), None));
         }
 
@@ -578,9 +577,7 @@ pub fn parse_item_crs_arg_type_strip_crs(
     match sedona_type {
         SedonaType::Wkb(edges, _) => Ok((SedonaType::Wkb(*edges, None), None)),
         SedonaType::WkbView(edges, _) => Ok((SedonaType::WkbView(*edges, None), None)),
-        SedonaType::Arrow(DataType::Struct(fields))
-            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
-        {
+        SedonaType::Arrow(DataType::Struct(fields)) if sedona_type.is_item_crs() => {
             let item = SedonaType::from_storage_field(&fields[0])?;
             let crs = SedonaType::from_storage_field(&fields[1])?;
             Ok((item, Some(crs)))

@@ -49,10 +49,7 @@ impl ArgMatcher {
         let geometry_arg_crses = args
             .iter()
             .filter(|arg_type| IsGeometryOrGeography {}.match_type(arg_type))
-            .map(|arg_type| match arg_type {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs.clone(),
-                _ => None,
-            })
+            .map(|arg_type| arg_type.crs().clone())
             .collect::<Vec<_>>();
 
         if geometry_arg_crses.is_empty() {
@@ -360,16 +357,7 @@ struct IsItemCrs {}
 
 impl TypeMatcher for IsItemCrs {
     fn match_type(&self, arg: &SedonaType) -> bool {
-        if let SedonaType::Arrow(DataType::Struct(fields)) = arg {
-            let field_names = fields.iter().map(|f| f.name()).collect::<Vec<_>>();
-            if field_names != ["item", "crs"] {
-                return false;
-            }
-
-            return true;
-        }
-
-        false
+        arg.is_item_crs()
     }
 }
 

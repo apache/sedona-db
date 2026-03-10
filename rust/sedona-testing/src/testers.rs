@@ -17,7 +17,7 @@
 use std::{iter::zip, sync::Arc};
 
 use arrow_array::{ArrayRef, BooleanArray, RecordBatch};
-use arrow_schema::{DataType, FieldRef, Schema};
+use arrow_schema::{FieldRef, Schema};
 use datafusion_common::{
     arrow::compute::kernels::concat::concat, config::ConfigOptions, Result, ScalarValue,
 };
@@ -665,12 +665,7 @@ impl ScalarUdfTester {
         if let Expr::Literal(scalar, _) = arg.lit() {
             let is_geometry_or_geography = match sedona_type {
                 SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => true,
-                SedonaType::Arrow(DataType::Struct(fields))
-                    if fields.iter().map(|f| f.name()).collect::<Vec<_>>()
-                        == vec!["item", "crs"] =>
-                {
-                    true
-                }
+                SedonaType::Arrow(_) if sedona_type.is_item_crs() => true,
                 _ => false,
             };
 

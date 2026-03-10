@@ -195,21 +195,6 @@ fn resolve_item_crs(item_crs_str: Option<&str>, static_crs: &Crs) -> Result<Crs>
     }
 }
 
-fn crs_from_sedona_type(sedona_type: &SedonaType) -> Crs {
-    match sedona_type {
-        SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs.clone(),
-        _ => None,
-    }
-}
-
-fn is_item_crs_type(sedona_type: &SedonaType) -> bool {
-    matches!(
-        sedona_type,
-        SedonaType::Arrow(DataType::Struct(fields))
-            if fields.len() == 2 && fields[0].name() == "item" && fields[1].name() == "crs"
-    )
-}
-
 impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// Create a new [RasterExecutor]
     pub fn new(arg_types: &'a [SedonaType], args: &'b [ColumnarValue]) -> Self {
@@ -553,14 +538,14 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             .get(arg_index)
             .ok_or_else(|| sedona_internal_datafusion_err!("Missing argument"))?;
 
-        if is_item_crs_type(sedona_type) {
+        if sedona_type.is_item_crs() {
             let item_type = match sedona_type {
                 SedonaType::Arrow(DataType::Struct(fields)) => {
                     SedonaType::from_storage_field(&fields[0])?
                 }
                 _ => return sedona_internal_err!("Unexpected item_crs type"),
             };
-            let item_static_crs = crs_from_sedona_type(&item_type);
+            let item_static_crs = item_type.crs().clone();
 
             match arg {
                 ColumnarValue::Array(array) => {
@@ -635,7 +620,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 }
             }
         } else {
-            let static_crs = crs_from_sedona_type(sedona_type);
+            let static_crs = sedona_type.crs().clone();
             match arg {
                 ColumnarValue::Array(array) => match sedona_type {
                     SedonaType::Wkb(_, _) | SedonaType::Arrow(DataType::Binary) => {
