@@ -150,6 +150,10 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     load_fn!(lib, api, VSIFileFromMemBuffer);
     load_fn!(lib, api, VSIFCloseL);
     load_fn!(lib, api, VSIUnlink);
+    load_fn!(lib, api, VSIGetDirectorySeparator);
+    load_fn!(lib, api, VSIOpenDir);
+    load_fn!(lib, api, VSIGetNextDirEntry);
+    load_fn!(lib, api, VSICloseDir);
     load_fn!(lib, api, VSIGetMemFileBuffer);
     load_fn!(lib, api, VSIFree);
     load_fn!(lib, api, VSIMalloc);

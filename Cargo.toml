@@ -38,6 +38,7 @@ members = [
     "rust/sedona-pointcloud",
     "rust/sedona-raster",
     "rust/sedona-raster-functions",
+    "rust/sedona-raster-gdal",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-testing",
@@ -104,9 +105,9 @@ geo-types = "0.7.17"
 geojson = "0.24.2"
 geos = { version = "11.0.1", features = ["geo", "v3_12_0"] }
 glam = "0.32.0"
+libloading = "0.9"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
-libloading = "0.9"
 lru = "0.16"
 mimalloc = { version = "0.1", default-features = false }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
@@ -144,6 +145,7 @@ sedona-geoparquet = { version = "0.3.0", path = "rust/sedona-geoparquet" }
 sedona-pointcloud = { version = "0.3.0", path = "rust/sedona-pointcloud" }
 sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
+sedona-raster-gdal = { version = "0.3.0", path = "rust/sedona-raster-gdal" }
 sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
 sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }

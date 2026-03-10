@@ -16,6 +16,7 @@
 // under the License.
 
 use crate::errors::GdalInitLibraryError;
+use crate::gdal::Gdal;
 use crate::gdal_api::GdalApi;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -203,6 +204,19 @@ where
     Ok(func(api))
 }
 
+/// Execute a closure with a high-level [`Gdal`] handle backed by the
+/// process-global [`GdalApi`].
+///
+/// This is the ergonomic entry-point for most GDAL operations. The global API
+/// is initialized lazily on the first call; subsequent calls reuse the same
+/// `&'static GdalApi` under the hood.
+pub fn with_global_gdal<F, R>(func: F) -> Result<R, GdalInitLibraryError>
+where
+    F: FnOnce(&Gdal) -> R,
+{
+    let api = get_global_gdal_api()?;
+    Ok(func(&Gdal::new(api)))
+}
 /// Verify that the GDAL library meets the minimum version requirement.
 ///
 /// We use `GDALVersionInfo("VERSION_NUM")` instead of `GDALCheckVersion` because

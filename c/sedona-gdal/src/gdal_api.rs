@@ -33,6 +33,7 @@ use crate::gdal_dyn_bindgen::SedonaGdalApi;
 /// initialization of [`GdalApi`] via [`GdalApi::try_from_shared_library`] or
 /// [`GdalApi::try_from_current_process`], and you cannot obtain a `&GdalApi`
 /// without successful initialization.
+#[macro_export]
 macro_rules! call_gdal_api {
     ($api:expr, $func:ident $(, $arg:expr)*) => {
         if let Some(func) = $api.inner.$func {
@@ -110,6 +111,23 @@ impl GdalApi {
         GdalError::CplError {
             class: default_err_class,
             number: err_no,
+            msg: err_msg,
+        }
+    }
+
+    /// Build a NullPointer error with the latest CPL error message.
+    pub fn last_null_pointer_err(&self, method_name: &'static str) -> GdalError {
+        let err_msg = unsafe {
+            let msg_ptr = call_gdal_api!(self, CPLGetLastErrorMsg);
+            if msg_ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
+            }
+        };
+        unsafe { call_gdal_api!(self, CPLErrorReset) };
+        GdalError::NullPointer {
+            method_name,
             msg: err_msg,
         }
     }

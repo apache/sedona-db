@@ -23,5 +23,19 @@ pub mod gdal_dyn_bindgen;
 pub mod errors;
 
 // --- Core API ---
+pub mod gdal;
 pub mod gdal_api;
 pub mod global;
+
+// --- High-level wrappers ---
+pub mod config;
+pub mod cpl;
+pub mod dataset;
+pub mod driver;
+pub mod geo_transform;
+pub mod mem;
+pub mod raster;
+pub mod spatial_ref;
+pub mod vector;
+pub mod vrt;
+pub mod vsi;
