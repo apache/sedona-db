@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
 
@@ -45,7 +46,7 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     };
 
     if err_code != 0 {
-        panic!("SedonaGeographyGlueInitKernels() failed")
+        return sedona_internal_err!("SedonaGeographyGlueInitKernels() failed");
     }
 
     ffi_scalar_kernels
