@@ -200,6 +200,7 @@ mod test {
     }
 
     #[test]
+    #[ignore = "requires downloading assets via submodules/download-assets.py"]
     fn test_raster_resolves() {
         let _guard = SERIAL_TEST.lock().unwrap();
 
