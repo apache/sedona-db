@@ -347,9 +347,6 @@ impl<'a> RasterRefImpl<'a> {
         }
     }
 
-    /// Get the CRS string for the raster. The returned string slice is valid as long as the
-    /// arrow arrays referenced by this RasterRefImpl are valid. The returned string slice may
-    /// have longer lifetime than &str returned by RasterRefImpl::crs().
     pub fn crs_str_ref(&self) -> Option<&'a str> {
         if self.crs.is_null(self.bands.raster_index) {
             None
