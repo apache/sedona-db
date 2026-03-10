@@ -39,4 +39,10 @@ default = ["gdal-sys"]
 gdal-sys = ["dep:gdal-sys"]
 
 [dev-dependencies]
+criterion = { workspace = true }
 sedona-testing = { workspace = true }
+
+[[bench]]
+harness = false
+name = "rasterize_affine"
+path = "benches/rasterize_affine.rs"

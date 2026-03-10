@@ -31,6 +31,9 @@ pub type GDALRWFlag = c_int;
 pub type OGRwkbByteOrder = c_int;
 pub type GDALOpenFlags = c_uint;
 pub type GDALRIOResampleAlg = c_int;
+pub type GUIntBig = u64;
+pub type GIntBig = i64;
+pub type vsi_l_offset = GUIntBig;
 
 // --- Opaque handle types ---
 
@@ -43,6 +46,31 @@ pub type OGRLayerH = *mut c_void;
 pub type OGRFeatureH = *mut c_void;
 pub type OGRFieldDefnH = *mut c_void;
 pub type VSILFILE = *mut c_void;
+
+// --- VSI mode constants ---
+
+pub const VSI_S_IFMT: i32 = 0o170000;
+pub const VSI_S_IFDIR: i32 = 0o040000;
+pub const VSI_S_IFREG: i32 = 0o100000;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct VSIDIR {
+    _unused: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct VSIDIREntry {
+    pub pszName: *mut c_char,
+    pub nMode: c_int,
+    pub nSize: vsi_l_offset,
+    pub nMTime: GIntBig,
+    pub bModeKnown: c_char,
+    pub bSizeKnown: c_char,
+    pub bMTimeKnown: c_char,
+    pub papszExtra: *mut *mut c_char,
+}
 
 // --- Enum types ---
 
@@ -455,6 +483,17 @@ pub(crate) struct SedonaGdalApi {
     >,
     pub VSIFCloseL: Option<unsafe extern "C" fn(fp: VSILFILE) -> c_int>,
     pub VSIUnlink: Option<unsafe extern "C" fn(pszFilename: *const c_char) -> c_int>,
+    pub VSIGetDirectorySeparator:
+        Option<unsafe extern "C" fn(pszPath: *const c_char) -> *const c_char>,
+    pub VSIOpenDir: Option<
+        unsafe extern "C" fn(
+            pszPath: *const c_char,
+            nRecurseDepth: c_int,
+            papszOptions: *const *const c_char,
+        ) -> *mut VSIDIR,
+    >,
+    pub VSIGetNextDirEntry: Option<unsafe extern "C" fn(dir: *mut VSIDIR) -> *const VSIDIREntry>,
+    pub VSICloseDir: Option<unsafe extern "C" fn(dir: *mut VSIDIR)>,
     pub VSIGetMemFileBuffer: Option<
         unsafe extern "C" fn(
             pszFilename: *const c_char,

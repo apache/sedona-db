@@ -209,6 +209,16 @@ impl SedonaContext {
             Arc::new(RandomGeometryFunction::default()),
         );
 
+        // Register GDAL-backed raster table functions
+        out.ctx.register_udtf(
+            "rs_geotiff_tiles",
+            sedona_raster_gdal::rs_geotiff_tiles_udtf(),
+        );
+
+        for udf in sedona_raster_gdal::all_gdal_udfs() {
+            out.ctx.register_udf(udf);
+        }
+
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 
