@@ -2692,6 +2692,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "evalexpr"
+version = "13.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25929004897f2bbab309121a60400d36992f6d911d09baa6c172f6cc55706601"
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6149,6 +6155,7 @@ dependencies = [
 name = "sedona-raster-gdal"
 version = "0.4.0"
 dependencies = [
+ "arrow",
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
@@ -6156,16 +6163,23 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "datafusion-common-runtime",
+ "evalexpr",
+ "futures",
  "lru 0.18.0",
  "sedona-common",
  "sedona-expr",
  "sedona-functions",
  "sedona-gdal",
+ "sedona-geometry",
+ "sedona-proj",
  "sedona-raster",
+ "sedona-raster-functions",
  "sedona-schema",
  "sedona-testing",
  "tempfile",
  "tokio",
+ "wkb",
 ]
 
 [[package]]

@@ -85,10 +85,10 @@ impl SedonaScalarKernel for RsFromPath {
 
     fn invoke_batch(
         &self,
-        _arg_types: &[SedonaType],
-        _args: &[ColumnarValue],
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+        self.invoke_batch_from_args(arg_types, args, &SedonaType::Arrow(DataType::Null), 0, None)
     }
 }
 
