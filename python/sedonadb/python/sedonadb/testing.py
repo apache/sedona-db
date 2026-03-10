@@ -383,7 +383,10 @@ class DuckDB(DBEngine):
         self.con = duckdb.connect()
         self.con.install_extension("spatial")
         self.con.load_extension("spatial")
-        self.con.sql("CALL register_geoarrow_extensions()")
+        try:
+            self.con.sql("CALL register_geoarrow_extensions()")
+        except Exception:
+            pass  # newer DuckDB versions register geoarrow automatically
 
     @classmethod
     def name(cls):
