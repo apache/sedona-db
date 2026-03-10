@@ -17,6 +17,7 @@
 
 #include "geography_glue.h"
 
+#include <cerrno>
 #include <cstdint>
 
 #include "absl/base/config.h"
