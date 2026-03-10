@@ -54,7 +54,7 @@ mod st_pointzm;
 mod st_reverse;
 mod st_rotate;
 mod st_scale;
-mod st_setsrid;
+pub mod st_setsrid;
 mod st_srid;
 mod st_start_point;
 mod st_translate;

@@ -47,7 +47,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -102,7 +102,7 @@ geo-index = { version = "0.3.4", features = ["use-geo_0_31"] }
 geo-traits = "0.3.0"
 geo-types = "0.7.17"
 geojson = "0.24.2"
-geos = { version = "11.0.1", features = ["geo", "v3_12_0"] }
+geos = { version = "11.1.1", features = ["geo", "v3_12_0"] }
 glam = "0.32.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
@@ -130,29 +130,29 @@ wkb = "0.9.2"
 wkt = "0.14.0"
 
 # Workspace path dependencies for internal crates
-sedona = { version = "0.3.0", path = "rust/sedona" }
-sedona-adbc = { version = "0.3.0", path = "rust/sedona-adbc" }
-sedona-common = { version = "0.3.0", path = "rust/sedona-common" }
-sedona-datasource = { version = "0.3.0", path = "rust/sedona-datasource" }
-sedona-expr = { version = "0.3.0", path = "rust/sedona-expr" }
-sedona-functions = { version = "0.3.0", path = "rust/sedona-functions" }
-sedona-geo = { version = "0.3.0", path = "rust/sedona-geo" }
-sedona-geo-generic-alg = { version = "0.3.0", path = "rust/sedona-geo-generic-alg" }
-sedona-geo-traits-ext = { version = "0.3.0", path = "rust/sedona-geo-traits-ext" }
-sedona-geometry = { version = "0.3.0", path = "rust/sedona-geometry" }
-sedona-geoparquet = { version = "0.3.0", path = "rust/sedona-geoparquet" }
-sedona-pointcloud = { version = "0.3.0", path = "rust/sedona-pointcloud" }
-sedona-raster = { version = "0.3.0", path = "rust/sedona-raster" }
-sedona-raster-functions = { version = "0.3.0", path = "rust/sedona-raster-functions" }
-sedona-schema = { version = "0.3.0", path = "rust/sedona-schema" }
-sedona-spatial-join = { version = "0.3.0", path = "rust/sedona-spatial-join" }
-sedona-testing = { version = "0.3.0", path = "rust/sedona-testing" }
+sedona = { version = "0.4.0", path = "rust/sedona" }
+sedona-adbc = { version = "0.4.0", path = "rust/sedona-adbc" }
+sedona-common = { version = "0.4.0", path = "rust/sedona-common" }
+sedona-datasource = { version = "0.4.0", path = "rust/sedona-datasource" }
+sedona-expr = { version = "0.4.0", path = "rust/sedona-expr" }
+sedona-functions = { version = "0.4.0", path = "rust/sedona-functions" }
+sedona-geo = { version = "0.4.0", path = "rust/sedona-geo" }
+sedona-geo-generic-alg = { version = "0.4.0", path = "rust/sedona-geo-generic-alg" }
+sedona-geo-traits-ext = { version = "0.4.0", path = "rust/sedona-geo-traits-ext" }
+sedona-geometry = { version = "0.4.0", path = "rust/sedona-geometry" }
+sedona-geoparquet = { version = "0.4.0", path = "rust/sedona-geoparquet" }
+sedona-pointcloud = { version = "0.4.0", path = "rust/sedona-pointcloud" }
+sedona-raster = { version = "0.4.0", path = "rust/sedona-raster" }
+sedona-raster-functions = { version = "0.4.0", path = "rust/sedona-raster-functions" }
+sedona-schema = { version = "0.4.0", path = "rust/sedona-schema" }
+sedona-spatial-join = { version = "0.4.0", path = "rust/sedona-spatial-join" }
+sedona-testing = { version = "0.4.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
-sedona-extension = { version = "0.3.0", path = "c/sedona-extension" }
-sedona-geoarrow-c = { version = "0.3.0", path = "c/sedona-geoarrow-c" }
-sedona-geos = { version = "0.3.0", path = "c/sedona-geos" }
-sedona-gdal = { version = "0.3.0", path = "c/sedona-gdal", default-features = false }
-sedona-proj = { version = "0.3.0", path = "c/sedona-proj", default-features = false }
-sedona-s2geography = { version = "0.3.0", path = "c/sedona-s2geography" }
-sedona-tg = { version = "0.3.0", path = "c/sedona-tg" }
+sedona-extension = { version = "0.4.0", path = "c/sedona-extension" }
+sedona-geoarrow-c = { version = "0.4.0", path = "c/sedona-geoarrow-c" }
+sedona-geos = { version = "0.4.0", path = "c/sedona-geos" }
+sedona-gdal = { version = "0.4.0", path = "c/sedona-gdal", default-features = false }
+sedona-proj = { version = "0.4.0", path = "c/sedona-proj", default-features = false }
+sedona-s2geography = { version = "0.4.0", path = "c/sedona-s2geography" }
+sedona-tg = { version = "0.4.0", path = "c/sedona-tg" }
