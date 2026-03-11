@@ -136,7 +136,7 @@ mod tests {
         use crate::dataset::LayerOptions;
         use crate::driver::DriverManager;
         use crate::global::with_global_gdal_api;
-        use crate::raster::Buffer;
+        use crate::raster::types::Buffer;
         use crate::vector::FieldDefn;
         use crate::vsi::unlink_mem_file;
 
@@ -221,7 +221,7 @@ mod tests {
         use crate::dataset::LayerOptions;
         use crate::driver::DriverManager;
         use crate::global::with_global_gdal_api;
-        use crate::raster::Buffer;
+        use crate::raster::types::Buffer;
         use crate::vector::FieldDefn;
         use crate::vsi::unlink_mem_file;
 
