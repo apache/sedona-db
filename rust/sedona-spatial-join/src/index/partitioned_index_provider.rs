@@ -377,7 +377,6 @@ impl Stream for ReceiverBatchStream {
     type Item = Result<EvaluatedBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        println!("Polling KNN Join Stream...");
         // Delegate the streaming to the receiver's poll_recv method
         self.rx.poll_recv(cx)
     }
