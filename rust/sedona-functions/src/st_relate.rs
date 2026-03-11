@@ -20,7 +20,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_Relate() scalar UDF implementation
 pub fn st_relate_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new_stub(
+    SedonaScalarUDF::from_impl(
         "st_relate",
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
