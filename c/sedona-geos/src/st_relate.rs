@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
 use arrow_array::builder::StringBuilder;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
@@ -26,6 +25,7 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use std::sync::Arc;
 
 use crate::executor::GeosExecutor;
 
