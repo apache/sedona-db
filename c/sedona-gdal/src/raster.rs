@@ -16,7 +16,3 @@
 // under the License.
 
 pub mod types;
-
-pub use types::{
-    Buffer, DatasetOptions, GdalDataType, GdalType, RasterCreationOptions, ResampleAlg,
-};
