@@ -16,7 +16,6 @@
 // under the License.
 
 use std::sync::Arc;
-
 use arrow_array::builder::StringBuilder;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
