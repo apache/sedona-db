@@ -27,7 +27,7 @@ use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
 use crate::raster::types::GdalDataType as RustGdalDataType;
-use crate::raster::GdalType;
+use crate::raster::types::GdalType;
 
 /// A GDAL driver.
 pub struct Driver {
