@@ -14,36 +14,34 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_expr::{scalar_doc_sections::DOC_SECTION_OTHER, Documentation, Volatility};
-use sedona_expr::scalar_udf::SedonaScalarUDF;
+use std::sync::Arc;
+
+use arrow_schema::DataType;
+use datafusion_common::plan_err;
+use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-/// ST_Relate() scalar UDF implementation
+/// ST_Relate() scalar UDF stub
 pub fn st_relate_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::from_impl(
-        "st_relate",
+    let stub_impl = SimpleSedonaScalarKernel::new_ref(
         ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            SedonaType::Arrow(arrow_schema::DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8),
         ),
-        Volatility::Immutable,
-        Some(st_relate_doc()),
-    )
+        Arc::new(|_arg_types, _args| plan_err!("ST_Relate() is not yet implemented")),
+    );
+    SedonaScalarUDF::from_impl("st_relate", stub_impl)
 }
 
-fn st_relate_doc() -> Documentation {
-    Documentation::builder(
-        DOC_SECTION_OTHER,
-        "Returns the DE-9IM intersection matrix for two geometries",
-        "ST_Relate (geomA: Geometry, geomB: Geometry)",
-    )
-    .with_argument("geomA", "First input geometry")
-    .with_argument("geomB", "Second input geometry")
-    .with_sql_example(
-        "SELECT ST_Relate(
-            ST_GeomFromWKT('POINT(0 0)'),
-            ST_GeomFromWKT('POINT(1 1)')
-        )",
-    )
-    .build()
+#[cfg(test)]
+mod tests {
+    use datafusion_expr::ScalarUDF;
+
+    use super::*;
+
+    #[test]
+    fn udf_metadata() {
+        let udf: ScalarUDF = st_relate_udf().into();
+        assert_eq!(udf.name(), "st_relate");
+    }
 }
