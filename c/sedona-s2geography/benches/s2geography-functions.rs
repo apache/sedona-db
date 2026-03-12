@@ -180,6 +180,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         &f,
         "s2geography",
         "st_equals",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_equals",
         BenchmarkArgs::ArrayScalar(
             Transformed(Polygon(10).into(), to_geography()),
             Transformed(Polygon(10).into(), to_geography()),
