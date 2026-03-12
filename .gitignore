@@ -51,4 +51,3 @@ __pycache__
 dev/release/.env
 
 /.luarc.json
-.cargo/config.toml
