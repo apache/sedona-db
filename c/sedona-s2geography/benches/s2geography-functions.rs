@@ -27,7 +27,7 @@ use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkAr
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut f = FunctionSet::new();
-    for (name, kernel) in sedona_s2geography::register::scalar_kernels() {
+    for (name, kernel) in sedona_s2geography::register::scalar_kernels().unwrap() {
         f.add_scalar_udf_impl(name, kernel).unwrap();
     }
 

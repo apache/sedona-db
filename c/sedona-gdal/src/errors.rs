@@ -15,17 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::os::raw::{c_char, c_int, c_void};
+//! Ported (and contains copied code) from georust/gdal:
+//! <https://github.com/georust/gdal/blob/v0.19.0/src/errors.rs>.
+//! Original code is licensed under MIT.
 
-unsafe extern "C" {
-    pub fn SedonaGeographyGlueOpenSSLVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueS2GeometryVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueAbseilVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueTestLinkage() -> f64;
-    pub fn SedonaGeographyGlueLngLatToCellId(lng: f64, lat: f64) -> u64;
-    pub fn SedonaGeographyGlueNumKernels() -> usize;
-    pub fn SedonaGeographyGlueInitKernels(
-        kernels_array: *mut c_void,
-        kernels_size_bytes: usize,
-    ) -> c_int;
+use thiserror::Error;
+
+/// Error type for the sedona-gdal crate initialization and library loading.
+#[derive(Error, Debug)]
+pub enum GdalInitLibraryError {
+    #[error("{0}")]
+    Invalid(String),
+    #[error("{0}")]
+    LibraryError(String),
+}
+
+/// Error type compatible with the georust/gdal error variants used in this codebase.
+#[derive(Clone, Debug, Error)]
+pub enum GdalError {
+    #[error("CPL error class: '{class:?}', error number: '{number}', error msg: '{msg}'")]
+    CplError {
+        class: u32,
+        number: i32,
+        msg: String,
+    },
 }

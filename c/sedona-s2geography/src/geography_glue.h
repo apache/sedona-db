@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -45,40 +46,9 @@ double SedonaGeographyGlueTestLinkage(void);
 
 uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat);
 
-struct SedonaGeographyArrowUdf {
-  int (*init)(struct SedonaGeographyArrowUdf* self, struct ArrowSchema* arg_schema,
-              const char* options, struct ArrowSchema* out);
-  int (*execute)(struct SedonaGeographyArrowUdf* self, struct ArrowArray** args,
-                 int64_t n_args, struct ArrowArray* out);
-  const char* (*get_last_error)(struct SedonaGeographyArrowUdf* self);
-  void (*release)(struct SedonaGeographyArrowUdf* self);
+size_t SedonaGeographyGlueNumKernels(void);
 
-  void* private_data;
-};
-
-#define DECLARE_UDF_IMPL(name) \
-  void SedonaGeographyInitUdf##name(struct SedonaGeographyArrowUdf* out)
-
-DECLARE_UDF_IMPL(Area);
-DECLARE_UDF_IMPL(Centroid);
-DECLARE_UDF_IMPL(ClosestPoint);
-DECLARE_UDF_IMPL(Contains);
-DECLARE_UDF_IMPL(ConvexHull);
-DECLARE_UDF_IMPL(Difference);
-DECLARE_UDF_IMPL(Distance);
-DECLARE_UDF_IMPL(Equals);
-DECLARE_UDF_IMPL(Intersection);
-DECLARE_UDF_IMPL(Intersects);
-DECLARE_UDF_IMPL(Length);
-DECLARE_UDF_IMPL(LineInterpolatePoint);
-DECLARE_UDF_IMPL(LineLocatePoint);
-DECLARE_UDF_IMPL(MaxDistance);
-DECLARE_UDF_IMPL(Perimeter);
-DECLARE_UDF_IMPL(ShortestLine);
-DECLARE_UDF_IMPL(SymDifference);
-DECLARE_UDF_IMPL(Union);
-
-#undef DECLARE_UDF_IMPL
+int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kernels_size_bytes);
 
 #ifdef __cplusplus
 }

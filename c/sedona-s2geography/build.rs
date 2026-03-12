@@ -31,18 +31,12 @@ fn main() {
 
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt.
-    let mut lib_dirs = [
-        "geography_glue",
-        "s2geography",
-        "s2",
-        "geoarrow",
-        "nanoarrow_static",
-    ]
-    .map(|lib| find_lib_dir(&dst, lib))
-    .into_iter()
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect::<Vec<_>>();
+    let mut lib_dirs = ["geography_glue", "s2geography", "s2"]
+        .map(|lib| find_lib_dir(&dst, lib))
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
 
     lib_dirs.sort();
     for lib_dir in lib_dirs {
@@ -52,8 +46,6 @@ fn main() {
     println!("cargo:rustc-link-lib=static=geography_glue");
     println!("cargo:rustc-link-lib=static=s2geography");
     println!("cargo:rustc-link-lib=static=s2");
-    println!("cargo:rustc-link-lib=static=geoarrow");
-    println!("cargo:rustc-link-lib=static=nanoarrow_static");
 
     // Parse the output we wrote from CMake that is the linker flags
     // that CMake thinks we need for Abseil and OpenSSL.

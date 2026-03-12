@@ -60,9 +60,7 @@ pub fn create_array_storage(wkt_values: &[Option<&str>], data_type: &SedonaType)
     match data_type {
         SedonaType::Wkb(_, _) => Arc::new(make_wkb_array::<BinaryArray>(wkt_values)),
         SedonaType::WkbView(_, _) => Arc::new(make_wkb_array::<BinaryViewArray>(wkt_values)),
-        SedonaType::Arrow(DataType::Struct(fields))
-            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
-        {
+        SedonaType::Arrow(DataType::Struct(fields)) if data_type.is_item_crs() => {
             let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();
             create_array_item_crs(wkt_values, (0..wkt_values.len()).map(|_| None), &item_type)
         }
@@ -102,9 +100,7 @@ pub fn create_scalar_storage(wkt_value: Option<&str>, data_type: &SedonaType) ->
     match data_type {
         SedonaType::Wkb(_, _) => ScalarValue::Binary(wkt_value.map(make_wkb)),
         SedonaType::WkbView(_, _) => ScalarValue::BinaryView(wkt_value.map(make_wkb)),
-        SedonaType::Arrow(DataType::Struct(fields))
-            if fields.iter().map(|f| f.name()).collect::<Vec<_>>() == vec!["item", "crs"] =>
-        {
+        SedonaType::Arrow(DataType::Struct(fields)) if data_type.is_item_crs() => {
             let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();
             create_scalar_item_crs(wkt_value, None, &item_type)
         }

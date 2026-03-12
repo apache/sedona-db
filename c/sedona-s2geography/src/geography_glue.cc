@@ -17,23 +17,18 @@
 
 #include "geography_glue.h"
 
+#include <cerrno>
 #include <cstdint>
 
 #include "absl/base/config.h"
 
-#include <geoarrow/geoarrow.h>
-#include <nanoarrow/nanoarrow.h>
 #include <openssl/opensslv.h>
 #include <s2geography.h>
-#include <s2geography/arrow_udf/arrow_udf.h>
+#include <s2geography/sedona_udf/sedona_extension.h>
 
 #include <s2/s2earth.h>
 
 using namespace s2geography;
-
-const char* SedonaGeographyGlueNanoarrowVersion(void) { return ArrowNanoarrowVersion(); }
-
-const char* SedonaGeographyGlueGeoArrowVersion(void) { return GeoArrowVersion(); }
 
 const char* SedonaGeographyGlueOpenSSLVersion(void) {
   static std::string version = std::string() + std::to_string(OPENSSL_VERSION_MAJOR) +
@@ -77,58 +72,34 @@ uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
   }
 }
 
-struct UdfExporter {
-  static void Export(std::unique_ptr<s2geography::arrow_udf::ArrowUDF> udf,
-                     struct SedonaGeographyArrowUdf* out) {
-    out->private_data = udf.release();
-    out->init = &CInit;
-    out->execute = &CExecute;
-    out->get_last_error = &CLastError;
-    out->release = &CRelease;
+size_t SedonaGeographyGlueNumKernels(void) { return 18; }
+
+int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_bytes) {
+  if (kerenels_size_bytes !=
+      (sizeof(SedonaCScalarKernel) * SedonaGeographyGlueNumKernels())) {
+    return EINVAL;
   }
 
-  static int CInit(struct SedonaGeographyArrowUdf* self, struct ArrowSchema* arg_schema,
-                   const char* options, struct ArrowSchema* out) {
-    auto udf = reinterpret_cast<s2geography::arrow_udf::ArrowUDF*>(self->private_data);
-    return udf->Init(arg_schema, options, out);
-  }
-  static int CExecute(struct SedonaGeographyArrowUdf* self, struct ArrowArray** args,
-                      int64_t n_args, struct ArrowArray* out) {
-    auto udf = reinterpret_cast<s2geography::arrow_udf::ArrowUDF*>(self->private_data);
-    return udf->Execute(args, n_args, out);
-  }
-  static const char* CLastError(struct SedonaGeographyArrowUdf* self) {
-    auto udf = reinterpret_cast<s2geography::arrow_udf::ArrowUDF*>(self->private_data);
-    return udf->GetLastError();
-  }
+  auto* kernel_ptr = reinterpret_cast<struct SedonaCScalarKernel*>(kernels_array);
 
-  static void CRelease(struct SedonaGeographyArrowUdf* self) {
-    auto udf = reinterpret_cast<s2geography::arrow_udf::ArrowUDF*>(self->private_data);
-    delete udf;
-    self->private_data = nullptr;
-  }
-};
+  s2geography::sedona_udf::AreaKernel(kernel_ptr++);
+  s2geography::sedona_udf::CentroidKernel(kernel_ptr++);
+  s2geography::sedona_udf::ClosestPointKernel(kernel_ptr++);
+  s2geography::sedona_udf::ContainsKernel(kernel_ptr++);
+  s2geography::sedona_udf::ConvexHullKernel(kernel_ptr++);
+  s2geography::sedona_udf::DifferenceKernel(kernel_ptr++);
+  s2geography::sedona_udf::DistanceKernel(kernel_ptr++);
+  s2geography::sedona_udf::EqualsKernel(kernel_ptr++);
+  s2geography::sedona_udf::IntersectionKernel(kernel_ptr++);
+  s2geography::sedona_udf::IntersectsKernel(kernel_ptr++);
+  s2geography::sedona_udf::LengthKernel(kernel_ptr++);
+  s2geography::sedona_udf::LineInterpolatePointKernel(kernel_ptr++);
+  s2geography::sedona_udf::LineLocatePointKernel(kernel_ptr++);
+  s2geography::sedona_udf::MaxDistanceKernel(kernel_ptr++);
+  s2geography::sedona_udf::PerimeterKernel(kernel_ptr++);
+  s2geography::sedona_udf::ShortestLineKernel(kernel_ptr++);
+  s2geography::sedona_udf::SymDifferenceKernel(kernel_ptr++);
+  s2geography::sedona_udf::UnionKernel(kernel_ptr++);
 
-#define INIT_UDF_IMPL(name)                                                \
-  void SedonaGeographyInitUdf##name(struct SedonaGeographyArrowUdf* out) { \
-    return UdfExporter::Export(s2geography::arrow_udf::name(), out);       \
-  }
-
-INIT_UDF_IMPL(Area);
-INIT_UDF_IMPL(Centroid);
-INIT_UDF_IMPL(ClosestPoint);
-INIT_UDF_IMPL(Contains);
-INIT_UDF_IMPL(ConvexHull);
-INIT_UDF_IMPL(Difference);
-INIT_UDF_IMPL(Distance);
-INIT_UDF_IMPL(Equals);
-INIT_UDF_IMPL(Intersection);
-INIT_UDF_IMPL(Intersects);
-INIT_UDF_IMPL(Length);
-INIT_UDF_IMPL(LineInterpolatePoint);
-INIT_UDF_IMPL(LineLocatePoint);
-INIT_UDF_IMPL(MaxDistance);
-INIT_UDF_IMPL(Perimeter);
-INIT_UDF_IMPL(ShortestLine);
-INIT_UDF_IMPL(SymDifference);
-INIT_UDF_IMPL(Union);
+  return 0;
+}

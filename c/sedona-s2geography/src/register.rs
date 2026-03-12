@@ -14,35 +14,24 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+use datafusion_common::Result;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::ScalarKernelRef;
+use std::sync::OnceLock;
 
-use crate::scalar_kernel;
+static S2_SCALAR_KERNELS: OnceLock<Result<Vec<(String, ScalarKernelRef)>>> = OnceLock::new();
 
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
-    vec![
-        ("st_area", scalar_kernel::st_area_impl()),
-        ("st_centroid", scalar_kernel::st_centroid_impl()),
-        ("st_closestpoint", scalar_kernel::st_closest_point_impl()),
-        ("st_contains", scalar_kernel::st_contains_impl()),
-        ("st_convexhull", scalar_kernel::st_convex_hull_impl()),
-        ("st_difference", scalar_kernel::st_difference_impl()),
-        ("st_distance", scalar_kernel::st_distance_impl()),
-        ("st_equals", scalar_kernel::st_equals_impl()),
-        ("st_intersection", scalar_kernel::st_intersection_impl()),
-        ("st_intersects", scalar_kernel::st_intersects_impl()),
-        (
-            "st_lineinterpolatepoint",
-            scalar_kernel::st_line_interpolate_point_impl(),
-        ),
-        (
-            "st_linelocatepoint",
-            scalar_kernel::st_line_locate_point_impl(),
-        ),
-        ("st_length", scalar_kernel::st_length_impl()),
-        ("st_symdifference", scalar_kernel::st_sym_difference_impl()),
-        ("st_maxdistance", scalar_kernel::st_max_distance_impl()),
-        ("st_perimeter", scalar_kernel::st_perimeter_impl()),
-        ("st_shortestline", scalar_kernel::st_shortest_line_impl()),
-        ("st_union", scalar_kernel::st_union_impl()),
-    ]
+/// Initialize s2geography scalar kernels via extension ABI
+///
+/// This function is the entrypoint to S2Geography-based scalar kernels suitable for
+/// adding to a FunctionSet.
+pub fn scalar_kernels() -> Result<Vec<(&'static str, ScalarKernelRef)>> {
+    match S2_SCALAR_KERNELS.get_or_init(crate::s2geography::s2_scalar_kernels) {
+        Ok(kernels) => Ok(kernels
+            .iter()
+            .map(|(name, kernel)| (name.as_str(), kernel.clone()))
+            .collect()),
+        Err(err) => sedona_internal_err!("Error initializing s2geography kernels: {err}"),
+    }
 }

@@ -15,17 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::os::raw::{c_char, c_int, c_void};
+// --- FFI layer ---
+pub(crate) mod dyn_load;
+pub mod gdal_dyn_bindgen;
 
-unsafe extern "C" {
-    pub fn SedonaGeographyGlueOpenSSLVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueS2GeometryVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueAbseilVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueTestLinkage() -> f64;
-    pub fn SedonaGeographyGlueLngLatToCellId(lng: f64, lat: f64) -> u64;
-    pub fn SedonaGeographyGlueNumKernels() -> usize;
-    pub fn SedonaGeographyGlueInitKernels(
-        kernels_array: *mut c_void,
-        kernels_size_bytes: usize,
-    ) -> c_int;
-}
+// --- Error types ---
+pub mod errors;
+
+// --- Core API ---
+pub mod gdal_api;
+pub mod global;
