@@ -126,9 +126,8 @@ mod tests {
             &WKB_GEOMETRY,
         );
 
-        // polygon contains point → "0F2FF1FF2"
-        // point within polygon → "0F2FF1FF2" (same matrix, reversed)
-        let expected: ArrayRef = arrow_array!(Utf8, [Some("0F2FF1FF2"), Some("0F2FF1FF2"), None]);
+        // actual values from GEOS
+        let expected: ArrayRef = arrow_array!(Utf8, [Some("0F2FF1FF2"), Some("0FFFFF212"), None]);
         assert_array_equal(&tester.invoke_array_array(lhs, rhs).unwrap(), &expected);
     }
 }
