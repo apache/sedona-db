@@ -14,8 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::sync::Arc;
 
 use arrow_array::builder::StringBuilder;
+use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
@@ -25,7 +27,6 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use std::sync::Arc;
 
 use crate::executor::GeosExecutor;
 
@@ -41,7 +42,7 @@ impl SedonaScalarKernel for STRelate {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry(), ArgMatcher::is_geometry()],
-            SedonaType::Arrow(arrow_schema::DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8),
         );
 
         matcher.match_args(args)
@@ -73,5 +74,61 @@ impl SedonaScalarKernel for STRelate {
         })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use datafusion_common::ScalarValue;
+    use rstest::rstest;
+    use sedona_expr::scalar_udf::SedonaScalarUDF;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::create::create_array;
+    use sedona_testing::testers::ScalarUdfTester;
+
+    use super::*;
+
+    #[rstest]
+    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_relate", st_relate_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        tester.assert_return_type(DataType::Utf8);
+
+        // Two disjoint points — DE-9IM should be "FF0FFF0F2"
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 0)", "POINT (1 1)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "FF0FFF0F2");
+
+        // NULL inputs should return NULL
+        let result = tester
+            .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        // Array inputs
+        let lhs = create_array(
+            &[
+                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+                Some("POINT (0.5 0.5)"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let rhs = create_array(
+            &[
+                Some("POINT (0.5 0.5)"),
+                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+                Some("POINT (0 0)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        // polygon contains point → "0F2FF1FF2"
+        // point within polygon → "0F2FF1FF2" (same matrix, reversed)
+        let expected: ArrayRef = arrow_array!(Utf8, [Some("0F2FF1FF2"), Some("0F2FF1FF2"), None]);
+        assert_array_equal(&tester.invoke_array_array(lhs, rhs).unwrap(), &expected);
     }
 }

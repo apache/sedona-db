@@ -442,3 +442,39 @@ def test_st_overlaps(eng, geom1, geom2, expected):
         f"SELECT ST_Overlaps({geom_or_null(geom1)}, {geom_or_null(geom2)})",
         expected,
     )
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        (None, None, None),
+        ("POINT (0 0)", None, None),
+        (None, "POINT (0 0)", None),
+        # Two disjoint points
+        ("POINT (0 0)", "POINT (1 1)", "FF0FFF0F2"),
+        # Identical points
+        ("POINT (0 0)", "POINT (0 0)", "0FFFFFFF2"),
+        # Point on boundary of polygon
+        ("POINT (0 0)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "FF2F01212"),
+        # Point inside polygon
+        ("POINT (0.5 0.5)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "0F2FF1FF2"),
+        # Two disjoint polygons
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            "FF2FF1212",
+        ),
+        # Overlapping polygons
+        (
+            "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+            "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+            "212101212",
+        ),
+    ],
+)
+def test_st_relate(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Relate({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+        expected,
+    )
+    
