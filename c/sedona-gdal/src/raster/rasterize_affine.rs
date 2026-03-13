@@ -32,7 +32,7 @@ use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::{CE_Failure, CE_None};
 use crate::geo_transform::{GeoTransform, GeoTransformEx};
-use crate::vector::Geometry;
+use crate::vector::geometry::Geometry;
 
 #[repr(C)]
 struct AffineTransformArg {
@@ -178,8 +178,8 @@ mod tests {
 
     use crate::driver::{Driver, DriverManager};
     use crate::global::with_global_gdal_api;
+    use crate::raster::rasterize::{rasterize, RasterizeOptions};
     use crate::raster::types::Buffer;
-    use crate::raster::{rasterize, RasterizeOptions};
 
     fn mem_driver(api: &'static GdalApi) -> Driver {
         DriverManager::get_driver_by_name(api, "MEM").unwrap()
