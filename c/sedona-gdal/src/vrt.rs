@@ -25,7 +25,7 @@ use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
-use crate::raster::RasterBand;
+use crate::raster::rasterband::RasterBand;
 use crate::{gdal_dyn_bindgen::*, raster::types::GdalDataType};
 
 /// Special value indicating that nodata is not set for a VRT source.

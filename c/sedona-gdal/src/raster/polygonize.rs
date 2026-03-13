@@ -21,8 +21,8 @@ use crate::cpl::CslStringList;
 use crate::errors::Result;
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
-use crate::raster::RasterBand;
-use crate::vector::Layer;
+use crate::raster::rasterband::RasterBand;
+use crate::vector::layer::Layer;
 
 #[derive(Clone, Debug, Default)]
 pub struct PolygonizeOptions {
@@ -137,7 +137,7 @@ mod tests {
         use crate::driver::DriverManager;
         use crate::global::with_global_gdal_api;
         use crate::raster::types::Buffer;
-        use crate::vector::FieldDefn;
+        use crate::vector::feature::FieldDefn;
         use crate::vsi::unlink_mem_file;
 
         with_global_gdal_api(|api| {
@@ -222,7 +222,7 @@ mod tests {
         use crate::driver::DriverManager;
         use crate::global::with_global_gdal_api;
         use crate::raster::types::Buffer;
-        use crate::vector::FieldDefn;
+        use crate::vector::feature::FieldDefn;
         use crate::vsi::unlink_mem_file;
 
         with_global_gdal_api(|api| {
