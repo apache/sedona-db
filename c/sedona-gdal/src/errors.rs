@@ -20,6 +20,7 @@
 //! Original code is licensed under MIT.
 
 use std::ffi::NulError;
+use std::num::TryFromIntError;
 
 use thiserror::Error;
 
@@ -45,8 +46,26 @@ pub enum GdalError {
     #[error("Bad argument: {0}")]
     BadArgument(String),
 
+    #[error("GDAL method '{method_name}' returned a NULL pointer. Error msg: '{msg}'")]
+    NullPointer {
+        method_name: &'static str,
+        msg: String,
+    },
+
+    #[error("OGR method '{method_name}' returned error: '{err:?}'")]
+    OgrError { err: i32, method_name: &'static str },
+
+    #[error("Unable to unlink mem file: {file_name}")]
+    UnlinkMemFile { file_name: String },
+
     #[error("FFI NUL error: {0}")]
     FfiNulError(#[from] NulError),
+
+    #[error(transparent)]
+    IntConversionError(#[from] TryFromIntError),
+
+    #[error("Buffer length {0} does not match raster size {1:?}")]
+    BufferSizeMismatch(usize, (usize, usize)),
 }
 
 pub type Result<T> = std::result::Result<T, GdalError>;
