@@ -33,6 +33,10 @@ pub struct SpatialRef {
     c_srs: OGRSpatialReferenceH,
 }
 
+// SAFETY: `SpatialRef` has unique ownership of its GDAL handle and only moves that
+// ownership between threads. The handle is released exactly once on drop, and this
+// wrapper does not provide shared concurrent access, so `Send` is sound while `Sync`
+// remains intentionally unimplemented.
 unsafe impl Send for SpatialRef {}
 
 impl Drop for SpatialRef {
@@ -76,7 +80,10 @@ impl SpatialRef {
         Ok(Self { api, c_srs: cloned })
     }
 
-    /// Return the raw C handle.
+    /// Return the borrowed raw C handle.
+    ///
+    /// The returned handle is owned by `self` and must not be released or destroyed
+    /// by the caller. It is only valid for the lifetime of `&self`.
     pub fn c_srs(&self) -> OGRSpatialReferenceH {
         self.c_srs
     }
@@ -92,7 +99,16 @@ impl SpatialRef {
                 &mut ptr,
                 ptr::null()
             );
-            if rv != OGRERR_NONE || ptr.is_null() {
+            if rv != OGRERR_NONE {
+                if !ptr.is_null() {
+                    call_gdal_api!(self.api, VSIFree, ptr as *mut std::ffi::c_void);
+                }
+                return Err(GdalError::OgrError {
+                    err: rv,
+                    method_name: "OSRExportToPROJJSON",
+                });
+            }
+            if ptr.is_null() {
                 return Err(GdalError::NullPointer {
                     method_name: "OSRExportToPROJJSON",
                     msg: "returned null".to_string(),

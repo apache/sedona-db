@@ -29,24 +29,31 @@ use crate::gdal_api::{call_gdal_api, GdalApi};
 /// Creates a new VSI in-memory file from a given buffer.
 ///
 /// The data is copied into GDAL-allocated memory (via `VSIMalloc`) so that
-/// GDAL can safely free it with `VSIFree` when ownership is taken.
+/// GDAL can safely free it with `VSIFree` when ownership is taken, without
+/// crossing allocator boundaries back into Rust.
 pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: &[u8]) -> Result<()> {
     let c_file_name = CString::new(file_name)?;
     let len = data.len();
+    let len_i64 = i64::try_from(len)?;
 
-    // Allocate via GDAL's allocator so GDAL can safely free it.
-    let gdal_buf = unsafe { call_gdal_api!(api, VSIMalloc, len) } as *mut u8;
-    if gdal_buf.is_null() {
-        return Err(GdalError::NullPointer {
-            method_name: "VSIMalloc",
-            msg: format!("failed to allocate {len} bytes"),
-        });
-    }
+    let gdal_buf = if len == 0 {
+        std::ptr::null_mut()
+    } else {
+        // Allocate via GDAL's allocator so GDAL can safely free it.
+        let gdal_buf = unsafe { call_gdal_api!(api, VSIMalloc, len) } as *mut u8;
+        if gdal_buf.is_null() {
+            return Err(GdalError::NullPointer {
+                method_name: "VSIMalloc",
+                msg: format!("failed to allocate {len} bytes"),
+            });
+        }
 
-    // Copy data into GDAL-allocated buffer
-    unsafe {
-        std::ptr::copy_nonoverlapping(data.as_ptr(), gdal_buf, len);
-    }
+        // Copy data into GDAL-allocated buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), gdal_buf, len);
+        }
+        gdal_buf
+    };
 
     let handle = unsafe {
         call_gdal_api!(
@@ -54,14 +61,16 @@ pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: &[u8]) -> R
             VSIFileFromMemBuffer,
             c_file_name.as_ptr(),
             gdal_buf,
-            len as i64,
+            len_i64,
             1 // bTakeOwnership = true — GDAL will VSIFree gdal_buf
         )
     };
 
     if handle.is_null() {
         // GDAL did not take ownership, so we must free.
-        unsafe { call_gdal_api!(api, VSIFree, gdal_buf as *mut std::ffi::c_void) };
+        if !gdal_buf.is_null() {
+            unsafe { call_gdal_api!(api, VSIFree, gdal_buf as *mut std::ffi::c_void) };
+        }
         return Err(GdalError::NullPointer {
             method_name: "VSIFileFromMemBuffer",
             msg: String::new(),
@@ -94,35 +103,41 @@ pub fn unlink_mem_file(api: &'static GdalApi, file_name: &str) -> Result<()> {
 pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> Result<Vec<u8>> {
     let c_file_name = CString::new(file_name)?;
 
-    let owned_bytes = unsafe {
-        let mut length: i64 = 0;
-        let bytes = call_gdal_api!(
+    let mut length: i64 = 0;
+    let bytes = unsafe {
+        call_gdal_api!(
             api,
             VSIGetMemFileBuffer,
             c_file_name.as_ptr(),
             &mut length,
             1 // bUnlinkAndSeize = true
-        );
+        )
+    };
 
-        if bytes.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "VSIGetMemFileBuffer",
-                msg: String::new(),
-            });
+    if length < 0 {
+        if !bytes.is_null() {
+            unsafe { call_gdal_api!(api, VSIFree, bytes.cast::<std::ffi::c_void>()) };
         }
+        return Err(GdalError::BadArgument(format!(
+            "VSIGetMemFileBuffer returned negative length: {length}"
+        )));
+    }
 
-        if length < 0 {
-            call_gdal_api!(api, VSIFree, bytes.cast::<std::ffi::c_void>());
-            return Err(GdalError::BadArgument(format!(
-                "VSIGetMemFileBuffer returned negative length: {length}"
-            )));
+    if bytes.is_null() {
+        if length == 0 {
+            return Ok(Vec::new());
         }
+        return Err(GdalError::NullPointer {
+            method_name: "VSIGetMemFileBuffer",
+            msg: String::new(),
+        });
+    }
 
-        let slice = std::slice::from_raw_parts(bytes, length as usize);
+    let owned_bytes = unsafe {
+        let length = usize::try_from(length)?;
+        let slice = std::slice::from_raw_parts(bytes, length);
         let vec = slice.to_vec();
-
         call_gdal_api!(api, VSIFree, bytes.cast::<std::ffi::c_void>());
-
         vec
     };
 
@@ -170,16 +185,24 @@ mod tests {
     }
 
     #[test]
+    fn create_and_retrieve_empty_mem_file() {
+        let file_name = "/vsimem/3f9e6282-313d-4c51-81ab-f020ff2134d8";
+
+        with_global_gdal_api(|api| {
+            create_mem_file(api, file_name, &[]).unwrap();
+
+            let bytes = get_vsi_mem_file_bytes_owned(api, file_name).unwrap();
+
+            assert!(bytes.is_empty());
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn no_mem_file() {
         with_global_gdal_api(|api| {
-            assert!(matches!(
-                get_vsi_mem_file_bytes_owned(api, "foobar").unwrap_err(),
-                GdalError::NullPointer {
-                    method_name: "VSIGetMemFileBuffer",
-                    msg,
-                }
-                if msg.is_empty()
-            ));
+            let bytes = get_vsi_mem_file_bytes_owned(api, "foobar").unwrap();
+            assert!(bytes.is_empty());
         })
         .unwrap();
     }

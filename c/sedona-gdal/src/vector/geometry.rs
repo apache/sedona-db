@@ -34,6 +34,10 @@ pub struct Geometry {
     c_geom: OGRGeometryH,
 }
 
+// SAFETY: `Geometry` has unique ownership of its GDAL handle and only transfers that
+// ownership across threads. The handle is destroyed exactly once on drop, and this
+// wrapper does not expose concurrent shared access, so `Send` is sound while `Sync`
+// remains intentionally unimplemented.
 unsafe impl Send for Geometry {}
 
 impl Drop for Geometry {
@@ -60,6 +64,9 @@ impl Geometry {
             )
         };
         if rv != OGRERR_NONE {
+            if !c_geom.is_null() {
+                unsafe { call_gdal_api!(api, OGR_G_DestroyGeometry, c_geom) };
+            }
             return Err(GdalError::OgrError {
                 err: rv,
                 method_name: "OGR_G_CreateFromWkb",
@@ -89,6 +96,9 @@ impl Geometry {
             )
         };
         if rv != OGRERR_NONE {
+            if !c_geom.is_null() {
+                unsafe { call_gdal_api!(api, OGR_G_DestroyGeometry, c_geom) };
+            }
             return Err(GdalError::OgrError {
                 err: rv,
                 method_name: "OGR_G_CreateFromWkt",
@@ -103,7 +113,10 @@ impl Geometry {
         Ok(Self { api, c_geom })
     }
 
-    /// Return the raw C geometry handle.
+    /// Return the borrowed raw C geometry handle.
+    ///
+    /// The returned handle is owned by `self` and must not be destroyed by the
+    /// caller. It is only valid for the lifetime of `&self`.
     pub fn c_geometry(&self) -> OGRGeometryH {
         self.c_geom
     }
@@ -145,5 +158,87 @@ impl Geometry {
             });
         }
         Ok(buf)
+    }
+}
+
+#[cfg(all(test, feature = "gdal-sys"))]
+mod tests {
+    use super::*;
+
+    use crate::errors::GdalError;
+    use crate::global::with_global_gdal_api;
+
+    #[test]
+    fn test_from_wkt_envelope() {
+        with_global_gdal_api(|api| {
+            let geometry = Geometry::from_wkt(api, "POINT (1 2)").unwrap();
+            let envelope = geometry.envelope();
+
+            assert_eq!(envelope.MinX, 1.0);
+            assert_eq!(envelope.MaxX, 1.0);
+            assert_eq!(envelope.MinY, 2.0);
+            assert_eq!(envelope.MaxY, 2.0);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_from_wkb() {
+        with_global_gdal_api(|api| {
+            let geometry = Geometry::from_wkt(api, "POINT (1 2)").unwrap();
+            let wkb = geometry.wkb().unwrap();
+            let geometry = Geometry::from_wkb(api, &wkb).unwrap();
+            assert!(!geometry.c_geometry().is_null());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_wkb_round_trip_preserves_envelope() {
+        with_global_gdal_api(|api| {
+            let geometry = Geometry::from_wkt(api, "LINESTRING (0 1, 2 3, 4 5)").unwrap();
+            let wkb = geometry.wkb().unwrap();
+            let round_tripped = Geometry::from_wkb(api, &wkb).unwrap();
+
+            assert!(!wkb.is_empty());
+
+            let envelope = geometry.envelope();
+            let round_trip_envelope = round_tripped.envelope();
+            assert_eq!(envelope.MinX, round_trip_envelope.MinX);
+            assert_eq!(envelope.MaxX, round_trip_envelope.MaxX);
+            assert_eq!(envelope.MinY, round_trip_envelope.MinY);
+            assert_eq!(envelope.MaxY, round_trip_envelope.MaxY);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_from_wkt_invalid() {
+        with_global_gdal_api(|api| {
+            let error = Geometry::from_wkt(api, "POINT (").err().unwrap();
+            assert!(matches!(
+                error,
+                GdalError::OgrError {
+                    method_name: "OGR_G_CreateFromWkt",
+                    ..
+                }
+            ));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_from_wkb_invalid() {
+        with_global_gdal_api(|api| {
+            let error = Geometry::from_wkb(api, &[0x01, 0x02, 0x03]).err().unwrap();
+            assert!(matches!(
+                error,
+                GdalError::OgrError {
+                    method_name: "OGR_G_CreateFromWkb",
+                    ..
+                }
+            ));
+        })
+        .unwrap();
     }
 }
