@@ -135,10 +135,87 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "s2geography",
+        "st_contains",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
         "st_intersects",
         BenchmarkArgs::ArrayScalar(
             Transformed(Point.into(), to_geography()),
             Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ScalarArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(500).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_equals",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
         ),
     );
 
