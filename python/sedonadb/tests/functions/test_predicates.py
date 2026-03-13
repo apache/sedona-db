@@ -359,5 +359,3 @@ def test_st_relate(eng, geom1, geom2, expected):
         f"SELECT ST_Relate({geom_or_null(geom1)}, {geom_or_null(geom2)})",
         expected,
     )
-    
-
