@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod polygonize;
-pub mod rasterband;
-pub mod rasterize;
-pub mod rasterize_affine;
-pub mod types;
+pub mod feature;
+pub mod geometry;
+pub mod layer;

@@ -29,4 +29,11 @@ pub mod global;
 // --- High-level wrappers ---
 pub mod config;
 pub mod cpl;
+pub mod dataset;
+pub mod driver;
+pub mod geo_transform;
 pub mod raster;
+pub mod spatial_ref;
+pub mod vector;
+pub mod vrt;
+pub mod vsi;
