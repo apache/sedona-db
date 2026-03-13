@@ -30,7 +30,7 @@ use crate::gdal_api::{call_gdal_api, GdalApi};
 ///
 /// The data is copied into GDAL-allocated memory (via `VSIMalloc`) so that
 /// GDAL can safely free it with `VSIFree` when ownership is taken.
-pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: Vec<u8>) -> Result<()> {
+pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: &[u8]) -> Result<()> {
     let c_file_name = CString::new(file_name)?;
     let len = data.len();
 
@@ -47,7 +47,6 @@ pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: Vec<u8>) ->
     unsafe {
         std::ptr::copy_nonoverlapping(data.as_ptr(), gdal_buf, len);
     }
-    // Rust Vec is dropped here, freeing the Rust-allocated memory.
 
     let handle = unsafe {
         call_gdal_api!(
@@ -140,7 +139,7 @@ mod tests {
         let file_name = "/vsimem/525ebf24-a030-4677-bb4e-a921741cabe0";
 
         with_global_gdal_api(|api| {
-            create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
+            create_mem_file(api, file_name, &[1_u8, 2, 3, 4]).unwrap();
 
             let bytes = get_vsi_mem_file_bytes_owned(api, file_name).unwrap();
 
@@ -163,7 +162,7 @@ mod tests {
         let file_name = "/vsimem/bbf5f1d6-c1e9-4469-a33b-02cd9173132d";
 
         with_global_gdal_api(|api| {
-            create_mem_file(api, file_name, vec![1_u8, 2, 3, 4]).unwrap();
+            create_mem_file(api, file_name, &[1_u8, 2, 3, 4]).unwrap();
 
             unlink_mem_file(api, file_name).unwrap();
         })

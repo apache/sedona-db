@@ -26,6 +26,8 @@ use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
 
+pub type Envelope = OGREnvelope;
+
 /// An OGR geometry.
 pub struct Geometry {
     api: &'static GdalApi,
@@ -115,12 +117,7 @@ impl Geometry {
             MaxY: 0.0,
         };
         unsafe { call_gdal_api!(self.api, OGR_G_GetEnvelope, self.c_geom, &mut env) };
-        Envelope {
-            MinX: env.MinX,
-            MaxX: env.MaxX,
-            MinY: env.MinY,
-            MaxY: env.MaxY,
-        }
+        env
     }
 
     /// Export to ISO WKB.
@@ -149,14 +146,4 @@ impl Geometry {
         }
         Ok(buf)
     }
-}
-
-/// Bounding envelope.
-#[derive(Debug, Clone, Copy)]
-#[allow(non_snake_case)]
-pub struct Envelope {
-    pub MinX: f64,
-    pub MaxX: f64,
-    pub MinY: f64,
-    pub MaxY: f64,
 }
