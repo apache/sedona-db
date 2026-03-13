@@ -16,5 +16,3 @@
 // under the License.
 
 pub mod geometry;
-
-pub use geometry::{Envelope, Geometry};
