@@ -30,15 +30,15 @@ use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::{GDALOpenFlags, OGRFieldType};
 use crate::mem::create_mem_dataset;
 use crate::raster::polygonize::{polygonize, PolygonizeOptions};
+use crate::raster::rasterband::RasterBand;
 use crate::raster::rasterize::{rasterize, RasterizeOptions};
 use crate::raster::rasterize_affine::rasterize_affine;
 use crate::raster::types::DatasetOptions;
 use crate::raster::types::GdalDataType;
-use crate::raster::RasterBand;
 use crate::spatial_ref::SpatialRef;
 use crate::vector::feature::FieldDefn;
 use crate::vector::geometry::Geometry;
-use crate::vector::Layer;
+use crate::vector::layer::Layer;
 use crate::vrt::VrtDataset;
 use crate::vsi;
 
