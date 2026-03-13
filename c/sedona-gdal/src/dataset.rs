@@ -27,10 +27,10 @@ use crate::driver::Driver;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
+use crate::raster::rasterband::RasterBand;
 use crate::raster::types::{DatasetOptions, GdalDataType as RustGdalDataType};
-use crate::raster::RasterBand;
 use crate::spatial_ref::SpatialRef;
-use crate::vector::Layer;
+use crate::vector::layer::Layer;
 
 /// A GDAL dataset.
 pub struct Dataset {

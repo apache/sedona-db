@@ -25,7 +25,7 @@ use std::marker::PhantomData;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
-use crate::vector::Envelope;
+use crate::vector::geometry::Envelope;
 
 /// An OGR feature.
 pub struct Feature<'a> {
