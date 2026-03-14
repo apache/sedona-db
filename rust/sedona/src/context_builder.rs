@@ -58,7 +58,7 @@ fn default_memory_limit() -> usize {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust
 /// # async fn example() -> datafusion::error::Result<()> {
 /// use sedona::context_builder::SedonaContextBuilder;
 /// use sedona::pool_type::PoolType;
@@ -87,7 +87,7 @@ fn default_memory_limit() -> usize {
 ///
 /// String-based configuration (useful for ADBC connection options, etc.):
 ///
-/// ```rust,no_run
+/// ```rust
 /// # async fn example() -> datafusion::error::Result<()> {
 /// use std::collections::HashMap;
 /// use sedona::context_builder::SedonaContextBuilder;
