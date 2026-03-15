@@ -42,10 +42,7 @@ pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: &[u8]) -> R
         // Allocate via GDAL's allocator so GDAL can safely free it.
         let gdal_buf = unsafe { call_gdal_api!(api, VSIMalloc, len) } as *mut u8;
         if gdal_buf.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "VSIMalloc",
-                msg: format!("failed to allocate {len} bytes"),
-            });
+            return Err(api.last_null_pointer_err("VSIMalloc"));
         }
 
         // Copy data into GDAL-allocated buffer.
@@ -71,10 +68,7 @@ pub fn create_mem_file(api: &'static GdalApi, file_name: &str, data: &[u8]) -> R
         if !gdal_buf.is_null() {
             unsafe { call_gdal_api!(api, VSIFree, gdal_buf as *mut std::ffi::c_void) };
         }
-        return Err(GdalError::NullPointer {
-            method_name: "VSIFileFromMemBuffer",
-            msg: String::new(),
-        });
+        return Err(api.last_null_pointer_err("VSIFileFromMemBuffer"));
     }
 
     unsafe {
@@ -127,10 +121,7 @@ pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> R
         if length == 0 {
             return Ok(Vec::new());
         }
-        return Err(GdalError::NullPointer {
-            method_name: "VSIGetMemFileBuffer",
-            msg: String::new(),
-        });
+        return Err(api.last_null_pointer_err("VSIGetMemFileBuffer"));
     }
 
     let owned_bytes = unsafe {

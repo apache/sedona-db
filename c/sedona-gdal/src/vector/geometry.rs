@@ -73,10 +73,7 @@ impl Geometry {
             });
         }
         if c_geom.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "OGR_G_CreateFromWkb",
-                msg: "returned null geometry".to_string(),
-            });
+            return Err(api.last_null_pointer_err("OGR_G_CreateFromWkb"));
         }
         Ok(Self { api, c_geom })
     }
@@ -105,10 +102,7 @@ impl Geometry {
             });
         }
         if c_geom.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "OGR_G_CreateFromWkt",
-                msg: "returned null geometry".to_string(),
-            });
+            return Err(api.last_null_pointer_err("OGR_G_CreateFromWkt"));
         }
         Ok(Self { api, c_geom })
     }

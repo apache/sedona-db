@@ -228,6 +228,14 @@ pub const CE_Fatal: CPLErr = 4;
 
 pub const OGRERR_NONE: OGRErr = 0;
 
+// --- OSRAxisMappingStrategy type and constants ---
+
+pub type OSRAxisMappingStrategy = c_int;
+
+pub const OAMS_TRADITIONAL_GIS_ORDER: OSRAxisMappingStrategy = 0;
+pub const OAMS_AUTHORITY_COMPLIANT: OSRAxisMappingStrategy = 1;
+pub const OAMS_CUSTOM: OSRAxisMappingStrategy = 2;
+
 // --- OGRwkbByteOrder constants ---
 
 pub const wkbXDR: OGRwkbByteOrder = 0; // Big endian
@@ -360,6 +368,17 @@ pub(crate) struct SedonaGdalApi {
     // --- SpatialRef ---
     pub OSRNewSpatialReference:
         Option<unsafe extern "C" fn(pszWKT: *const c_char) -> OGRSpatialReferenceH>,
+    pub OSRSetFromUserInput: Option<
+        unsafe extern "C" fn(hSRS: OGRSpatialReferenceH, pszDefinition: *const c_char) -> OGRErr,
+    >,
+    pub OSREPSGTreatsAsLatLong: Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH) -> c_int>,
+    pub OSRGetDataAxisToSRSAxisMapping: Option<
+        unsafe extern "C" fn(hSRS: OGRSpatialReferenceH, pnCount: *mut c_int) -> *const c_int,
+    >,
+    pub OSRGetAxisMappingStrategy:
+        Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH) -> OSRAxisMappingStrategy>,
+    pub OSRSetAxisMappingStrategy:
+        Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH, strategy: OSRAxisMappingStrategy)>,
     pub OSRDestroySpatialReference: Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH)>,
     pub OSRExportToPROJJSON: Option<
         unsafe extern "C" fn(

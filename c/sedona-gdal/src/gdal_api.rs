@@ -96,7 +96,7 @@ impl GdalApi {
         }
     }
 
-    /// Check the last CPL error and return a `GdalError`, it always returns an error struct
+    /// Check the last CPL error and return a `GdalError::CplError`, it always returns an error struct
     /// (even when the error number is 0).
     pub fn last_cpl_err(&self, default_err_class: u32) -> GdalError {
         let err_no = unsafe { call_gdal_api!(self, CPLGetLastErrorNo) };
@@ -112,6 +112,23 @@ impl GdalApi {
         GdalError::CplError {
             class: default_err_class,
             number: err_no,
+            msg: err_msg,
+        }
+    }
+
+    /// Check the last CPL error and return a `GdalError::NullPointer`, it always returns an error struct
+    pub fn last_null_pointer_err(&self, method_name: &'static str) -> GdalError {
+        let err_msg = unsafe {
+            let msg_ptr = call_gdal_api!(self, CPLGetLastErrorMsg);
+            if msg_ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(msg_ptr).to_string_lossy().into_owned()
+            }
+        };
+        unsafe { call_gdal_api!(self, CPLErrorReset) };
+        GdalError::NullPointer {
+            method_name,
             msg: err_msg,
         }
     }
