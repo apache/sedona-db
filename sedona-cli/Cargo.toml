@@ -41,7 +41,7 @@ s2geography = ["sedona/s2geography"]
 [dependencies]
 arrow = { workspace = true }
 async-trait = { workspace = true }
-clap = { version = "4.5.30", features = ["derive", "cargo"] }
+clap = { version = "4.5.60", features = ["derive", "cargo"] }
 datafusion = { workspace = true, features = [
     "avro",
     "crypto_expressions",
