@@ -119,6 +119,11 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
 
     // --- SpatialRef ---
     load_fn!(lib, api, OSRNewSpatialReference);
+    load_fn!(lib, api, OSRSetFromUserInput);
+    load_fn!(lib, api, OSREPSGTreatsAsLatLong);
+    load_fn!(lib, api, OSRGetDataAxisToSRSAxisMapping);
+    load_fn!(lib, api, OSRGetAxisMappingStrategy);
+    load_fn!(lib, api, OSRSetAxisMappingStrategy);
     load_fn!(lib, api, OSRDestroySpatialReference);
     load_fn!(lib, api, OSRExportToPROJJSON);
     load_fn!(lib, api, OSRClone);
