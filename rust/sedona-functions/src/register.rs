@@ -76,6 +76,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_pointzm::st_pointm_udf,
         crate::st_pointzm::st_pointz_udf,
         crate::st_pointzm::st_pointzm_udf,
+        crate::st_relate::st_relate_udf,
         crate::st_reverse::st_reverse_udf,
         crate::st_rotate::st_rotate_udf,
         crate::st_rotate::st_rotate_x_udf,

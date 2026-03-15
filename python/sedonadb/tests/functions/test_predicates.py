@@ -335,10 +335,6 @@ def test_st_within(eng, geom1, geom2, expected):
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
-        # These cases demonstrates the weirdness of ST_Contains:
-        # Both POINT(0 0) and GEOMETRYCOLLECTION (POINT (0 0)) contains POINT (0 0),
-        # but GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1)) does not contain POINT (0 0).
-        # See https://lin-ear-th-inking.blogspot.com/2007/06/subtleties-of-ogc-covers-spatial.html
         (
             "POINT (0 0)",
             "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
@@ -440,5 +436,36 @@ def test_st_overlaps(eng, geom1, geom2, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Overlaps({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        (None, None, None),
+        ("POINT (0 0)", None, None),
+        (None, "POINT (0 0)", None),
+        ("POINT (0 0)", "POINT (1 1)", "FF0FFF0F2"),
+        ("POINT (0 0)", "POINT (0 0)", "0FFFFFFF2"),
+        ("POINT (0 0)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "F0FFFF212"),
+        ("POINT (0.5 0.5)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "0FFFFF212"),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            "FF2FF1212",
+        ),
+        (
+            "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+            "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+            "212101212",
+        ),
+    ],
+)
+def test_st_relate(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Relate({geom_or_null(geom1)}, {geom_or_null(geom2)})",
         expected,
     )
