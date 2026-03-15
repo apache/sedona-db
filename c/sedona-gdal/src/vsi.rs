@@ -22,9 +22,63 @@
 //! GDAL Virtual File System (VSI) wrappers.
 
 use std::ffi::CString;
+use std::ops::Deref;
 
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
+
+/// An owned GDAL-allocated VSI memory buffer.
+pub struct VSIBuffer {
+    api: &'static GdalApi,
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: `VsiBuffer` uniquely owns the GDAL-allocated buffer it wraps. Ownership may
+// move across threads, and the buffer is released exactly once on drop using GDAL's
+// allocator.
+unsafe impl Send for VSIBuffer {}
+
+// SAFETY: `VsiBuffer` exposes only shared read-only slice access to an immutable
+// GDAL-owned byte buffer. Concurrent reads are therefore safe, and the buffer is
+// still released exactly once on drop using GDAL's allocator.
+unsafe impl Sync for VSIBuffer {}
+
+impl VSIBuffer {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl AsRef<[u8]> for VSIBuffer {
+    fn as_ref(&self) -> &[u8] {
+        if self.len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        }
+    }
+}
+
+impl Deref for VSIBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl Drop for VSIBuffer {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { call_gdal_api!(self.api, VSIFree, self.ptr.cast::<std::ffi::c_void>()) };
+        }
+    }
+}
 
 /// Creates a new VSI in-memory file from a given buffer.
 ///
@@ -93,8 +147,9 @@ pub fn unlink_mem_file(api: &'static GdalApi, file_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copies the bytes of the VSI in-memory file, taking ownership and freeing the GDAL memory.
-pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> Result<Vec<u8>> {
+/// Returns an owned GDAL-allocated buffer containing the bytes of the VSI in-memory
+/// file, taking ownership and freeing the GDAL memory on drop.
+pub fn get_vsi_mem_file_buffer_owned(api: &'static GdalApi, file_name: &str) -> Result<VSIBuffer> {
     let c_file_name = CString::new(file_name)?;
 
     let mut length: i64 = 0;
@@ -119,20 +174,27 @@ pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> R
 
     if bytes.is_null() {
         if length == 0 {
-            return Ok(Vec::new());
+            return Ok(VSIBuffer {
+                api,
+                ptr: std::ptr::null_mut(),
+                len: 0,
+            });
         }
         return Err(api.last_null_pointer_err("VSIGetMemFileBuffer"));
     }
 
-    let owned_bytes = unsafe {
-        let length = usize::try_from(length)?;
-        let slice = std::slice::from_raw_parts(bytes, length);
-        let vec = slice.to_vec();
-        call_gdal_api!(api, VSIFree, bytes.cast::<std::ffi::c_void>());
-        vec
-    };
+    let len = usize::try_from(length)?;
+    Ok(VSIBuffer {
+        api,
+        ptr: bytes.cast::<u8>(),
+        len,
+    })
+}
 
-    Ok(owned_bytes)
+/// Copies the bytes of the VSI in-memory file, taking ownership and freeing the GDAL memory.
+pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> Result<Vec<u8>> {
+    let buffer = get_vsi_mem_file_buffer_owned(api, file_name)?;
+    Ok(buffer.as_ref().to_vec())
 }
 
 #[cfg(all(test, feature = "gdal-sys"))]
@@ -164,6 +226,21 @@ mod tests {
     }
 
     #[test]
+    fn create_and_retrieve_mem_file_buffer() {
+        let file_name = "/vsimem/2e3c48a5-d2ef-4f5c-896d-5467cdca9406";
+
+        with_global_gdal_api(|api| {
+            create_mem_file(api, file_name, &[1_u8, 2, 3, 4]).unwrap();
+
+            let buffer = get_vsi_mem_file_buffer_owned(api, file_name).unwrap();
+
+            assert_eq!(buffer.len(), 4);
+            assert_eq!(buffer.as_ref(), &[1_u8, 2, 3, 4]);
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn create_and_unlink_mem_file() {
         let file_name = "/vsimem/bbf5f1d6-c1e9-4469-a33b-02cd9173132d";
 
@@ -185,6 +262,21 @@ mod tests {
             let bytes = get_vsi_mem_file_bytes_owned(api, file_name).unwrap();
 
             assert!(bytes.is_empty());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn create_and_retrieve_empty_mem_file_buffer() {
+        let file_name = "/vsimem/17319db4-775b-4380-a9af-802c160dcb24";
+
+        with_global_gdal_api(|api| {
+            create_mem_file(api, file_name, &[]).unwrap();
+
+            let buffer = get_vsi_mem_file_buffer_owned(api, file_name).unwrap();
+
+            assert!(buffer.is_empty());
+            assert_eq!(buffer.as_ref(), &[]);
         })
         .unwrap();
     }
