@@ -51,7 +51,7 @@ mod st_point;
 mod st_pointn;
 mod st_points;
 mod st_pointzm;
-pub mod st_relate;
+mod st_relate;
 mod st_reverse;
 mod st_rotate;
 mod st_scale;
