@@ -19,6 +19,8 @@
 
 # SedonaDB
 
+[![PyPI Version](https://img.shields.io/pypi/v/sedonadb)](https://pypi.org/project/sedonadb/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/sedonadb)](https://pepy.tech/project/sedonadb) [![Downloads](https://static.pepy.tech/personalized-badge/sedonadb?period=total&units=international_system&left_color=black&right_color=brightgreen&left_text=total%20downloads)](https://pepy.tech/project/sedonadb)
+
 SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
 SedonaDB is perfect for processing smaller to medium datasets on local machines or cloud instances. For distributed workloads, you can leverage the power of SedonaSpark, SedonaFlink, or SedonaSnow.
@@ -36,6 +38,7 @@ SedonaDB is perfect for processing smaller to medium datasets on local machines 
 * **Spatial query optimization**
     * Spatial-aware heuristic based optimization
     * Spatial-aware cost based optimization
+    * Automatic disk spilling for large-scale spatial joins
 
 * **Spatial query processing**
     * Spatial range query, KNN query, spatial join query, KNN join query
