@@ -135,7 +135,21 @@ impl SedonaContext {
                 .with_geometry_encoding(GeometryEncoding::Wkb)
                 .with_las_extra_bytes(LasExtraBytes::Typed),
         );
-
+        // Auto-enable GPU when built with gpu feature
+        // The optimizer will check actual GPU availability at runtime
+        #[cfg(feature = "gpu")]
+        let session_config = {
+            use sedona_common::option::SedonaOptions;
+            let mut session_config = session_config;
+            if let Some(sedona_opts) = session_config
+                .options_mut()
+                .extensions
+                .get_mut::<SedonaOptions>()
+            {
+                sedona_opts.spatial_join.gpu.enable = true;
+            }
+            session_config
+        };
         #[allow(unused_mut)]
         let mut state_builder = SessionStateBuilder::new()
             .with_default_features()

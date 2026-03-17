@@ -32,6 +32,8 @@ result_large_err = "allow"
 
 [features]
 backtrace = ["datafusion-common/backtrace"]
+# Enable GPU acceleration (requires CUDA toolkit and sedona-libgpuspatial with gpu feature)
+gpu = ["sedona-libgpuspatial/gpu"]
 
 [dependencies]
 async-trait = { workspace = true }
@@ -63,6 +65,7 @@ sedona-geometry = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-tg = { workspace = true }
 sedona-geos = { workspace = true }
+sedona-libgpuspatial = { workspace = true }
 wkb = { workspace = true }
 geo-index = { workspace = true }
 geos = { workspace = true }
