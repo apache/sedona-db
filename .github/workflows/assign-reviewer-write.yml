@@ -1,0 +1,111 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Reads PR metadata from the artifact produced by assign-reviewer.yml,
+# loads the reviewer list from the trusted main branch, computes the
+# round-robin assignment, and requests a review.
+# See https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=321719166
+
+name: "Assign Reviewer to PR"
+on:
+  workflow_run:
+    workflows: ["Compute Reviewer Assignment"]
+    types:
+      - completed
+
+jobs:
+  assign:
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout reviewers config
+        uses: actions/checkout@v4
+        with:
+          repository: apache/sedona-db
+          ref: main
+          path: config
+          sparse-checkout: .github/reviewers.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download PR metadata artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: ${{ github.event.workflow_run.id }},
+            });
+            const match = artifacts.data.artifacts.find(a => a.name === 'pr-meta');
+            if (!match) {
+              core.setFailed('No pr-meta artifact found');
+              return;
+            }
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: match.id,
+              archive_format: 'zip',
+            });
+            const fs = require('fs');
+            fs.writeFileSync('${{ github.workspace }}/pr-meta.zip', Buffer.from(download.data));
+
+      - name: Unzip artifact
+        run: unzip -d pr-meta pr-meta.zip
+
+      - name: Assign reviewer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read reviewer list from trusted checkout (main branch)
+            const reviewers = JSON.parse(fs.readFileSync('config/.github/reviewers.json', 'utf8'));
+
+            // Read PR metadata from artifact (untrusted - validate before use)
+            const prNumber = parseInt(fs.readFileSync('pr-meta/number.txt', 'utf8').trim(), 10);
+            const author = fs.readFileSync('pr-meta/author.txt', 'utf8').trim();
+
+            if (isNaN(prNumber) || prNumber <= 0) {
+              throw new Error(`Invalid PR number: ${prNumber}`);
+            }
+            if (!/^[a-zA-Z0-9_-]+$/.test(author)) {
+              throw new Error(`Invalid author: ${author}`);
+            }
+
+            const eligible = reviewers.filter(r => r !== author);
+            if (eligible.length === 0) {
+              console.log('No eligible reviewers, skipping');
+              return;
+            }
+
+            const idx = prNumber % eligible.length;
+            const reviewer = eligible[idx];
+            console.log(`Assigning ${reviewer} to PR #${prNumber}`);
+
+            await github.rest.pulls.requestReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              reviewers: [reviewer]
+            });
