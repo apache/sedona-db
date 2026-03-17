@@ -1,0 +1,44 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Captures PR metadata for the reviewer assignment workflow.
+# The actual assignment is performed by assign-reviewer-write.yml
+# (workflow_run trigger) which has write permission.
+# See https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=321719166
+
+name: "Compute Reviewer Assignment"
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  compute:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            fs.mkdirSync('pr-meta');
+            fs.writeFileSync('pr-meta/number.txt', String(context.issue.number));
+            fs.writeFileSync('pr-meta/author.txt', context.payload.pull_request.user.login);
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-meta
+          path: pr-meta/
