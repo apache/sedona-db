@@ -23,7 +23,6 @@
 #include "gpuspatial/refine/spatial_refiner.hpp"
 #include "gpuspatial/relate/relate_engine.cuh"
 #include "gpuspatial/rt/rt_engine.hpp"
-#include "gpuspatial/utils/gpu_timer.hpp"
 #include "gpuspatial/utils/thread_pool.hpp"
 
 #include "geoarrow/geoarrow_type.h"
@@ -72,10 +71,7 @@ class RTSpatialRefiner : public SpatialRefiner {
   struct SpatialRefinerContext {
     rmm::cuda_stream_view cuda_stream;
 #ifdef GPUSPATIAL_PROFILING
-    GPUTimer timer;
-    // counters
     double parse_ms = 0.0;
-    double alloc_ms = 0.0;
     double refine_ms = 0.0;
     double copy_res_ms = 0.0;
 #endif
@@ -107,7 +103,10 @@ class RTSpatialRefiner : public SpatialRefiner {
   std::shared_ptr<ThreadPool> thread_pool_;
   std::unique_ptr<ParallelWkbLoader<point_t, index_t>> wkb_loader_;
   dev_geometries_t build_geometries_;
-
+#ifdef GPUSPATIAL_PROFILING
+  double push_build_ms_ = 0.0f;
+  double finish_building_ms_ = 0.0f;
+#endif
   template <typename INDEX_IT>
   void buildIndicesMap(rmm::cuda_stream_view stream, INDEX_IT index_begin,
                        INDEX_IT index_end, IndicesMap& indices_map) const;

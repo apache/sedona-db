@@ -26,6 +26,7 @@
 #include <cub/warp/warp_reduce.cuh>
 
 #include <thrust/binary_search.h>
+#include <thrust/distance.h>
 
 namespace gpuspatial {
 

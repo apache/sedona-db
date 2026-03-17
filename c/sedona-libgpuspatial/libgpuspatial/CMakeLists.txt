@@ -17,6 +17,7 @@
 cmake_minimum_required(VERSION 3.30.4)
 
 option(GPUSPATIAL_BUILD_TESTS "Build tests" OFF)
+option(GPUSPATIAL_PROFILING "Enable profiling" OFF)
 
 # This must be set before project() to be picked up by vcpkg
 if(GPUSPATIAL_BUILD_TESTS)
@@ -162,6 +163,10 @@ target_compile_options(gpuspatial
                                --expt-relaxed-constexpr>
                                -DGPUSPATIAL_LOG_ACTIVE_LEVEL=RAPIDS_LOGGER_LOG_LEVEL_${LIBGPUSPATIAL_LOGGING_LEVEL}
 )
+
+if(GPUSPATIAL_PROFILING)
+  target_compile_definitions(gpuspatial PUBLIC GPUSPATIAL_PROFILING)
+endif()
 
 add_library(gpuspatial_c src/gpuspatial_c.cc)
 target_link_libraries(gpuspatial_c PUBLIC gpuspatial)

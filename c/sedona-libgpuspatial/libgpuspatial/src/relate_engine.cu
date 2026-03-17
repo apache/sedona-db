@@ -25,8 +25,8 @@
 #include "gpuspatial/utils/logger.hpp"
 #include "rt/shaders/shader_id.hpp"
 
-#include <rmm/mr/device/pool_memory_resource.hpp>
-#include <rmm/mr/device/tracking_resource_adaptor.hpp>
+#include "rmm/mr/pool_memory_resource.hpp"
+#include "rmm/mr/tracking_resource_adaptor.hpp"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_scalar.hpp"
 #include "rmm/exec_policy.hpp"
@@ -34,6 +34,7 @@
 #include <thrust/remove.h>
 #include <thrust/sort.h>
 #include <thrust/unique.h>
+#include <cuda/std/iterator>
 
 namespace gpuspatial {
 namespace detail {
@@ -328,7 +329,7 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(const rmm::cuda_stream_view& strea
                           auto IM = relate(geom1, geom2);
                           return !detail::EvaluatePredicate(predicate, IM);
                         });
-  size_t new_size = thrust::distance(zip_begin, end);
+  size_t new_size = cuda::std::distance(zip_begin, end);
   ids1.resize(new_size, stream);
   ids2.resize(new_size, stream);
 }
@@ -459,7 +460,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
   // Collect uniq polygon ids to estimate total BVH memory usage
   auto uniq_poly_ids_end = thrust::unique(rmm::exec_policy_nosync(stream),
                                           uniq_poly_ids.begin(), uniq_poly_ids.end());
-  uniq_poly_ids.resize(thrust::distance(uniq_poly_ids.begin(), uniq_poly_ids_end),
+  uniq_poly_ids.resize(cuda::std::distance(uniq_poly_ids.begin(), uniq_poly_ids_end),
                        stream);
   uniq_poly_ids.shrink_to_fit(stream);
 
@@ -488,7 +489,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
     uniq_poly_ids_end = thrust::unique(rmm::exec_policy_nosync(stream),
                                        uniq_poly_ids.begin(), uniq_poly_ids.end());
 
-    uniq_poly_ids.resize(thrust::distance(uniq_poly_ids.begin(), uniq_poly_ids_end),
+    uniq_poly_ids.resize(cuda::std::distance(uniq_poly_ids.begin(), uniq_poly_ids_end),
                          stream);
     uniq_poly_ids.shrink_to_fit(stream);
 
@@ -552,7 +553,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                                [=] __device__(const thrust::tuple<INDEX_T, INDEX_T>& tu) {
                                  return tu == invalid_tuple;
                                });
-  size_t new_size = thrust::distance(zip_begin, end);
+  size_t new_size = cuda::std::distance(zip_begin, end);
   point_ids.resize(new_size, stream);
   poly_ids.resize(new_size, stream);
 }
@@ -601,7 +602,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
       thrust::unique(rmm::exec_policy_nosync(stream), uniq_multi_poly_ids.begin(),
                      uniq_multi_poly_ids.end());
   uniq_multi_poly_ids.resize(
-      thrust::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end), stream);
+      cuda::std::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end), stream);
   uniq_multi_poly_ids.shrink_to_fit(stream);
 
   auto bvh_bytes =
@@ -632,7 +633,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
         thrust::unique(rmm::exec_policy_nosync(stream), uniq_multi_poly_ids.begin(),
                        uniq_multi_poly_ids.end());
     uniq_multi_poly_ids.resize(
-        thrust::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end), stream);
+        cuda::std::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end), stream);
     uniq_multi_poly_ids.shrink_to_fit(stream);
 
     rmm::device_uvector<int> IMs(ids_size_batch, stream);
@@ -699,7 +700,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                                [=] __device__(const thrust::tuple<INDEX_T, INDEX_T>& tu) {
                                  return tu == invalid_tuple;
                                });
-  size_t new_size = thrust::distance(zip_begin, end);
+  size_t new_size = cuda::std::distance(zip_begin, end);
   point_ids.resize(new_size, stream);
   multi_poly_ids.resize(new_size, stream);
 }
