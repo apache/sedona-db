@@ -232,13 +232,12 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
   ctx.cuda_stream.synchronize();
 #ifdef GPUSPATIAL_PROFILING
   ctx.copy_res_ms = sw.stop();
-#endif
 
   GPUSPATIAL_LOG_INFO(
       "RTSpatialRefiner %p (Free %zu MB), Profiling Results. Parse: %.2lf ms, Refine: %.2lf ms, Copy Results: %.2lf ms",
       this, rmm::available_device_memory().first / 1024 / 1024, len, ctx.parse_ms,
       ctx.refine_ms, ctx.copy_res_ms);
-
+#endif
   return new_size;
 }
 
