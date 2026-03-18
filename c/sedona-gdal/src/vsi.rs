@@ -276,7 +276,7 @@ mod tests {
             let buffer = get_vsi_mem_file_buffer_owned(api, file_name).unwrap();
 
             assert!(buffer.is_empty());
-            assert_eq!(buffer.as_ref(), &[]);
+            assert_eq!(buffer.as_ref(), b"");
         })
         .unwrap();
     }

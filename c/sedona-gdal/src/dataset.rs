@@ -24,7 +24,7 @@ use std::ptr;
 
 use crate::cpl::CslStringList;
 use crate::driver::Driver;
-use crate::errors::{GdalError, Result};
+use crate::errors::Result;
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
 use crate::raster::rasterband::RasterBand;
@@ -148,10 +148,7 @@ impl Dataset {
         let c_band =
             unsafe { call_gdal_api!(self.api, GDALGetRasterBand, self.c_dataset, band_index_i32) };
         if c_band.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "GDALGetRasterBand",
-                msg: format!("band index {band_index}"),
-            });
+            return Err(self.api.last_null_pointer_err("GDALGetRasterBand"));
         }
         Ok(RasterBand::new(self.api, c_band, self))
     }
@@ -222,10 +219,7 @@ impl Dataset {
     pub fn spatial_ref(&self) -> Result<SpatialRef> {
         let c_srs = unsafe { call_gdal_api!(self.api, GDALGetSpatialRef, self.c_dataset) };
         if c_srs.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "GDALGetSpatialRef",
-                msg: "returned null".to_string(),
-            });
+            return Err(self.api.last_null_pointer_err("GDALGetSpatialRef"));
         }
         // GDALGetSpatialRef returns a borrowed reference — clone it via OSRClone.
         unsafe { SpatialRef::from_c_srs_clone(self.api, c_srs) }
@@ -293,10 +287,7 @@ impl Dataset {
             )
         };
         if c_layer.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "GDALDatasetCreateLayer",
-                msg: format!("failed to create layer '{}'", options.name),
-            });
+            return Err(self.api.last_null_pointer_err("GDALDatasetCreateLayer"));
         }
         Ok(Layer::new(self.api, c_layer, self))
     }

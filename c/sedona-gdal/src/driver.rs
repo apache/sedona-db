@@ -23,7 +23,7 @@ use std::ffi::CString;
 use std::ptr;
 
 use crate::dataset::Dataset;
-use crate::errors::{GdalError, Result};
+use crate::errors::Result;
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
 use crate::raster::types::GdalDataType as RustGdalDataType;
@@ -159,11 +159,7 @@ impl DriverManager {
         let c_name = CString::new(name)?;
         let c_driver = unsafe { call_gdal_api!(api, GDALGetDriverByName, c_name.as_ptr()) };
         if c_driver.is_null() {
-            // `GDALGetDriverByName` just returns `null` and sets no error message
-            return Err(GdalError::NullPointer {
-                method_name: "GDALGetDriverByName",
-                msg: format!("driver '{name}' not found"),
-            });
+            return Err(api.last_null_pointer_err("GDALGetDriverByName"));
         }
         Ok(Driver { api, c_driver })
     }

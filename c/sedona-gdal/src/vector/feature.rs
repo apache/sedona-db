@@ -202,10 +202,7 @@ impl FieldDefn {
         let c_field_defn =
             unsafe { call_gdal_api!(api, OGR_Fld_Create, c_name.as_ptr(), field_type) };
         if c_field_defn.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "OGR_Fld_Create",
-                msg: format!("failed to create field definition '{name}'"),
-            });
+            return Err(api.last_null_pointer_err("OGR_Fld_Create"));
         }
         Ok(Self { api, c_field_defn })
     }
