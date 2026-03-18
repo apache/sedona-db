@@ -335,6 +335,10 @@ def test_st_within(eng, geom1, geom2, expected):
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
+        # These cases demonstrates the weirdness of ST_Contains:
+        # Both POINT(0 0) and GEOMETRYCOLLECTION (POINT (0 0)) contains POINT (0 0),
+        # but GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1)) does not contain POINT (0 0).
+        # See https://lin-ear-th-inking.blogspot.com/2007/06/subtleties-of-ogc-covers-spatial.html
         (
             "POINT (0 0)",
             "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
@@ -461,6 +465,28 @@ def test_st_overlaps(eng, geom1, geom2, expected):
             "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
             "212101212",
         ),
+        ("POINT (0 0)", "LINESTRING (0 0, 1 1)", "F0FFFF102"),
+        ("LINESTRING (0 0, 2 2)", "LINESTRING (1 1, 3 3)", "1010F0102"),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            "POINT (0 0)",
+            "FF10F0FF2",
+        ),
+        (
+            "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+            "POLYGON ((2 0, 4 0, 4 2, 2 2, 2 0))",
+            "FF2F11212",
+        ),  # touching polygons
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))",
+            "POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))",
+            "212FF1FF2",
+        ),  # polygon containment
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (2 2, 4 2, 4 4, 2 4, 2 2))",
+            "POINT (1 1)",
+            "0F2FF1FF2",
+        ),  # point in a polygon hole
     ],
 )
 def test_st_relate(eng, geom1, geom2, expected):
