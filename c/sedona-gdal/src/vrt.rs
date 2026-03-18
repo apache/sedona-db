@@ -23,7 +23,7 @@ use std::ptr::null_mut;
 
 use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
-use crate::errors::{GdalError, Result};
+use crate::errors::Result;
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::raster::rasterband::RasterBand;
 use crate::{gdal_dyn_bindgen::*, raster::types::GdalDataType};
@@ -47,10 +47,7 @@ impl VrtDataset {
         let c_dataset = unsafe { call_gdal_api!(api, VRTCreate, x, y) };
 
         if c_dataset.is_null() {
-            return Err(GdalError::NullPointer {
-                method_name: "VRTCreate",
-                msg: String::new(),
-            });
+            return Err(api.last_null_pointer_err("VRTCreate"));
         }
 
         Ok(VrtDataset {
