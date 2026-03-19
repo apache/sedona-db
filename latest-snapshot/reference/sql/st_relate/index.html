@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_z/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_relate/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_Z - Apache Sedona</title>
+        <title>ST_Relate - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_z" class="md-skip">
+        <a href="#st_relate" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Z
+              ST_Relate
             
           </span>
             </div>
@@ -1509,7 +1509,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_z.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_relate.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1517,27 +1517,32 @@
   
 
 
-<h1 id="st_z">ST_Z<a class="headerlink" href="#st_z" title="Permanent link">¶</a></h1>
-<p>Returns the Z coordinate of the point, or NULL if not available.</p>
+<h1 id="st_relate">ST_Relate<a class="headerlink" href="#st_relate" title="Permanent link">¶</a></h1>
+<p>Returns the DE-9IM intersection matrix string for two geometries.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">ST_Z</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">string</span><span class="w"> </span><span class="n">ST_Relate</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geom</strong> (geometry): Input geometry</li>
+<li><strong>geomA</strong> (geometry): Input geometry</li>
+<li><strong>geomB</strong> (geometry): Input geometry</li>
 </ul>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Returns NULL if the geometry has no Z dimension or for non-point
-geometries.</p>
+<p>Returns the DE-9IM (Dimensionally Extended 9-Intersection Model)
+intersection matrix as a 9-character string describing the spatial
+relationship between two geometries.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Z</span><span class="p">(</span><span class="n">ST_PointZ</span><span class="p">(</span><span class="o">-</span><span class="mi">74</span><span class="p">.</span><span class="mi">0060</span><span class="p">,</span><span class="w"> </span><span class="mi">40</span><span class="p">.</span><span class="mi">7128</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">.</span><span class="mi">0</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Relate</span><span class="p">(</span>
+<span class="w">    </span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POINT(0 0)'</span><span class="p">),</span>
+<span class="w">    </span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POINT(1 1)'</span><span class="p">)</span>
+<span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────┐
-│ st_z(st_pointz(Float64(-74.006),Float64(40.7128),Float64(100))) │
-│                             float64                             │
-╞═════════════════════════════════════════════════════════════════╡
-│                                                           100.0 │
-└─────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_relate(st_geomfromwkt(Utf8("POINT(0 0)")),st_geomfromwkt(Utf8("POINT(1 1) │
+│                                     ")))…                                    │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ FF0FFF0F2                                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
