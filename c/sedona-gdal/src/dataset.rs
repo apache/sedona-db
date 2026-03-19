@@ -146,7 +146,8 @@ impl Dataset {
         unsafe { call_gdal_api!(self.api, GDALGetRasterCount, self.c_dataset) as usize }
     }
 
-    /// Get a raster band (1-indexed).
+    /// Fetch a raster band by 1-indexed band number.
+    /// Band numbers start at 1, as in GDAL.
     pub fn rasterband(&self, band_index: usize) -> Result<RasterBand<'_>> {
         let band_index_i32 = i32::try_from(band_index)?;
         let c_band =
@@ -157,7 +158,8 @@ impl Dataset {
         Ok(RasterBand::new(self.api, c_band, self))
     }
 
-    /// Get the geo-transform.
+    /// Fetch the dataset geotransform coefficients.
+    /// Return an error if no geotransform is available.
     pub fn geo_transform(&self) -> Result<[f64; 6]> {
         let mut gt = [0.0f64; 6];
         let rv = unsafe {
@@ -190,7 +192,8 @@ impl Dataset {
         Ok(())
     }
 
-    /// Get the projection string.
+    /// Fetch the projection definition string for this dataset.
+    /// Return an empty string if no projection is available.
     pub fn projection(&self) -> String {
         unsafe {
             let ptr = call_gdal_api!(self.api, GDALGetProjectionRef, self.c_dataset);
@@ -202,7 +205,7 @@ impl Dataset {
         }
     }
 
-    /// Set the projection string.
+    /// Set the projection definition string for this dataset.
     pub fn set_projection(&self, projection: &str) -> Result<()> {
         let c_projection = CString::new(projection)?;
         let rv = unsafe {
@@ -219,7 +222,8 @@ impl Dataset {
         Ok(())
     }
 
-    /// Get the spatial reference.
+    /// Fetch the spatial reference for this dataset.
+    /// GDAL returns a borrowed handle; this method clones it.
     pub fn spatial_ref(&self) -> Result<SpatialRef> {
         let c_srs = unsafe { call_gdal_api!(self.api, GDALGetSpatialRef, self.c_dataset) };
         if c_srs.is_null() {
@@ -317,24 +321,12 @@ impl Dataset {
         )
     }
 
-    /// Add a raster band backed by an existing memory buffer (zero-copy).
-    ///
-    /// This wraps `GDALAddBand` with the `DATAPOINTER`, `PIXELOFFSET`, and `LINEOFFSET`
-    /// options, allowing you to attach existing memory to a MEM dataset without copying.
-    ///
-    /// # Arguments
-    /// * `data_type` - The GDAL data type of the band.
-    /// * `data_ptr` - Pointer to the band pixel data.
-    /// * `pixel_offset` - Byte offset between consecutive pixels. `None` defaults to the
-    ///   byte size of `data_type`.
-    /// * `line_offset` - Byte offset between consecutive lines. `None` defaults to
-    ///   `pixel_offset * width`.
+    /// Add a band backed by an existing memory buffer.
+    /// Pass `DATAPOINTER`, `PIXELOFFSET`, and `LINEOFFSET` to `GDALAddBand`.
     ///
     /// # Safety
     ///
-    /// The caller must ensure that `data_ptr` points to a valid buffer of at least
-    /// `height * line_offset` bytes (or `height * width * data_type.byte_size()` when
-    /// using defaults), and that the buffer outlives this dataset.
+    /// `data_ptr` must point to valid band data that outlives this dataset.
     pub unsafe fn add_band_with_data(
         &self,
         data_type: RustGdalDataType,

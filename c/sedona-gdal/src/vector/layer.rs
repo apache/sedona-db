@@ -53,7 +53,8 @@ impl<'a> Layer<'a> {
         unsafe { call_gdal_api!(self.api, OGR_L_ResetReading, self.c_layer) };
     }
 
-    /// Get the next feature (returns None when exhausted).
+    /// Fetch the next feature from the current read cursor.
+    /// Return `None` when no more features are available.
     pub fn next_feature(&self) -> Option<Feature<'_>> {
         let c_feature = unsafe { call_gdal_api!(self.api, OGR_L_GetNextFeature, self.c_layer) };
         if c_feature.is_null() {
@@ -63,7 +64,8 @@ impl<'a> Layer<'a> {
         }
     }
 
-    /// Create a field on this layer.
+    /// Create a field in this layer.
+    /// Allow the driver to approximate the definition if needed.
     pub fn create_field(&self, field_defn: &FieldDefn) -> Result<()> {
         let rv = unsafe {
             call_gdal_api!(
@@ -83,9 +85,8 @@ impl<'a> Layer<'a> {
         Ok(())
     }
 
-    /// Get the number of features in this layer.
-    ///
-    /// If `force` is true, the count will be computed even if it is expensive.
+    /// Fetch the feature count for this layer.
+    /// Return `-1` if the count is unknown and `force` is `false`.
     pub fn feature_count(&self, force: bool) -> i64 {
         unsafe {
             call_gdal_api!(
@@ -97,7 +98,8 @@ impl<'a> Layer<'a> {
         }
     }
 
-    /// Iterate over all features.
+    /// Iterate over features from the start of the layer.
+    /// This resets the layer read cursor before iteration.
     pub fn features(&mut self) -> FeatureIterator<'_> {
         self.reset_reading();
         FeatureIterator { layer: self }

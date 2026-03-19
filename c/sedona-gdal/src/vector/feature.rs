@@ -51,9 +51,8 @@ impl<'a> Feature<'a> {
         }
     }
 
-    /// Get the geometry reference (borrowed, not owned — do not destroy).
-    ///
-    /// Returns None if the feature has no geometry.
+    /// Fetch the feature geometry.
+    /// The returned geometry is borrowed; return `None` if no geometry is set.
     pub fn geometry(&self) -> Option<BorrowedGeometry<'_>> {
         let c_geom = unsafe { call_gdal_api!(self.api, OGR_F_GetGeometryRef, self.c_feature) };
         if c_geom.is_null() {
@@ -67,7 +66,8 @@ impl<'a> Feature<'a> {
         }
     }
 
-    /// Get a field's index by name. Returns an error if the field is not found.
+    /// Fetch the index of a field by name.
+    /// Return an error if the field is not found.
     pub fn field_index(&self, name: &str) -> Result<i32> {
         let c_name = CString::new(name)?;
         let idx = unsafe {
@@ -84,7 +84,7 @@ impl<'a> Feature<'a> {
         Ok(idx)
     }
 
-    /// Get a field value as f64.
+    /// Fetch a field value as `f64`.
     pub fn field_as_double(&self, field_index: i32) -> f64 {
         unsafe {
             call_gdal_api!(
@@ -96,9 +96,8 @@ impl<'a> Feature<'a> {
         }
     }
 
-    /// Get a field value as i32.
-    ///
-    /// Returns `Some(value)` if the field is set and not null, `None` otherwise.
+    /// Fetch a field value as `i32`.
+    /// Return `None` if the field is unset or null.
     pub fn field_as_integer(&self, field_index: i32) -> Option<i32> {
         let is_set = unsafe {
             call_gdal_api!(
@@ -163,7 +162,7 @@ impl<'a> BorrowedGeometry<'a> {
         Ok(buf)
     }
 
-    /// Get the bounding envelope.
+    /// Fetch the 2D envelope of this geometry.
     pub fn envelope(&self) -> Envelope {
         let mut env = OGREnvelope {
             MinX: 0.0,

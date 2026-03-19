@@ -52,9 +52,8 @@ impl<'a> RasterBand<'a> {
         self.c_rasterband
     }
 
-    /// Read a region of the band as a typed buffer.
-    ///
-    /// If `e_resample_alg` is `None`, nearest-neighbour resampling is used.
+    /// Read a window of this band into a typed buffer.
+    /// If `e_resample_alg` is `None`, use nearest-neighbour resampling.
     pub fn read_as<T: GdalType + Copy>(
         &self,
         window: (isize, isize),
@@ -137,24 +136,24 @@ impl<'a> RasterBand<'a> {
         Ok(())
     }
 
-    /// Get the data type of this band.
+    /// Fetch this band's data type.
     pub fn band_type(&self) -> GdalDataType {
         GdalDataType::from_c(self.c_band_type()).unwrap_or(GdalDataType::Unknown)
     }
 
-    /// Get the GDAL data type of this band.
+    /// Fetch this band's raw GDAL data type.
     pub fn c_band_type(&self) -> GDALDataType {
         unsafe { call_gdal_api!(self.api, GDALGetRasterDataType, self.c_rasterband) }
     }
 
-    /// Get band size as (x_size, y_size).
+    /// Fetch band size as `(x_size, y_size)`.
     pub fn size(&self) -> (usize, usize) {
         let x = unsafe { call_gdal_api!(self.api, GDALGetRasterBandXSize, self.c_rasterband) };
         let y = unsafe { call_gdal_api!(self.api, GDALGetRasterBandYSize, self.c_rasterband) };
         (x as usize, y as usize)
     }
 
-    /// Get the block size as (x_size, y_size).
+    /// Fetch the natural block size as `(x_size, y_size)`.
     pub fn block_size(&self) -> (usize, usize) {
         let mut x: i32 = 0;
         let mut y: i32 = 0;
@@ -170,7 +169,8 @@ impl<'a> RasterBand<'a> {
         (x as usize, y as usize)
     }
 
-    /// Get the no-data value. Returns `Some(value)` if set, `None` otherwise.
+    /// Fetch the band's nodata value.
+    /// Return `None` if no nodata value is set.
     pub fn no_data_value(&self) -> Option<f64> {
         let mut success: i32 = 0;
         let value = unsafe {
@@ -188,7 +188,8 @@ impl<'a> RasterBand<'a> {
         }
     }
 
-    /// Set or clear the no-data value.
+    /// Set the band's nodata value.
+    /// Pass `None` to clear any existing nodata value.
     pub fn set_no_data_value(&self, value: Option<f64>) -> Result<()> {
         let rv = if let Some(val) = value {
             unsafe { call_gdal_api!(self.api, GDALSetRasterNoDataValue, self.c_rasterband, val) }
@@ -201,7 +202,8 @@ impl<'a> RasterBand<'a> {
         Ok(())
     }
 
-    /// Set or clear the no-data value as u64.
+    /// Set the band's nodata value as `u64`.
+    /// Pass `None` to clear any existing nodata value.
     pub fn set_no_data_value_u64(&self, value: Option<u64>) -> Result<()> {
         let rv = if let Some(val) = value {
             unsafe {
@@ -221,7 +223,8 @@ impl<'a> RasterBand<'a> {
         Ok(())
     }
 
-    /// Set or clear the no-data value as i64.
+    /// Set the band's nodata value as `i64`.
+    /// Pass `None` to clear any existing nodata value.
     pub fn set_no_data_value_i64(&self, value: Option<i64>) -> Result<()> {
         let rv = if let Some(val) = value {
             unsafe {
@@ -247,7 +250,8 @@ impl<'a> RasterBand<'a> {
     }
 }
 
-/// Compute the actual block size (clamped to raster extent) for a given block index.
+/// Return the actual block size for a block index.
+/// Clamp edge blocks to the raster extent.
 pub fn actual_block_size(
     band: &RasterBand<'_>,
     block_index: (usize, usize),
