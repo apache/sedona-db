@@ -39,6 +39,10 @@ pub struct Dataset {
     owned: bool,
 }
 
+// SAFETY: `Dataset` carries an opaque GDAL dataset handle plus an ownership flag.
+// Moving the wrapper across threads only transfers ownership of that handle; it does
+// not permit concurrent shared access. The handle is closed at most once on drop when
+// `owned` is true, so `Send` is sound while `Sync` remains intentionally unimplemented.
 unsafe impl Send for Dataset {}
 
 impl Drop for Dataset {

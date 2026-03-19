@@ -325,8 +325,8 @@ mod tests {
                 .read_as::<u8>((20, 30), (4, 4), (2, 2), Some(ResampleAlg::Average))
                 .unwrap();
             assert_eq!(rv.shape, (2, 2));
-            // Average resampling; exact values are GDAL-version-dependent.
-            // Verify shape and that results differ from the non-resampled full read.
+            // Average resampling; exact values are GDAL-version-dependent, so just
+            // verify that the downsampled result has the expected shape and length.
             assert_eq!(rv.data().len(), 4);
         })
         .unwrap();
