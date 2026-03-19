@@ -162,11 +162,7 @@ impl<'a> BorrowedGeometry<'a> {
         Ok(buf)
     }
 
-<<<<<<< HEAD
     /// Fetch the 2D envelope of this geometry.
-=======
-    /// Get the bounding envelope.
->>>>>>> 46f573c4 (refactor(sedona-gdal): prefer imported core types)
     pub fn envelope(&self) -> Envelope {
         let mut env = OGREnvelope {
             MinX: 0.0,
