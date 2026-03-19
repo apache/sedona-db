@@ -204,12 +204,8 @@ where
     Ok(func(api))
 }
 
-/// Execute a closure with a high-level [`Gdal`] handle backed by the
-/// process-global [`GdalApi`].
-///
-/// This is the ergonomic entry-point for most GDAL operations. The global API
-/// is initialized lazily on the first call; subsequent calls reuse the same
-/// `&'static GdalApi` under the hood.
+/// Execute a closure with the process-global high-level [`Gdal`] handle.
+/// The global API is initialized lazily on first use and then reused.
 pub fn with_global_gdal<F, R>(func: F) -> Result<R, GdalInitLibraryError>
 where
     F: FnOnce(&Gdal) -> R,
