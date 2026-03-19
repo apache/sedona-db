@@ -80,14 +80,8 @@ unsafe extern "C" fn affine_transformer(
     1
 }
 
-/// Rasterize geometries with an affine transformer derived from the destination dataset.
-///
-/// This mirrors [`rasterize()`](super::rasterize) but avoids GDAL's slow default
-/// transformer creation.
-///
-/// Assumptions:
-/// - Geometry coordinates are already in the destination dataset georeferenced coordinate space.
-/// - Only GeoTransform-based affine conversion is supported (no GCP/RPC/geolocs).
+/// Rasterize geometries using the dataset geotransform as the transformer.
+/// Geometry coordinates must already be in the dataset georeferenced coordinate space.
 pub fn rasterize_affine(
     api: &'static GdalApi,
     dataset: &Dataset,

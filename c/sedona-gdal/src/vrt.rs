@@ -40,7 +40,7 @@ pub struct VrtDataset {
 unsafe impl Send for VrtDataset {}
 
 impl VrtDataset {
-    /// Create a new empty VRT dataset with the given dimensions.
+    /// Create an empty VRT dataset with the given raster size.
     pub fn create(api: &'static GdalApi, x_size: usize, y_size: usize) -> Result<Self> {
         let x: i32 = x_size.try_into()?;
         let y: i32 = y_size.try_into()?;
@@ -55,15 +55,14 @@ impl VrtDataset {
         })
     }
 
-    /// Consume this VRT and return the underlying `Dataset`, transferring ownership.
+    /// Return the underlying `Dataset`, transferring ownership.
     pub fn as_dataset(self) -> Dataset {
         let VrtDataset { dataset } = self;
         dataset
     }
 
-    /// Add a new band to the VRT dataset.
-    ///
-    /// Returns the 1-based index of the newly created band on success.
+    /// Add a band to this VRT dataset.
+    /// Return the 1-based index of the new band.
     pub fn add_band(&mut self, data_type: GdalDataType, options: Option<&[&str]>) -> Result<usize> {
         let csl = CslStringList::try_from_iter(options.unwrap_or(&[]).iter().copied())?;
 
@@ -91,7 +90,7 @@ impl VrtDataset {
         Ok(self.raster_count())
     }
 
-    /// Fetch a band from the VRT dataset as a `VrtRasterBand`.
+    /// Fetch a VRT band by 1-indexed band number.
     pub fn rasterband(&self, band_index: usize) -> Result<VrtRasterBand<'_>> {
         let band = self.dataset.rasterband(band_index)?;
         Ok(VrtRasterBand { band })
@@ -124,19 +123,13 @@ pub struct VrtRasterBand<'a> {
 }
 
 impl<'a> VrtRasterBand<'a> {
-    /// Returns the raw GDAL raster band handle.
+    /// Return the raw GDAL raster band handle.
     pub fn c_rasterband(&self) -> GDALRasterBandH {
         self.band.c_rasterband()
     }
 
-    /// Adds a simple source to this VRT band.
-    ///
-    /// # Arguments
-    /// * `source_band` - The source raster band to read from
-    /// * `src_window` - Source window as `(x_offset, y_offset, x_size, y_size)` in pixels
-    /// * `dst_window` - Destination window as `(x_offset, y_offset, x_size, y_size)` in pixels
-    /// * `resampling` - Optional resampling method (e.g. "near", "bilinear", "cubic").
-    /// * `nodata` - Optional nodata value for the source. If None, uses `NODATA_UNSET`.
+    /// Add a simple source to this VRT band.
+    /// Map a source window to a destination window, with optional resampling and nodata.
     pub fn add_simple_source(
         &self,
         source_band: &RasterBand<'a>,
@@ -179,7 +172,7 @@ impl<'a> VrtRasterBand<'a> {
         Ok(())
     }
 
-    /// Sets the nodata value for this VRT band.
+    /// Set the nodata value for this VRT band.
     pub fn set_no_data_value(&self, nodata: f64) -> Result<()> {
         let rv = unsafe {
             call_gdal_api!(

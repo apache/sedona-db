@@ -97,7 +97,7 @@ impl Default for RasterizeOptions {
 }
 
 impl RasterizeOptions {
-    /// Build a [`CslStringList`] from this options struct.
+    /// Build a GDAL option list from these rasterize options.
     pub fn to_options_list(self) -> Result<CslStringList> {
         let mut options = CslStringList::with_capacity(5);
 
@@ -133,11 +133,8 @@ impl RasterizeOptions {
     }
 }
 
-/// Rasterize geometries onto a dataset.
-///
-/// There must be one burn value for every geometry. Each burn value is
-/// replicated across all bands internally, matching the
-/// `GDALRasterizeGeometries` contract of `nGeomCount * nBandCount` entries.
+/// Rasterize geometries into the selected dataset bands.
+/// Supply one burn value per geometry; values are replicated across the target bands.
 pub fn rasterize(
     api: &'static GdalApi,
     dataset: &Dataset,

@@ -48,7 +48,7 @@ pub struct PolygonizeOptions {
 }
 
 impl PolygonizeOptions {
-    /// Build a [`CslStringList`] from this options struct.
+    /// Build a GDAL option list from these polygonize options.
     pub fn to_options_list(&self) -> Result<CslStringList> {
         let mut options = CslStringList::new();
 
@@ -69,8 +69,7 @@ impl PolygonizeOptions {
 }
 
 /// Polygonize a raster band into a vector layer.
-///
-/// Uses `GDALPolygonize` (integer pixel values).
+/// This uses `GDALPolygonize`, which reads source pixels as integers.
 pub fn polygonize(
     api: &'static GdalApi,
     src_band: &RasterBand<'_>,
@@ -157,7 +156,7 @@ mod tests {
             let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
 
             // 4-connected output
-            let layer_4 = vector_ds
+            let mut layer_4 = vector_ds
                 .create_layer(LayerOptions {
                     name: "four",
                     srs: None,
@@ -178,7 +177,7 @@ mod tests {
             assert_eq!(ones_4, 3);
 
             // 8-connected output
-            let layer_8 = vector_ds
+            let mut layer_8 = vector_ds
                 .create_layer(LayerOptions {
                     name: "eight",
                     srs: None,
@@ -244,7 +243,7 @@ mod tests {
             let gpkg_driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
             let vector_ds = gpkg_driver.create_vector_only(gpkg_path).unwrap();
 
-            let layer = vector_ds
+            let mut layer = vector_ds
                 .create_layer(LayerOptions {
                     name: "masked",
                     srs: None,
