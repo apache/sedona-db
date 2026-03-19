@@ -156,3 +156,4 @@ sedona-gdal = { version = "0.4.0", path = "c/sedona-gdal", default-features = fa
 sedona-proj = { version = "0.4.0", path = "c/sedona-proj", default-features = false }
 sedona-s2geography = { version = "0.4.0", path = "c/sedona-s2geography" }
 sedona-tg = { version = "0.4.0", path = "c/sedona-tg" }
+sedona-libgpuspatial  = { version = "0.4.0", path = "c/sedona-libgpuspatial" }

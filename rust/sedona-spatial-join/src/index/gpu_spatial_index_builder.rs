@@ -52,8 +52,6 @@ pub struct GPUSpatialIndexBuilder {
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
     /// Statistics for indexed geometries
-    stats: GeoStatistics,
-    /// Memory used by the spatial index
     memory_used: usize,
 }
 
@@ -108,7 +106,6 @@ impl GPUSpatialIndexBuilder {
             probe_threads_count,
             metrics,
             indexed_batches: vec![],
-            stats: GeoStatistics::empty(),
             memory_used: 0,
         }
     }
@@ -149,10 +146,6 @@ impl GPUSpatialIndexBuilder {
         self.indexed_batches.push(indexed_batch);
         self.record_memory_usage(in_mem_size);
         Ok(())
-    }
-    fn merge_stats(&mut self, stats: GeoStatistics) -> &mut Self {
-        self.stats.merge(&stats);
-        self
     }
 }
 
@@ -211,10 +204,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 .map(|batch| &batch.batch)
                 .collect();
             let schema = all_record_batches[0].schema();
-            let batch =
-                arrow::compute::concat_batches(&schema, all_record_batches).map_err(|e| {
-                    DataFusionError::Execution(format!("Failed to concatenate left batches: {}", e))
-                })?;
+            let batch = arrow::compute::concat_batches(&schema, all_record_batches)?;
             let references: Vec<&dyn arrow::array::Array> = self
                 .indexed_batches
                 .iter()
@@ -315,13 +305,12 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
     async fn add_stream(
         &mut self,
         mut stream: SendableEvaluatedBatchStream,
-        geo_statistics: GeoStatistics,
+        _geo_statistics: GeoStatistics,
     ) -> Result<()> {
         while let Some(batch) = stream.next().await {
             let indexed_batch = batch?;
             self.add_batch(indexed_batch)?;
         }
-        self.merge_stats(geo_statistics);
         Ok(())
     }
 }

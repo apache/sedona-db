@@ -404,6 +404,7 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum SpatialIndexBuilderVariant {
     Default(DefaultSpatialIndexBuilder),
     Gpu(GPUSpatialIndexBuilder),

@@ -328,13 +328,14 @@ mod tests {
     use datafusion_common::JoinType;
     use datafusion_physical_expr::expressions::Column;
     use futures::Stream;
-    use sedona_common::{ExecutionMode, SpatialJoinOptions};
+    use sedona_common::{ExecutionMode, GpuOptions, SpatialJoinOptions};
     use sedona_expr::statistics::GeoStatistics;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
     use std::pin::Pin;
     use std::sync::Arc;
     use std::task::{Context, Poll};
+    use std::vec::IntoIter;
 
     pub struct SingleBatchStream {
         // We use an Option so we can `take()` it on the first poll,
@@ -381,6 +382,58 @@ mod tests {
         let single_batch_stream = SingleBatchStream::new(indexed_batch, schema);
         let sendable_stream: SendableEvaluatedBatchStream = Box::pin(single_batch_stream);
         let stats = GeoStatistics::empty();
+        builder.add_stream(sendable_stream, stats).await.unwrap();
+        builder.finish().unwrap()
+    }
+
+    // 1. Create a new stream struct for multiple batches
+    pub struct VecBatchStream {
+        // IntoIter allows us to cleanly pop items off the vector one by one
+        batches: IntoIter<EvaluatedBatch>,
+        schema: SchemaRef,
+    }
+
+    impl VecBatchStream {
+        pub fn new(batches: Vec<EvaluatedBatch>, schema: SchemaRef) -> Self {
+            Self {
+                batches: batches.into_iter(),
+                schema,
+            }
+        }
+    }
+
+    impl Stream for VecBatchStream {
+        type Item = datafusion_common::Result<EvaluatedBatch>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            // `next()` on IntoIter returns Option<EvaluatedBatch>
+            // We map it to Option<Result<EvaluatedBatch>> to match the stream's Item type
+            Poll::Ready(self.batches.next().map(Ok))
+        }
+    }
+
+    impl EvaluatedBatchStream for VecBatchStream {
+        fn is_external(&self) -> bool {
+            false
+        }
+
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    // 2. Write the new build_index function that accepts the Vec
+    async fn build_index_from_vec(
+        mut builder: GPUSpatialIndexBuilder,
+        indexed_batches: Vec<EvaluatedBatch>,
+        schema: SchemaRef,
+    ) -> SpatialIndexRef {
+        let vec_batch_stream = VecBatchStream::new(indexed_batches, schema);
+        let sendable_stream: SendableEvaluatedBatchStream = Box::pin(vec_batch_stream);
+
+        let stats = GeoStatistics::empty();
+
+        // Add the stream of multiple batches to the builder
         builder.add_stream(sendable_stream, stats).await.unwrap();
         builder.finish().unwrap()
     }
@@ -460,6 +513,86 @@ mod tests {
 
         assert_eq!(index.schema(), schema);
         assert_eq!(index.num_indexed_batches(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_spatial_index_builder_add_multiple_batches() {
+        let gpu_ops = GpuOptions {
+            concat_build: false,
+            ..Default::default()
+        };
+        let options = SpatialJoinOptions {
+            gpu: gpu_ops,
+            ..Default::default()
+        };
+        let metrics = SpatialJoinBuildMetrics::default();
+
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("geom", 0)),
+            Arc::new(Column::new("geom", 1)),
+            SpatialRelationType::Intersects,
+        ));
+
+        // Create the schema
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+
+        // Initialize the builder
+        let builder = GPUSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            4,
+            metrics,
+        );
+
+        // --- Create Batch 1 ---
+        let batch1 = RecordBatch::new_empty(schema.clone());
+        let geom_batch1 = create_array(
+            &[
+                Some("POINT (0.25 0.25)"),
+                Some("POINT (10 10)"),
+                None,
+                Some("POINT (0.25 0.25)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let evaluated_batch1 = EvaluatedBatch {
+            batch: batch1,
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch1, &WKB_GEOMETRY).unwrap(),
+        };
+
+        // --- Create Batch 2 ---
+        let batch2 = RecordBatch::new_empty(schema.clone());
+        let geom_batch2 = create_array(
+            &[
+                Some("POINT (1 1)"),
+                Some("POINT (5 5)"),
+                Some("POINT (20 20)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let evaluated_batch2 = EvaluatedBatch {
+            batch: batch2,
+            geom_array: EvaluatedGeometryArray::try_new(geom_batch2, &WKB_GEOMETRY).unwrap(),
+        };
+
+        // --- Build the Index ---
+        // Combine them into a Vec and use the multi-batch builder function
+        let indexed_batches = vec![evaluated_batch1, evaluated_batch2];
+
+        // Note: This relies on the `build_index_from_vec` function we created earlier
+        let index = build_index_from_vec(builder, indexed_batches, schema.clone()).await;
+
+        // --- Assertions ---
+        assert_eq!(index.schema(), schema);
+
+        // Assert that exactly 2 batches were indexed
+        assert_eq!(index.num_indexed_batches(), 2);
     }
 
     async fn setup_index_for_batch_test(
@@ -546,5 +679,107 @@ mod tests {
         assert_eq!(build_batch_positions.len(), 0);
         assert_eq!(probe_indices.len(), 0);
         assert_eq!(next_idx, 2);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_non_empty_results_multiple_build_batches() {
+        let gpu_ops = GpuOptions {
+            concat_build: false,
+            ..Default::default()
+        };
+        let options = SpatialJoinOptions {
+            gpu: gpu_ops,
+            ..Default::default()
+        };
+        let metrics = SpatialJoinBuildMetrics::default();
+
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("geom", 0)),
+            Arc::new(Column::new("geom", 1)),
+            SpatialRelationType::Intersects,
+        ));
+
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+
+        let builder = GPUSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            4,
+            metrics,
+        );
+
+        // --- Build Side: Multiple Batches of Polygons ---
+        // Batch 0
+        let build_batch0 = RecordBatch::new_empty(schema.clone());
+        let build_geom_batch0 = create_array(
+            &[
+                Some("POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))"),
+                Some("POLYGON ((20 20, 20 30, 30 30, 30 20, 20 20))"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let evaluated_build0 = EvaluatedBatch {
+            batch: build_batch0,
+            geom_array: EvaluatedGeometryArray::try_new(build_geom_batch0, &WKB_GEOMETRY).unwrap(),
+        };
+
+        // Batch 1
+        let build_batch1 = RecordBatch::new_empty(schema.clone());
+        let build_geom_batch1 = create_array(
+            &[Some("POLYGON ((40 40, 40 50, 50 50, 50 40, 40 40))")],
+            &WKB_GEOMETRY,
+        );
+        let evaluated_build1 = EvaluatedBatch {
+            batch: build_batch1,
+            geom_array: EvaluatedGeometryArray::try_new(build_geom_batch1, &WKB_GEOMETRY).unwrap(),
+        };
+
+        // Build the multi-batch index using the helper function we created previously
+        let indexed_batches = vec![evaluated_build0, evaluated_build1];
+        let index = build_index_from_vec(builder, indexed_batches, schema.clone()).await;
+
+        // --- Probe Side: One Batch of Points ---
+        let probe_batch = RecordBatch::new_empty(schema.clone());
+        let probe_geoms = &[
+            Some("POINT (5 5)"),     // Matches Batch 0, Row 0
+            Some("POINT (100 100)"), // No match
+            Some("POINT (25 25)"),   // Matches Batch 0, Row 1
+            Some("POINT (45 45)"),   // Matches Batch 1, Row 0
+        ];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        // --- Execute Query ---
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+
+        // Probing all 4 points
+        let (query_metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..4,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        // --- Assertions ---
+        // We expect exactly 3 matches out of the 4 probe points
+        assert_eq!(query_metrics.count, 3);
+        assert_eq!(build_batch_positions.len(), 3);
+        assert_eq!(probe_indices.len(), 3);
+
+        // The probe indices should match the rows in our probe batch that successfully intersected
+        assert_eq!(probe_indices, vec![0, 2, 3]);
+
+        // The query processed all 4 probe points
+        assert_eq!(next_idx, 4);
     }
 }
