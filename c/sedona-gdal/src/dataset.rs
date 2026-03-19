@@ -38,10 +38,17 @@ pub struct Dataset {
     c_dataset: GDALDatasetH,
 }
 
+<<<<<<< HEAD
 // SAFETY: `Dataset` has unique ownership of its GDAL dataset handle and only moves
 // that ownership across threads. The handle is closed exactly once on drop, and this
 // wrapper does not provide shared concurrent access, so `Send` is sound while `Sync`
 // remains intentionally unimplemented.
+=======
+// SAFETY: `Dataset` carries an opaque GDAL dataset handle plus an ownership flag.
+// Moving the wrapper across threads only transfers ownership of that handle; it does
+// not permit concurrent shared access. The handle is closed at most once on drop when
+// `owned` is true, so `Send` is sound while `Sync` remains intentionally unimplemented.
+>>>>>>> b522280f (test(sedona-gdal): add layer iteration coverage)
 unsafe impl Send for Dataset {}
 
 impl Drop for Dataset {
