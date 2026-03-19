@@ -98,7 +98,7 @@ impl<'a> Layer<'a> {
     }
 
     /// Iterate over all features.
-    pub fn features(&self) -> FeatureIterator<'_> {
+    pub fn features(&mut self) -> FeatureIterator<'_> {
         self.reset_reading();
         FeatureIterator { layer: self }
     }
@@ -183,7 +183,7 @@ mod tests {
 
             let c_layer = unsafe { GDALDatasetGetLayer(read_dataset.c_dataset(), 0) };
             assert!(!c_layer.is_null());
-            let read_layer = Layer::new(api, c_layer, &read_dataset);
+            let mut read_layer = Layer::new(api, c_layer, &read_dataset);
 
             assert_eq!(read_layer.feature_count(true), 3);
 
