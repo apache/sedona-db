@@ -51,7 +51,7 @@ pub struct Gdal {
 }
 
 impl Gdal {
-    /// Create a new `Gdal` instance wrapping the given API reference.
+    /// Create a `Gdal` wrapper for the given API reference.
     pub(crate) fn new(api: &'static GdalApi) -> Self {
         Self { api }
     }
@@ -63,26 +63,21 @@ impl Gdal {
         self.api.name()
     }
 
-    /// Query GDAL version information.
-    ///
-    /// `request` is one of the standard `GDALVersionInfo` keys:
-    /// - `"RELEASE_NAME"` — e.g. `"3.8.4"`
-    /// - `"VERSION_NUM"` — e.g. `"3080400"`
-    /// - `"BUILD_INFO"` — multi-line build details
+    /// Fetch GDAL version information for a standard request key.
     pub fn version_info(&self, request: &str) -> String {
         self.api.version_info(request)
     }
 
     // -- Config --------------------------------------------------------------
 
-    /// Set a GDAL library configuration option with **thread-local** scope.
+    /// Set a thread-local GDAL configuration option.
     pub fn set_thread_local_config_option(&self, key: &str, value: &str) -> Result<()> {
         config::set_thread_local_config_option(self.api, key, value)
     }
 
     // -- Driver --------------------------------------------------------------
 
-    /// Look up a GDAL driver by its short name (e.g. `"GTiff"`, `"MEM"`).
+    /// Fetch a GDAL driver by its short name.
     pub fn get_driver_by_name(&self, name: &str) -> Result<Driver> {
         DriverManager::get_driver_by_name(self.api, name)
     }
@@ -108,21 +103,21 @@ impl Gdal {
         )
     }
 
-    /// Open a dataset using a [`DatasetOptions`] struct (georust-compatible convenience).
+    /// Open a dataset using a [`DatasetOptions`] struct.
     pub fn open_ex_with_options(&self, path: &str, options: DatasetOptions<'_>) -> Result<Dataset> {
         Dataset::open_ex_with_options(self.api, path, options)
     }
 
     // -- Spatial Reference ---------------------------------------------------
 
-    /// Create a new [`SpatialRef`] from a WKT string.
+    /// Create a spatial reference from a WKT string.
     pub fn spatial_ref_from_wkt(&self, wkt: &str) -> Result<SpatialRef> {
         SpatialRef::from_wkt(self.api, wkt)
     }
 
     // -- VRT -----------------------------------------------------------------
 
-    /// Create a new empty VRT dataset with the given dimensions.
+    /// Create an empty VRT dataset with the given raster size.
     pub fn create_vrt(&self, x_size: usize, y_size: usize) -> Result<VrtDataset> {
         VrtDataset::create(self.api, x_size, y_size)
     }
@@ -141,40 +136,32 @@ impl Gdal {
 
     // -- Vector --------------------------------------------------------------
 
-    /// Create a new OGR field definition.
+    /// Create an OGR field definition.
     pub fn create_field_defn(&self, name: &str, field_type: OGRFieldType) -> Result<FieldDefn> {
         FieldDefn::new(self.api, name, field_type)
     }
 
     // -- VSI (Virtual File System) -------------------------------------------
 
-    /// Create a new VSI in-memory file from a given buffer.
-    pub fn create_mem_file(&self, file_name: &str, data: Vec<u8>) -> Result<()> {
+    /// Create a VSI in-memory file from the given bytes.
+    pub fn create_mem_file(&self, file_name: &str, data: &[u8]) -> Result<()> {
         vsi::create_mem_file(self.api, file_name, data)
     }
 
-    /// Unlink (delete) a VSI in-memory file.
+    /// Delete a VSI in-memory file.
     pub fn unlink_mem_file(&self, file_name: &str) -> Result<()> {
         vsi::unlink_mem_file(self.api, file_name)
     }
 
-    /// Copy the bytes of a VSI in-memory file, taking ownership and freeing the
-    /// GDAL memory.
+    /// Copy the bytes of a VSI in-memory file, taking ownership of the GDAL buffer.
     pub fn get_vsi_mem_file_bytes_owned(&self, file_name: &str) -> Result<Vec<u8>> {
         vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
     }
 
     // -- Raster operations ---------------------------------------------------
 
-    /// Create a bare in-memory (MEM) GDAL dataset via `MEMDataset::Create`.
-    ///
-    /// This bypasses GDAL's open-dataset-list mutex for better concurrency.
-    /// The returned dataset has `n_owned_bands` bands of type
-    /// `owned_bands_data_type` whose pixel data is owned by GDAL.
-    ///
-    /// For a higher-level builder that also attaches zero-copy external bands,
-    /// geo-transforms, projections, and nodata values, see
-    /// [`MemDatasetBuilder`].
+    /// Create a bare in-memory MEM dataset with GDAL-owned bands.
+    /// For a higher-level builder with external bands and metadata, use `MemDatasetBuilder`.
     pub fn create_mem_dataset(
         &self,
         width: usize,
@@ -191,8 +178,7 @@ impl Gdal {
         )
     }
 
-    /// Rasterize geometries with an affine transformer derived from the
-    /// destination dataset.
+    /// Rasterize geometries using the dataset geotransform as the transformer.
     pub fn rasterize_affine(
         &self,
         dataset: &Dataset,
@@ -211,7 +197,7 @@ impl Gdal {
         )
     }
 
-    /// Rasterize geometries onto a dataset.
+    /// Rasterize geometries into the selected dataset bands.
     pub fn rasterize(
         &self,
         dataset: &Dataset,

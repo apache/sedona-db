@@ -95,7 +95,7 @@ pub struct MemDatasetBuilder {
 }
 
 impl MemDatasetBuilder {
-    /// Create a new builder for a MEM dataset with the given dimensions.
+    /// Create a builder for a MEM dataset with the given dimensions.
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
@@ -108,7 +108,7 @@ impl MemDatasetBuilder {
         }
     }
 
-    /// Create a new builder for a MEM dataset with the given dimensions and number of owned bands.
+    /// Create a builder for a MEM dataset with GDAL-owned bands.
     pub fn new_with_owned_bands(
         width: usize,
         height: usize,
@@ -126,13 +126,8 @@ impl MemDatasetBuilder {
         }
     }
 
-    /// Create a MEM dataset with owned bands.
-    ///
-    /// This is a convenience shortcut equivalent to
-    /// `MemDatasetBuilder::new_with_owned_bands(...).build(gdal)`.
-    ///
-    /// Unlike [`build`](Self::build), this method is safe because datasets created
-    /// with only owned bands do not reference any external memory.
+    /// Create a MEM dataset with GDAL-owned bands.
+    /// This is a safe shortcut for `new_with_owned_bands(...).build(gdal)`.
     pub fn create(
         gdal: &Gdal,
         width: usize,
@@ -149,8 +144,7 @@ impl MemDatasetBuilder {
     }
 
     /// Add a zero-copy band from a raw data pointer.
-    ///
-    /// Uses default pixel and line offsets (contiguous, row-major layout).
+    /// Use default contiguous row-major pixel and line offsets.
     ///
     /// # Safety
     ///
@@ -162,15 +156,6 @@ impl MemDatasetBuilder {
     }
 
     /// Add a zero-copy band with custom offsets and optional nodata.
-    ///
-    /// # Arguments
-    /// * `data_type` - The GDAL data type of the band.
-    /// * `data_ptr` - Pointer to the band pixel data.
-    /// * `pixel_offset` - Byte offset between consecutive pixels. `None` defaults to
-    ///   the byte size of `data_type`.
-    /// * `line_offset` - Byte offset between consecutive lines. `None` defaults to
-    ///   `pixel_offset * width`.
-    /// * `nodata` - Optional nodata value for the band.
     ///
     /// # Safety
     ///
@@ -195,24 +180,19 @@ impl MemDatasetBuilder {
         self
     }
 
-    /// Set the geo-transform for the dataset.
-    ///
-    /// The array is `[origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]`.
+    /// Set the dataset geotransform coefficients.
     pub fn geo_transform(mut self, gt: [f64; 6]) -> Self {
         self.geo_transform = Some(gt);
         self
     }
 
-    /// Set the projection (CRS) for the dataset as a WKT or PROJ string.
+    /// Set the dataset projection definition string.
     pub fn projection(mut self, wkt: impl Into<String>) -> Self {
         self.projection = Some(wkt.into());
         self
     }
 
-    /// Build the GDAL MEM dataset.
-    ///
-    /// Creates an empty MEM dataset using [`create_mem_dataset`], then attaches
-    /// bands, sets the geo-transform, projection, and per-band nodata values.
+    /// Build the MEM dataset and attach the configured bands and metadata.
     ///
     /// # Safety
     ///
@@ -263,14 +243,8 @@ impl MemDatasetBuilder {
     }
 }
 
-/// Create a bare in-memory (MEM) GDAL dataset via `MEMDataset::Create`.
-///
-/// This bypasses GDAL's open-dataset-list mutex for better concurrency.
-/// The returned dataset has `n_owned_bands` bands of type
-/// `owned_bands_data_type` whose pixel data is owned by GDAL.
-///
-/// For a higher-level builder that also attaches zero-copy external bands,
-/// geo-transforms, projections, and nodata values, see [`MemDatasetBuilder`].
+/// Create a bare in-memory MEM dataset with GDAL-owned bands.
+/// For a higher-level builder with external bands and metadata, use `MemDatasetBuilder`.
 pub(crate) fn create_mem_dataset(
     api: &'static GdalApi,
     width: usize,
