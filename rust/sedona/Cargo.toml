@@ -32,6 +32,7 @@ result_large_err = "allow"
 
 [features]
 default = ["aws", "azure", "gcp", "http", "geo", "geos", "tg", "spatial-join"]
+all-except-gpu = ["aws", "azure", "gcp", "geo", "geos", "tg", "http", "pointcloud", "proj", "gdal", "spatial-join", "s2geography"]
 aws = ["dep:aws-config", "dep:aws-credential-types", "object_store/aws"]
 azure = ["object_store/azure"]
 gcp = ["object_store/gcp"]

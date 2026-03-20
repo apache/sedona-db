@@ -745,7 +745,6 @@ mod tests {
         let index = build_index_from_vec(builder, indexed_batches, schema.clone()).await;
 
         // --- Probe Side: One Batch of Points ---
-        let probe_batch = RecordBatch::new_empty(schema.clone());
         let probe_geoms = &[
             Some("POINT (5 5)"),     // Matches Batch 0, Row 0
             Some("POINT (100 100)"), // No match
