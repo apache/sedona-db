@@ -38,6 +38,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_intersects",
         ArrayScalar(Point, Polygon(500)),
     );
+
+    benchmark::scalar(c, &f, "tg", "st_intersects", ArrayArray(Polygon(10), Point));
 }
 
 criterion_group!(benches, criterion_benchmark);
