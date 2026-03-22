@@ -38,7 +38,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout reviewers config
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: apache/sedona-db
           ref: main
