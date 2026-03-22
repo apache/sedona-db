@@ -38,7 +38,7 @@ jobs:
             fs.mkdirSync('pr-meta');
             fs.writeFileSync('pr-meta/number.txt', String(context.issue.number));
             fs.writeFileSync('pr-meta/author.txt', context.payload.pull_request.user.login);
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pr-meta
           path: pr-meta/
