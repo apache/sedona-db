@@ -64,6 +64,7 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
+use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;
 
 /// Sedona SessionContext wrapper
 ///
@@ -143,21 +144,15 @@ impl SedonaContext {
             .with_config(session_config);
 
         // Register the spatial join planner extension
-        let mut extension_planners: Vec<std::sync::Arc<dyn datafusion::physical_planner::ExtensionPlanner + Send + Sync>> = Vec::new();
+        let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
             let (sb, factory) = sedona_spatial_join::register_planner(state_builder)?;
+            planner = planner.with_spatial_join_factory(factory);
             state_builder = sb;
-            extension_planners.push(std::sync::Arc::new(
-                sedona_spatial_join_common::extension_planner::SpatialJoinExtensionPlanner::new(
-                    vec![factory],
-                ),
-            ));
         }
 
-        state_builder = state_builder.with_query_planner(std::sync::Arc::new(
-            crate::query_planner::SedonaQueryPlanner::new(extension_planners),
-        ));
+        state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
