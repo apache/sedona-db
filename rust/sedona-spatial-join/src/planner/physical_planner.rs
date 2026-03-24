@@ -22,6 +22,7 @@ use async_trait::async_trait;
 
 use arrow_schema::Schema;
 
+use datafusion::config::ConfigOptions;
 use datafusion::execution::session_state::SessionState;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
@@ -113,7 +114,8 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             spatial_predicate: &spatial_predicate,
             remainder: remainder.as_ref(),
             join_type,
-            options: &ext.spatial_join,
+            join_options: &ext.spatial_join,
+            options: session_state.config_options(),
         };
 
         for factory in &self.factories {
@@ -140,7 +142,8 @@ pub struct PlanSpatialJoinArgs<'a> {
     pub spatial_predicate: &'a SpatialPredicate,
     pub remainder: Option<&'a JoinFilter>,
     pub join_type: &'a JoinType,
-    pub options: &'a SpatialJoinOptions,
+    pub join_options: &'a SpatialJoinOptions,
+    pub options: &'a Arc<ConfigOptions>,
 }
 
 pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
@@ -177,7 +180,7 @@ impl SedonaSpatialJoinFactory for DefaultSpatialJoinPlanner {
         // We determine which pre-swap input will be the probe AFTER any potential swap, and
         // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
         // child position.
-        let (physical_left, physical_right) = if args.options.repartition_probe_side {
+        let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
             repartition_probe_side(
                 args.physical_left.clone(),
                 args.physical_right.clone(),
@@ -195,7 +198,7 @@ impl SedonaSpatialJoinFactory for DefaultSpatialJoinPlanner {
             args.remainder.cloned(),
             args.join_type,
             None,
-            args.options,
+            args.join_options,
         )?;
 
         if should_swap {
