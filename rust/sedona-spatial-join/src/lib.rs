@@ -21,7 +21,7 @@ mod index;
 mod join_provider;
 pub mod operand_evaluator;
 pub mod partitioning;
-pub mod planner;
+pub mod factory;
 mod prepare;
 mod probe;
 pub mod refine;
@@ -32,7 +32,7 @@ pub mod utils;
 pub use exec::SpatialJoinExec;
 
 // Re-export function for register the spatial join planner
-pub use planner::DefaultSpatialJoinFactory;
+pub use factory::DefaultSpatialJoinFactory;
 
 // Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
 // its presence in optimized physical plans.
