@@ -29,16 +29,36 @@ use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, Phy
 use datafusion_common::Result;
 use datafusion_expr::LogicalPlan;
 
+use crate::extension_planner::{SedonaSpatialJoinFactory, SpatialJoinExtensionPlanner};
+
 /// Query planner that wraps DataFusion's [`DefaultPhysicalPlanner`] with a set
 /// of extension planners that handle custom logical nodes (e.g. spatial joins).
 pub struct SedonaQueryPlanner {
-    extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>,
+    spatial_join_planner: SpatialJoinExtensionPlanner,
 }
 
 impl SedonaQueryPlanner {
     /// Create a new [`SedonaQueryPlanner`] with the given extension planners.
-    pub fn new(extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>) -> Self {
-        Self { extension_planners }
+    pub fn new() -> Self {
+        Self {
+            spatial_join_planner: SpatialJoinExtensionPlanner::new(vec![]),
+        }
+    }
+
+    pub fn with_spatial_join_factory(mut self, factory: Arc<dyn SedonaSpatialJoinFactory>) -> Self {
+        self.spatial_join_planner
+            .append_spatial_join_factory(factory);
+        self
+    }
+
+    fn extension_planners(&self) -> Vec<Arc<dyn ExtensionPlanner + Send + Sync>> {
+        vec![Arc::new(self.spatial_join_planner.clone())]
+    }
+}
+
+impl Default for SedonaQueryPlanner {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -56,7 +76,7 @@ impl QueryPlanner for SedonaQueryPlanner {
         session_state: &SessionState,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let physical_planner =
-            DefaultPhysicalPlanner::with_extension_planners(self.extension_planners.clone());
+            DefaultPhysicalPlanner::with_extension_planners(self.extension_planners());
         physical_planner
             .create_physical_plan(logical_plan, session_state)
             .await

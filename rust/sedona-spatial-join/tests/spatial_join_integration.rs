@@ -51,7 +51,6 @@ use sedona_spatial_join::{
     register_planner, spatial_predicate::RelationPredicate, ProbeShuffleExec, SpatialJoinExec,
     SpatialPredicate,
 };
-use sedona_spatial_join_common::extension_planner::SpatialJoinExtensionPlanner;
 use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
@@ -160,9 +159,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
         state_builder = sb;
 
         state_builder = state_builder.with_query_planner(Arc::new(
-            SedonaQueryPlanner::new(vec![Arc::new(
-                SpatialJoinExtensionPlanner::new(vec![factory]),
-            )]),
+            SedonaQueryPlanner::new().with_spatial_join_factory(factory),
         ));
         let opts = session_config
             .options_mut()

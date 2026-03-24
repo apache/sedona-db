@@ -68,6 +68,7 @@ pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
 /// Delegates to a list of [`SedonaSpatialJoinFactory`] implementations to
 /// produce a physical plan for spatial join nodes. Falls back to
 /// [`NestedLoopJoinExec`] when no factory can handle the predicate.
+#[derive(Clone, Debug)]
 pub struct SpatialJoinExtensionPlanner {
     factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>,
 }
@@ -76,6 +77,10 @@ impl SpatialJoinExtensionPlanner {
     /// Create a new planner with the given factories.
     pub fn new(factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>) -> Self {
         Self { factories }
+    }
+
+    pub fn append_spatial_join_factory(&mut self, factory: Arc<dyn SedonaSpatialJoinFactory>) {
+        self.factories.push(factory);
     }
 }
 
@@ -142,7 +147,8 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             options: session_state.config_options(),
         };
 
-        for factory in &self.factories {
+        // Iterate over in reverse to handle more recently added factories first
+        for factory in self.factories.iter().rev() {
             if let Some(exec) = factory.plan_spatial_join(&args)? {
                 return Ok(Some(exec));
             }
