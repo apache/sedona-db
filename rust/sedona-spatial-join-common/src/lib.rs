@@ -14,3 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+pub mod spatial_expr_utils;
+pub mod spatial_predicate;

@@ -27,3 +27,16 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+arrow-schema = { workspace = true }
+datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
+sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
+sedona-schema = { workspace = true }
+
+[dev-dependencies]
+arrow = { workspace = true }
+datafusion = { workspace = true }
+sedona-schema = { workspace = true }
