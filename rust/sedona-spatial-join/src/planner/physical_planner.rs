@@ -40,7 +40,7 @@ use crate::planner::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::probe_shuffle_exec::ProbeShuffleExec;
 use crate::planner::spatial_expr_utils::{is_spatial_predicate_supported, transform_join_filter};
 use crate::spatial_predicate::SpatialPredicate;
-use sedona_common::option::SedonaOptions;
+use sedona_common::option::{SedonaOptions, SpatialJoinOptions};
 
 /// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
 pub(crate) fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
@@ -102,6 +102,7 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
         else {
             return sedona_internal_err!("SedonaOptions not found in session state extensions");
         };
+        let spatial_join_options = &ext.spatial_join;
 
         if !ext.spatial_join.enable {
             return sedona_internal_err!("Spatial join is disabled in SedonaOptions");
@@ -151,14 +152,18 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
 
         let should_swap = !matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_))
             && join_type.supports_swap()
-            && should_swap_join_order(physical_left.as_ref(), physical_right.as_ref())?;
+            && should_swap_join_order(
+                spatial_join_options,
+                physical_left.as_ref(),
+                physical_right.as_ref(),
+            )?;
 
         // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
         // datasets, leading to more balanced workloads during out-of-core spatial join.
         // We determine which pre-swap input will be the probe AFTER any potential swap, and
         // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
         // child position.
-        let (physical_left, physical_right) = if ext.spatial_join.repartition_probe_side {
+        let (physical_left, physical_right) = if spatial_join_options.repartition_probe_side {
             repartition_probe_side(
                 physical_left,
                 physical_right,
@@ -176,7 +181,7 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             remainder,
             join_type,
             None,
-            &ext.spatial_join,
+            spatial_join_options,
         )?;
 
         if should_swap {
@@ -192,8 +197,20 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
 ///    produce a smaller and more efficient spatial index (R-tree).
 /// 2. If row-count statistics are unavailable (for example, for CSV sources),
 ///    fall back to total input size as an estimate.
-/// 3. Do not swap the join order if no relevant statistics are available.
-fn should_swap_join_order(left: &dyn ExecutionPlan, right: &dyn ExecutionPlan) -> Result<bool> {
+/// 3. Do not swap the join order if join reordering is disabled or no relevant
+///    statistics are available.
+fn should_swap_join_order(
+    spatial_join_options: &SpatialJoinOptions,
+    left: &dyn ExecutionPlan,
+    right: &dyn ExecutionPlan,
+) -> Result<bool> {
+    if !spatial_join_options.spatial_join_reordering {
+        log::info!(
+            "spatial join swap heuristic disabled via sedona.spatial_join.spatial_join_reordering"
+        );
+        return Ok(false);
+    }
+
     let left_stats = left.partition_statistics(None)?;
     let right_stats = right.partition_statistics(None)?;
 

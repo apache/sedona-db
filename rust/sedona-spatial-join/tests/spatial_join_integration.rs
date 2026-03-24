@@ -283,6 +283,7 @@ fn single_row_table(schema: SchemaRef, id: i32, marker: &str) -> Result<Arc<dyn 
 // Keep the data fixed and vary only the advertised stats so the planner swap
 // decision is explained entirely by the heuristic under test.
 async fn assert_build_side_from_stats(
+    options: SpatialJoinOptions,
     left_num_rows: Option<usize>,
     right_num_rows: Option<usize>,
     left_total_byte_size: Option<usize>,
@@ -309,7 +310,7 @@ async fn assert_build_side_from_stats(
         stats_with(right_schema.as_ref(), right_num_rows, right_total_byte_size),
     ));
 
-    let ctx = setup_context(Some(SpatialJoinOptions::default()), 10)?;
+    let ctx = setup_context(Some(options), 10)?;
     ctx.register_table("L", left_provider)?;
     ctx.register_table("R", right_provider)?;
 
@@ -692,6 +693,7 @@ async fn test_spatial_join_swap_inputs_produces_same_plan(
 // smaller-row input on the build side even if it is larger by byte size.
 async fn test_spatial_join_reordering_uses_row_count() -> Result<()> {
     assert_build_side_from_stats(
+        SpatialJoinOptions::default(),
         Some(100),
         Some(10),
         Some(100),
@@ -706,6 +708,7 @@ async fn test_spatial_join_reordering_uses_row_count() -> Result<()> {
 // smaller-bytes input on the build side.
 async fn test_spatial_join_reordering_uses_size_fallback() -> Result<()> {
     assert_build_side_from_stats(
+        SpatialJoinOptions::default(),
         None,
         None,
         Some(10_000),
@@ -719,7 +722,33 @@ async fn test_spatial_join_reordering_uses_size_fallback() -> Result<()> {
 // When both row count and size are absent, the planner preserves the original
 // join order.
 async fn test_spatial_join_reordering_preserves_order_without_stats() -> Result<()> {
-    assert_build_side_from_stats(None, None, None, None, OriginalInputSide::Left).await
+    assert_build_side_from_stats(
+        SpatialJoinOptions::default(),
+        None,
+        None,
+        None,
+        None,
+        OriginalInputSide::Left,
+    )
+    .await
+}
+
+#[tokio::test]
+// When join reordering is disabled, the planner preserves the original join
+// order even if statistics would normally trigger a swap.
+async fn test_spatial_join_reordering_can_be_disabled() -> Result<()> {
+    assert_build_side_from_stats(
+        SpatialJoinOptions {
+            spatial_join_reordering: false,
+            ..Default::default()
+        },
+        Some(100),
+        Some(10),
+        Some(100),
+        Some(10_000),
+        OriginalInputSide::Left,
+    )
+    .await
 }
 
 #[tokio::test]

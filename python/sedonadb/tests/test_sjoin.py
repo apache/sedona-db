@@ -16,6 +16,7 @@
 # under the License.
 
 import json
+import re
 import warnings
 
 import geopandas as gpd
@@ -66,6 +67,96 @@ def test_spatial_join(join_type, on):
         sedonadb_results = eng_sedonadb.execute_and_collect(sql).to_pandas()
         assert len(sedonadb_results) > 0
         eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+def _plan_text(df):
+    query_plan = df.to_pandas()
+    return "\n".join(query_plan.iloc[:, 1].astype(str).tolist())
+
+
+def _spatial_join_side_file_names(plan_text):
+    """Extract the left/right parquet file names used by `SpatialJoinExec`.
+
+    Example input:
+        SpatialJoinExec: join_type=Inner, on=ST_intersects(geo_right@0, geo_left@0)
+          ProjectionExec: expr=[geometry@0 as geo_right]
+            DataSourceExec: file_groups={1 group: [[.../natural-earth_countries_geo.parquet]]}, projection=[geometry], file_type=parquet
+          ProbeShuffleExec: partitioning=RoundRobinBatch(1)
+            ProjectionExec: expr=[geometry@0 as geo_left]
+              DataSourceExec: file_groups={1 group: [[.../natural-earth_cities_geo.parquet]]}, projection=[geometry], file_type=parquet
+
+    Example output:
+        ["natural-earth_countries_geo", "natural-earth_cities_geo"]
+    """
+    spatial_join_idx = plan_text.find("SpatialJoinExec:")
+    assert spatial_join_idx != -1, plan_text
+
+    file_names = re.findall(
+        r"DataSourceExec:.*?/([^/\]]+)\.parquet", plan_text[spatial_join_idx:]
+    )
+    assert len(file_names) >= 2, plan_text
+    return file_names[:2]
+
+
+def test_spatial_join_reordering_can_be_disabled_e2e(geoarrow_data):
+    path_left = (
+        geoarrow_data / "natural-earth" / "files" / "natural-earth_cities_geo.parquet"
+    )
+    path_right = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries_geo.parquet"
+    )
+    assert path_left.exists(), f"Missing test asset: {path_left}"
+    assert path_right.exists(), f"Missing test asset: {path_right}"
+
+    with SedonaDB.create_or_skip() as eng_sedonadb:
+        sql = f"""
+            SELECT t1.name
+            FROM '{path_left}' AS t1
+            JOIN '{path_right}' AS t2
+            ON ST_Intersects(t1.geometry, t2.geometry)
+        """
+
+        # Test 1: regular run swaps the join order
+        plan_text = _plan_text(eng_sedonadb.con.sql(f"EXPLAIN {sql}"))
+        print(f"Plan with reordering enabled:\n{plan_text}")
+        assert _spatial_join_side_file_names(plan_text) == [
+            "natural-earth_countries_geo",
+            "natural-earth_cities_geo",
+        ], plan_text
+
+        result_with_reordering = (
+            eng_sedonadb.execute_and_collect(sql)
+            .to_pandas()
+            .sort_values("name")
+            .reset_index(drop=True)
+        )
+        assert len(result_with_reordering) > 0
+
+        # Test 2: with config disabled, join won't reorder
+        eng_sedonadb.con.sql(
+            "SET sedona.spatial_join.spatial_join_reordering TO false"
+        ).execute()
+
+        plan_text = _plan_text(eng_sedonadb.con.sql(f"EXPLAIN {sql}"))
+        print(f"Plan with reordering disabled:\n{plan_text}")
+        assert _spatial_join_side_file_names(plan_text) == [
+            "natural-earth_cities_geo",
+            "natural-earth_countries_geo",
+        ], plan_text
+
+        result_without_reordering = (
+            eng_sedonadb.execute_and_collect(sql)
+            .to_pandas()
+            .sort_values("name")
+            .reset_index(drop=True)
+        )
+        pd.testing.assert_frame_equal(
+            result_without_reordering,
+            result_with_reordering,
+        )
 
 
 @pytest.mark.parametrize(

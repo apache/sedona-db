@@ -82,6 +82,11 @@ config_namespace! {
         /// locality might cause imbalanced partitions when running out-of-core spatial join.
         pub repartition_probe_side: bool, default = true
 
+        /// Reorder spatial join inputs to put the smaller input on the build side
+        /// when statistics are available. If set to `false`, spatial joins
+        /// preserve the original query order.
+        pub spatial_join_reordering: bool, default = true
+
         /// Maximum number of sample bounding boxes collected from the index side for partitioning the
         /// data when running out-of-core spatial join
         pub max_index_side_bbox_samples: usize, default = 10000
