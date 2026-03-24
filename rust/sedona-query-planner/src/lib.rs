@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod extension_planner;
-pub mod logical_plan_node;
+mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;
 pub mod query_planner;
-pub mod spatial_expr_utils;
+mod spatial_expr_utils;
+pub mod spatial_join_factory;
 pub mod spatial_predicate;
