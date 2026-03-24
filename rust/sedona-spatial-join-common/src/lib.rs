@@ -16,5 +16,6 @@
 // under the License.
 
 pub mod logical_plan_node;
+pub mod probe_shuffle_exec;
 pub mod spatial_expr_utils;
 pub mod spatial_predicate;

@@ -25,7 +25,6 @@ use datafusion_common::Result;
 
 mod optimizer;
 mod physical_planner;
-pub mod probe_shuffle_exec;
 
 /// Register Sedona spatial join planning hooks.
 ///
