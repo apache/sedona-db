@@ -20,24 +20,25 @@
 //! This module wires Sedona's logical optimizer rules and physical planning extensions that
 //! can produce `SpatialJoinExec`.
 
+use std::sync::Arc;
+
 use datafusion::execution::SessionStateBuilder;
+use datafusion::physical_planner::ExtensionPlanner;
 use datafusion_common::Result;
 
 mod physical_planner;
 
 /// Register Sedona spatial join planning hooks.
 ///
-/// Enables logical rewrites (to surface join filters) and a query planner extension that can
-/// plan `SpatialJoinExec`. This is the primary entry point to leveraging the spatial join
-/// implementation provided by this crate and ensures joins created by SQL or using
-/// a DataFrame API that meet certain conditions (e.g. contain a spatial predicate as
-/// a join condition) are executed using the `SpatialJoinExec`.
-pub fn register_planner(state_builder: SessionStateBuilder) -> Result<SessionStateBuilder> {
+/// Registers logical optimizer rules and returns an extension planner that can
+/// plan `SpatialJoinExec`. The caller is responsible for installing the returned
+/// extension planner into a [`QueryPlanner`].
+pub fn register_planner(
+    state_builder: SessionStateBuilder,
+) -> Result<(SessionStateBuilder, Arc<dyn ExtensionPlanner + Send + Sync>)> {
     // Enable the logical rewrite that turns Filter(CrossJoin) into Join(filter=...)
     let state_builder = sedona_spatial_join_common::optimizer::register_spatial_join_logical_optimizer(state_builder)?;
 
-    // Enable planning SpatialJoinExec via an extension node during logical->physical planning.
-    Ok(physical_planner::register_spatial_join_planner(
-        state_builder,
-    ))
+    // Return the extension planner for SpatialJoinExec
+    Ok((state_builder, physical_planner::spatial_join_extension_planner()))
 }

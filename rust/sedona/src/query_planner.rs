@@ -15,9 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod logical_plan_node;
-pub mod optimizer;
-pub mod probe_shuffle_exec;
-pub mod query_planner;
-pub mod spatial_expr_utils;
-pub mod spatial_predicate;
+//! Re-export of [`SedonaQueryPlanner`] from `sedona-spatial-join-common`.
+
+pub use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;

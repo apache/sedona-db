@@ -5172,6 +5172,7 @@ dependencies = [
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "sedona-spatial-join-common",
  "sedona-testing",
  "sedona-tg",
  "serde",
@@ -5697,6 +5698,7 @@ version = "0.4.0"
 dependencies = [
  "arrow",
  "arrow-schema",
+ "async-trait",
  "datafusion",
  "datafusion-common",
  "datafusion-execution",
