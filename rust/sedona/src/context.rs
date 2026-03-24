@@ -64,7 +64,9 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
-use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;
+use sedona_spatial_join_common::{
+    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
+};
 
 /// Sedona SessionContext wrapper
 ///
@@ -147,11 +149,12 @@ impl SedonaContext {
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            let (sb, factory) = sedona_spatial_join::register_planner(state_builder)?;
-            planner = planner.with_spatial_join_factory(factory);
-            state_builder = sb;
+            use sedona_spatial_join::planner::DefaultSpatialJoinFactory;
+
+            planner = planner.with_spatial_join_factory(Arc::new(DefaultSpatialJoinFactory::new()));
         }
 
+        state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();

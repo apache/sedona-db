@@ -19,22 +19,31 @@ use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
-use sedona_spatial_join_common::extension_planner::{PlanSpatialJoinArgs, SedonaSpatialJoinFactory};
+use sedona_spatial_join_common::extension_planner::{
+    PlanSpatialJoinArgs, SedonaSpatialJoinFactory,
+};
 use sedona_spatial_join_common::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_spatial_join_common::spatial_expr_utils::is_spatial_predicate_supported;
 
 use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::SpatialPredicate;
 
-/// Returns the default spatial join factory.
-pub(crate) fn default_spatial_join_factory() -> Arc<dyn SedonaSpatialJoinFactory> {
-    Arc::new(DefaultSpatialJoinPlanner {})
+#[derive(Debug)]
+pub struct DefaultSpatialJoinFactory;
+
+impl DefaultSpatialJoinFactory {
+    pub fn new() -> Self {
+        Self {}
+    }
 }
 
-#[derive(Debug)]
-pub struct DefaultSpatialJoinPlanner;
+impl Default for DefaultSpatialJoinFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-impl SedonaSpatialJoinFactory for DefaultSpatialJoinPlanner {
+impl SedonaSpatialJoinFactory for DefaultSpatialJoinFactory {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,

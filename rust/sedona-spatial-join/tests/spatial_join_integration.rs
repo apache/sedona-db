@@ -48,10 +48,12 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use sedona_spatial_join::{
-    register_planner, spatial_predicate::RelationPredicate, ProbeShuffleExec, SpatialJoinExec,
-    SpatialPredicate,
+    spatial_predicate::RelationPredicate, DefaultSpatialJoinFactory, ProbeShuffleExec,
+    SpatialJoinExec, SpatialPredicate,
 };
-use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;
+use sedona_spatial_join_common::{
+    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
+};
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
 
@@ -155,11 +157,10 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     session_config = add_sedona_option_extension(session_config);
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
-        let (sb, factory) = register_planner(state_builder)?;
-        state_builder = sb;
-
+        state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(
-            SedonaQueryPlanner::new().with_spatial_join_factory(factory),
+            SedonaQueryPlanner::new()
+                .with_spatial_join_factory(Arc::new(DefaultSpatialJoinFactory::new())),
         ));
         let opts = session_config
             .options_mut()
