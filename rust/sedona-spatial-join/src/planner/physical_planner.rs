@@ -36,7 +36,7 @@ use datafusion_physical_plan::joins::NestedLoopJoinExec;
 use sedona_common::sedona_internal_err;
 
 use crate::exec::SpatialJoinExec;
-use crate::planner::logical_plan_node::SpatialJoinPlanNode;
+use sedona_spatial_join_common::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_spatial_join_common::spatial_expr_utils::{
     is_spatial_predicate_supported, transform_join_filter,

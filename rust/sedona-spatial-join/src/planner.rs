@@ -23,7 +23,6 @@
 use datafusion::execution::SessionStateBuilder;
 use datafusion_common::Result;
 
-mod logical_plan_node;
 mod optimizer;
 mod physical_planner;
 pub mod probe_shuffle_exec;
