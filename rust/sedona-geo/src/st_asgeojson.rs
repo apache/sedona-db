@@ -102,7 +102,7 @@ fn geom_to_geojson(geom: &Wkb) -> Result<String> {
     // For all other geometries (including other empty geometries), convert to geo_types::Geometry
     let geo_geom = item_to_geometry(geom)?;
 
-    let geojson_value = geojson::Value::from(&geo_geom);
+    let geojson_value = geojson::GeometryValue::from(&geo_geom);
     let geojson_geom = geojson::Geometry::new(geojson_value);
 
     serde_json::to_string(&geojson_geom).map_err(|err| DataFusionError::External(Box::new(err)))
