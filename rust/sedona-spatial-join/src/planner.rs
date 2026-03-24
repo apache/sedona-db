@@ -23,22 +23,22 @@
 use std::sync::Arc;
 
 use datafusion::execution::SessionStateBuilder;
-use datafusion::physical_planner::ExtensionPlanner;
 use datafusion_common::Result;
+use sedona_spatial_join_common::extension_planner::SedonaSpatialJoinFactory;
 
-mod physical_planner;
+pub(crate) mod physical_planner;
 
 /// Register Sedona spatial join planning hooks.
 ///
-/// Registers logical optimizer rules and returns an extension planner that can
-/// plan `SpatialJoinExec`. The caller is responsible for installing the returned
-/// extension planner into a [`QueryPlanner`].
+/// Registers logical optimizer rules and returns a [`SedonaSpatialJoinFactory`]
+/// that can produce `SpatialJoinExec` plans. The caller is responsible for
+/// installing it into a [`SpatialJoinExtensionPlanner`].
 pub fn register_planner(
     state_builder: SessionStateBuilder,
-) -> Result<(SessionStateBuilder, Arc<dyn ExtensionPlanner + Send + Sync>)> {
+) -> Result<(SessionStateBuilder, Arc<dyn SedonaSpatialJoinFactory>)> {
     // Enable the logical rewrite that turns Filter(CrossJoin) into Join(filter=...)
     let state_builder = sedona_spatial_join_common::optimizer::register_spatial_join_logical_optimizer(state_builder)?;
 
-    // Return the extension planner for SpatialJoinExec
-    Ok((state_builder, physical_planner::spatial_join_extension_planner()))
+    // Return the default spatial join factory
+    Ok((state_builder, physical_planner::default_spatial_join_factory()))
 }

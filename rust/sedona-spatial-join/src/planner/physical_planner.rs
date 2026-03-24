@@ -15,146 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
-use arrow_schema::Schema;
-
-use datafusion::config::ConfigOptions;
-use datafusion::execution::session_state::SessionState;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
-use datafusion_common::{plan_err, DFSchema, JoinSide, Result};
-use datafusion_expr::logical_plan::UserDefinedLogicalNode;
-use datafusion_expr::{JoinType, LogicalPlan};
-use datafusion_physical_expr::create_physical_expr;
-use datafusion_physical_plan::joins::utils::JoinFilter;
-use datafusion_physical_plan::joins::NestedLoopJoinExec;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use datafusion_common::{JoinSide, Result};
+use sedona_spatial_join_common::extension_planner::{PlanSpatialJoinArgs, SedonaSpatialJoinFactory};
+use sedona_spatial_join_common::probe_shuffle_exec::ProbeShuffleExec;
+use sedona_spatial_join_common::spatial_expr_utils::is_spatial_predicate_supported;
 
 use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::SpatialPredicate;
-use sedona_common::option::SedonaOptions;
-use sedona_spatial_join_common::logical_plan_node::SpatialJoinPlanNode;
-use sedona_spatial_join_common::probe_shuffle_exec::ProbeShuffleExec;
-use sedona_spatial_join_common::spatial_expr_utils::{
-    is_spatial_predicate_supported, transform_join_filter,
-};
 
-/// Returns the spatial join [`ExtensionPlanner`].
-pub(crate) fn spatial_join_extension_planner() -> Arc<dyn ExtensionPlanner + Send + Sync> {
-    Arc::new(SpatialJoinExtensionPlanner {
-        factories: vec![Arc::new(DefaultSpatialJoinPlanner {})],
-    })
-}
-
-/// Physical planner hook for `SpatialJoinPlanNode`.
-struct SpatialJoinExtensionPlanner {
-    factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>,
-}
-
-#[async_trait]
-impl ExtensionPlanner for SpatialJoinExtensionPlanner {
-    async fn plan_extension(
-        &self,
-        _planner: &dyn PhysicalPlanner,
-        node: &dyn UserDefinedLogicalNode,
-        logical_inputs: &[&LogicalPlan],
-        physical_inputs: &[Arc<dyn ExecutionPlan>],
-        session_state: &SessionState,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(spatial_node) = node.as_any().downcast_ref::<SpatialJoinPlanNode>() else {
-            return Ok(None);
-        };
-
-        let Some(ext) = session_state
-            .config_options()
-            .extensions
-            .get::<SedonaOptions>()
-        else {
-            return sedona_internal_err!("SedonaOptions not found in session state extensions");
-        };
-
-        if !ext.spatial_join.enable {
-            return sedona_internal_err!("Spatial join is disabled in SedonaOptions");
-        }
-
-        if logical_inputs.len() != 2 || physical_inputs.len() != 2 {
-            return plan_err!("SpatialJoinPlanNode expects 2 inputs");
-        }
-
-        let join_type = &spatial_node.join_type;
-
-        let (physical_left, physical_right) =
-            (physical_inputs[0].clone(), physical_inputs[1].clone());
-
-        let join_filter = logical_join_filter_to_physical(
-            spatial_node,
-            session_state,
-            &physical_left,
-            &physical_right,
-        )?;
-
-        let Some((spatial_predicate, remainder)) = transform_join_filter(&join_filter) else {
-            let nlj = NestedLoopJoinExec::try_new(
-                physical_left,
-                physical_right,
-                Some(join_filter),
-                join_type,
-                None,
-            )?;
-            return Ok(Some(Arc::new(nlj)));
-        };
-
-        let args = PlanSpatialJoinArgs {
-            physical_left: &physical_left,
-            physical_right: &physical_right,
-            spatial_predicate: &spatial_predicate,
-            remainder: remainder.as_ref(),
-            join_type,
-            join_options: &ext.spatial_join,
-            options: session_state.config_options(),
-        };
-
-        for factory in &self.factories {
-            if let Some(exec) = factory.plan_spatial_join(&args)? {
-                return Ok(Some(exec));
-            }
-        }
-
-        let nlj = NestedLoopJoinExec::try_new(
-            physical_left,
-            physical_right,
-            Some(join_filter),
-            join_type,
-            None,
-        )?;
-
-        Ok(Some(Arc::new(nlj)))
-    }
-}
-
-pub struct PlanSpatialJoinArgs<'a> {
-    pub physical_left: &'a Arc<dyn ExecutionPlan>,
-    pub physical_right: &'a Arc<dyn ExecutionPlan>,
-    pub spatial_predicate: &'a SpatialPredicate,
-    pub remainder: Option<&'a JoinFilter>,
-    pub join_type: &'a JoinType,
-    pub join_options: &'a SpatialJoinOptions,
-    pub options: &'a Arc<ConfigOptions>,
-}
-
-pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
-    fn plan_spatial_join(
-        &self,
-        args: &PlanSpatialJoinArgs<'_>,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>>;
+/// Returns the default spatial join factory.
+pub(crate) fn default_spatial_join_factory() -> Arc<dyn SedonaSpatialJoinFactory> {
+    Arc::new(DefaultSpatialJoinPlanner {})
 }
 
 #[derive(Debug)]
-struct DefaultSpatialJoinPlanner;
+pub struct DefaultSpatialJoinPlanner;
 
 impl SedonaSpatialJoinFactory for DefaultSpatialJoinPlanner {
     fn plan_spatial_join(
@@ -256,82 +134,6 @@ fn should_swap_join_order(
     );
 
     Ok(should_swap)
-}
-
-/// This function is mostly taken from the match arm for handling LogicalPlan::Join in
-/// https://github.com/apache/datafusion/blob/51.0.0/datafusion/core/src/physical_planner.rs#L1144-L1245
-fn logical_join_filter_to_physical(
-    plan_node: &SpatialJoinPlanNode,
-    session_state: &SessionState,
-    physical_left: &Arc<dyn ExecutionPlan>,
-    physical_right: &Arc<dyn ExecutionPlan>,
-) -> Result<JoinFilter> {
-    let SpatialJoinPlanNode {
-        left,
-        right,
-        filter,
-        ..
-    } = plan_node;
-
-    let left_df_schema = left.schema();
-    let right_df_schema = right.schema();
-
-    // Extract columns from filter expression and saved in a HashSet
-    let cols = filter.column_refs();
-
-    // Collect left & right field indices, the field indices are sorted in ascending order
-    let mut left_field_indices = cols
-        .iter()
-        .filter_map(|c| left_df_schema.index_of_column(c).ok())
-        .collect::<Vec<_>>();
-    left_field_indices.sort_unstable();
-
-    let mut right_field_indices = cols
-        .iter()
-        .filter_map(|c| right_df_schema.index_of_column(c).ok())
-        .collect::<Vec<_>>();
-    right_field_indices.sort_unstable();
-
-    // Collect DFFields and Fields required for intermediate schemas
-    let (filter_df_fields, filter_fields): (Vec<_>, Vec<_>) = left_field_indices
-        .clone()
-        .into_iter()
-        .map(|i| {
-            (
-                left_df_schema.qualified_field(i),
-                physical_left.schema().field(i).clone(),
-            )
-        })
-        .chain(right_field_indices.clone().into_iter().map(|i| {
-            (
-                right_df_schema.qualified_field(i),
-                physical_right.schema().field(i).clone(),
-            )
-        }))
-        .unzip();
-    let filter_df_fields = filter_df_fields
-        .into_iter()
-        .map(|(qualifier, field)| (qualifier.cloned(), Arc::new(field.clone())))
-        .collect::<Vec<_>>();
-
-    let metadata: HashMap<_, _> = left_df_schema
-        .metadata()
-        .clone()
-        .into_iter()
-        .chain(right_df_schema.metadata().clone())
-        .collect();
-
-    // Construct intermediate schemas used for filtering data and
-    // convert logical expression to physical according to filter schema
-    let filter_df_schema = DFSchema::new_with_metadata(filter_df_fields, metadata.clone())?;
-    let filter_schema = Schema::new_with_metadata(filter_fields, metadata);
-
-    let filter_expr =
-        create_physical_expr(filter, &filter_df_schema, session_state.execution_props())?;
-    let column_indices = JoinFilter::build_column_indices(left_field_indices, right_field_indices);
-
-    let join_filter = JoinFilter::new(filter_expr, column_indices, Arc::new(filter_schema));
-    Ok(join_filter)
 }
 
 /// Repartition the probe side of a spatial join using `RoundRobinBatch` partitioning.
