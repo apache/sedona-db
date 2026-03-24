@@ -17,11 +17,11 @@
 
 pub mod evaluated_batch;
 pub mod exec;
+pub mod factory;
 mod index;
 mod join_provider;
 pub mod operand_evaluator;
 pub mod partitioning;
-pub mod factory;
 mod prepare;
 mod probe;
 pub mod refine;
