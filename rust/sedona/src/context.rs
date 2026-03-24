@@ -149,11 +149,24 @@ impl SedonaContext {
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
+            #[cfg(not(feature = "gpu"))]
+            {
+                use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
 
-            planner = planner.with_spatial_join_physical_planner(Arc::new(
-                DefaultSpatialJoinPhysicalPlanner::new(),
-            ));
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    DefaultSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            // Register the GPU join
+            #[cfg(feature = "gpu")]
+            {
+                use sedona_spatial_join_gpu::physical_planner::GpuSpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    GpuSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
         }
 
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;

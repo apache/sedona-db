@@ -52,7 +52,7 @@ use sedona_schema::{
 };
 use sedona_spatial_join::{
     spatial_predicate::RelationPredicate, DefaultSpatialJoinPhysicalPlanner, ProbeShuffleExec,
-    SpatialJoinExec, SpatialPredicate,
+    SpatialJoinExec, SpatialPredicate, join_provider::DefaultSpatialJoinProvider
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
@@ -1187,6 +1187,7 @@ async fn test_mark_join(
         &join_type,
         None,
         &options,
+        Arc::new(DefaultSpatialJoinProvider)
     )?;
 
     // Create NestedLoopJoinExec plan for comparison

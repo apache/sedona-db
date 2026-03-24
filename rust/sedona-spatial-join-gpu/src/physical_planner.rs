@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use crate::join_provider::GpuSpatialJoinProvider;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
@@ -26,35 +27,34 @@ use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
 };
-use sedona_query_planner::spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate};
+use sedona_query_planner::spatial_predicate::{
+    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate,
+};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
-
-use crate::exec::SpatialJoinExec;
-use crate::join_provider::DefaultSpatialJoinProvider;
-use crate::spatial_predicate::SpatialPredicate;
+use sedona_spatial_join::SpatialJoinExec;
 
 /// [SpatialJoinFactory] implementation for the default spatial join
 ///
 /// This struct is the entrypoint to ensuring the SedonaQueryPlanner is able
 /// to instantiate the [ExecutionPlan] implemented in this crate.
 #[derive(Debug)]
-pub struct DefaultSpatialJoinPhysicalPlanner;
+pub struct GpuSpatialJoinPhysicalPlanner;
 
-impl DefaultSpatialJoinPhysicalPlanner {
+impl GpuSpatialJoinPhysicalPlanner {
     /// Create a new default join factory
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl Default for DefaultSpatialJoinPhysicalPlanner {
+impl Default for GpuSpatialJoinPhysicalPlanner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
+impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,
@@ -93,6 +93,8 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
             (args.physical_left.clone(), args.physical_right.clone())
         };
 
+        let join_provider = Arc::new(GpuSpatialJoinProvider);
+
         let exec = SpatialJoinExec::try_new(
             physical_left,
             physical_right,
@@ -101,7 +103,7 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
             args.join_type,
             None,
             args.join_options,
-            Arc::new(DefaultSpatialJoinProvider)
+            join_provider,
         )?;
 
         if should_swap {
@@ -247,12 +249,11 @@ pub fn is_spatial_predicate_supported(
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use arrow_schema::{DataType, Field};
     use datafusion_physical_expr::expressions::Column;
     use sedona_query_planner::spatial_predicate::SpatialRelationType;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
-
-    use super::*;
 
     #[test]
     fn test_is_spatial_predicate_supported() {
