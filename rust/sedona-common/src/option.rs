@@ -114,6 +114,9 @@ config_namespace! {
 
         /// Options for debugging or testing spatial join
         pub debug : SpatialJoinDebugOptions, default = SpatialJoinDebugOptions::default()
+
+        /// GPU acceleration options
+        pub gpu: GpuOptions, default = GpuOptions::default()
     }
 }
 
@@ -131,6 +134,34 @@ config_namespace! {
 
         /// Seed for random processes in the spatial join for testing purpose
         pub random_seed: Option<u64>, default = None
+    }
+}
+
+config_namespace! {
+    /// Configuration options for GPU-accelerated spatial joins
+    pub struct GpuOptions {
+        /// Enable GPU-accelerated spatial joins (requires CUDA and GPU feature flag)
+        pub enable: bool, default = false
+
+        // Concatenate all geometries on the build-side into a single buffer for GPU processing
+        pub concat_build: bool, default = true
+
+        /// GPU device ID to use (0 = first GPU, 1 = second, etc.)
+        pub device_id: usize, default = 0
+
+        /// Fall back to CPU if GPU initialization or execution fails
+        pub fallback_to_cpu: bool, default = true
+        /// Use CUDA memory pool for GPU memory management
+        pub use_memory_pool: bool, default = true
+        /// Percentage of total GPU memory to initialize CUDA memory pool (between 0% and 100%)
+        pub memory_pool_init_percentage: usize, default = 50
+
+        /// Overlapping parsing and refinement by pipelining multiple batches; 1 means no pipelining
+        pub pipeline_batches: usize, default = 1
+
+
+        /// Compress BVH to reduce memory usage for processing larger datasets at the cost of some performance
+        pub compress_bvh: bool, default = false
     }
 }
 

@@ -15,11 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub(crate) mod arrow_utils;
-pub(crate) mod bbox_sampler;
-pub(crate) mod disposable_async_cell;
-pub(crate) mod init_once_array;
-pub mod internal_benchmark_util;
-pub mod join_utils;
-pub(crate) mod once_fut;
-pub(crate) mod spill;
+pub(crate) mod gpu_spatial_index;
+pub(crate) mod gpu_spatial_index_builder;
+pub(crate) use gpu_spatial_index_builder::GPUSpatialIndexBuilder as GpuSpatialIndexBuilder;
