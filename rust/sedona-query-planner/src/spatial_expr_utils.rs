@@ -37,7 +37,7 @@ use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
 
 /// Collect the names of spatial predicates appeared in expr. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
-pub fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
+pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
     fn collect(expr: &Expr, acc: &mut HashSet<String>) {
         match expr {
             Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr {
@@ -102,7 +102,7 @@ pub fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
 ///
 /// The remainder may reference fewer columns than the original join filter. If that's the case,
 /// the columns that are not referenced by the remainder will be pruned.
-pub fn transform_join_filter(
+pub(crate) fn transform_join_filter(
     join_filter: &JoinFilter,
 ) -> Option<(SpatialPredicate, Option<JoinFilter>)> {
     let (spatial_predicate, remainder) =
@@ -565,7 +565,7 @@ fn replace_join_filter_expr(expr: &Arc<dyn PhysicalExpr>, join_filter: &JoinFilt
 
 /// Which side of the join is the query (probe) side for KNN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KNNJoinQuerySide {
+pub(crate) enum KNNJoinQuerySide {
     Left,
     Right,
 }
@@ -576,7 +576,7 @@ pub enum KNNJoinQuerySide {
 /// The first argument of `ST_KNN(query_geom, object_geom, k, use_spheroid)` identifies the
 /// query side. We collect all column references from that argument and check which child's
 /// schema they belong to.
-pub fn find_knn_query_side(
+pub(crate) fn find_knn_query_side(
     filter_expr: &Expr,
     left_schema: &DFSchema,
     right_schema: &DFSchema,
@@ -606,7 +606,7 @@ pub fn find_knn_query_side(
 /// Recursively find the `ST_KNN` scalar function call in an expression tree.
 ///
 /// Searches through `AND` binary expressions to find the `ST_KNN` function call.
-pub fn find_st_knn_call(expr: &Expr) -> Option<&ScalarFunction> {
+fn find_st_knn_call(expr: &Expr) -> Option<&ScalarFunction> {
     match expr {
         Expr::ScalarFunction(func) if func.func.name().eq_ignore_ascii_case("st_knn") => Some(func),
         Expr::BinaryExpr(datafusion_expr::expr::BinaryExpr { left, right, op })

@@ -29,7 +29,7 @@ use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, Phy
 use datafusion_common::Result;
 use datafusion_expr::LogicalPlan;
 
-use crate::extension_planner::{SpatialJoinExtensionPlanner, SpatialJoinFactory};
+use crate::spatial_join_factory::{SpatialJoinExtensionPlanner, SpatialJoinFactory};
 
 /// Query planner that wraps DataFusion's [`DefaultPhysicalPlanner`] with a set
 /// of extension planners that handle custom logical nodes (e.g. spatial joins).
