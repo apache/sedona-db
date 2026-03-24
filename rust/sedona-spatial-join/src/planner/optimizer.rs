@@ -16,7 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::planner::logical_plan_node::SpatialJoinPlanNode;
+use sedona_spatial_join_common::logical_plan_node::SpatialJoinPlanNode;
 use sedona_spatial_join_common::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };

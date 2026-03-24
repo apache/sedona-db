@@ -15,5 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod logical_plan_node;
 pub mod spatial_expr_utils;
 pub mod spatial_predicate;
