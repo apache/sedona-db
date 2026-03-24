@@ -15,6 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Re-export of [`SedonaQueryPlanner`] from `sedona-spatial-join-common`.
+//! Re-export of [`SedonaQueryPlanner`] from `sedona-query-planner`.
 
-pub use sedona_spatial_join_common::query_planner::SedonaQueryPlanner;
+pub use sedona_query_planner::query_planner::SedonaQueryPlanner;

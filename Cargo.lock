@@ -5168,11 +5168,11 @@ dependencies = [
  "sedona-geos",
  "sedona-pointcloud",
  "sedona-proj",
+ "sedona-query-planner",
  "sedona-raster-functions",
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
- "sedona-spatial-join-common",
  "sedona-testing",
  "sedona-tg",
  "serde",
@@ -5571,6 +5571,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-query-planner"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-schema",
+]
+
+[[package]]
 name = "sedona-raster"
 version = "0.4.0"
 dependencies = [
@@ -5683,31 +5701,13 @@ dependencies = [
  "sedona-geo-traits-ext",
  "sedona-geometry",
  "sedona-geos",
+ "sedona-query-planner",
  "sedona-schema",
- "sedona-spatial-join-common",
  "sedona-testing",
  "sedona-tg",
  "tokio",
  "wkb",
  "wkt 0.14.0",
-]
-
-[[package]]
-name = "sedona-spatial-join-common"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "arrow-schema",
- "async-trait",
- "datafusion",
- "datafusion-common",
- "datafusion-execution",
- "datafusion-expr",
- "datafusion-physical-expr",
- "datafusion-physical-plan",
- "sedona-common",
- "sedona-expr",
- "sedona-schema",
 ]
 
 [[package]]

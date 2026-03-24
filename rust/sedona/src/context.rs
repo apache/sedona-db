@@ -64,7 +64,7 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
-use sedona_spatial_join_common::{
+use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
 
