@@ -41,7 +41,7 @@ use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::spatial_expr_utils::transform_join_filter;
 use crate::spatial_predicate::SpatialPredicate;
 
-/// Arguments passed to a [`SedonaSpatialJoinFactory`] when planning a spatial join.
+/// Arguments passed to a [`SpatialJoinFactory`] when planning a spatial join.
 pub struct PlanSpatialJoinArgs<'a> {
     pub physical_left: &'a Arc<dyn ExecutionPlan>,
     pub physical_right: &'a Arc<dyn ExecutionPlan>,
@@ -57,6 +57,8 @@ pub struct PlanSpatialJoinArgs<'a> {
 /// Implementations decide whether they can handle a given spatial predicate and,
 /// if so, produce an appropriate [`ExecutionPlan`].
 pub trait SpatialJoinFactory: std::fmt::Debug + Send + Sync {
+    /// Given the provided arguments, produce an [ExecutionPlan] implementing
+    /// the join operation or `None` if this implementation cannot execute the join
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,
@@ -65,7 +67,7 @@ pub trait SpatialJoinFactory: std::fmt::Debug + Send + Sync {
 
 /// Physical planner hook for [`SpatialJoinPlanNode`].
 ///
-/// Delegates to a list of [`SedonaSpatialJoinFactory`] implementations to
+/// Delegates to a list of [`SpatialJoinFactory`] implementations to
 /// produce a physical plan for spatial join nodes. Falls back to
 /// [`NestedLoopJoinExec`] when no factory can handle the predicate.
 #[derive(Clone, Debug)]
@@ -79,6 +81,10 @@ impl SpatialJoinExtensionPlanner {
         Self { factories }
     }
 
+    /// Append a new join factory
+    ///
+    /// Implementations are checked in reverse order such that more recently added
+    /// implementations can override the default join.
     pub fn append_spatial_join_factory(&mut self, factory: Arc<dyn SpatialJoinFactory>) {
         self.factories.push(factory);
     }

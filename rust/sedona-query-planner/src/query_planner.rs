@@ -45,6 +45,10 @@ impl SedonaQueryPlanner {
         }
     }
 
+    /// Append a [SpatialJoinFactory] to the planner
+    ///
+    /// Note that [crate::optimizer::register_spatial_join_logical_optimizer] is required
+    /// to ensure a SpatialJoinExec exists in a logical plan.
     pub fn with_spatial_join_factory(mut self, factory: Arc<dyn SpatialJoinFactory>) -> Self {
         self.spatial_join_planner
             .append_spatial_join_factory(factory);
