@@ -27,28 +27,32 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
 use datafusion_common::{plan_err, DFSchema, JoinSide, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNode;
-use datafusion_expr::LogicalPlan;
+use datafusion_expr::{JoinType, LogicalPlan};
 use datafusion_physical_expr::create_physical_expr;
 use datafusion_physical_plan::joins::utils::JoinFilter;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::exec::SpatialJoinExec;
+use crate::spatial_predicate::SpatialPredicate;
+use sedona_common::option::SedonaOptions;
 use sedona_spatial_join_common::logical_plan_node::SpatialJoinPlanNode;
 use sedona_spatial_join_common::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_spatial_join_common::spatial_expr_utils::{
     is_spatial_predicate_supported, transform_join_filter,
 };
-use crate::spatial_predicate::SpatialPredicate;
-use sedona_common::option::{SedonaOptions, SpatialJoinOptions};
 
 /// Returns the spatial join [`ExtensionPlanner`].
 pub(crate) fn spatial_join_extension_planner() -> Arc<dyn ExtensionPlanner + Send + Sync> {
-    Arc::new(SpatialJoinExtensionPlanner {})
+    Arc::new(SpatialJoinExtensionPlanner {
+        factories: vec![Arc::new(DefaultSpatialJoinPlanner {})],
+    })
 }
 
 /// Physical planner hook for `SpatialJoinPlanNode`.
-struct SpatialJoinExtensionPlanner;
+struct SpatialJoinExtensionPlanner {
+    factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>,
+}
 
 #[async_trait]
 impl ExtensionPlanner for SpatialJoinExtensionPlanner {
@@ -71,7 +75,6 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
         else {
             return sedona_internal_err!("SedonaOptions not found in session state extensions");
         };
-        let spatial_join_options = &ext.spatial_join;
 
         if !ext.spatial_join.enable {
             return sedona_internal_err!("Spatial join is disabled in SedonaOptions");
@@ -104,27 +107,73 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
             return Ok(Some(Arc::new(nlj)));
         };
 
-        if !is_spatial_predicate_supported(
-            &spatial_predicate,
-            &physical_left.schema(),
-            &physical_right.schema(),
-        )? {
-            let nlj = NestedLoopJoinExec::try_new(
-                physical_left,
-                physical_right,
-                Some(join_filter),
-                join_type,
-                None,
-            )?;
-            return Ok(Some(Arc::new(nlj)));
+        let args = PlanSpatialJoinArgs {
+            physical_left: &physical_left,
+            physical_right: &physical_right,
+            spatial_predicate: &spatial_predicate,
+            remainder: remainder.as_ref(),
+            join_type,
+            options: &ext.spatial_join,
+        };
+
+        for factory in &self.factories {
+            if let Some(exec) = factory.plan_spatial_join(&args)? {
+                return Ok(Some(exec));
+            }
         }
 
-        let should_swap = !matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_))
-            && join_type.supports_swap()
+        let nlj = NestedLoopJoinExec::try_new(
+            physical_left,
+            physical_right,
+            Some(join_filter),
+            join_type,
+            None,
+        )?;
+
+        Ok(Some(Arc::new(nlj)))
+    }
+}
+
+pub struct PlanSpatialJoinArgs<'a> {
+    pub physical_left: &'a Arc<dyn ExecutionPlan>,
+    pub physical_right: &'a Arc<dyn ExecutionPlan>,
+    pub spatial_predicate: &'a SpatialPredicate,
+    pub remainder: Option<&'a JoinFilter>,
+    pub join_type: &'a JoinType,
+    pub options: &'a SpatialJoinOptions,
+}
+
+pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
+    fn plan_spatial_join(
+        &self,
+        args: &PlanSpatialJoinArgs<'_>,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>>;
+}
+
+#[derive(Debug)]
+struct DefaultSpatialJoinPlanner;
+
+impl SedonaSpatialJoinFactory for DefaultSpatialJoinPlanner {
+    fn plan_spatial_join(
+        &self,
+        args: &PlanSpatialJoinArgs<'_>,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        if !is_spatial_predicate_supported(
+            args.spatial_predicate,
+            &args.physical_left.schema(),
+            &args.physical_right.schema(),
+        )? {
+            return Ok(None);
+        }
+
+        let should_swap = !matches!(
+            args.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(_)
+        ) && args.join_type.supports_swap()
             && should_swap_join_order(
-                spatial_join_options,
-                physical_left.as_ref(),
-                physical_right.as_ref(),
+                args.options,
+                args.physical_left.as_ref(),
+                args.physical_right.as_ref(),
             )?;
 
         // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
@@ -132,25 +181,25 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
         // We determine which pre-swap input will be the probe AFTER any potential swap, and
         // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
         // child position.
-        let (physical_left, physical_right) = if spatial_join_options.repartition_probe_side {
+        let (physical_left, physical_right) = if args.options.repartition_probe_side {
             repartition_probe_side(
-                physical_left,
-                physical_right,
-                &spatial_predicate,
+                args.physical_left.clone(),
+                args.physical_right.clone(),
+                args.spatial_predicate,
                 should_swap,
             )?
         } else {
-            (physical_left, physical_right)
+            (args.physical_left.clone(), args.physical_right.clone())
         };
 
         let exec = SpatialJoinExec::try_new(
             physical_left,
             physical_right,
-            spatial_predicate,
-            remainder,
-            join_type,
+            args.spatial_predicate.clone(),
+            args.remainder.cloned(),
+            args.join_type,
             None,
-            spatial_join_options,
+            args.options,
         )?;
 
         if should_swap {
