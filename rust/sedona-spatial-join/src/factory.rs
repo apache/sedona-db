@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
-use sedona_query_planner::extension_planner::{PlanSpatialJoinArgs, SedonaSpatialJoinFactory};
+use sedona_query_planner::extension_planner::{PlanSpatialJoinArgs, SpatialJoinFactory};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_expr_utils::is_spatial_predicate_supported;
 
@@ -46,7 +46,7 @@ impl Default for DefaultSpatialJoinFactory {
     }
 }
 
-impl SedonaSpatialJoinFactory for DefaultSpatialJoinFactory {
+impl SpatialJoinFactory for DefaultSpatialJoinFactory {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,

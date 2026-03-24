@@ -56,7 +56,7 @@ pub struct PlanSpatialJoinArgs<'a> {
 ///
 /// Implementations decide whether they can handle a given spatial predicate and,
 /// if so, produce an appropriate [`ExecutionPlan`].
-pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
+pub trait SpatialJoinFactory: std::fmt::Debug + Send + Sync {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,
@@ -70,16 +70,16 @@ pub trait SedonaSpatialJoinFactory: std::fmt::Debug + Send + Sync {
 /// [`NestedLoopJoinExec`] when no factory can handle the predicate.
 #[derive(Clone, Debug)]
 pub struct SpatialJoinExtensionPlanner {
-    factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>,
+    factories: Vec<Arc<dyn SpatialJoinFactory>>,
 }
 
 impl SpatialJoinExtensionPlanner {
     /// Create a new planner with the given factories.
-    pub fn new(factories: Vec<Arc<dyn SedonaSpatialJoinFactory>>) -> Self {
+    pub fn new(factories: Vec<Arc<dyn SpatialJoinFactory>>) -> Self {
         Self { factories }
     }
 
-    pub fn append_spatial_join_factory(&mut self, factory: Arc<dyn SedonaSpatialJoinFactory>) {
+    pub fn append_spatial_join_factory(&mut self, factory: Arc<dyn SpatialJoinFactory>) {
         self.factories.push(factory);
     }
 }

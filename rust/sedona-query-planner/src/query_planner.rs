@@ -29,7 +29,7 @@ use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, Phy
 use datafusion_common::Result;
 use datafusion_expr::LogicalPlan;
 
-use crate::extension_planner::{SedonaSpatialJoinFactory, SpatialJoinExtensionPlanner};
+use crate::extension_planner::{SpatialJoinExtensionPlanner, SpatialJoinFactory};
 
 /// Query planner that wraps DataFusion's [`DefaultPhysicalPlanner`] with a set
 /// of extension planners that handle custom logical nodes (e.g. spatial joins).
@@ -45,7 +45,7 @@ impl SedonaQueryPlanner {
         }
     }
 
-    pub fn with_spatial_join_factory(mut self, factory: Arc<dyn SedonaSpatialJoinFactory>) -> Self {
+    pub fn with_spatial_join_factory(mut self, factory: Arc<dyn SpatialJoinFactory>) -> Self {
         self.spatial_join_planner
             .append_spatial_join_factory(factory);
         self
