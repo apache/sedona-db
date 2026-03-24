@@ -143,10 +143,17 @@ impl SedonaContext {
             .with_config(session_config);
 
         // Register the spatial join planner extension
+        let mut extension_planners: Vec<std::sync::Arc<dyn datafusion::physical_planner::ExtensionPlanner + Send + Sync>> = Vec::new();
         #[cfg(feature = "spatial-join")]
         {
-            state_builder = sedona_spatial_join::register_planner(state_builder)?;
+            let (sb, ext_planner) = sedona_spatial_join::register_planner(state_builder)?;
+            state_builder = sb;
+            extension_planners.push(ext_planner);
         }
+
+        state_builder = state_builder.with_query_planner(std::sync::Arc::new(
+            crate::query_planner::SedonaQueryPlanner::new(extension_planners),
+        ));
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;

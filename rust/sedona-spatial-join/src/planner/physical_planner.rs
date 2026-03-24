@@ -16,17 +16,15 @@
 // under the License.
 
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use arrow_schema::Schema;
 
-use datafusion::execution::context::QueryPlanner;
-use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
+use datafusion::execution::session_state::SessionState;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, PhysicalPlanner};
+use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
 use datafusion_common::{plan_err, DFSchema, JoinSide, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNode;
 use datafusion_expr::LogicalPlan;
@@ -44,40 +42,9 @@ use sedona_spatial_join_common::spatial_expr_utils::{
 use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 
-/// Registers a query planner that can produce [`SpatialJoinExec`] from a logical extension node.
-pub(crate) fn register_spatial_join_planner(builder: SessionStateBuilder) -> SessionStateBuilder {
-    let extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>> =
-        vec![Arc::new(SpatialJoinExtensionPlanner {})];
-    builder.with_query_planner(Arc::new(SedonaSpatialQueryPlanner { extension_planners }))
-}
-
-/// Query planner that enables Sedona's spatial join planning.
-///
-/// Installs an [`ExtensionPlanner`] that recognizes `SpatialJoinPlanNode` and produces
-/// `SpatialJoinExec` when supported and enabled.
-struct SedonaSpatialQueryPlanner {
-    extension_planners: Vec<Arc<dyn ExtensionPlanner + Send + Sync>>,
-}
-
-impl fmt::Debug for SedonaSpatialQueryPlanner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SedonaSpatialQueryPlanner").finish()
-    }
-}
-
-#[async_trait]
-impl QueryPlanner for SedonaSpatialQueryPlanner {
-    async fn create_physical_plan(
-        &self,
-        logical_plan: &LogicalPlan,
-        session_state: &SessionState,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let physical_planner =
-            DefaultPhysicalPlanner::with_extension_planners(self.extension_planners.clone());
-        physical_planner
-            .create_physical_plan(logical_plan, session_state)
-            .await
-    }
+/// Returns the spatial join [`ExtensionPlanner`].
+pub(crate) fn spatial_join_extension_planner() -> Arc<dyn ExtensionPlanner + Send + Sync> {
+    Arc::new(SpatialJoinExtensionPlanner {})
 }
 
 /// Physical planner hook for `SpatialJoinPlanNode`.
