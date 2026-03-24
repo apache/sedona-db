@@ -21,23 +21,19 @@ use std::sync::Arc;
 use crate::spatial_predicate::{
     DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
-use arrow_schema::Schema;
 use datafusion_common::ScalarValue;
 use datafusion_common::{
     tree_node::{Transformed, TreeNode},
     Column as LogicalColumn, JoinSide,
 };
-use datafusion_common::{DFSchema, HashMap, Result};
+use datafusion_common::{DFSchema, HashMap};
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
 use datafusion_physical_plan::joins::utils::ColumnIndex;
 use datafusion_physical_plan::joins::utils::JoinFilter;
-use sedona_common::sedona_internal_err;
 use sedona_expr::utils::{parse_distance_predicate, ParsedDistancePredicate};
-use sedona_schema::datatypes::SedonaType;
-use sedona_schema::matchers::ArgMatcher;
 
 /// Collect the names of spatial predicates appeared in expr. We assume that the given
 /// `expr` evaluates to a boolean value and originates from a filter logical node.
@@ -635,7 +631,7 @@ mod tests {
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
     use datafusion_physical_plan::joins::utils::JoinFilter;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
+    use sedona_schema::datatypes::WKB_GEOMETRY;
     use std::sync::Arc;
 
     // Helper function to create a test schema
