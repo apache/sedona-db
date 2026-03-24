@@ -15,26 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! DataFusion planner integration for Sedona spatial joins.
-//!
-//! This module wires Sedona's logical optimizer rules and physical planning extensions that
-//! can produce `SpatialJoinExec`.
-
 use std::sync::Arc;
 
+use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
+use datafusion_physical_expr::PhysicalExpr;
+use sedona_common::sedona_internal_err;
 use sedona_query_planner::extension_planner::{PlanSpatialJoinArgs, SpatialJoinFactory};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
-use sedona_query_planner::spatial_expr_utils::is_spatial_predicate_supported;
+use sedona_query_planner::spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate};
+use sedona_schema::datatypes::SedonaType;
+use sedona_schema::matchers::ArgMatcher;
 
 use crate::exec::SpatialJoinExec;
 use crate::spatial_predicate::SpatialPredicate;
 
+/// [SpatialJoinFactory] implementation for the default spatial join
+///
+/// This struct is the entrypoint to ensuring the SedonaQueryPlanner is able
+/// to instantiate the [ExecutionPlan] implemented in this crate.
 #[derive(Debug)]
 pub struct DefaultSpatialJoinFactory;
 
 impl DefaultSpatialJoinFactory {
+    /// Create a new default join factory
     pub fn new() -> Self {
         Self {}
     }
@@ -176,4 +181,134 @@ fn repartition_probe_side(
     *probe_plan = Arc::new(ProbeShuffleExec::try_new(Arc::clone(probe_plan))?);
 
     Ok((physical_left, physical_right))
+}
+
+pub fn is_spatial_predicate_supported(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> Result<bool> {
+    /// Only spatial predicates working with planar geometry are supported for optimization.
+    /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
+    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
+        let left_return_field = expr.return_field(schema)?;
+        let sedona_type = SedonaType::from_storage_field(&left_return_field)?;
+        let matcher = ArgMatcher::is_geometry();
+        Ok(matcher.match_type(&sedona_type))
+    }
+
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate { left, right, .. })
+        | SpatialPredicate::Distance(DistancePredicate { left, right, .. }) => {
+            Ok(is_geometry_type_supported(left, left_schema)?
+                && is_geometry_type_supported(right, right_schema)?)
+        }
+        SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left,
+            right,
+            probe_side,
+            ..
+        }) => {
+            let (left, right) = match probe_side {
+                JoinSide::Left => (left, right),
+                JoinSide::Right => (right, left),
+                _ => {
+                    return sedona_internal_err!(
+                        "Invalid probe side in KNN predicate: {:?}",
+                        probe_side
+                    )
+                }
+            };
+            Ok(is_geometry_type_supported(left, left_schema)?
+                && is_geometry_type_supported(right, right_schema)?)
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use arrow_schema::{DataType, Field};
+    use datafusion_physical_expr::expressions::Column;
+    use sedona_query_planner::spatial_predicate::SpatialRelationType;
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
+
+    use super::*;
+
+    #[test]
+    fn test_is_spatial_predicate_supported() {
+        // Planar geometry field
+        let geom_field = WKB_GEOMETRY.to_storage_field("geom", false).unwrap();
+        let schema = Arc::new(Schema::new(vec![geom_field.clone()]));
+        let col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred = RelationPredicate::new(
+            col_expr.clone(),
+            col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred = SpatialPredicate::Relation(rel_pred);
+        assert!(is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
+
+        // Geography field (should NOT be supported)
+        let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
+        let geog_schema = Arc::new(Schema::new(vec![geog_field.clone()]));
+        let geog_col_expr = Arc::new(Column::new("geog", 0)) as Arc<dyn PhysicalExpr>;
+        let rel_pred_geog = RelationPredicate::new(
+            geog_col_expr.clone(),
+            geog_col_expr.clone(),
+            SpatialRelationType::Intersects,
+        );
+        let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
+        assert!(
+            !is_spatial_predicate_supported(&spatial_pred_geog, &geog_schema, &geog_schema)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_is_knn_predicate_supported() {
+        // ST_KNN(left, right)
+        let left_schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
+            .to_storage_field("geom", false)
+            .unwrap()]));
+        let right_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
+        ]));
+        let left_col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+        let right_col_expr = Arc::new(Column::new("geom", 1)) as Arc<dyn PhysicalExpr>;
+        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
+            left_col_expr.clone(),
+            right_col_expr.clone(),
+            5,
+            false,
+            JoinSide::Left,
+        ));
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
+
+        // ST_KNN(right, left)
+        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
+            right_col_expr.clone(),
+            left_col_expr.clone(),
+            5,
+            false,
+            JoinSide::Right,
+        ));
+        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
+
+        // ST_KNN with geography (should NOT be supported)
+        let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
+            .to_storage_field("geog", false)
+            .unwrap()]));
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_geog_schema, &right_schema).unwrap()
+        );
+
+        let right_geog_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
+        ]));
+        assert!(
+            !is_spatial_predicate_supported(&knn_pred, &left_schema, &right_geog_schema).unwrap()
+        );
+    }
 }
