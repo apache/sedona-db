@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
-use crate::planner::spatial_expr_utils::{
+use sedona_spatial_join_common::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };
 use datafusion::execution::session_state::SessionStateBuilder;

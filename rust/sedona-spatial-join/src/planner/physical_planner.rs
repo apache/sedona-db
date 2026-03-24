@@ -38,7 +38,9 @@ use sedona_common::sedona_internal_err;
 use crate::exec::SpatialJoinExec;
 use crate::planner::logical_plan_node::SpatialJoinPlanNode;
 use crate::planner::probe_shuffle_exec::ProbeShuffleExec;
-use crate::planner::spatial_expr_utils::{is_spatial_predicate_supported, transform_join_filter};
+use sedona_spatial_join_common::spatial_expr_utils::{
+    is_spatial_predicate_supported, transform_join_filter,
+};
 use crate::spatial_predicate::SpatialPredicate;
 use sedona_common::option::SedonaOptions;
 

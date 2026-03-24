@@ -24,7 +24,7 @@ pub mod planner;
 mod prepare;
 mod probe;
 pub mod refine;
-pub mod spatial_predicate;
+pub use sedona_spatial_join_common::spatial_predicate;
 mod stream;
 pub mod utils;
 

@@ -5683,6 +5683,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geos",
  "sedona-schema",
+ "sedona-spatial-join-common",
  "sedona-testing",
  "sedona-tg",
  "tokio",
@@ -5693,6 +5694,18 @@ dependencies = [
 [[package]]
 name = "sedona-spatial-join-common"
 version = "0.4.0"
+dependencies = [
+ "arrow",
+ "arrow-schema",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-schema",
+]
 
 [[package]]
 name = "sedona-testing"
