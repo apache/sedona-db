@@ -16,13 +16,13 @@
 # under the License.
 
 [package]
-name = "sedona-spatial-join-common"
+name = "sedona-query-planner"
 version.workspace = true
 authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Common traits and types for spatial join operations in Apache SedonaDB"
+description = "Query planner and common traits for spatial join operations in Apache SedonaDB"
 edition.workspace = true
 rust-version.workspace = true
 

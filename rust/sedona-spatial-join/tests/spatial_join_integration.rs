@@ -43,6 +43,9 @@ use sedona_common::SedonaOptions;
 use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 use sedona_geo::to_geo::GeoTypesExecutor;
 use sedona_geometry::types::GeometryTypeId;
+use sedona_query_planner::{
+    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
+};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -50,9 +53,6 @@ use sedona_schema::{
 use sedona_spatial_join::{
     spatial_predicate::RelationPredicate, DefaultSpatialJoinFactory, ProbeShuffleExec,
     SpatialJoinExec, SpatialPredicate,
-};
-use sedona_spatial_join_common::{
-    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;

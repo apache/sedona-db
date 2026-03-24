@@ -25,7 +25,7 @@ pub mod partitioning;
 mod prepare;
 mod probe;
 pub mod refine;
-pub use sedona_spatial_join_common::spatial_predicate;
+pub use sedona_query_planner::spatial_predicate;
 mod stream;
 pub mod utils;
 
@@ -36,7 +36,7 @@ pub use factory::DefaultSpatialJoinFactory;
 
 // Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
 // its presence in optimized physical plans.
-pub use sedona_spatial_join_common::probe_shuffle_exec::ProbeShuffleExec;
+pub use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 
 // Re-export types needed for external usage (e.g., in Comet)
 pub use spatial_predicate::SpatialPredicate;
