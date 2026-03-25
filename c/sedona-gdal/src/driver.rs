@@ -89,7 +89,7 @@ impl Driver {
         if c_ds.is_null() {
             return Err(self.api.last_cpl_err(CE_Failure as u32));
         }
-        Ok(Dataset::new_owned(self.api, c_ds))
+        Ok(Dataset::new(self.api, c_ds))
     }
 
     /// Create a new raster dataset with a runtime data type.
@@ -125,7 +125,7 @@ impl Driver {
         if c_ds.is_null() {
             return Err(self.api.last_cpl_err(CE_Failure as u32));
         }
-        Ok(Dataset::new_owned(self.api, c_ds))
+        Ok(Dataset::new(self.api, c_ds))
     }
 
     /// Create a new dataset (vector-only, no raster bands).
@@ -147,7 +147,7 @@ impl Driver {
         if c_ds.is_null() {
             return Err(self.api.last_cpl_err(CE_Failure as u32));
         }
-        Ok(Dataset::new_owned(self.api, c_ds))
+        Ok(Dataset::new(self.api, c_ds))
     }
 }
 

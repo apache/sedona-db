@@ -36,18 +36,17 @@ use crate::vector::layer::Layer;
 pub struct Dataset {
     api: &'static GdalApi,
     c_dataset: GDALDatasetH,
-    owned: bool,
 }
 
-// SAFETY: `Dataset` carries an opaque GDAL dataset handle plus an ownership flag.
-// Moving the wrapper across threads only transfers ownership of that handle; it does
-// not permit concurrent shared access. The handle is closed at most once on drop when
-// `owned` is true, so `Send` is sound while `Sync` remains intentionally unimplemented.
+// SAFETY: `Dataset` has unique ownership of its GDAL dataset handle and only moves
+// that ownership across threads. The handle is closed exactly once on drop, and this
+// wrapper does not provide shared concurrent access, so `Send` is sound while `Sync`
+// remains intentionally unimplemented.
 unsafe impl Send for Dataset {}
 
 impl Drop for Dataset {
     fn drop(&mut self) {
-        if self.owned && !self.c_dataset.is_null() {
+        if !self.c_dataset.is_null() {
             unsafe { call_gdal_api!(self.api, GDALClose, self.c_dataset) };
         }
     }
@@ -100,33 +99,12 @@ impl Dataset {
             return Err(api.last_cpl_err(CE_Failure as u32));
         }
 
-        Ok(Self {
-            api,
-            c_dataset,
-            owned: true,
-        })
+        Ok(Self { api, c_dataset })
     }
 
-    /// Create a new owned Dataset from a C handle.
-    pub(crate) fn new_owned(api: &'static GdalApi, c_dataset: GDALDatasetH) -> Self {
-        Self {
-            api,
-            c_dataset,
-            owned: true,
-        }
-    }
-
-    /// Wrap an existing C dataset handle (non-owning).
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure the handle is valid and outlives this `Dataset`.
-    pub unsafe fn from_c_dataset(api: &'static GdalApi, c_dataset: GDALDatasetH) -> Self {
-        Self {
-            api,
-            c_dataset,
-            owned: false,
-        }
+    /// Create a new Dataset from an owned C handle.
+    pub(crate) fn new(api: &'static GdalApi, c_dataset: GDALDatasetH) -> Self {
+        Self { api, c_dataset }
     }
 
     /// Return the raw C dataset handle.
@@ -269,11 +247,7 @@ impl Dataset {
         if c_ds.is_null() {
             return Err(self.api.last_cpl_err(CE_Failure as u32));
         }
-        Ok(Dataset {
-            api: self.api,
-            c_dataset: c_ds,
-            owned: true,
-        })
+        Ok(Dataset::new(self.api, c_ds))
     }
 
     /// Create a new vector layer.
@@ -359,11 +333,6 @@ impl Dataset {
         }
         Ok(())
     }
-
-    /// Mark this dataset as owning its handle (for `Drop`).
-    pub fn set_owned(&mut self, owned: bool) {
-        self.owned = owned;
-    }
 }
 
 /// Options for creating a vector layer.
@@ -388,8 +357,15 @@ impl Default for LayerOptions<'_> {
 
 #[cfg(all(test, feature = "gdal-sys"))]
 mod tests {
+    use gdal_sys::{GDALDatasetGetLayer, GDALDatasetGetLayerCount};
+
     use crate::driver::DriverManager;
+    use crate::gdal_dyn_bindgen::{OGRwkbGeometryType, GDAL_OF_READONLY, GDAL_OF_VECTOR};
     use crate::global::with_global_gdal_api;
+    use crate::vector::layer::Layer;
+    use crate::vsi::unlink_mem_file;
+
+    use super::{Dataset, LayerOptions};
 
     #[test]
     fn test_geo_transform_roundtrip() {
@@ -452,6 +428,73 @@ mod tests {
             let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
             let ds = driver.create("", 123, 456, 1).unwrap();
             assert_eq!(ds.raster_size(), (123, 456));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_create_vector_layer() {
+        with_global_gdal_api(|api| {
+            let path = "/vsimem/test_dataset_create_vector_layer.gpkg";
+            let driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
+            let dataset = driver.create_vector_only(path).unwrap();
+
+            let layer = dataset
+                .create_layer(LayerOptions {
+                    name: "points",
+                    srs: None,
+                    ty: OGRwkbGeometryType::wkbPoint,
+                    options: None,
+                })
+                .unwrap();
+
+            assert_eq!(dataset.raster_count(), 0);
+            assert!(!layer.c_layer().is_null());
+            assert_eq!(layer.feature_count(true), 0);
+
+            unlink_mem_file(api, path).unwrap();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_open_vector_dataset_with_open_ex() {
+        with_global_gdal_api(|api| {
+            let path = "/vsimem/test_dataset_open_vector.gpkg";
+            let driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
+            {
+                let dataset = driver.create_vector_only(path).unwrap();
+
+                dataset
+                    .create_layer(LayerOptions {
+                        name: "points",
+                        srs: None,
+                        ty: OGRwkbGeometryType::wkbPoint,
+                        options: None,
+                    })
+                    .unwrap();
+            }
+
+            let reopened = Dataset::open_ex(
+                api,
+                path,
+                GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            let layer_count = unsafe { GDALDatasetGetLayerCount(reopened.c_dataset()) };
+            assert_eq!(layer_count, 1);
+
+            let c_layer = unsafe { GDALDatasetGetLayer(reopened.c_dataset(), 0) };
+            assert!(!c_layer.is_null());
+
+            let reopened_layer = Layer::new(api, c_layer, &reopened);
+            assert_eq!(reopened_layer.feature_count(true), 0);
+
+            unlink_mem_file(api, path).unwrap();
         })
         .unwrap();
     }
