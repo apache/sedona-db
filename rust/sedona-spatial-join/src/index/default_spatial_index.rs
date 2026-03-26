@@ -52,9 +52,7 @@ use crate::{
     refine::{create_refiner, IndexQueryResultRefiner},
     spatial_predicate::SpatialPredicate,
 };
-use crate::{
-    index::spatial_index::DISTANCE_TOLERANCE, join_evaluator::DefaultSpatialJoinEvaluator,
-};
+use crate::{index::spatial_index::DISTANCE_TOLERANCE, join_provider::DefaultSpatialJoinEvaluator};
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
 use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};

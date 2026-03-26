@@ -35,7 +35,7 @@ use sedona_geometry::bounding_box::BoundingBox;
 use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
     index::spatial_index_builder::SpatialJoinBuildMetrics,
-    join_evaluator::DefaultSpatialJoinEvaluator,
+    join_provider::DefaultSpatialJoinEvaluator,
 };
 use crate::{
     index::{

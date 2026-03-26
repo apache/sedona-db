@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
-    join_evaluator::{DefaultSpatialJoinEvaluator, SpatialJoinEvaluator},
+    join_provider::{DefaultSpatialJoinEvaluator, SpatialJoinProvider},
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate, SpatialPredicateTrait},
     stream::SpatialJoinStream,
@@ -115,7 +115,7 @@ pub struct SpatialJoinExec {
     /// A random seed for making random procedures in spatial join deterministic
     seed: u64,
     /// Factories to create the index builder and evaluated batches
-    evaluator: Arc<dyn SpatialJoinEvaluator>,
+    join_provider: Arc<dyn SpatialJoinProvider>,
 }
 
 impl SpatialJoinExec {
@@ -175,7 +175,7 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             seed,
-            evaluator: Arc::new(DefaultSpatialJoinEvaluator {}),
+            join_provider: Arc::new(DefaultSpatialJoinEvaluator {}),
         })
     }
 
@@ -507,7 +507,7 @@ impl ExecutionPlan for SpatialJoinExec {
             session_config,
             context.runtime_env(),
             &self.metrics,
-            self.evaluator.clone(),
+            self.join_provider.clone(),
             once_fut_spatial_join_components,
             Arc::clone(&self.once_async_spatial_join_components),
         )))

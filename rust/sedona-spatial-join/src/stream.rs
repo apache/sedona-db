@@ -44,7 +44,7 @@ use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::partitioned_index_provider::PartitionedIndexProvider;
 use crate::index::spatial_index::SpatialIndexRef;
-use crate::join_evaluator::SpatialJoinEvaluator;
+use crate::join_provider::SpatialJoinProvider;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::partitioning::SpatialPartition;
 use crate::prepare::SpatialJoinComponents;
@@ -145,7 +145,7 @@ impl SpatialJoinStream {
         session_config: &SessionConfig,
         runtime_env: Arc<RuntimeEnv>,
         metrics: &ExecutionPlanMetricsSet,
-        evaluator: Arc<dyn SpatialJoinEvaluator>,
+        join_provider: Arc<dyn SpatialJoinProvider>,
         once_fut_spatial_join_components: OnceFut<SpatialJoinComponents>,
         once_async_spatial_join_components: Arc<Mutex<Option<OnceAsync<SpatialJoinComponents>>>>,
     ) -> Self {
@@ -159,7 +159,7 @@ impl SpatialJoinStream {
             .unwrap_or_default();
 
         let evaluator =
-            create_operand_evaluator(on, evaluator, sedona_options.spatial_join.clone());
+            create_operand_evaluator(on, join_provider, sedona_options.spatial_join.clone());
         let join_metrics = SpatialJoinProbeMetrics::new(probe_partition_id, metrics);
         let probe_stream = create_evaluated_probe_stream(
             probe_stream,

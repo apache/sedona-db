@@ -14,7 +14,7 @@ use crate::{
     SpatialPredicate,
 };
 
-pub(crate) trait SpatialJoinEvaluator: std::fmt::Debug + Send + Sync {
+pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
     fn try_new_spatial_index_builder(
         &self,
         schema: SchemaRef,
@@ -34,7 +34,7 @@ pub(crate) trait SpatialJoinEvaluator: std::fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub(crate) struct DefaultSpatialJoinEvaluator;
 
-impl SpatialJoinEvaluator for DefaultSpatialJoinEvaluator {
+impl SpatialJoinProvider for DefaultSpatialJoinEvaluator {
     fn try_new_spatial_index_builder(
         &self,
         schema: SchemaRef,

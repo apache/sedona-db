@@ -23,7 +23,7 @@ use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
 use crate::index::BuildPartition;
-use crate::join_evaluator::SpatialJoinEvaluator;
+use crate::join_provider::SpatialJoinProvider;
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
 use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
@@ -56,7 +56,7 @@ pub(crate) struct PartitionedIndexProvider {
     /// Async cells for indexes, one per regular partition
     index_cells: Vec<DisposableAsyncCell<SharedResult<SpatialIndexRef>>>,
 
-    evaluator: Arc<dyn SpatialJoinEvaluator>,
+    join_provider: Arc<dyn SpatialJoinProvider>,
 
     /// The memory reserved in the build side collection phase. We'll hold them until
     /// we don't need to build spatial indexes.
@@ -78,7 +78,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         partitioned_spill_files: SpilledPartitions,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinEvaluator>,
+        evaluator: Arc<dyn SpatialJoinProvider>,
         reservations: Vec<MemoryReservation>,
     ) -> Self {
         let num_partitions = partitioned_spill_files.num_regular_partitions();
@@ -95,7 +95,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::MultiPartition(Mutex::new(partitioned_spill_files)),
             index_cells,
-            evaluator,
+            join_provider: evaluator,
             _reservations: reservations,
         }
     }
@@ -109,7 +109,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         mut build_partitions: Vec<BuildPartition>,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinEvaluator>,
+        evaluator: Arc<dyn SpatialJoinProvider>,
     ) -> Self {
         let reservations = build_partitions
             .iter_mut()
@@ -125,7 +125,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::SinglePartition(Mutex::new(Some(build_partitions))),
             index_cells,
-            evaluator,
+            join_provider: evaluator,
             _reservations: reservations,
         }
     }
@@ -137,7 +137,7 @@ impl PartitionedIndexProvider {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinEvaluator>,
+        evaluator: Arc<dyn SpatialJoinProvider>,
     ) -> Self {
         let build_partitions = Vec::new();
         Self::new_single_partition(
@@ -283,7 +283,7 @@ impl PartitionedIndexProvider {
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = self.evaluator.try_new_spatial_index_builder(
+        let mut builder = self.join_provider.try_new_spatial_index_builder(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -305,7 +305,7 @@ impl PartitionedIndexProvider {
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = self.evaluator.try_new_spatial_index_builder(
+        let mut builder = self.join_provider.try_new_spatial_index_builder(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -404,7 +404,7 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::join_evaluator::DefaultSpatialJoinEvaluator;
+    use crate::join_provider::DefaultSpatialJoinEvaluator;
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
