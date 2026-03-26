@@ -42,7 +42,7 @@ use crate::{
         spill::EvaluatedBatchSpillWriter,
         EvaluatedBatch,
     },
-    operand_evaluator::{create_operand_evaluator, OperandEvaluator},
+    operand_evaluator::OperandEvaluator,
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
@@ -130,7 +130,7 @@ impl BuildSideBatchesCollector {
         spill_compression: SpillCompression,
         spatial_index_builder: SpatialIndexBuilderRef,
     ) -> Self {
-        let evaluator = create_operand_evaluator(&spatial_predicate, spatial_join_options.clone());
+        let evaluator = spatial_index_builder.operand_evaluator();
         BuildSideBatchesCollector {
             spatial_predicate,
             spatial_join_options,

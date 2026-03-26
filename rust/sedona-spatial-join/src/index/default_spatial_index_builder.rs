@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::join_evaluator::DefaultSpatialJoinEvaluator;
+use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
@@ -232,6 +234,14 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
         refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
     }
 
+    fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator> {
+        create_operand_evaluator(
+            &self.spatial_predicate,
+            Arc::new(DefaultSpatialJoinEvaluator {}),
+            self.options.clone(),
+        )
+    }
+
     fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(DefaultSpatialIndex::empty(
@@ -242,7 +252,6 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             )));
         }
 
-        let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
         let num_geoms = self
             .indexed_batches
             .iter()
@@ -284,7 +293,7 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
         Ok(Arc::new(DefaultSpatialIndex::new(
             self.schema.clone(),
             self.options.clone(),
-            evaluator,
+            self.operand_evaluator(),
             refiner,
             rtree,
             self.indexed_batches

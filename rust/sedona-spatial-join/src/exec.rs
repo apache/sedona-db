@@ -507,6 +507,7 @@ impl ExecutionPlan for SpatialJoinExec {
             session_config,
             context.runtime_env(),
             &self.metrics,
+            self.evaluator.clone(),
             once_fut_spatial_join_components,
             Arc::clone(&self.once_async_spatial_join_components),
         )))

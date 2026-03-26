@@ -250,6 +250,8 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         None
     };
 
+    // Mark
+
     // Create EvaluatedGeometryArray
     let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, &sedona_type)?;
     geom_array.distance = distance;

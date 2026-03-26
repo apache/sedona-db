@@ -41,7 +41,6 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use wkb::reader::Wkb;
 
-use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::index::SpatialIndex;
 use crate::{
     evaluated_batch::EvaluatedBatch,
@@ -52,6 +51,9 @@ use crate::{
     operand_evaluator::{create_operand_evaluator, distance_value_at, OperandEvaluator},
     refine::{create_refiner, IndexQueryResultRefiner},
     spatial_predicate::SpatialPredicate,
+};
+use crate::{
+    index::spatial_index::DISTANCE_TOLERANCE, join_evaluator::DefaultSpatialJoinEvaluator,
 };
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
@@ -111,7 +113,11 @@ impl DefaultSpatialIndex {
         options: SpatialJoinOptions,
         probe_threads_counter: AtomicUsize,
     ) -> Self {
-        let evaluator = create_operand_evaluator(&spatial_predicate, options.clone());
+        let evaluator = create_operand_evaluator(
+            &spatial_predicate,
+            Arc::new(DefaultSpatialJoinEvaluator {}),
+            options.clone(),
+        );
         let refiner = create_refiner(
             options.spatial_library,
             &spatial_predicate,

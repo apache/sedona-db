@@ -21,6 +21,7 @@ use sedona_expr::statistics::GeoStatistics;
 use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
+use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream,
     spatial_predicate::SpatialPredicate,
@@ -40,6 +41,8 @@ pub(crate) trait SpatialIndexBuilder: Send {
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
     ) -> usize;
+
+    fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator>;
 
     /// Finish building and return the completed SpatialIndex.
     fn finish(&mut self) -> Result<SpatialIndexRef>;
