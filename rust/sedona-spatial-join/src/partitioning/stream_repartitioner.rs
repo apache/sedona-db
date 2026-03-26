@@ -652,8 +652,6 @@ mod tests {
     use super::*;
     use arrow_array::{Array, ArrayRef, BinaryArray, Int32Array};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion_common::ScalarValue;
-    use datafusion_expr::ColumnarValue;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use sedona_geometry::bounding_box::BoundingBox;
     use sedona_geometry::interval::IntervalTrait;
@@ -995,154 +993,6 @@ mod tests {
         Ok(())
     }
 
-    fn make_geom_array_with_distance(
-        wkbs: Vec<Vec<u8>>,
-        distance: Option<ColumnarValue>,
-    ) -> Result<EvaluatedGeometryArray> {
-        let geom_array: ArrayRef = Arc::new(BinaryArray::from(
-            wkbs.iter()
-                .map(|wkb| Some(wkb.as_slice()))
-                .collect::<Vec<_>>(),
-        ));
-        let mut geom = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
-        geom.distance = distance;
-        Ok(geom)
-    }
-
-    #[test]
-    fn interleave_distance_none() -> Result<()> {
-        let wkbs1 = vec![
-            wkb_point((10.0, 10.0)).unwrap(),
-            wkb_point((20.0, 20.0)).unwrap(),
-        ];
-        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let geom1 = make_geom_array_with_distance(wkbs1, None)?;
-        let geom2 = make_geom_array_with_distance(wkbs2, None)?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0), (0, 1)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
-        assert!(result.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_uniform_scalar() -> Result<()> {
-        let wkbs1 = vec![
-            wkb_point((10.0, 10.0)).unwrap(),
-            wkb_point((20.0, 20.0)).unwrap(),
-        ];
-        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let scalar = ScalarValue::Float64(Some(5.0));
-        let geom1 =
-            make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar.clone())))?;
-        let geom2 =
-            make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Scalar(scalar.clone())))?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0), (0, 1)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
-        assert!(matches!(result, Some(ColumnarValue::Scalar(_))));
-        if let Some(ColumnarValue::Scalar(value)) = result {
-            assert_eq!(value, ScalarValue::Float64(Some(5.0)));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_different_scalars() -> Result<()> {
-        use arrow_array::Float64Array;
-
-        let wkbs1 = vec![
-            wkb_point((10.0, 10.0)).unwrap(),
-            wkb_point((20.0, 20.0)).unwrap(),
-        ];
-        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let scalar1 = ScalarValue::Float64(Some(5.0));
-        let scalar2 = ScalarValue::Float64(Some(10.0));
-        let geom1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar1)))?;
-        let geom2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Scalar(scalar2)))?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0), (0, 1)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
-        assert!(matches!(result, Some(ColumnarValue::Array(_))));
-        if let Some(ColumnarValue::Array(array)) = result {
-            let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            assert_eq!(float_array.len(), 3);
-            assert_eq!(float_array.value(0), 5.0);
-            assert_eq!(float_array.value(1), 10.0);
-            assert_eq!(float_array.value(2), 5.0);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_arrays() -> Result<()> {
-        use arrow_array::Float64Array;
-
-        let wkbs1 = vec![
-            wkb_point((10.0, 10.0)).unwrap(),
-            wkb_point((20.0, 20.0)).unwrap(),
-        ];
-        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let array1: ArrayRef = Arc::new(Float64Array::from(vec![1.0, 2.0]));
-        let array2: ArrayRef = Arc::new(Float64Array::from(vec![3.0]));
-        let geom1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Array(array1)))?;
-        let geom2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Array(array2)))?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0), (0, 1)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
-        assert!(matches!(result, Some(ColumnarValue::Array(_))));
-        if let Some(ColumnarValue::Array(array)) = result {
-            let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            assert_eq!(float_array.len(), 3);
-            assert_eq!(float_array.value(0), 1.0);
-            assert_eq!(float_array.value(1), 3.0);
-            assert_eq!(float_array.value(2), 2.0);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_mixed_scalar_and_array() -> Result<()> {
-        use arrow_array::Float64Array;
-
-        let wkbs1 = vec![
-            wkb_point((10.0, 10.0)).unwrap(),
-            wkb_point((20.0, 20.0)).unwrap(),
-        ];
-        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let scalar = ScalarValue::Float64(Some(5.0));
-        let array: ArrayRef = Arc::new(Float64Array::from(vec![10.0]));
-        let geom1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar)))?;
-        let geom2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Array(array)))?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0), (0, 1)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
-        assert!(matches!(result, Some(ColumnarValue::Array(_))));
-        if let Some(ColumnarValue::Array(array)) = result {
-            let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            assert_eq!(float_array.len(), 3);
-            assert_eq!(float_array.value(0), 5.0);
-            assert_eq!(float_array.value(1), 10.0);
-            assert_eq!(float_array.value(2), 5.0);
-        }
-        Ok(())
-    }
-
     #[test]
     fn interleave_evaluated_batch_empty_assignments() -> Result<()> {
         let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
@@ -1155,26 +1005,6 @@ mod tests {
         assert_eq!(result.geom_array.geometry_array.len(), 0);
         assert!(result.geom_array.rects.is_empty());
         assert!(result.geom_array.distance.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_inconsistent_metadata() -> Result<()> {
-        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
-        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
-
-        let scalar = ScalarValue::Float64(Some(5.0));
-        let geom1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar)))?;
-        let geom2 = make_geom_array_with_distance(wkbs2, None)?;
-
-        let geom_arrays = vec![&geom1, &geom2];
-        let assignments = vec![(0, 0), (1, 0)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Inconsistent distance metadata"));
-        }
         Ok(())
     }
 
@@ -1229,30 +1059,6 @@ mod tests {
         assert_eq!(view_array.value(1), wkbs2[0].as_slice());
         assert_eq!(view_array.value(2), wkbs1[1].as_slice());
 
-        Ok(())
-    }
-
-    #[test]
-    fn interleave_distance_mixed_none_and_null() -> Result<()> {
-        use arrow_array::Float64Array;
-
-        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
-        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
-        let wkbs3 = vec![wkb_point((30.0, 30.0)).unwrap()];
-
-        let null_array = Arc::new(Float64Array::new_null(1));
-        let ega1 = make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Array(null_array)))?;
-
-        let null_scalar = ScalarValue::Float64(None);
-        let ega2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Scalar(null_scalar)))?;
-
-        let ega3 = make_geom_array_with_distance(wkbs3, None)?;
-
-        let vec_ega = vec![&ega1, &ega2, &ega3];
-        let assignments = vec![(0, 0), (1, 0), (2, 0)];
-
-        let result = EvaluatedGeometryArray::interleave_distance(&vec_ega, &assignments)?;
-        assert!(result.is_none());
         Ok(())
     }
 }
