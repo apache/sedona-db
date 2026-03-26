@@ -51,7 +51,7 @@ impl VrtDataset {
         }
 
         Ok(VrtDataset {
-            dataset: Dataset::new_owned(api, c_dataset),
+            dataset: Dataset::new(api, c_dataset),
         })
     }
 
