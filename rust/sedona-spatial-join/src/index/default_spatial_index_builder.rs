@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-use crate::join_provider::DefaultSpatialJoinEvaluator;
+use crate::join_provider::DefaultSpatialJoinProvider;
 use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
@@ -237,7 +237,7 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
     fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator> {
         create_operand_evaluator(
             &self.spatial_predicate,
-            Arc::new(DefaultSpatialJoinEvaluator {}),
+            Arc::new(DefaultSpatialJoinProvider {}),
             self.options.clone(),
         )
     }

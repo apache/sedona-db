@@ -52,7 +52,7 @@ use crate::{
     refine::{create_refiner, IndexQueryResultRefiner},
     spatial_predicate::SpatialPredicate,
 };
-use crate::{index::spatial_index::DISTANCE_TOLERANCE, join_provider::DefaultSpatialJoinEvaluator};
+use crate::{index::spatial_index::DISTANCE_TOLERANCE, join_provider::DefaultSpatialJoinProvider};
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
 use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
@@ -113,7 +113,7 @@ impl DefaultSpatialIndex {
     ) -> Self {
         let evaluator = create_operand_evaluator(
             &spatial_predicate,
-            Arc::new(DefaultSpatialJoinEvaluator {}),
+            Arc::new(DefaultSpatialJoinProvider {}),
             options.clone(),
         );
         let refiner = create_refiner(

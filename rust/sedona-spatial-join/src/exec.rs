@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
-    join_provider::{DefaultSpatialJoinEvaluator, SpatialJoinProvider},
+    join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate, SpatialPredicateTrait},
     stream::SpatialJoinStream,
@@ -175,7 +175,7 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             seed,
-            join_provider: Arc::new(DefaultSpatialJoinEvaluator {}),
+            join_provider: Arc::new(DefaultSpatialJoinProvider {}),
         })
     }
 

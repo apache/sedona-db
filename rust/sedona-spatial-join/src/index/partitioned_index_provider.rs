@@ -404,7 +404,7 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::join_provider::DefaultSpatialJoinEvaluator;
+    use crate::join_provider::DefaultSpatialJoinProvider;
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
@@ -582,7 +582,7 @@ mod tests {
             1,
             vec![build_partition],
             SpatialJoinBuildMetrics::new(0, &metrics),
-            Arc::new(DefaultSpatialJoinEvaluator {}),
+            Arc::new(DefaultSpatialJoinProvider {}),
         );
 
         let first_index = provider
@@ -624,7 +624,7 @@ mod tests {
             1,
             spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &metrics),
-            Arc::new(DefaultSpatialJoinEvaluator {}),
+            Arc::new(DefaultSpatialJoinProvider {}),
             vec![new_reservation(Arc::clone(&memory_pool))],
         ));
 
