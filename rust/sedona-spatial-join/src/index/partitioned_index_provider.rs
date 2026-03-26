@@ -78,7 +78,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         partitioned_spill_files: SpilledPartitions,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinProvider>,
+        join_provider: Arc<dyn SpatialJoinProvider>,
         reservations: Vec<MemoryReservation>,
     ) -> Self {
         let num_partitions = partitioned_spill_files.num_regular_partitions();
@@ -95,7 +95,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::MultiPartition(Mutex::new(partitioned_spill_files)),
             index_cells,
-            join_provider: evaluator,
+            join_provider,
             _reservations: reservations,
         }
     }
@@ -109,7 +109,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         mut build_partitions: Vec<BuildPartition>,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinProvider>,
+        join_provider: Arc<dyn SpatialJoinProvider>,
     ) -> Self {
         let reservations = build_partitions
             .iter_mut()
@@ -125,7 +125,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::SinglePartition(Mutex::new(Some(build_partitions))),
             index_cells,
-            join_provider: evaluator,
+            join_provider,
             _reservations: reservations,
         }
     }
@@ -137,7 +137,7 @@ impl PartitionedIndexProvider {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
-        evaluator: Arc<dyn SpatialJoinProvider>,
+        join_provider: Arc<dyn SpatialJoinProvider>,
     ) -> Self {
         let build_partitions = Vec::new();
         Self::new_single_partition(
@@ -148,7 +148,7 @@ impl PartitionedIndexProvider {
             probe_threads_count,
             build_partitions,
             metrics,
-            evaluator,
+            join_provider,
         )
     }
 
