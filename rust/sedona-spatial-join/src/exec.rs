@@ -476,6 +476,7 @@ impl ExecutionPlan for SpatialJoinExec {
                         self.join_type,
                         probe_thread_count,
                         self.metrics.clone(),
+                        self.join_provider.clone(),
                         self.seed,
                     );
                     Ok(spatial_join_components_builder.build(build_streams))

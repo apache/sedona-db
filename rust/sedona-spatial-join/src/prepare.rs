@@ -32,11 +32,11 @@ use sedona_common::{sedona_internal_err, NumSpatialPartitionsConfig, SedonaOptio
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::index::DefaultSpatialIndexBuilder;
 use crate::{
     index::spatial_index_builder::SpatialJoinBuildMetrics,
     join_provider::DefaultSpatialJoinProvider,
 };
+use crate::{index::DefaultSpatialIndexBuilder, join_provider::SpatialJoinProvider};
 use crate::{
     index::{
         memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
@@ -76,6 +76,7 @@ pub(crate) struct SpatialJoinComponentsBuilder {
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
+    join_provider: Arc<dyn SpatialJoinProvider>,
     seed: u64,
     sedona_options: SedonaOptions,
 }
@@ -90,6 +91,7 @@ impl SpatialJoinComponentsBuilder {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: ExecutionPlanMetricsSet,
+        join_provider: Arc<dyn SpatialJoinProvider>,
         seed: u64,
     ) -> Self {
         let session_config = context.session_config();
@@ -106,6 +108,7 @@ impl SpatialJoinComponentsBuilder {
             join_type,
             probe_threads_count,
             metrics,
+            join_provider,
             seed,
             sedona_options,
         }
@@ -410,7 +413,7 @@ impl SpatialJoinComponentsBuilder {
             self.join_type,
             self.probe_threads_count,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
-            Arc::new(DefaultSpatialJoinProvider {}),
+            self.join_provider.clone(),
         );
 
         let probe_stream_options = ProbeStreamOptions {

@@ -112,6 +112,7 @@ impl EvaluatedGeometryArray {
     pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
+        let mut wkbs = Vec::with_capacity(num_rows);
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
             let rect_opt = if let Some(wkb) = &wkb_opt {
                 if let Some(rect) = wkb.bounding_rect() {
@@ -127,11 +128,24 @@ impl EvaluatedGeometryArray {
             } else {
                 None
             };
+
             rect_vec.push(rect_opt);
+
+            // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
+            // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
+            // have a situation where the `EvaluatedGeometryArray` is dropped while the `wkbs` are still in use
+            // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
+            wkbs.push(wkb_opt.map(|wkb| unsafe { transmute(wkb) }));
             Ok(())
         })?;
 
-        Self::try_new_with_rects(geometry_array, rect_vec, sedona_type)
+        Ok(Self {
+            sedona_type: sedona_type.clone(),
+            geometry_array,
+            rects: rect_vec,
+            distance: None,
+            wkbs,
+        })
     }
 
     /// Create a new EvaluatedGeometryArray with precomputed item bounds

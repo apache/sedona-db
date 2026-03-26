@@ -158,7 +158,7 @@ impl EvaluatedBatchSpillWriter {
                     rect.min().x(),
                     rect.min().y(),
                     rect.max().x(),
-                    rect.max().y,
+                    rect.max().y(),
                 ]);
                 rect_builder.append(true);
             } else {
