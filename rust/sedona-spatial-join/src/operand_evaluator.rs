@@ -111,7 +111,6 @@ impl EvaluatedGeometryArray {
     pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
-        let mut wkbs = Vec::with_capacity(num_rows);
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
             let rect_opt = if let Some(wkb) = &wkb_opt {
                 if let Some(rect) = wkb.bounding_rect() {
@@ -128,18 +127,32 @@ impl EvaluatedGeometryArray {
                 None
             };
             rect_vec.push(rect_opt);
-            wkbs.push(wkb_opt);
             Ok(())
         })?;
 
+        Self::try_new_with_rects(geometry_array, rect_vec, sedona_type)
+    }
+
+    pub fn try_new_with_rects(
+        geometry_array: ArrayRef,
+        rect_vec: Vec<Option<Rect<f32>>>,
+        sedona_type: &SedonaType,
+    ) -> Result<Self> {
         // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
         // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
         // have a situation where the `EvaluatedGeometryArray` is dropped while the `wkbs` are still in use
         // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
-        let wkbs = wkbs
-            .into_iter()
-            .map(|wkb| wkb.map(|wkb| unsafe { transmute(wkb) }))
-            .collect();
+        let num_rows = geometry_array.len();
+        let mut wkbs = Vec::with_capacity(num_rows);
+        geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
+            wkbs.push(wkb_opt.map(|wkb| unsafe { transmute(wkb) }));
+            Ok(())
+        })?;
+
+        if num_rows != rect_vec.len() {
+            return sedona_internal_err!("Expected rect_vec to have same length as geometry array");
+        }
+
         Ok(Self {
             sedona_type: sedona_type.clone(),
             geometry_array,
@@ -147,15 +160,6 @@ impl EvaluatedGeometryArray {
             distance: None,
             wkbs,
         })
-    }
-
-    /// Get the WKBs of the geometries in the geometry array.
-    pub fn wkbs(&self) -> &Vec<Option<Wkb<'_>>> {
-        // The returned WKBs are guaranteed to be valid for the lifetime of the GeometryBatchResult,
-        // because the WKBs reference buffers inside `geometry_array`, which is guaranteed to be valid
-        // for the lifetime of the GeometryBatchResult. We shorten the lifetime of the WKBs from 'static
-        // to '_, so that the caller can use the WKBs without worrying about the lifetime.
-        &self.wkbs
     }
 
     /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
@@ -188,30 +192,12 @@ impl EvaluatedGeometryArray {
             .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx])
             .collect();
 
-        // Recompute WKBs from the new geometry array (lifetimes tied to it).
-        let num_rows = geometry_array.len();
-        let mut wkbs = Vec::with_capacity(num_rows);
-        geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
-            wkbs.push(wkb_opt);
-            Ok(())
-        })?;
-        // Safety: same justification as try_new — wkbs reference buffers owned
-        // by `geometry_array` which is owned by the returned struct.
-        let wkbs = wkbs
-            .into_iter()
-            .map(|wkb| wkb.map(|wkb| unsafe { transmute(wkb) }))
-            .collect();
+        let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
 
         // Interleave distance columns.
-        let distance = Self::interleave_distance(geom_arrays, indices)?;
+        out.distance = Self::interleave_distance(geom_arrays, indices)?;
 
-        Ok(Self {
-            sedona_type: sedona_type.clone(),
-            geometry_array,
-            rects,
-            distance,
-            wkbs,
-        })
+        Ok(out)
     }
 
     /// Interleave the optional distance metadata across source geometry arrays.
@@ -291,6 +277,15 @@ impl EvaluatedGeometryArray {
         let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.as_ref()).collect();
         let array = arrow_interleave(&array_refs, indices)?;
         Ok(Some(ColumnarValue::Array(array)))
+    }
+
+    /// Get the WKBs of the geometries in the geometry array.
+    pub fn wkbs(&self) -> &Vec<Option<Wkb<'_>>> {
+        // The returned WKBs are guaranteed to be valid for the lifetime of the GeometryBatchResult,
+        // because the WKBs reference buffers inside `geometry_array`, which is guaranteed to be valid
+        // for the lifetime of the GeometryBatchResult. We shorten the lifetime of the WKBs from 'static
+        // to '_, so that the caller can use the WKBs without worrying about the lifetime.
+        &self.wkbs
     }
 
     pub fn in_mem_size(&self) -> Result<usize> {
