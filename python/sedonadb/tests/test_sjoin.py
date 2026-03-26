@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import sedonadb
-from sedonadb.testing import PostGIS, SedonaDB, random_geometry
+from sedonadb.testing import PostGIS, SedonaDB, random_geometry, skip_if_not_exists
 from shapely.geometry import Point
 
 
@@ -108,8 +108,8 @@ def test_spatial_join_reordering_can_be_disabled_e2e(geoarrow_data):
         / "files"
         / "natural-earth_countries_geo.parquet"
     )
-    assert path_left.exists(), f"Missing test asset: {path_left}"
-    assert path_right.exists(), f"Missing test asset: {path_right}"
+    skip_if_not_exists(path_left)
+    skip_if_not_exists(path_right)
 
     with SedonaDB.create_or_skip() as eng_sedonadb:
         sql = f"""
