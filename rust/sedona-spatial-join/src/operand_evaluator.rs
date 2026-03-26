@@ -108,6 +108,7 @@ pub struct EvaluatedGeometryArray {
 }
 
 impl EvaluatedGeometryArray {
+    /// Create a new EvaluatedGeometryArray and compute item bounds
     pub fn try_new(geometry_array: ArrayRef, sedona_type: &SedonaType) -> Result<Self> {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
@@ -133,6 +134,7 @@ impl EvaluatedGeometryArray {
         Self::try_new_with_rects(geometry_array, rect_vec, sedona_type)
     }
 
+    /// Create a new EvaluatedGeometryArray with precomputed item bounds
     pub fn try_new_with_rects(
         geometry_array: ArrayRef,
         rect_vec: Vec<Option<Rect<f32>>>,

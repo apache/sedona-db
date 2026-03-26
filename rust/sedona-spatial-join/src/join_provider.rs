@@ -31,7 +31,14 @@ use crate::{
     SpatialPredicate,
 };
 
+/// Provider for join internals
+///
+/// This trait provides an extension point for overriding the evaluation
+/// details of a spatial join. In particular it allows plugging in a custom
+/// index for accellerated joins on specific hardware (e.g., GPU) and a custom
+/// bounder for specific data types (e.g., geography).
 pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
+    /// Create a new [SpatialIndexBuilder]
     fn try_new_spatial_index_builder(
         &self,
         schema: SchemaRef,
@@ -41,6 +48,11 @@ pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
     ) -> Result<Box<dyn SpatialIndexBuilder>>;
+
+    /// Create a new [EvaluatedGeometryArray]
+    ///
+    /// Use [EvaluatedGeometryArray::try_new_with_rects] for custom computation of
+    /// bounding rectangles for specific items.
     fn try_new_evaluated_array(
         &self,
         geometry_array: ArrayRef,
@@ -48,6 +60,7 @@ pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
     ) -> Result<EvaluatedGeometryArray>;
 }
 
+/// Default implementation of the [SpatialJoinProvider]
 #[derive(Debug)]
 pub(crate) struct DefaultSpatialJoinProvider;
 
