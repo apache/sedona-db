@@ -30,7 +30,7 @@ use std::ptr;
 use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
-use crate::gdal_dyn_bindgen::{CE_Failure, CE_None};
+use crate::gdal_dyn_bindgen::CE_None;
 use crate::geo_transform::{GeoTransform, GeoTransformEx};
 use crate::vector::geometry::Geometry;
 
@@ -160,7 +160,7 @@ pub fn rasterize_affine(
             ptr::null_mut()
         );
         if error != CE_None {
-            return Err(api.last_cpl_err(CE_Failure as u32));
+            return Err(api.last_cpl_err(error as u32));
         }
     }
     Ok(())
