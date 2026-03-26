@@ -35,13 +35,11 @@ use crate::{
         SpatialPartitioner,
     },
 };
-use arrow::compute::interleave as arrow_interleave;
 use arrow::compute::interleave_record_batch;
-use arrow_array::{Array, ArrayRef, RecordBatch};
+use arrow_array::RecordBatch;
 use datafusion::config::SpillCompression;
-use datafusion_common::{Result, ScalarValue};
+use datafusion_common::Result;
 use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
-use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::SpillMetrics;
 use futures::StreamExt;
 use sedona_common::sedona_internal_err;
@@ -645,116 +643,17 @@ pub(crate) fn interleave_evaluated_batch(
         return sedona_internal_err!("interleave_evaluated_batch requires at least one batch");
     }
     let batch = interleave_record_batch(record_batches, indices)?;
-    let geom_array = interleave_geometry_array(geom_arrays, indices)?;
+    let geom_array = EvaluatedGeometryArray::interleave(geom_arrays, indices)?;
     Ok(EvaluatedBatch { batch, geom_array })
-}
-
-fn interleave_geometry_array(
-    geom_arrays: &[&EvaluatedGeometryArray],
-    indices: &[(usize, usize)],
-) -> Result<EvaluatedGeometryArray> {
-    if geom_arrays.is_empty() {
-        return sedona_internal_err!("interleave_geometry_array requires at least one batch");
-    }
-    let sedona_type = &geom_arrays[0].sedona_type;
-    let value_refs: Vec<&dyn Array> = geom_arrays
-        .iter()
-        .map(|geom| geom.geometry_array.as_ref())
-        .collect();
-    let geometry_array = arrow_interleave(&value_refs, indices)?;
-
-    let distance = interleave_distance_columns(geom_arrays, indices)?;
-
-    let mut result = EvaluatedGeometryArray::try_new(geometry_array, sedona_type)?;
-    result.distance = distance;
-    Ok(result)
-}
-
-fn interleave_distance_columns(
-    geom_arrays: &[&EvaluatedGeometryArray],
-    assignments: &[(usize, usize)],
-) -> Result<Option<ColumnarValue>> {
-    // Check consistency and determine if we need array conversion
-    let mut first_value: Option<&ColumnarValue> = None;
-    let mut needs_array = false;
-    let mut all_null = true;
-    let mut first_scalar: Option<&ScalarValue> = None;
-
-    for geom in geom_arrays {
-        match &geom.distance {
-            Some(value) => {
-                if first_value.is_none() {
-                    first_value = Some(value);
-                }
-
-                match value {
-                    ColumnarValue::Array(array) => {
-                        needs_array = true;
-                        if all_null && array.logical_null_count() != array.len() {
-                            all_null = false;
-                        }
-                    }
-                    ColumnarValue::Scalar(scalar) => {
-                        if let Some(first) = first_scalar {
-                            if first != scalar {
-                                needs_array = true;
-                            }
-                        } else {
-                            first_scalar = Some(scalar);
-                        }
-                        if !scalar.is_null() {
-                            all_null = false;
-                        }
-                    }
-                }
-            }
-            None => {
-                if first_value.is_some() && !all_null {
-                    return sedona_internal_err!("Inconsistent distance metadata across batches");
-                }
-            }
-        }
-    }
-
-    if all_null {
-        return Ok(None);
-    }
-
-    let Some(distance_value) = first_value else {
-        return Ok(None);
-    };
-
-    // If all scalars match, return scalar
-    if !needs_array {
-        if let ColumnarValue::Scalar(value) = distance_value {
-            return Ok(Some(ColumnarValue::Scalar(value.clone())));
-        }
-    }
-
-    // Convert to arrays and interleave
-    let mut arrays: Vec<ArrayRef> = Vec::with_capacity(geom_arrays.len());
-    for geom in geom_arrays {
-        match &geom.distance {
-            Some(ColumnarValue::Array(array)) => arrays.push(array.clone()),
-            Some(ColumnarValue::Scalar(value)) => {
-                arrays.push(value.to_array_of_size(geom.geometry_array.len())?);
-            }
-            None => {
-                return sedona_internal_err!("Inconsistent distance metadata across batches");
-            }
-        }
-    }
-
-    let array_refs: Vec<&dyn Array> = arrays.iter().map(|array| array.as_ref()).collect();
-    let array = arrow_interleave(&array_refs, assignments)?;
-    Ok(Some(ColumnarValue::Array(array)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, BinaryArray, Int32Array};
+    use arrow_array::{Array, ArrayRef, BinaryArray, Int32Array};
     use arrow_schema::{DataType, Field, Schema};
+    use datafusion_common::ScalarValue;
+    use datafusion_expr::ColumnarValue;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
     use sedona_geometry::bounding_box::BoundingBox;
     use sedona_geometry::interval::IntervalTrait;
@@ -1124,7 +1023,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0), (0, 1)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
         assert!(result.is_none());
         Ok(())
     }
@@ -1146,7 +1045,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0), (0, 1)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
         assert!(matches!(result, Some(ColumnarValue::Scalar(_))));
         if let Some(ColumnarValue::Scalar(value)) = result {
             assert_eq!(value, ScalarValue::Float64(Some(5.0)));
@@ -1172,7 +1071,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0), (0, 1)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
         assert!(matches!(result, Some(ColumnarValue::Array(_))));
         if let Some(ColumnarValue::Array(array)) = result {
             let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -1202,7 +1101,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0), (0, 1)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
         assert!(matches!(result, Some(ColumnarValue::Array(_))));
         if let Some(ColumnarValue::Array(array)) = result {
             let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -1232,7 +1131,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0), (0, 1)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments)?;
         assert!(matches!(result, Some(ColumnarValue::Array(_))));
         if let Some(ColumnarValue::Array(array)) = result {
             let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
@@ -1271,7 +1170,7 @@ mod tests {
         let geom_arrays = vec![&geom1, &geom2];
         let assignments = vec![(0, 0), (1, 0)];
 
-        let result = interleave_distance_columns(&geom_arrays, &assignments);
+        let result = EvaluatedGeometryArray::interleave_distance(&geom_arrays, &assignments);
         assert!(result.is_err());
         if let Err(e) = result {
             assert!(e.to_string().contains("Inconsistent distance metadata"));
@@ -1352,7 +1251,7 @@ mod tests {
         let vec_ega = vec![&ega1, &ega2, &ega3];
         let assignments = vec![(0, 0), (1, 0), (2, 0)];
 
-        let result = interleave_distance_columns(&vec_ega, &assignments)?;
+        let result = EvaluatedGeometryArray::interleave_distance(&vec_ega, &assignments)?;
         assert!(result.is_none());
         Ok(())
     }
