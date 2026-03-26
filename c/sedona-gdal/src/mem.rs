@@ -270,7 +270,7 @@ pub(crate) fn create_mem_dataset(
     if handle.is_null() {
         return Err(api.last_cpl_err(CE_Failure as u32));
     }
-    Ok(Dataset::new_owned(api, handle))
+    Ok(Dataset::new(api, handle))
 }
 
 #[cfg(all(test, feature = "gdal-sys"))]
