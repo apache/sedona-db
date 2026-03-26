@@ -582,7 +582,7 @@ mod tests {
             1,
             vec![build_partition],
             SpatialJoinBuildMetrics::new(0, &metrics),
-            Arc::new(DefaultSpatialJoinProvider {}),
+            Arc::new(DefaultSpatialJoinProvider),
         );
 
         let first_index = provider
@@ -624,7 +624,7 @@ mod tests {
             1,
             spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &metrics),
-            Arc::new(DefaultSpatialJoinProvider {}),
+            Arc::new(DefaultSpatialJoinProvider),
             vec![new_reservation(Arc::clone(&memory_pool))],
         ));
 

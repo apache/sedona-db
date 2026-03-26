@@ -32,10 +32,7 @@ use sedona_common::{sedona_internal_err, NumSpatialPartitionsConfig, SedonaOptio
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
-use crate::{
-    index::spatial_index_builder::SpatialJoinBuildMetrics,
-    join_provider::DefaultSpatialJoinProvider,
-};
+use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
 use crate::{index::DefaultSpatialIndexBuilder, join_provider::SpatialJoinProvider};
 use crate::{
     index::{
@@ -448,7 +445,7 @@ impl SpatialJoinComponentsBuilder {
             self.probe_threads_count,
             build_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
-            Arc::new(DefaultSpatialJoinProvider {}),
+            self.join_provider.clone(),
         );
 
         let probe_stream_options = ProbeStreamOptions {
@@ -486,7 +483,7 @@ impl SpatialJoinComponentsBuilder {
             self.probe_threads_count,
             merged_spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
-            Arc::new(DefaultSpatialJoinProvider {}),
+            self.join_provider.clone(),
             reservations,
         );
 

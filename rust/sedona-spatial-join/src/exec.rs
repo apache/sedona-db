@@ -175,7 +175,7 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             seed,
-            join_provider: Arc::new(DefaultSpatialJoinProvider {}),
+            join_provider: Arc::new(DefaultSpatialJoinProvider),
         })
     }
 

@@ -113,7 +113,7 @@ impl DefaultSpatialIndex {
     ) -> Self {
         let evaluator = create_operand_evaluator(
             &spatial_predicate,
-            Arc::new(DefaultSpatialJoinProvider {}),
+            Arc::new(DefaultSpatialJoinProvider),
             options.clone(),
         );
         let refiner = create_refiner(

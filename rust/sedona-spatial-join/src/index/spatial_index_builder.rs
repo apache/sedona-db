@@ -42,6 +42,10 @@ pub(crate) trait SpatialIndexBuilder: Send {
         options: &SpatialJoinOptions,
     ) -> usize;
 
+    /// Instantiate an [OperandEvaluator] with the correct SpatialJoinProvider
+    ///
+    /// This is needed because the OperandEvaluator is one of the places that
+    /// EvaluatedGeometryArrays are constructed.
     fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator>;
 
     /// Finish building and return the completed SpatialIndex.
