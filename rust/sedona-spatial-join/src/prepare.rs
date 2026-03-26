@@ -84,6 +84,7 @@ pub(crate) struct SpatialJoinComponentsBuilder {
 impl SpatialJoinComponentsBuilder {
     /// Create a new builder capturing the execution context and configuration
     /// required to produce `SpatialJoinComponents` from build-side streams.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         context: Arc<TaskContext>,
         build_schema: SchemaRef,
