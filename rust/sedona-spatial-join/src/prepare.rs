@@ -217,6 +217,7 @@ impl SpatialJoinComponentsBuilder {
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
         let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
+        // Passing a SpatialIndexBuilder for estimating memory usage during collection
         let builder = Arc::new(DefaultSpatialIndexBuilder::new(
             self.build_schema.clone(),
             self.spatial_predicate.clone(),

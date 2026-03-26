@@ -32,6 +32,7 @@ result_large_err = "allow"
 
 [features]
 default = ["aws", "azure", "gcp", "http", "geo", "geos", "tg", "spatial-join"]
+all-except-gpu = ["aws", "azure", "gcp", "geo", "geos", "tg", "http", "pointcloud", "proj", "gdal", "spatial-join", "s2geography"]
 aws = ["dep:aws-config", "dep:aws-credential-types", "object_store/aws"]
 azure = ["object_store/azure"]
 gcp = ["object_store/gcp"]
@@ -44,6 +45,7 @@ proj = ["sedona-proj/proj-sys"]
 gdal = ["sedona-gdal/gdal-sys"]
 spatial-join = ["dep:sedona-spatial-join"]
 s2geography = ["dep:sedona-s2geography"]
+gpu = ["sedona-spatial-join/gpu"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -85,6 +87,7 @@ sedona-spatial-join = { workspace = true, optional = true }
 sedona-s2geography = { workspace = true, optional = true }
 sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }
+sedona-libgpuspatial = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sysinfo = { workspace = true }

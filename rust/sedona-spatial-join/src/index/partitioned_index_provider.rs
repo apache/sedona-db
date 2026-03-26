@@ -20,6 +20,7 @@ use crate::evaluated_batch::evaluated_batch_stream::{
     EvaluatedBatchStream, SendableEvaluatedBatchStream,
 };
 use crate::evaluated_batch::EvaluatedBatch;
+use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
 use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
@@ -34,6 +35,7 @@ use datafusion_expr::JoinType;
 use futures::{Stream, StreamExt};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_expr::statistics::GeoStatistics;
 use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -270,18 +272,35 @@ impl PartitionedIndexProvider {
             .count()
     }
 
+    fn create_index_builder(&self) -> Result<SpatialIndexBuilderVariant> {
+        if GPUSpatialIndexBuilder::is_using_gpu(&self.spatial_predicate, &self.options)? {
+            let builder = GPUSpatialIndexBuilder::new(
+                Arc::clone(&self.schema),
+                self.spatial_predicate.clone(),
+                self.options.clone(),
+                self.join_type,
+                self.probe_threads_count,
+                self.metrics.clone(),
+            );
+            Ok(SpatialIndexBuilderVariant::Gpu(builder))
+        } else {
+            let builder = DefaultSpatialIndexBuilder::new(
+                Arc::clone(&self.schema),
+                self.spatial_predicate.clone(),
+                self.options.clone(),
+                self.join_type,
+                self.probe_threads_count,
+                self.metrics.clone(),
+            )?;
+            Ok(SpatialIndexBuilderVariant::Default(builder))
+        }
+    }
+
     async fn build_index_for_single_partition(
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = DefaultSpatialIndexBuilder::new(
-            Arc::clone(&self.schema),
-            self.spatial_predicate.clone(),
-            self.options.clone(),
-            self.join_type,
-            self.probe_threads_count,
-            self.metrics.clone(),
-        )?;
+        let mut builder = self.create_index_builder()?;
 
         for build_partition in build_partitions {
             let stream = build_partition.build_side_batch_stream;
@@ -296,14 +315,7 @@ impl PartitionedIndexProvider {
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = DefaultSpatialIndexBuilder::new(
-            Arc::clone(&self.schema),
-            self.spatial_predicate.clone(),
-            self.options.clone(),
-            self.join_type,
-            self.probe_threads_count,
-            self.metrics.clone(),
-        )?;
+        let mut builder = self.create_index_builder()?;
 
         // Spawn tasks to load indexed batches from spilled files concurrently
         let (spill_files, geo_statistics, _) = spilled_partition.into_inner();
@@ -389,6 +401,37 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+enum SpatialIndexBuilderVariant {
+    Default(DefaultSpatialIndexBuilder),
+    Gpu(GPUSpatialIndexBuilder),
+}
+
+impl SpatialIndexBuilderVariant {
+    // Delegate the mutable method
+    pub async fn add_stream(
+        &mut self,
+        stream: SendableEvaluatedBatchStream,
+        geo_statistics: GeoStatistics,
+    ) -> Result<()> {
+        match self {
+            SpatialIndexBuilderVariant::Default(builder) => {
+                builder.add_stream(stream, geo_statistics).await
+            }
+            SpatialIndexBuilderVariant::Gpu(builder) => {
+                builder.add_stream(stream, geo_statistics).await
+            }
+        }
+    }
+
+    pub fn finish(self) -> Result<SpatialIndexRef> {
+        match self {
+            SpatialIndexBuilderVariant::Default(builder) => builder.finish(),
+            SpatialIndexBuilderVariant::Gpu(builder) => builder.finish(),
+        }
     }
 }
 
