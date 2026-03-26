@@ -42,7 +42,7 @@ pub(crate) trait SpatialIndexBuilder {
     ) -> usize;
 
     /// Finish building and return the completed SpatialIndex.
-    fn finish(self) -> Result<SpatialIndexRef>;
+    fn finish(&mut self) -> Result<SpatialIndexRef>;
     async fn add_stream(
         &mut self,
         stream: SendableEvaluatedBatchStream,

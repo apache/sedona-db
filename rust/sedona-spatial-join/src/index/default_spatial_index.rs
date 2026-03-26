@@ -752,7 +752,7 @@ mod tests {
             SpatialRelationType::Intersects,
         ));
 
-        let builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,
@@ -1226,7 +1226,7 @@ mod tests {
             JoinSide::Left,
         ));
 
-        let builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = DefaultSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
             options,

@@ -232,12 +232,12 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
         refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
     }
 
-    fn finish(mut self) -> Result<SpatialIndexRef> {
+    fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(DefaultSpatialIndex::empty(
-                self.spatial_predicate,
-                self.schema,
-                self.options,
+                self.spatial_predicate.clone(),
+                self.schema.clone(),
+                self.options.clone(),
                 AtomicUsize::new(self.probe_threads_count),
             )));
         }
@@ -282,12 +282,14 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.memory_used
         );
         Ok(Arc::new(DefaultSpatialIndex::new(
-            self.schema,
-            self.options,
+            self.schema.clone(),
+            self.options.clone(),
             evaluator,
             refiner,
             rtree,
-            self.indexed_batches,
+            self.indexed_batches
+                .drain(0..self.indexed_batches.len())
+                .collect(),
             batch_pos_vec,
             geom_idx_vec,
             visited_build_side,

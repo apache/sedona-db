@@ -21,8 +21,9 @@ use crate::evaluated_batch::evaluated_batch_stream::{
 };
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::index::spatial_index::SpatialIndexRef;
-use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-use crate::index::{BuildPartition, DefaultSpatialIndexBuilder};
+use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
+use crate::index::BuildPartition;
+use crate::join_evaluator::SpatialJoinEvaluator;
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
 use crate::{partitioning::SpatialPartition, spatial_predicate::SpatialPredicate};
@@ -55,6 +56,8 @@ pub(crate) struct PartitionedIndexProvider {
     /// Async cells for indexes, one per regular partition
     index_cells: Vec<DisposableAsyncCell<SharedResult<SpatialIndexRef>>>,
 
+    evaluator: Arc<dyn SpatialJoinEvaluator>,
+
     /// The memory reserved in the build side collection phase. We'll hold them until
     /// we don't need to build spatial indexes.
     _reservations: Vec<MemoryReservation>,
@@ -75,6 +78,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         partitioned_spill_files: SpilledPartitions,
         metrics: SpatialJoinBuildMetrics,
+        evaluator: Arc<dyn SpatialJoinEvaluator>,
         reservations: Vec<MemoryReservation>,
     ) -> Self {
         let num_partitions = partitioned_spill_files.num_regular_partitions();
@@ -91,6 +95,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::MultiPartition(Mutex::new(partitioned_spill_files)),
             index_cells,
+            evaluator,
             _reservations: reservations,
         }
     }
@@ -104,6 +109,7 @@ impl PartitionedIndexProvider {
         probe_threads_count: usize,
         mut build_partitions: Vec<BuildPartition>,
         metrics: SpatialJoinBuildMetrics,
+        evaluator: Arc<dyn SpatialJoinEvaluator>,
     ) -> Self {
         let reservations = build_partitions
             .iter_mut()
@@ -119,6 +125,7 @@ impl PartitionedIndexProvider {
             metrics,
             data: BuildSideData::SinglePartition(Mutex::new(Some(build_partitions))),
             index_cells,
+            evaluator,
             _reservations: reservations,
         }
     }
@@ -130,6 +137,7 @@ impl PartitionedIndexProvider {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
+        evaluator: Arc<dyn SpatialJoinEvaluator>,
     ) -> Self {
         let build_partitions = Vec::new();
         Self::new_single_partition(
@@ -140,6 +148,7 @@ impl PartitionedIndexProvider {
             probe_threads_count,
             build_partitions,
             metrics,
+            evaluator,
         )
     }
 
@@ -274,7 +283,7 @@ impl PartitionedIndexProvider {
         &self,
         build_partitions: Vec<BuildPartition>,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = self.evaluator.try_new_spatial_index_builder(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -296,7 +305,7 @@ impl PartitionedIndexProvider {
         &self,
         spilled_partition: SpilledPartition,
     ) -> Result<SpatialIndexRef> {
-        let mut builder = DefaultSpatialIndexBuilder::new(
+        let mut builder = self.evaluator.try_new_spatial_index_builder(
             Arc::clone(&self.schema),
             self.spatial_predicate.clone(),
             self.options.clone(),
@@ -395,6 +404,7 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::join_evaluator::DefaultSpatialJoinEvaluator;
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
@@ -572,6 +582,7 @@ mod tests {
             1,
             vec![build_partition],
             SpatialJoinBuildMetrics::new(0, &metrics),
+            Arc::new(DefaultSpatialJoinEvaluator {}),
         );
 
         let first_index = provider
@@ -613,6 +624,7 @@ mod tests {
             1,
             spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &metrics),
+            Arc::new(DefaultSpatialJoinEvaluator {}),
             vec![new_reservation(Arc::clone(&memory_pool))],
         ));
 
