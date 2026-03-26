@@ -35,7 +35,7 @@ use crate::{
 ///
 /// This trait provides an extension point for overriding the evaluation
 /// details of a spatial join. In particular it allows plugging in a custom
-/// index for accellerated joins on specific hardware (e.g., GPU) and a custom
+/// index for accelerated joins on specific hardware (e.g., GPU) and a custom
 /// bounder for specific data types (e.g., geography).
 pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
     /// Create a new [SpatialIndexBuilder]
