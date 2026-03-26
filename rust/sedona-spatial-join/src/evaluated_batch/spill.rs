@@ -291,7 +291,7 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         .as_any()
         .downcast_ref::<Float32Array>()
         .ok_or_else(|| {
-            sedona_internal_datafusion_err!("Expected rect column to be FixedSizeListArray")
+            sedona_internal_datafusion_err!("Expected rect column child to be Float32Array")
         })?;
     let rect_vec = (0..rect_array.len())
         .map(|i| {
