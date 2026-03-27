@@ -119,10 +119,7 @@ pub fn rasterize_affine(
     // Keep this stack-allocated option array instead of going through `CslStringList`
     // so the affine fast path avoids extra allocation overhead for tiny geometries.
     let mut c_options: [*mut c_char; 2] = if all_touched {
-        [
-            c"ALL_TOUCHED=TRUE".as_ptr() as *mut c_char,
-            ptr::null_mut(),
-        ]
+        [c"ALL_TOUCHED=TRUE".as_ptr() as *mut c_char, ptr::null_mut()]
     } else {
         [
             c"ALL_TOUCHED=FALSE".as_ptr() as *mut c_char,
