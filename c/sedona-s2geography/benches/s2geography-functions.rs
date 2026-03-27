@@ -328,6 +328,51 @@ fn criterion_benchmark(c: &mut Criterion) {
             Transformed(Polygon(10).into(), to_geography()),
         ),
     );
+
+    // Lines
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_linelocatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_linelocatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(100).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(10).into(), to_geography()),
+            Float64(0.0, 1.0),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(100).into(), to_geography()),
+            Float64(0.0, 1.0),
+        ),
+    );
 }
 
 fn to_geography() -> ScalarUDF {
