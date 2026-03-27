@@ -19,7 +19,7 @@
 
 use std::ffi::CString;
 use std::ops::{Deref, DerefMut};
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 
 use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
@@ -36,8 +36,6 @@ pub const NODATA_UNSET: f64 = -1234.56;
 pub struct VrtDataset {
     dataset: Dataset,
 }
-
-unsafe impl Send for VrtDataset {}
 
 impl VrtDataset {
     /// Create an empty VRT dataset with the given raster size.
@@ -132,7 +130,7 @@ impl<'a> VrtRasterBand<'a> {
     /// Map a source window to a destination window, with optional resampling and nodata.
     pub fn add_simple_source(
         &self,
-        source_band: &RasterBand<'a>,
+        source_band: &RasterBand<'_>,
         src_window: (i32, i32, i32, i32),
         dst_window: (i32, i32, i32, i32),
         resampling: Option<&str>,
@@ -140,10 +138,7 @@ impl<'a> VrtRasterBand<'a> {
     ) -> Result<()> {
         let c_resampling = resampling.map(CString::new).transpose()?;
 
-        let resampling_ptr = c_resampling
-            .as_ref()
-            .map(|s| s.as_ptr())
-            .unwrap_or(null_mut());
+        let resampling_ptr = c_resampling.as_ref().map(|s| s.as_ptr()).unwrap_or(null());
 
         let nodata_value = nodata.unwrap_or(NODATA_UNSET);
 

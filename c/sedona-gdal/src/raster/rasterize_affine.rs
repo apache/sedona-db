@@ -24,7 +24,7 @@
 //! This module supplies a minimal GDALTransformerFunc that applies the dataset
 //! GeoTransform (and its inverse), avoiding expensive transformer creation.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
 use crate::dataset::Dataset;
@@ -116,10 +116,18 @@ pub fn rasterize_affine(
 
     let bands_i32: Vec<c_int> = bands.iter().map(|&band| band as c_int).collect();
 
-    let c_options = if all_touched {
-        [c"ALL_TOUCHED=TRUE".as_ptr(), ptr::null_mut()]
+    // Keep this stack-allocated option array instead of going through `CslStringList`
+    // so the affine fast path avoids extra allocation overhead for tiny geometries.
+    let mut c_options: [*mut c_char; 2] = if all_touched {
+        [
+            c"ALL_TOUCHED=TRUE".as_ptr() as *mut c_char,
+            ptr::null_mut(),
+        ]
     } else {
-        [c"ALL_TOUCHED=FALSE".as_ptr(), ptr::null_mut()]
+        [
+            c"ALL_TOUCHED=FALSE".as_ptr() as *mut c_char,
+            ptr::null_mut(),
+        ]
     };
 
     let geometries_c: Vec<_> = geometries.iter().map(|geo| geo.c_geometry()).collect();
@@ -152,10 +160,17 @@ pub fn rasterize_affine(
             bands_i32.as_ptr(),
             geometries_c.len() as c_int,
             geometries_c.as_ptr(),
+            // SAFETY: `affine_transformer` has the GDAL transformer callback ABI.
+            // This binding models the raw C API slot as `void*`, and on supported
+            // targets we rely on the platform ABI allowing this callback pointer to
+            // pass through that raw field unchanged.
             (affine_transformer as *const ()).cast::<c_void>() as *mut c_void,
             (&mut arg as *mut AffineTransformArg).cast::<c_void>(),
             burn_values_expanded.as_ptr(),
-            c_options.as_ptr() as *mut *mut i8,
+            // SAFETY: GDAL reads option strings through this mutable `char**` API.
+            // The pointed-to string literals remain valid for the call and are not
+            // expected to be modified by `GDALRasterizeGeometries`.
+            c_options.as_mut_ptr(),
             ptr::null_mut(),
             ptr::null_mut()
         );
