@@ -33,7 +33,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
-use crate::{index::DefaultSpatialIndexBuilder, join_provider::SpatialJoinProvider};
+use crate::{join_provider::SpatialJoinProvider};
 use crate::{
     index::{
         memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
@@ -221,20 +221,20 @@ impl SpatialJoinComponentsBuilder {
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
         let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
-        let builder = Arc::new(DefaultSpatialIndexBuilder::new(
+        let builder = self.join_provider.try_new_spatial_index_builder(
             self.build_schema.clone(),
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             self.join_type,
             self.probe_threads_count,
             join_metrics.clone(),
-        )?);
+        )?;
         let collector = BuildSideBatchesCollector::new(
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             Arc::clone(&runtime_env),
             spill_compression,
-            builder,
+            Arc::from(builder),
         );
         let build_partitions = collector
             .collect_all(

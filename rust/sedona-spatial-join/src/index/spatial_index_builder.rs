@@ -31,7 +31,7 @@ use datafusion_common::Result;
 
 /// Builder for constructing a SpatialIndex from geometry batches.
 #[async_trait]
-pub(crate) trait SpatialIndexBuilder: Send {
+pub(crate) trait SpatialIndexBuilder: Send + Sync {
     /// Estimate the amount of memory required by the R-tree index and evaluating spatial predicates.
     /// The estimated memory usage does not include the memory required for holding the build side
     /// batches.
@@ -74,5 +74,3 @@ impl SpatialJoinBuildMetrics {
         }
     }
 }
-
-pub(crate) type SpatialIndexBuilderRef = Arc<dyn SpatialIndexBuilder + Send + Sync>;

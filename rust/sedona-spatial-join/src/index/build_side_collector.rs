@@ -32,19 +32,12 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
-use crate::index::spatial_index_builder::SpatialIndexBuilderRef;
 use crate::{
     evaluated_batch::{
-        evaluated_batch_stream::{
-            evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream,
-            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
-        },
-        spill::EvaluatedBatchSpillWriter,
-        EvaluatedBatch,
-    },
-    operand_evaluator::OperandEvaluator,
-    spatial_predicate::SpatialPredicate,
-    utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
+        EvaluatedBatch, evaluated_batch_stream::{
+            SendableEvaluatedBatchStream, evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream, in_mem::InMemoryEvaluatedBatchStream
+        }, spill::EvaluatedBatchSpillWriter
+    }, index::spatial_index_builder::SpatialIndexBuilder, operand_evaluator::OperandEvaluator, spatial_predicate::SpatialPredicate, utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples}
 };
 
 pub(crate) struct BuildPartition {
@@ -84,7 +77,7 @@ pub(crate) struct BuildSideBatchesCollector {
     evaluator: Arc<dyn OperandEvaluator>,
     runtime_env: Arc<RuntimeEnv>,
     spill_compression: SpillCompression,
-    spatial_index_builder: SpatialIndexBuilderRef,
+    spatial_index_builder: Arc<dyn SpatialIndexBuilder>,
 }
 
 #[derive(Clone)]
@@ -128,7 +121,7 @@ impl BuildSideBatchesCollector {
         spatial_join_options: SpatialJoinOptions,
         runtime_env: Arc<RuntimeEnv>,
         spill_compression: SpillCompression,
-        spatial_index_builder: SpatialIndexBuilderRef,
+        spatial_index_builder: Arc<dyn SpatialIndexBuilder>,
     ) -> Self {
         let evaluator = spatial_index_builder.operand_evaluator();
         BuildSideBatchesCollector {
