@@ -33,7 +33,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
-use crate::{join_provider::SpatialJoinProvider};
+use crate::join_provider::SpatialJoinProvider;
 use crate::{
     index::{
         memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},

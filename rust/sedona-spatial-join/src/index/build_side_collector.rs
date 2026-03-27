@@ -34,10 +34,17 @@ use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
     evaluated_batch::{
-        EvaluatedBatch, evaluated_batch_stream::{
-            SendableEvaluatedBatchStream, evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream, in_mem::InMemoryEvaluatedBatchStream
-        }, spill::EvaluatedBatchSpillWriter
-    }, index::spatial_index_builder::SpatialIndexBuilder, operand_evaluator::OperandEvaluator, spatial_predicate::SpatialPredicate, utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples}
+        evaluated_batch_stream::{
+            evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream,
+            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
+        },
+        spill::EvaluatedBatchSpillWriter,
+        EvaluatedBatch,
+    },
+    index::spatial_index_builder::SpatialIndexBuilder,
+    operand_evaluator::OperandEvaluator,
+    spatial_predicate::SpatialPredicate,
+    utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
 
 pub(crate) struct BuildPartition {
