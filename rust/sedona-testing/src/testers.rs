@@ -542,13 +542,13 @@ impl ScalarUdfTester {
     }
 
     fn invoke_scalar_arrays(&self, arg: impl Literal, arrays: Vec<ArrayRef>) -> Result<ArrayRef> {
-        let mut args = zip(arrays, &self.arg_types)
+        let scalar_arg = Self::scalar_arg(arg, &self.arg_types[0])?;
+        let mut args = zip(arrays, &self.arg_types[1..])
             .map(|(array, sedona_type)| {
                 ColumnarValue::Array(array).cast_to(sedona_type.storage_type(), None)
             })
             .collect::<Result<Vec<_>>>()?;
-        let index = args.len();
-        args.insert(0, Self::scalar_arg(arg, &self.arg_types[index])?);
+        args.insert(0, scalar_arg);
 
         if let ColumnarValue::Array(array) = self.invoke(args)? {
             Ok(array)
