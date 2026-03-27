@@ -61,6 +61,7 @@ sedona-functions = { workspace = true }
 sedona-geo = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-schema = { workspace = true }
+sedona-query-planner = { workspace = true }
 sedona-tg = { workspace = true }
 sedona-geos = { workspace = true }
 wkb = { workspace = true }

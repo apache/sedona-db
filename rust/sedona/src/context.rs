@@ -64,6 +64,9 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
+use sedona_query_planner::{
+    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
+};
 
 /// Sedona SessionContext wrapper
 ///
@@ -143,10 +146,16 @@ impl SedonaContext {
             .with_config(session_config);
 
         // Register the spatial join planner extension
+        let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            state_builder = sedona_spatial_join::register_planner(state_builder)?;
+            use sedona_spatial_join::factory::DefaultSpatialJoinFactory;
+
+            planner = planner.with_spatial_join_factory(Arc::new(DefaultSpatialJoinFactory::new()));
         }
+
+        state_builder = register_spatial_join_logical_optimizer(state_builder)?;
+        state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;

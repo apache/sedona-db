@@ -15,30 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod evaluated_batch;
-pub mod exec;
-pub mod factory;
-mod index;
-pub mod operand_evaluator;
-pub mod partitioning;
-mod prepare;
-mod probe;
-pub mod refine;
-pub use sedona_query_planner::spatial_predicate;
-mod stream;
-pub mod utils;
-
-pub use exec::SpatialJoinExec;
-
-// Re-export function for register the spatial join planner
-pub use factory::DefaultSpatialJoinFactory;
-
-// Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
-// its presence in optimized physical plans.
-pub use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
-
-// Re-export types needed for external usage (e.g., in Comet)
-pub use spatial_predicate::SpatialPredicate;
-
-// Re-export option types from sedona-common for convenience
-pub use sedona_common::option::*;
+mod logical_plan_node;
+pub mod optimizer;
+pub mod probe_shuffle_exec;
+pub mod query_planner;
+mod spatial_expr_utils;
+pub mod spatial_join_factory;
+pub mod spatial_predicate;

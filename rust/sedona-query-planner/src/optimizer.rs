@@ -16,8 +16,8 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::planner::logical_plan_node::SpatialJoinPlanNode;
-use crate::planner::spatial_expr_utils::{
+use crate::logical_plan_node::SpatialJoinPlanNode;
+use crate::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -52,7 +52,7 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 ///
 /// - `SpatialJoinLogicalRewrite` is appended at the end so that non-KNN spatial joins still
 ///   benefit from filter pushdown before being converted to extension nodes.
-pub(crate) fn register_spatial_join_logical_optimizer(
+pub fn register_spatial_join_logical_optimizer(
     mut session_state_builder: SessionStateBuilder,
 ) -> Result<SessionStateBuilder> {
     let optimizer = session_state_builder

@@ -29,7 +29,7 @@ use sedona_common::sedona_internal_err;
 /// Carries a join's inputs and filter expression so the physical planner can recognize and plan
 /// a `SpatialJoinExec`.
 #[derive(PartialEq, Eq, Hash)]
-pub(crate) struct SpatialJoinPlanNode {
+pub struct SpatialJoinPlanNode {
     pub left: LogicalPlan,
     pub right: LogicalPlan,
     pub join_type: JoinType,
