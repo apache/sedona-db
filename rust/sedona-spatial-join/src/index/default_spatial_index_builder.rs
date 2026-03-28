@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::join_provider::DefaultSpatialJoinProvider;
+use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
@@ -232,17 +234,24 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
         refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
     }
 
-    fn finish(mut self) -> Result<SpatialIndexRef> {
+    fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator> {
+        create_operand_evaluator(
+            &self.spatial_predicate,
+            Arc::new(DefaultSpatialJoinProvider {}),
+            self.options.clone(),
+        )
+    }
+
+    fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(DefaultSpatialIndex::empty(
-                self.spatial_predicate,
-                self.schema,
-                self.options,
+                self.spatial_predicate.clone(),
+                self.schema.clone(),
+                self.options.clone(),
                 AtomicUsize::new(self.probe_threads_count),
             )));
         }
 
-        let evaluator = create_operand_evaluator(&self.spatial_predicate, self.options.clone());
         let num_geoms = self
             .indexed_batches
             .iter()
@@ -282,12 +291,14 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.memory_used
         );
         Ok(Arc::new(DefaultSpatialIndex::new(
-            self.schema,
-            self.options,
-            evaluator,
+            self.schema.clone(),
+            self.options.clone(),
+            self.operand_evaluator(),
             refiner,
             rtree,
-            self.indexed_batches,
+            self.indexed_batches
+                .drain(0..self.indexed_batches.len())
+                .collect(),
             batch_pos_vec,
             geom_idx_vec,
             visited_build_side,

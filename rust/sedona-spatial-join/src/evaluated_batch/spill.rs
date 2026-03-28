@@ -18,13 +18,15 @@
 use std::sync::Arc;
 
 use arrow::array::Float64Array;
-use arrow_array::{Array, RecordBatch, StructArray};
+use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, StructArray};
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
 use datafusion::config::SpillCompression;
 use datafusion_common::{Result, ScalarValue};
 use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::SpillMetrics;
+use geo::{Coord, Rect};
+use geo_traits::CoordTrait;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_schema::datatypes::SedonaType;
 
@@ -52,6 +54,7 @@ pub struct EvaluatedBatchSpillWriter {
 const SPILL_FIELD_DATA_INDEX: usize = 0;
 const SPILL_FIELD_GEOM_INDEX: usize = 1;
 const SPILL_FIELD_DIST_INDEX: usize = 2;
+const SPILL_FIELD_RECT_INDEX: usize = 3;
 
 impl EvaluatedBatchSpillWriter {
     /// Create a new SpillWriter
@@ -70,7 +73,12 @@ impl EvaluatedBatchSpillWriter {
             Field::new("data", DataType::Struct(data_inner_fields.clone()), false);
         let geom_field = sedona_type.to_storage_field("geom", true)?;
         let dist_field = Field::new("dist", DataType::Float64, true);
-        let spill_schema = Schema::new(vec![data_struct_field, geom_field, dist_field]);
+        let rect_field = Field::new(
+            "rect",
+            DataType::new_fixed_size_list(DataType::Float32, 4, true),
+            true,
+        );
+        let spill_schema = Schema::new(vec![data_struct_field, geom_field, dist_field, rect_field]);
 
         // Create spill file
         let inner = RecordBatchSpillWriter::try_new(
@@ -141,11 +149,31 @@ impl EvaluatedBatchSpillWriter {
         }
         let dist_array = dist_builder.finish();
 
+        // Store rect into a FixedSizeList array
+        let mut rect_builder =
+            arrow::array::FixedSizeListBuilder::new(arrow::array::Float32Builder::new(), 4);
+        for rect_opt in &geom_array.rects {
+            if let Some(rect) = rect_opt {
+                rect_builder.values().append_slice(&[
+                    rect.min().x(),
+                    rect.min().y(),
+                    rect.max().x(),
+                    rect.max().y(),
+                ]);
+                rect_builder.append(true);
+            } else {
+                rect_builder.values().append_nulls(4);
+                rect_builder.append(false);
+            }
+        }
+        let rect_array = rect_builder.finish();
+
         // Assemble the final spilled RecordBatch
         let columns = vec![
-            Arc::new(data_struct_array) as Arc<dyn arrow::array::Array>,
+            Arc::new(data_struct_array) as ArrayRef,
             Arc::clone(&geom_array.geometry_array),
-            Arc::new(dist_array) as Arc<dyn arrow::array::Array>,
+            Arc::new(dist_array) as ArrayRef,
+            Arc::new(rect_array) as ArrayRef,
         ];
         let spilled_record_batch =
             RecordBatch::try_new(Arc::new(self.spill_schema.clone()), columns)?;
@@ -250,8 +278,46 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
         None
     };
 
+    // Extract the rect array
+    let rect_array = record_batch
+        .column(SPILL_FIELD_RECT_INDEX)
+        .as_any()
+        .downcast_ref::<FixedSizeListArray>()
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!("Expected rect column to be FixedSizeListArray")
+        })?;
+    let rect_child_array = rect_array
+        .values()
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!("Expected rect column child to be Float32Array")
+        })?;
+    let rect_vec = (0..rect_array.len())
+        .map(|i| {
+            if rect_array.is_null(i) {
+                None
+            } else {
+                let child_i = i * 4;
+                unsafe {
+                    Some(Rect::new(
+                        Coord {
+                            x: rect_child_array.value_unchecked(child_i),
+                            y: rect_child_array.value_unchecked(child_i + 1),
+                        },
+                        Coord {
+                            x: rect_child_array.value_unchecked(child_i + 2),
+                            y: rect_child_array.value_unchecked(child_i + 3),
+                        },
+                    ))
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Create EvaluatedGeometryArray
-    let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, &sedona_type)?;
+    let mut geom_array =
+        EvaluatedGeometryArray::try_new_with_rects(geom_array, rect_vec, &sedona_type)?;
     geom_array.distance = distance;
 
     Ok(EvaluatedBatch { batch, geom_array })
@@ -402,7 +468,7 @@ mod tests {
         )?;
 
         // Verify the spill schema has the expected structure
-        assert_eq!(writer.spill_schema.fields().len(), 3);
+        assert_eq!(writer.spill_schema.fields().len(), 4);
         assert_eq!(
             writer.spill_schema.field(SPILL_FIELD_DATA_INDEX).name(),
             "data"
@@ -414,6 +480,10 @@ mod tests {
         assert_eq!(
             writer.spill_schema.field(SPILL_FIELD_DIST_INDEX).name(),
             "dist"
+        );
+        assert_eq!(
+            writer.spill_schema.field(SPILL_FIELD_RECT_INDEX).name(),
+            "rect"
         );
 
         Ok(())

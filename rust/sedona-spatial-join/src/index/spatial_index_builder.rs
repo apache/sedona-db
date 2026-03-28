@@ -21,6 +21,7 @@ use sedona_expr::statistics::GeoStatistics;
 use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
+use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream,
     spatial_predicate::SpatialPredicate,
@@ -30,7 +31,7 @@ use datafusion_common::Result;
 
 /// Builder for constructing a SpatialIndex from geometry batches.
 #[async_trait]
-pub(crate) trait SpatialIndexBuilder {
+pub(crate) trait SpatialIndexBuilder: Send + Sync {
     /// Estimate the amount of memory required by the R-tree index and evaluating spatial predicates.
     /// The estimated memory usage does not include the memory required for holding the build side
     /// batches.
@@ -41,8 +42,14 @@ pub(crate) trait SpatialIndexBuilder {
         options: &SpatialJoinOptions,
     ) -> usize;
 
+    /// Instantiate an [OperandEvaluator] with the correct SpatialJoinProvider
+    ///
+    /// This is needed because the OperandEvaluator is one of the places that
+    /// EvaluatedGeometryArrays are constructed.
+    fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator>;
+
     /// Finish building and return the completed SpatialIndex.
-    fn finish(self) -> Result<SpatialIndexRef>;
+    fn finish(&mut self) -> Result<SpatialIndexRef>;
     async fn add_stream(
         &mut self,
         stream: SendableEvaluatedBatchStream,
@@ -67,5 +74,3 @@ impl SpatialJoinBuildMetrics {
         }
     }
 }
-
-pub(crate) type SpatialIndexBuilderRef = Arc<dyn SpatialIndexBuilder + Send + Sync>;

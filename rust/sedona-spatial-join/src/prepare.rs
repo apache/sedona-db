@@ -33,7 +33,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
-use crate::index::DefaultSpatialIndexBuilder;
+use crate::join_provider::SpatialJoinProvider;
 use crate::{
     index::{
         memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
@@ -73,6 +73,7 @@ pub(crate) struct SpatialJoinComponentsBuilder {
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: ExecutionPlanMetricsSet,
+    join_provider: Arc<dyn SpatialJoinProvider>,
     seed: u64,
     sedona_options: SedonaOptions,
 }
@@ -80,6 +81,7 @@ pub(crate) struct SpatialJoinComponentsBuilder {
 impl SpatialJoinComponentsBuilder {
     /// Create a new builder capturing the execution context and configuration
     /// required to produce `SpatialJoinComponents` from build-side streams.
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         context: Arc<TaskContext>,
         build_schema: SchemaRef,
@@ -87,6 +89,7 @@ impl SpatialJoinComponentsBuilder {
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: ExecutionPlanMetricsSet,
+        join_provider: Arc<dyn SpatialJoinProvider>,
         seed: u64,
     ) -> Self {
         let session_config = context.session_config();
@@ -103,6 +106,7 @@ impl SpatialJoinComponentsBuilder {
             join_type,
             probe_threads_count,
             metrics,
+            join_provider,
             seed,
             sedona_options,
         }
@@ -217,20 +221,20 @@ impl SpatialJoinComponentsBuilder {
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
         let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
-        let builder = Arc::new(DefaultSpatialIndexBuilder::new(
+        let builder = self.join_provider.try_new_spatial_index_builder(
             self.build_schema.clone(),
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             self.join_type,
             self.probe_threads_count,
             join_metrics.clone(),
-        )?);
+        )?;
         let collector = BuildSideBatchesCollector::new(
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             Arc::clone(&runtime_env),
             spill_compression,
-            builder,
+            Arc::from(builder),
         );
         let build_partitions = collector
             .collect_all(
@@ -407,6 +411,7 @@ impl SpatialJoinComponentsBuilder {
             self.join_type,
             self.probe_threads_count,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
+            self.join_provider.clone(),
         );
 
         let probe_stream_options = ProbeStreamOptions {
@@ -440,6 +445,7 @@ impl SpatialJoinComponentsBuilder {
             self.probe_threads_count,
             build_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
+            self.join_provider.clone(),
         );
 
         let probe_stream_options = ProbeStreamOptions {
@@ -477,6 +483,7 @@ impl SpatialJoinComponentsBuilder {
             self.probe_threads_count,
             merged_spilled_partitions,
             SpatialJoinBuildMetrics::new(0, &self.metrics),
+            self.join_provider.clone(),
             reservations,
         );
 

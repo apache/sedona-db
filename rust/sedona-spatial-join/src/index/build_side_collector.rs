@@ -32,7 +32,6 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
-use crate::index::spatial_index_builder::SpatialIndexBuilderRef;
 use crate::{
     evaluated_batch::{
         evaluated_batch_stream::{
@@ -42,7 +41,8 @@ use crate::{
         spill::EvaluatedBatchSpillWriter,
         EvaluatedBatch,
     },
-    operand_evaluator::{create_operand_evaluator, OperandEvaluator},
+    index::spatial_index_builder::SpatialIndexBuilder,
+    operand_evaluator::OperandEvaluator,
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
@@ -84,7 +84,7 @@ pub(crate) struct BuildSideBatchesCollector {
     evaluator: Arc<dyn OperandEvaluator>,
     runtime_env: Arc<RuntimeEnv>,
     spill_compression: SpillCompression,
-    spatial_index_builder: SpatialIndexBuilderRef,
+    spatial_index_builder: Arc<dyn SpatialIndexBuilder>,
 }
 
 #[derive(Clone)]
@@ -128,9 +128,9 @@ impl BuildSideBatchesCollector {
         spatial_join_options: SpatialJoinOptions,
         runtime_env: Arc<RuntimeEnv>,
         spill_compression: SpillCompression,
-        spatial_index_builder: SpatialIndexBuilderRef,
+        spatial_index_builder: Arc<dyn SpatialIndexBuilder>,
     ) -> Self {
-        let evaluator = create_operand_evaluator(&spatial_predicate, spatial_join_options.clone());
+        let evaluator = spatial_index_builder.operand_evaluator();
         BuildSideBatchesCollector {
             spatial_predicate,
             spatial_join_options,
