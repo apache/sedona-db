@@ -187,23 +187,37 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
     }
 }
 
+/// Spatial join reordering heuristic:
+/// 1. Put the input with fewer rows on the build side, because fewer entries
+///    produce a smaller and more efficient spatial index (R-tree).
+/// 2. If row-count statistics are unavailable (for example, for CSV sources),
+///    fall back to total input size as an estimate.
+/// 3. Do not swap the join order if no relevant statistics are available.
 fn should_swap_join_order(left: &dyn ExecutionPlan, right: &dyn ExecutionPlan) -> Result<bool> {
     let left_stats = left.partition_statistics(None)?;
     let right_stats = right.partition_statistics(None)?;
 
-    match (
-        left_stats.total_byte_size.get_value(),
-        right_stats.total_byte_size.get_value(),
-    ) {
-        (Some(l), Some(r)) => Ok(l > r),
+    let left_num_rows = left_stats.num_rows;
+    let right_num_rows = right_stats.num_rows;
+    let left_total_byte_size = left_stats.total_byte_size;
+    let right_total_byte_size = right_stats.total_byte_size;
+
+    let should_swap = match (left_num_rows.get_value(), right_num_rows.get_value()) {
+        (Some(l), Some(r)) => l > r,
         _ => match (
-            left_stats.num_rows.get_value(),
-            right_stats.num_rows.get_value(),
+            left_total_byte_size.get_value(),
+            right_total_byte_size.get_value(),
         ) {
-            (Some(l), Some(r)) => Ok(l > r),
-            _ => Ok(false),
+            (Some(l), Some(r)) => l > r,
+            _ => false,
         },
-    }
+    };
+
+    log::info!(
+        "spatial join swap heuristic: left_num_rows={left_num_rows:?}, right_num_rows={right_num_rows:?}, left_total_byte_size={left_total_byte_size:?}, right_total_byte_size={right_total_byte_size:?}, should_swap={should_swap}"
+    );
+
+    Ok(should_swap)
 }
 
 /// This function is mostly taken from the match arm for handling LogicalPlan::Join in

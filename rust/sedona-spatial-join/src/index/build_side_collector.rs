@@ -32,6 +32,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
+use crate::index::spatial_index_builder::SpatialIndexBuilderRef;
 use crate::{
     evaluated_batch::{
         evaluated_batch_stream::{
@@ -41,7 +42,6 @@ use crate::{
         spill::EvaluatedBatchSpillWriter,
         EvaluatedBatch,
     },
-    index::SpatialIndexBuilder,
     operand_evaluator::{create_operand_evaluator, OperandEvaluator},
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
@@ -84,6 +84,7 @@ pub(crate) struct BuildSideBatchesCollector {
     evaluator: Arc<dyn OperandEvaluator>,
     runtime_env: Arc<RuntimeEnv>,
     spill_compression: SpillCompression,
+    spatial_index_builder: SpatialIndexBuilderRef,
 }
 
 #[derive(Clone)]
@@ -127,6 +128,7 @@ impl BuildSideBatchesCollector {
         spatial_join_options: SpatialJoinOptions,
         runtime_env: Arc<RuntimeEnv>,
         spill_compression: SpillCompression,
+        spatial_index_builder: SpatialIndexBuilderRef,
     ) -> Self {
         let evaluator = create_operand_evaluator(&spatial_predicate, spatial_join_options.clone());
         BuildSideBatchesCollector {
@@ -135,6 +137,7 @@ impl BuildSideBatchesCollector {
             evaluator,
             runtime_env,
             spill_compression,
+            spatial_index_builder,
         }
     }
 
@@ -217,7 +220,7 @@ impl BuildSideBatchesCollector {
         }
 
         let geo_statistics = analyzer.finish();
-        let extra_mem = SpatialIndexBuilder::estimate_extra_memory_usage(
+        let extra_mem = self.spatial_index_builder.estimate_extra_memory_usage(
             &geo_statistics,
             &self.spatial_predicate,
             &self.spatial_join_options,
@@ -439,13 +442,15 @@ impl BuildSideBatchesCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
+    use crate::index::DefaultSpatialIndexBuilder;
     use crate::{
         operand_evaluator::EvaluatedGeometryArray,
         spatial_predicate::{RelationPredicate, SpatialRelationType},
     };
     use arrow_array::{ArrayRef, BinaryArray, Int32Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion_common::ScalarValue;
+    use datafusion_common::{JoinType, ScalarValue};
     use datafusion_execution::memory_pool::{GreedyMemoryPool, MemoryConsumer, MemoryPool};
     use datafusion_physical_expr::expressions::Literal;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
@@ -482,11 +487,23 @@ mod tests {
             expr,
             SpatialRelationType::Intersects,
         ));
+
+        let builder = DefaultSpatialIndexBuilder::new(
+            test_schema(),
+            predicate.clone(),
+            SpatialJoinOptions::default(),
+            JoinType::Inner,
+            1,
+            SpatialJoinBuildMetrics::default(),
+        )
+        .unwrap();
+
         BuildSideBatchesCollector::new(
             predicate,
             SpatialJoinOptions::default(),
             Arc::new(RuntimeEnv::default()),
             SpillCompression::Uncompressed,
+            Arc::new(builder),
         )
     }
 

@@ -29,7 +29,10 @@ class Stopwatch {
   }
 
   void start() { t2 = t1 = std::chrono::high_resolution_clock::now(); }
-  void stop() { t2 = std::chrono::high_resolution_clock::now(); }
+  double stop() {
+    t2 = std::chrono::high_resolution_clock::now();
+    return ms();
+  }
 
   double ms() const {
     return std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() /

@@ -132,19 +132,14 @@ impl CrsTransform for Box<dyn CrsTransform> {
 /// when the same transformations are used repeatedly. Uses LRU (Least Recently Used) eviction
 /// policy when the cache reaches its capacity.
 ///
-/// # Example
+/// A caching wrapper around any CRS transformation engine.
 ///
-/// ```rust,ignore
-/// use sedona_geometry::transform::{CachingCrsEngine, CrsEngine};
+/// This provides automatic caching of coordinate transformation objects to improve performance
+/// when the same transformations are used repeatedly. Uses LRU (Least Recently Used) eviction
+/// policy when the cache reaches its capacity.
 ///
-/// let engine = SomeCrsEngine::new();
-/// let cached_engine = CachingCrsEngine::new(engine);
-///
-/// // Subsequent calls with the same parameters will use cached transforms
-/// let transform1 = cached_engine.get_transform_crs_to_crs("EPSG:4326", "EPSG:3857", None, "")?;
-/// let transform2 = cached_engine.get_transform_crs_to_crs("EPSG:4326", "EPSG:3857", None, "")?;
-/// // transform2 is retrieved from cache
-/// ```
+/// Repeated calls with the same CRS or pipeline parameters reuse cached transformation objects
+/// instead of recreating them.
 #[derive(Debug)]
 pub struct CachingCrsEngine<T: CrsEngine> {
     engine: T,

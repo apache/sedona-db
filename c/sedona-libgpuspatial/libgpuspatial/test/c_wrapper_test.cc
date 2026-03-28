@@ -122,7 +122,7 @@ class CWrapperTest : public ::testing::Test {
 
     runtime_config.ptx_root = ptx_root.c_str();
     runtime_config.device_id = 0;
-    runtime_config.use_cuda_memory_pool = true;
+    runtime_config.use_cuda_memory_pool = false;
     runtime_config.cuda_memory_pool_init_precent = 10;
     ASSERT_EQ(runtime_.init(&runtime_, &runtime_config), 0);
 
@@ -242,8 +242,6 @@ TEST_F(CWrapperTest, InitializeJoiner) {
               NANOARROW_OK)
         << error.message;
 
-    refiner_.init_schema(&refiner_, build_schema.get(), probe_schema.get());
-
     for (int64_t j = 0; j < probe_array->length; j++) {
       ArrowBufferView wkb = ArrowArrayViewGetBytesUnsafe(probe_view.get(), j);
       auto geom = wkb_reader.read(wkb.data.as_uint8, wkb.size_bytes);
@@ -282,13 +280,17 @@ TEST_F(CWrapperTest, InitializeJoiner) {
         },
         &intersection_ids);
 
+    if (i == 0) {
+      ASSERT_EQ(refiner_.init_build_schema(&refiner_, build_schema.get()), 0);
+    }
+
     refiner_.clear(&refiner_);
     ASSERT_EQ(refiner_.push_build(&refiner_, build_array.get()), 0);
     ASSERT_EQ(refiner_.finish_building(&refiner_), 0);
 
     uint32_t new_len;
     ASSERT_EQ(refiner_.refine(
-                  &refiner_, probe_array.get(),
+                  &refiner_, probe_schema.get(), probe_array.get(),
                   SedonaSpatialRelationPredicate::SedonaSpatialPredicateContains,
                   intersection_ids.build_indices_ptr, intersection_ids.probe_indices_ptr,
                   intersection_ids.length, &new_len),

@@ -39,6 +39,7 @@ SedonaDB is perfect for processing smaller to medium datasets on local machines 
 * **Spatial query optimization**
     * Spatial-aware heuristic based optimization
     * Spatial-aware cost based optimization
+    * Automatic disk spilling for large-scale spatial joins
 
 * **Spatial query processing**
     * Spatial range query, KNN query, spatial join query, KNN join query

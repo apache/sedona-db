@@ -151,10 +151,9 @@ mod sys {
             Ok(Self { inner })
         }
 
-        /// Initializes the schema for the refiner based on the data types of the build and probe geometries.
-        /// This allows the refiner to understand how to interpret the geometry data for both sets.
-        pub fn init_schema(&mut self, build: &DataType, probe: &DataType) -> Result<()> {
-            self.inner.init_schema(build, probe)
+        /// Initializes the schema for the refiner based on the data types of the build geometries.
+        pub fn init_build_schema(&mut self, build: &DataType) -> Result<()> {
+            self.inner.init_build_schema(build)
         }
 
         /// Clears any previously inserted data from the refiner, allowing it to be reused for building a new set of geometries.
@@ -207,7 +206,7 @@ mod sys {
         pub fn push_build(&mut self, _r: &[Rect<f32>]) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn finish_building(self) -> Result<GpuSpatialIndex> {
+        pub fn finish_building(&mut self) -> Result<GpuSpatialIndex> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn probe(&self, _r: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
@@ -219,9 +218,10 @@ mod sys {
         pub fn try_new(_opts: &GpuSpatialOptions) -> Result<Self> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn init_schema(&mut self, _b: &DataType, _p: &DataType) -> Result<()> {
+        pub fn init_build_schema(&mut self, _b: &DataType) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
+
         pub fn clear(&mut self) {}
         pub fn push_build(&mut self, _arr: &arrow_array::ArrayRef) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
@@ -319,9 +319,7 @@ mod tests {
         let points = create_array_storage(point_values, &WKB_GEOMETRY);
 
         // 2. Build Refiner
-        refiner
-            .init_schema(polygons.data_type(), points.data_type())
-            .unwrap();
+        refiner.init_build_schema(polygons.data_type()).unwrap();
 
         refiner.push_build(&polygons).unwrap();
 

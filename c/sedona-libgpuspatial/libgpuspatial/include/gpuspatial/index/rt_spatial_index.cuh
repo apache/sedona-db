@@ -19,13 +19,11 @@
 #include "gpuspatial/index/rt_spatial_index.hpp"
 #include "gpuspatial/index/spatial_index.hpp"
 #include "gpuspatial/rt/rt_engine.hpp"
-#include "gpuspatial/utils/gpu_timer.hpp"
 #include "gpuspatial/utils/queue.hpp"
 
 #include "rmm/cuda_stream_pool.hpp"
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_uvector.hpp"
-#define GPUSPATIAL_PROFILING
 namespace gpuspatial {
 
 /** * @brief A spatial index implementation using NVIDIA OptiX ray tracing engine.
@@ -57,10 +55,9 @@ class RTSpatialIndex : public SpatialIndex<SCALAR_T, N_DIM> {
     Queue<index_t> build_indices;
     rmm::device_uvector<index_t> probe_indices{0, rmm::cuda_stream_default};
 #ifdef GPUSPATIAL_PROFILING
-    GPUTimer timer;
     // counters
     double alloc_ms = 0.0;
-    double bvh_build_ms = 0.0;
+    double prepare_ms = 0.0;
     double rt_ms = 0.0;
     double copy_res_ms = 0.0;
 #endif
@@ -92,7 +89,10 @@ class RTSpatialIndex : public SpatialIndex<SCALAR_T, N_DIM> {
   rmm::device_uvector<point_t> points_{0, rmm::cuda_stream_default};
   rmm::device_buffer bvh_buffer_{0, rmm::cuda_stream_default};
   OptixTraversableHandle handle_;
-
+#ifdef GPUSPATIAL_PROFILING
+  double push_build_ms_ = 0.0f;
+  double finish_building_ms_ = 0.0f;
+#endif
   void allocateResultBuffer(SpatialIndexContext& ctx, uint32_t capacity) const;
 
   void handleBuildPoint(SpatialIndexContext& ctx, ArrayView<point_t> points,
