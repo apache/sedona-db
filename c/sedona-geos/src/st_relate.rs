@@ -16,8 +16,9 @@
 // under the License.
 use std::sync::Arc;
 
-use arrow_array::builder::StringBuilder;
+use arrow_array::builder::{BooleanBuilder, StringBuilder};
 use arrow_schema::DataType;
+use datafusion_common::cast::as_string_array;
 use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::ColumnarValue;
@@ -30,9 +31,14 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
-/// ST_Relate implementation using GEOS
+/// ST_Relate(geometry, geometry) → text implementation using GEOS
 pub fn st_relate_impl() -> Vec<ScalarKernelRef> {
     ItemCrsKernel::wrap_impl(STRelate {})
+}
+
+/// ST_Relate(geometry, geometry, text) → boolean implementation using GEOS
+pub fn st_relate_pattern_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STRelatePattern {})
 }
 
 #[derive(Debug)]
@@ -67,6 +73,56 @@ impl SedonaScalarKernel for STRelate {
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
                     builder.append_value(relate);
+                }
+                _ => builder.append_null(),
+            }
+            Ok(())
+        })?;
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+#[derive(Debug)]
+struct STRelatePattern {}
+
+impl SedonaScalarKernel for STRelatePattern {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::is_geometry(),
+                ArgMatcher::is_string(),
+            ],
+            SedonaType::Arrow(DataType::Boolean),
+        );
+
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = GeosExecutor::new(arg_types, args);
+
+        let pattern_value = args[2]
+            .cast_to(&DataType::Utf8, None)?
+            .to_array(executor.num_iterations())?;
+        let pattern_array = as_string_array(&pattern_value)?;
+        let mut pattern_iter = pattern_array.iter();
+
+        let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
+
+        executor.execute_wkb_wkb_void(|wkb1, wkb2| {
+            match (wkb1, wkb2, pattern_iter.next().unwrap()) {
+                (Some(g1), Some(g2), Some(pattern)) => {
+                    let matches = g1
+                        .relate_pattern(g2, pattern)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                    builder.append_value(matches);
                 }
                 _ => builder.append_null(),
             }
@@ -129,5 +185,62 @@ mod tests {
         // actual values from GEOS
         let expected: ArrayRef = arrow_array!(Utf8, [Some("0F2FF1FF2"), Some("0FFFFF212"), None]);
         assert_array_equal(&tester.invoke_array_array(lhs, rhs).unwrap(), &expected);
+    }
+
+    #[rstest]
+    fn udf_pattern(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_relate", st_relate_pattern_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                sedona_type.clone(),
+                sedona_type,
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        tester.assert_return_type(DataType::Boolean);
+
+        // Point inside polygon matches "0F2FF1FF2"
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                "POINT (0.5 0.5)",
+                "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+                "0F2FF1FF2",
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, true);
+
+        // Disjoint points do not match interior pattern
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT (0 0)", "POINT (1 1)", "0FFFFFFF2")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, false);
+
+        // NULL inputs should return NULL
+        let result = tester
+            .invoke_scalar_scalar_scalar(ScalarValue::Null, ScalarValue::Null, ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        // Array inputs
+        let lhs = create_array(
+            &[Some("POINT (0.5 0.5)"), Some("POINT (0 0)"), None],
+            &WKB_GEOMETRY,
+        );
+        let rhs = create_array(
+            &[
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+                Some("POINT (1 1)"),
+                Some("POINT (0 0)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        let patterns: ArrayRef = arrow_array!(Utf8, [Some("0F2FF1FF2"), Some("FF0FFF0F2"), None]);
+
+        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(true), None]);
+        assert_array_equal(
+            &tester.invoke_arrays(vec![lhs, rhs, patterns]).unwrap(),
+            &expected,
+        );
     }
 }
