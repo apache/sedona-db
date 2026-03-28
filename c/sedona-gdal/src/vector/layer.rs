@@ -169,6 +169,7 @@ mod tests {
 
             let write_count = unsafe { GDALDatasetGetLayerCount(dataset.c_dataset()) };
             assert_eq!(write_count, 1);
+            drop(dataset);
 
             let read_dataset = Dataset::open_ex(
                 api,
