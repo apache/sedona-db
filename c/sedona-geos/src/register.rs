@@ -74,6 +74,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_perimeter" => crate::st_perimeter::st_perimeter_impl,
         "st_polygonize" => crate::st_polygonize::st_polygonize_impl,
         "st_relate" => crate::st_relate::st_relate_impl,
+        "st_relate" => crate::st_relate::st_relate_pattern_impl,
         "st_simplify" => crate::st_simplify::st_simplify_impl,
         "st_simplifypreservetopology" => crate::st_simplifypreservetopology::st_simplify_preserve_topology_impl,
         "st_snap" => crate::st_snap::st_snap_impl,
