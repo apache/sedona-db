@@ -200,21 +200,21 @@ mod tests {
         );
         tester.assert_return_type(DataType::Boolean);
 
-        // Point inside polygon — wildcard pattern "0*****FF*" matches "within"
+        // Point inside polygon — exact DE-9IM string from GEOS
         let result = tester
             .invoke_scalar_scalar_scalar(
                 "POINT (0.5 0.5)",
                 "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-                "0*****FF*",
+                "0FFFFF212",
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, true);
 
-        // Disjoint points do not match within pattern
+        // Disjoint points — exact DE-9IM string matches
         let result = tester
-            .invoke_scalar_scalar_scalar("POINT (0 0)", "POINT (1 1)", "0*****FF*")
+            .invoke_scalar_scalar_scalar("POINT (0 0)", "POINT (1 1)", "FF0FFF0F2")
             .unwrap();
-        tester.assert_scalar_result_equals(result, false);
+        tester.assert_scalar_result_equals(result, true);
 
         // NULL inputs should return NULL
         let result = tester
@@ -239,7 +239,7 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
-        let patterns: ArrayRef = arrow_array!(Utf8, [Some("0*****FF*"), Some("FF0FFF0F2"), None]);
+        let patterns: ArrayRef = arrow_array!(Utf8, [Some("0FFFFF212"), Some("FF0FFF0F2"), None]);
 
         let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(true), None]);
         assert_array_equal(
