@@ -198,7 +198,6 @@ impl EvaluatedBatchSpillReader {
     }
 
     /// Read the next EvaluatedBatch from the spill file
-    #[allow(unused)]
     pub fn next_batch(&mut self) -> Option<Result<EvaluatedBatch>> {
         self.next_raw_batch()
             .map(|record_batch| record_batch.and_then(spilled_batch_to_evaluated_batch))

@@ -22,7 +22,6 @@ use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::Result;
-use geo_types::Rect;
 use parking_lot::Mutex;
 use sedona_common::ExecutionMode;
 use sedona_expr::statistics::GeoStatistics;
