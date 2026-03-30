@@ -17,20 +17,18 @@
 
 use std::sync::Arc;
 
-use arrow_array::ArrayRef;
 use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_expr::JoinType;
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
-use sedona_schema::datatypes::SedonaType;
 
 use crate::{
     index::{
         spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         DefaultSpatialIndexBuilder,
     },
-    operand_evaluator::{create_operand_evaluator, EvaluatedGeometryArray, OperandEvaluator},
+    operand_evaluator::{DefaultGeometryArrayFactory, EvaluatedGeometryArrayFactory},
     SpatialPredicate,
 };
 
@@ -63,25 +61,7 @@ pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
         options: &SpatialJoinOptions,
     ) -> usize;
 
-    /// Instantiate an [OperandEvaluator] with the correct SpatialJoinProvider
-    ///
-    /// This is needed because the OperandEvaluator is one of the places that
-    /// EvaluatedGeometryArrays are constructed.
-    fn operand_evaluator(
-        &self,
-        spatial_predicate: &SpatialPredicate,
-        options: &SpatialJoinOptions,
-    ) -> Arc<dyn OperandEvaluator>;
-
-    /// Create a new [EvaluatedGeometryArray]
-    ///
-    /// Use [EvaluatedGeometryArray::try_new_with_rects] for custom computation of
-    /// bounding rectangles for specific items.
-    fn try_new_evaluated_array(
-        &self,
-        geometry_array: ArrayRef,
-        sedona_type: &SedonaType,
-    ) -> Result<EvaluatedGeometryArray>;
+    fn evaluated_array_factory(&self) -> Arc<dyn EvaluatedGeometryArrayFactory>;
 }
 
 /// Default implementation of the [SpatialJoinProvider]
@@ -109,14 +89,6 @@ impl SpatialJoinProvider for DefaultSpatialJoinProvider {
         Ok(Box::new(builder))
     }
 
-    fn try_new_evaluated_array(
-        &self,
-        geometry_array: ArrayRef,
-        sedona_type: &SedonaType,
-    ) -> Result<EvaluatedGeometryArray> {
-        EvaluatedGeometryArray::try_new(geometry_array, sedona_type)
-    }
-
     fn estimate_extra_memory_usage(
         &self,
         geo_stats: &GeoStatistics,
@@ -130,15 +102,7 @@ impl SpatialJoinProvider for DefaultSpatialJoinProvider {
         )
     }
 
-    fn operand_evaluator(
-        &self,
-        spatial_predicate: &SpatialPredicate,
-        options: &SpatialJoinOptions,
-    ) -> Arc<dyn OperandEvaluator> {
-        create_operand_evaluator(
-            spatial_predicate,
-            Arc::new(DefaultSpatialJoinProvider),
-            options.clone(),
-        )
+    fn evaluated_array_factory(&self) -> Arc<dyn EvaluatedGeometryArrayFactory> {
+        Arc::new(DefaultGeometryArrayFactory)
     }
 }

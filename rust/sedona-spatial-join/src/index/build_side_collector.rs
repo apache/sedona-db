@@ -42,6 +42,7 @@ use crate::{
         EvaluatedBatch,
     },
     join_provider::SpatialJoinProvider,
+    operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
@@ -324,9 +325,10 @@ impl BuildSideBatchesCollector {
             .enumerate()
         {
             let collector = self.clone();
-            let evaluator = self
-                .join_provider
-                .operand_evaluator(&self.spatial_predicate, &self.spatial_join_options);
+            let evaluator = create_operand_evaluator(
+                &self.spatial_predicate,
+                self.join_provider.evaluated_array_factory(),
+            );
             let bbox_sampler = BoundingBoxSampler::try_new(
                 self.spatial_join_options.min_index_side_bbox_samples,
                 self.spatial_join_options.max_index_side_bbox_samples,
@@ -375,9 +377,10 @@ impl BuildSideBatchesCollector {
             .zip(reservations)
             .enumerate()
         {
-            let evaluator = self
-                .join_provider
-                .operand_evaluator(&self.spatial_predicate, &self.spatial_join_options);
+            let evaluator = create_operand_evaluator(
+                &self.spatial_predicate,
+                self.join_provider.evaluated_array_factory(),
+            );
             let bbox_sampler = BoundingBoxSampler::try_new(
                 self.spatial_join_options.min_index_side_bbox_samples,
                 self.spatial_join_options.max_index_side_bbox_samples,

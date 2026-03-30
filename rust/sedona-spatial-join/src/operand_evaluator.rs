@@ -31,14 +31,44 @@ use sedona_geo_generic_alg::BoundingRect;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
-use sedona_common::option::SpatialJoinOptions;
 use sedona_common::sedona_internal_err;
 
 use crate::{
-    join_provider::SpatialJoinProvider,
     spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
     utils::arrow_utils::get_array_memory_size,
 };
+
+/// Factory for [EvaluatedGeometryArray] instances given an evaluated geometry column
+///
+/// Allows join providers to customize the eagerly evaluated representation of geometry.
+/// This is currently limited to a concrete internal representation but may expand to
+/// support non-Cartesian bounding or non-WKB backed geometry arrays. This also may
+/// expand to support more compact or efficient serialization/deserialization of the
+/// evaluated array when spilling.
+pub(crate) trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
+    /// Create a new [EvaluatedGeometryArray]
+    fn try_new_evaluated_array(
+        &self,
+        geometry_array: ArrayRef,
+        sedona_type: &SedonaType,
+    ) -> Result<EvaluatedGeometryArray>;
+}
+
+/// Default EvaluatedGeometryArray factory
+///
+/// This factory constructs an array
+#[derive(Debug)]
+pub(crate) struct DefaultGeometryArrayFactory;
+
+impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
+    fn try_new_evaluated_array(
+        &self,
+        geometry_array: ArrayRef,
+        sedona_type: &SedonaType,
+    ) -> Result<EvaluatedGeometryArray> {
+        EvaluatedGeometryArray::try_new(geometry_array, sedona_type)
+    }
+}
 
 /// Operand evaluator is for evaluating the operands of a spatial predicate. It can be a distance
 /// operand evaluator or a relation operand evaluator.
@@ -59,23 +89,21 @@ pub(crate) trait OperandEvaluator: fmt::Debug + Send + Sync {
 /// Create a spatial predicate evaluator for the spatial predicate.
 pub(crate) fn create_operand_evaluator(
     predicate: &SpatialPredicate,
-    join_provider: Arc<dyn SpatialJoinProvider>,
-    options: SpatialJoinOptions,
+    evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
 ) -> Arc<dyn OperandEvaluator> {
     match predicate {
         SpatialPredicate::Distance(predicate) => Arc::new(DistanceOperandEvaluator::new(
             predicate.clone(),
-            join_provider,
-            options,
+            evaluated_array_factory,
         )),
         SpatialPredicate::Relation(predicate) => Arc::new(RelationOperandEvaluator::new(
             predicate.clone(),
-            join_provider,
-            options,
+            evaluated_array_factory,
         )),
-        SpatialPredicate::KNearestNeighbors(predicate) => {
-            Arc::new(KNNOperandEvaluator::new(predicate.clone(), join_provider))
-        }
+        SpatialPredicate::KNearestNeighbors(predicate) => Arc::new(KNNOperandEvaluator::new(
+            predicate.clone(),
+            evaluated_array_factory,
+        )),
     }
 }
 
@@ -352,20 +380,17 @@ impl EvaluatedGeometryArray {
 #[derive(Debug)]
 struct RelationOperandEvaluator {
     inner: RelationPredicate,
-    join_provider: Arc<dyn SpatialJoinProvider>,
-    _options: SpatialJoinOptions,
+    evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
 }
 
 impl RelationOperandEvaluator {
     pub fn new(
         inner: RelationPredicate,
-        join_provider: Arc<dyn SpatialJoinProvider>,
-        options: SpatialJoinOptions,
+        evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
     ) -> Self {
         Self {
             inner,
-            join_provider,
-            _options: options,
+            evaluated_array_factory,
         }
     }
 }
@@ -374,20 +399,17 @@ impl RelationOperandEvaluator {
 #[derive(Debug)]
 struct DistanceOperandEvaluator {
     inner: DistancePredicate,
-    join_provider: Arc<dyn SpatialJoinProvider>,
-    _options: SpatialJoinOptions,
+    evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
 }
 
 impl DistanceOperandEvaluator {
     pub fn new(
         inner: DistancePredicate,
-        join_provider: Arc<dyn SpatialJoinProvider>,
-        options: SpatialJoinOptions,
+        evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
     ) -> Self {
         Self {
             inner,
-            join_provider,
-            _options: options,
+            evaluated_array_factory,
         }
     }
 }
@@ -395,14 +417,14 @@ impl DistanceOperandEvaluator {
 fn evaluate_with_rects(
     batch: &RecordBatch,
     geom_expr: &Arc<dyn PhysicalExpr>,
-    join_provider: &dyn SpatialJoinProvider,
+    evaluated_array_factory: &dyn EvaluatedGeometryArrayFactory,
 ) -> Result<EvaluatedGeometryArray> {
     let geometry_columnar_value = geom_expr.evaluate(batch)?;
     let num_rows = batch.num_rows();
     let geometry_array = geometry_columnar_value.to_array(num_rows)?;
     let sedona_type =
         SedonaType::from_storage_field(geom_expr.return_field(&batch.schema())?.as_ref())?;
-    join_provider.try_new_evaluated_array(geometry_array, &sedona_type)
+    evaluated_array_factory.try_new_evaluated_array(geometry_array, &sedona_type)
 }
 
 impl DistanceOperandEvaluator {
@@ -412,7 +434,8 @@ impl DistanceOperandEvaluator {
         geom_expr: &Arc<dyn PhysicalExpr>,
         side: JoinSide,
     ) -> Result<EvaluatedGeometryArray> {
-        let mut result = evaluate_with_rects(batch, geom_expr, self.join_provider.as_ref())?;
+        let mut result =
+            evaluate_with_rects(batch, geom_expr, self.evaluated_array_factory.as_ref())?;
 
         let should_expand = match side {
             JoinSide::Left => self.inner.distance_side == JoinSide::Left,
@@ -526,12 +549,12 @@ impl OperandEvaluator for DistanceOperandEvaluator {
 impl OperandEvaluator for RelationOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.join_provider.as_ref())
+        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.join_provider.as_ref())
+        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
@@ -547,14 +570,17 @@ impl OperandEvaluator for RelationOperandEvaluator {
 #[derive(Debug)]
 struct KNNOperandEvaluator {
     inner: KNNPredicate,
-    join_provider: Arc<dyn SpatialJoinProvider>,
+    evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
 }
 
 impl KNNOperandEvaluator {
-    fn new(inner: KNNPredicate, join_provider: Arc<dyn SpatialJoinProvider>) -> Self {
+    fn new(
+        inner: KNNPredicate,
+        evaluated_array_factory: Arc<dyn EvaluatedGeometryArrayFactory>,
+    ) -> Self {
         Self {
             inner,
-            join_provider,
+            evaluated_array_factory,
         }
     }
 }
@@ -562,12 +588,12 @@ impl KNNOperandEvaluator {
 impl OperandEvaluator for KNNOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.join_provider.as_ref())
+        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.join_provider.as_ref())
+        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {

@@ -158,8 +158,7 @@ impl SpatialJoinStream {
             .cloned()
             .unwrap_or_default();
 
-        let evaluator =
-            create_operand_evaluator(on, join_provider, sedona_options.spatial_join.clone());
+        let evaluator = create_operand_evaluator(on, join_provider.evaluated_array_factory());
         let join_metrics = SpatialJoinProbeMetrics::new(probe_partition_id, metrics);
         let probe_stream = create_evaluated_probe_stream(
             probe_stream,
