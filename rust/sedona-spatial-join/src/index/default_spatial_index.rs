@@ -35,7 +35,6 @@ use geo_index::rtree::{
 };
 use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
 use geo_index::IndexableNum;
-use geo_types::Rect;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
@@ -301,37 +300,6 @@ impl SpatialIndex for DefaultSpatialIndex {
 
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch {
         &self.inner.indexed_batches[batch_idx].batch
-    }
-
-    /// This method implements [`SpatialIndex::query`], which is a two-phase spatial join:
-    /// 1. **Filter phase**: Uses the R-tree index with the probe geometry's bounding rectangle
-    ///    to quickly identify candidate geometries that might satisfy the spatial predicate
-    /// 2. **Refinement phase**: Evaluates the exact spatial predicate on candidates to determine
-    ///    actual matches
-    fn query(
-        &self,
-        probe_wkb: &Wkb,
-        probe_rect: &Rect<f32>,
-        distance: &Option<f64>,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics> {
-        let min = probe_rect.min();
-        let max = probe_rect.max();
-        let mut candidates = self.inner.rtree.search(min.x, min.y, max.x, max.y);
-        if candidates.is_empty() {
-            return Ok(QueryResultMetrics {
-                count: 0,
-                candidate_count: 0,
-            });
-        }
-
-        // Sort and dedup candidates to avoid duplicate results when we index one geometry
-        // using several boxes.
-        candidates.sort_unstable();
-        candidates.dedup();
-
-        // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
-        self.refine(probe_wkb, &candidates, distance, build_batch_positions)
     }
 
     /// This method implements [`SpatialIndex::query_knn`] by:

@@ -45,25 +45,6 @@ pub(crate) trait SpatialIndex {
     fn num_indexed_batches(&self) -> usize;
     /// Get the batch at the given index.
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
-    /// Query the spatial index with a probe geometry to find matching build-side geometries.
-    /// # Arguments
-    /// * `probe_wkb` - The probe geometry in WKB format
-    /// * `probe_rect` - The minimum bounding rectangle of the probe geometry
-    /// * `distance` - Optional distance parameter for distance-based spatial predicates
-    /// * `build_batch_positions` - Output vector that will be populated with (batch_idx, row_idx)
-    ///   pairs for each matching build-side geometry
-    ///
-    /// # Returns
-    /// * `JoinResultMetrics` containing the number of actual matches (`count`) and the number
-    ///   of candidates from the filter phase (`candidate_count`)
-    #[allow(unused)]
-    fn query(
-        &self,
-        probe_wkb: &Wkb,
-        probe_rect: &Rect<f32>,
-        distance: &Option<f64>,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-    ) -> Result<QueryResultMetrics>;
     /// Query the spatial index for k nearest neighbors of a given geometry.
     /// # Arguments
     ///
