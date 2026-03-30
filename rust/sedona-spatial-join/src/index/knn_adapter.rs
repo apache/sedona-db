@@ -111,7 +111,7 @@ impl<'a> GeometryAccessor for SedonaKnnAdapter<'a> {
         let (batch_idx, row_idx) = self.data_id_to_batch_pos[item_index];
         let indexed_batch = &self.indexed_batches[batch_idx as usize];
 
-        if let Some(wkb) = indexed_batch.wkb(row_idx as usize) {
+        if let Some(wkb) = indexed_batch.geom_array.wkb(row_idx as usize) {
             if let Ok(geom) = item_to_geometry(wkb) {
                 // Try to store in cache - if another thread got there first, we just use theirs
                 let _ = geometry_cache[item_index].set(geom);

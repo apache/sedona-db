@@ -197,7 +197,7 @@ impl DefaultSpatialIndex {
             let chunk = chunk.to_vec();
             let index_owned = self.clone();
             join_set.spawn(async move {
-                let Some(probe_wkb) = cloned_evaluated_batch.wkb(row_idx) else {
+                let Some(probe_wkb) = cloned_evaluated_batch.geom_array.wkb(row_idx) else {
                     return (
                         i,
                         sedona_internal_err!(
@@ -251,12 +251,12 @@ impl DefaultSpatialIndex {
             let pos = self.inner.data_id_to_batch_pos[*data_idx as usize];
             let (batch_idx, row_idx) = pos;
             let indexed_batch = &self.inner.indexed_batches[batch_idx as usize];
-            let build_wkb = indexed_batch.wkb(row_idx as usize);
+            let build_wkb = indexed_batch.geom_array.wkb(row_idx as usize);
             let Some(build_wkb) = build_wkb else {
                 continue;
             };
             let distance = self.inner.evaluator.resolve_distance(
-                indexed_batch.distance(),
+                indexed_batch.geom_array.distance(),
                 row_idx as usize,
                 distance,
             )?;
@@ -530,7 +530,7 @@ impl SpatialIndex for DefaultSpatialIndex {
         }
 
         let rects = evaluated_batch.geom_array.rects();
-        let dist = evaluated_batch.distance();
+        let dist = evaluated_batch.geom_array.distance();
         let mut total_candidates_count = 0;
         let mut total_count = 0;
         let mut current_row_idx = range.start;
@@ -547,7 +547,7 @@ impl SpatialIndex for DefaultSpatialIndex {
                 continue;
             }
 
-            let Some(probe_wkb) = evaluated_batch.wkb(row_idx) else {
+            let Some(probe_wkb) = evaluated_batch.geom_array.wkb(row_idx) else {
                 return sedona_internal_err!(
                     "Failed to get WKB for row {} in evaluated batch",
                     row_idx

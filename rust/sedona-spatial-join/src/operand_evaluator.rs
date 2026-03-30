@@ -329,6 +329,11 @@ impl EvaluatedGeometryArray {
         &self.wkbs
     }
 
+    /// Get a single WKB
+    pub fn wkb(&self, idx: usize) -> Option<&Wkb<'_>> {
+        self.wkbs[idx].as_ref()
+    }
+
     pub fn in_mem_size(&self) -> Result<usize> {
         let geom_array_size = get_array_memory_size(&self.geometry_array)?;
 

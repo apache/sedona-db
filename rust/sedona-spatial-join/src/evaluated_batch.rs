@@ -18,8 +18,6 @@
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use datafusion_common::Result;
-use datafusion_expr::ColumnarValue;
-use wkb::reader::Wkb;
 
 use crate::{
     operand_evaluator::EvaluatedGeometryArray, utils::arrow_utils::get_record_batch_memory_size,
@@ -53,15 +51,6 @@ impl EvaluatedBatch {
 
     pub fn num_rows(&self) -> usize {
         self.batch.num_rows()
-    }
-
-    pub fn wkb(&self, idx: usize) -> Option<&Wkb<'_>> {
-        let wkbs = self.geom_array.wkbs();
-        wkbs[idx].as_ref()
-    }
-
-    pub fn distance(&self) -> &Option<ColumnarValue> {
-        self.geom_array.distance()
     }
 }
 

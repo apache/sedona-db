@@ -477,7 +477,7 @@ impl StreamRepartitioner {
                     self.slots.num_regular_partitions()
                 );
             };
-            if let Some(wkb) = batch_ref.wkb(row_idx) {
+            if let Some(wkb) = batch_ref.geom_array.wkb(row_idx) {
                 self.geo_stats_accumulators[slot_idx].update_statistics(wkb)?;
             }
             self.slot_assignments[slot_idx].push((batch_idx, row_idx));
