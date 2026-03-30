@@ -104,14 +104,14 @@ impl DefaultSpatialIndexBuilder {
         let num_rects = self
             .indexed_batches
             .iter()
-            .map(|batch| batch.rects().iter().flatten().count())
+            .map(|batch| batch.geom_array.rects().iter().flatten().count())
             .sum::<usize>();
 
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
         let mut batch_pos_vec = vec![(-1, -1); num_rects];
 
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
-            let rects = batch.rects();
+            let rects = batch.geom_array.rects();
             for (idx, rect_opt) in rects.iter().enumerate() {
                 let Some(rect) = rect_opt else {
                     continue;

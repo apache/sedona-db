@@ -378,11 +378,9 @@ mod tests {
     fn create_test_evaluated_batch(start_id: i32) -> Result<EvaluatedBatch> {
         let batch = create_test_record_batch(start_id)?;
         let (geom_array, sedona_type) = create_test_geometry_array()?;
-        let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, &sedona_type)?;
-
-        // Add distance as a scalar value
-        geom_array.distance = Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(10.0))));
-
+        let geom_array = EvaluatedGeometryArray::try_new(geom_array, &sedona_type)?.with_distance(
+            Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(10.0)))),
+        );
         Ok(EvaluatedBatch { batch, geom_array })
     }
 
@@ -576,10 +574,10 @@ mod tests {
         assert!(name_array.is_null(2));
 
         // Verify geometry array
-        assert_eq!(batch.geom_array.rects.len(), 3);
+        assert_eq!(batch.geom_array.rects().len(), 3);
 
         // Verify distance
-        match &batch.geom_array.distance {
+        match &batch.geom_array.distance() {
             Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(val)))) => {
                 assert_eq!(*val, 10.0);
             }

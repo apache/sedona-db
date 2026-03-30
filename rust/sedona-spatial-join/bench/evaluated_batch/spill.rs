@@ -57,11 +57,11 @@ fn make_evaluated_batch(num_rows: usize, sedona_type: &SedonaType) -> EvaluatedB
     let wkt_values = vec![Some("POINT (0 0)"); num_rows];
     let geom_array = create_array_storage(&wkt_values, sedona_type);
 
-    let mut geom_array = EvaluatedGeometryArray::try_new(geom_array, sedona_type)
-        .expect("failed to build geometry array for benchmark");
-
-    // Use a scalar distance so the spilled dist column is constant.
-    geom_array.distance = Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(10.0))));
+    let geom_array = EvaluatedGeometryArray::try_new(geom_array, sedona_type)
+        .expect("failed to build geometry array for benchmark")
+        .with_distance(Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(
+            10.0,
+        )))));
 
     EvaluatedBatch { batch, geom_array }
 }

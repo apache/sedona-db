@@ -571,7 +571,7 @@ impl StreamRepartitioner {
             self.spill_registry[slot_idx] = Some(EvaluatedBatchSpillWriter::try_new(
                 Arc::clone(&self.runtime_env),
                 batch.schema(),
-                &batch.geom_array.sedona_type,
+                batch.geom_array.sedona_type(),
                 "streaming repartitioner",
                 self.spill_compression,
                 self.spill_metrics.clone(),
@@ -595,13 +595,13 @@ pub(crate) fn assign_rows(
     assignments: &mut Vec<SpatialPartition>,
 ) -> Result<()> {
     assignments.clear();
-    assignments.reserve(batch.rects().len());
+    assignments.reserve(batch.geom_array.rects().len());
 
     match partitioned_side {
         PartitionedSide::BuildSide => {
             let mut cnt = 0;
             let num_regular_partitions = partitioner.num_regular_partitions() as u32;
-            for rect_opt in batch.rects() {
+            for rect_opt in batch.geom_array.rects() {
                 let partition = match rect_opt {
                     Some(rect) => partitioner.partition_no_multi(&geo_rect_to_bbox(rect))?,
                     None => {
@@ -616,7 +616,7 @@ pub(crate) fn assign_rows(
             }
         }
         PartitionedSide::ProbeSide => {
-            for rect_opt in batch.rects() {
+            for rect_opt in batch.geom_array.rects() {
                 let partition = match rect_opt {
                     Some(rect) => partitioner.partition(&geo_rect_to_bbox(rect))?,
                     None => SpatialPartition::None,
@@ -1002,9 +1002,9 @@ mod tests {
 
         let result = interleave_evaluated_batch(&record_batches, &geom_arrays, &[])?;
         assert_eq!(result.batch.num_rows(), 0);
-        assert_eq!(result.geom_array.geometry_array.len(), 0);
-        assert!(result.geom_array.rects.is_empty());
-        assert!(result.geom_array.distance.is_none());
+        assert_eq!(result.geom_array.geometry_array().len(), 0);
+        assert!(result.geom_array.rects().is_empty());
+        assert!(result.geom_array.distance().is_none());
         Ok(())
     }
 
@@ -1043,7 +1043,7 @@ mod tests {
         let result = interleave_evaluated_batch(&record_batches, &geom_arrays, &assignments)?;
 
         // Check if the result geometry array is BinaryViewArray
-        let geom_array = result.geom_array.geometry_array;
+        let geom_array = result.geom_array.geometry_array();
         assert!(geom_array
             .as_any()
             .downcast_ref::<BinaryViewArray>()

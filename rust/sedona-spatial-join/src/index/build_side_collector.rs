@@ -408,7 +408,7 @@ impl BuildSideBatchesCollector {
         let build_side_batch = &in_mem_batches[0];
 
         let schema = build_side_batch.schema();
-        let sedona_type = &build_side_batch.geom_array.sedona_type;
+        let sedona_type = &build_side_batch.geom_array.sedona_type();
         let mut spill_writer = EvaluatedBatchSpillWriter::try_new(
             Arc::clone(&self.runtime_env),
             schema,

@@ -91,15 +91,14 @@ pub(crate) fn create_operand_evaluator(
 
 /// Result of evaluating a geometry batch.
 pub struct EvaluatedGeometryArray {
-    /// Type of geometry_array
-    pub sedona_type: SedonaType,
+    sedona_type: SedonaType,
     /// The array of geometries produced by evaluating the geometry expression.
-    pub geometry_array: ArrayRef,
+    geometry_array: ArrayRef,
     /// The rects of the geometries in the geometry array. The length of this array is equal to the number of geometries.
     /// The rects will be None for empty or null geometries.
-    pub rects: Vec<Option<Rect<f32>>>,
+    rects: Vec<Option<Rect<f32>>>,
     /// The distance value produced by evaluating the distance expression.
-    pub distance: Option<ColumnarValue>,
+    distance: Option<ColumnarValue>,
     /// WKBs of the geometries in `geometry_array`. The wkb values reference buffers inside the geometry array,
     /// but we'll only allow accessing Wkb<'a> where 'a is the lifetime of the GeometryBatchResult to make
     /// the interfaces safe. The buffers in `geometry_array` are allocated on the heap and won't be moved when
@@ -176,6 +175,12 @@ impl EvaluatedGeometryArray {
             distance: None,
             wkbs,
         })
+    }
+
+    /// Set evaluated distance
+    pub fn with_distance(mut self, distance: Option<ColumnarValue>) -> Self {
+        self.distance = distance;
+        self
     }
 
     /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
@@ -293,6 +298,26 @@ impl EvaluatedGeometryArray {
         let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.as_ref()).collect();
         let array = arrow_interleave(&array_refs, indices)?;
         Ok(Some(ColumnarValue::Array(array)))
+    }
+
+    /// Type of geometry_array
+    pub fn sedona_type(&self) -> &SedonaType {
+        &self.sedona_type
+    }
+
+    /// Evaluated array of geometries
+    pub fn geometry_array(&self) -> &ArrayRef {
+        &self.geometry_array
+    }
+
+    /// Bounding rectangles of each element in geometry_array
+    pub fn rects(&self) -> &[Option<Rect<f32>>] {
+        &self.rects
+    }
+
+    /// Evaluated array of distances
+    pub fn distance(&self) -> &Option<ColumnarValue> {
+        &self.distance
     }
 
     /// Get the WKBs of the geometries in the geometry array.

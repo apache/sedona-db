@@ -521,7 +521,7 @@ mod tests {
             return Ok(SpilledPartition::empty());
         }
         let schema = batches[0].schema();
-        let sedona_type = batches[0].geom_array.sedona_type.clone();
+        let sedona_type = batches[0].geom_array.sedona_type().clone();
         let mut writer = EvaluatedBatchSpillWriter::try_new(
             runtime_env,
             schema,

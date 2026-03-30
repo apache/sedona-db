@@ -529,7 +529,7 @@ impl SpatialIndex for DefaultSpatialIndex {
             ));
         }
 
-        let rects = evaluated_batch.rects();
+        let rects = evaluated_batch.geom_array.rects();
         let dist = evaluated_batch.distance();
         let mut total_candidates_count = 0;
         let mut total_count = 0;
