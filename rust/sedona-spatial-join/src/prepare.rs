@@ -220,21 +220,12 @@ impl SpatialJoinComponentsBuilder {
             reservations.push(reservation);
             collect_metrics_vec.push(CollectBuildSideMetrics::new(k, &self.metrics));
         }
-        let join_metrics = SpatialJoinBuildMetrics::new(0, &self.metrics);
-        let builder = self.join_provider.try_new_spatial_index_builder(
-            self.build_schema.clone(),
-            self.spatial_predicate.clone(),
-            self.sedona_options.spatial_join.clone(),
-            self.join_type,
-            self.probe_threads_count,
-            join_metrics.clone(),
-        )?;
         let collector = BuildSideBatchesCollector::new(
             self.spatial_predicate.clone(),
             self.sedona_options.spatial_join.clone(),
             Arc::clone(&runtime_env),
             spill_compression,
-            Arc::from(builder),
+            self.join_provider.clone(),
         );
         let build_partitions = collector
             .collect_all(

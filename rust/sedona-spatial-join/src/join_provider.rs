@@ -15,11 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::Arc;
+
 use arrow_array::ArrayRef;
 use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_expr::JoinType;
 use sedona_common::SpatialJoinOptions;
+use sedona_expr::statistics::GeoStatistics;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -27,7 +30,7 @@ use crate::{
         spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         DefaultSpatialIndexBuilder,
     },
-    operand_evaluator::EvaluatedGeometryArray,
+    operand_evaluator::{create_operand_evaluator, EvaluatedGeometryArray, OperandEvaluator},
     SpatialPredicate,
 };
 
@@ -48,6 +51,27 @@ pub(crate) trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
     ) -> Result<Box<dyn SpatialIndexBuilder>>;
+
+    /// Estimate the amount of memory required by the index and refiner evaluating spatial predicates
+    ///
+    /// The estimated memory usage should not include the memory required for holding the build side
+    /// batches.
+    fn estimate_extra_memory_usage(
+        &self,
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize;
+
+    /// Instantiate an [OperandEvaluator] with the correct SpatialJoinProvider
+    ///
+    /// This is needed because the OperandEvaluator is one of the places that
+    /// EvaluatedGeometryArrays are constructed.
+    fn operand_evaluator(
+        &self,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> Arc<dyn OperandEvaluator>;
 
     /// Create a new [EvaluatedGeometryArray]
     ///
@@ -91,5 +115,30 @@ impl SpatialJoinProvider for DefaultSpatialJoinProvider {
         sedona_type: &SedonaType,
     ) -> Result<EvaluatedGeometryArray> {
         EvaluatedGeometryArray::try_new(geometry_array, sedona_type)
+    }
+
+    fn estimate_extra_memory_usage(
+        &self,
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize {
+        DefaultSpatialIndexBuilder::estimate_extra_memory_usage(
+            geo_stats,
+            spatial_predicate,
+            options,
+        )
+    }
+
+    fn operand_evaluator(
+        &self,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> Arc<dyn OperandEvaluator> {
+        create_operand_evaluator(
+            spatial_predicate,
+            Arc::new(DefaultSpatialJoinProvider),
+            options.clone(),
+        )
     }
 }

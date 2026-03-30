@@ -23,12 +23,9 @@ use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-use crate::join_provider::DefaultSpatialJoinProvider;
-use crate::operand_evaluator::OperandEvaluator;
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
-    operand_evaluator::create_operand_evaluator,
     refine::create_refiner,
     spatial_predicate::SpatialPredicate,
     utils::join_utils::need_produce_result_in_final,
@@ -95,6 +92,36 @@ impl DefaultSpatialIndexBuilder {
             stats: GeoStatistics::empty(),
             memory_used: 0,
         })
+    }
+
+    pub(crate) fn estimate_extra_memory_usage(
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
+    ) -> usize {
+        // Estimate the amount of memory needed by the refiner
+        let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
+        let refiner = create_refiner(
+            options.spatial_library,
+            spatial_predicate,
+            options.clone(),
+            num_geoms,
+            geo_stats.clone(),
+        );
+        let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
+
+        let knn_components_mem_usage =
+            if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
+                KnnComponents::estimate_max_memory_usage(geo_stats)
+            } else {
+                0
+            };
+
+        // Estimate the amount of memory needed for the R-tree
+        let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
+
+        // The final estimation is the sum of all above
+        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
     }
 
     /// Build the spatial R-tree index from collected geometry batches.
@@ -203,45 +230,6 @@ impl DefaultSpatialIndexBuilder {
 
 #[async_trait]
 impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
-    fn estimate_extra_memory_usage(
-        &self,
-        geo_stats: &GeoStatistics,
-        spatial_predicate: &SpatialPredicate,
-        options: &SpatialJoinOptions,
-    ) -> usize {
-        // Estimate the amount of memory needed by the refiner
-        let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
-        let refiner = create_refiner(
-            options.spatial_library,
-            spatial_predicate,
-            options.clone(),
-            num_geoms,
-            geo_stats.clone(),
-        );
-        let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
-
-        let knn_components_mem_usage =
-            if matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_)) {
-                KnnComponents::estimate_max_memory_usage(geo_stats)
-            } else {
-                0
-            };
-
-        // Estimate the amount of memory needed for the R-tree
-        let rtree_mem_usage = num_geoms * RTREE_MEMORY_ESTIMATE_PER_RECT;
-
-        // The final estimation is the sum of all above
-        refiner_mem_usage + knn_components_mem_usage + rtree_mem_usage
-    }
-
-    fn operand_evaluator(&self) -> Arc<dyn OperandEvaluator> {
-        create_operand_evaluator(
-            &self.spatial_predicate,
-            Arc::new(DefaultSpatialJoinProvider {}),
-            self.options.clone(),
-        )
-    }
-
     fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
             return Ok(Arc::new(DefaultSpatialIndex::empty(
@@ -291,9 +279,9 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.memory_used
         );
         Ok(Arc::new(DefaultSpatialIndex::new(
+            &self.spatial_predicate,
             self.schema.clone(),
             self.options.clone(),
-            self.operand_evaluator(),
             refiner,
             rtree,
             self.indexed_batches

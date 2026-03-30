@@ -143,9 +143,9 @@ impl DefaultSpatialIndex {
     }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        spatial_predicate: &SpatialPredicate,
         schema: SchemaRef,
         options: SpatialJoinOptions,
-        evaluator: Arc<dyn OperandEvaluator>,
         refiner: Arc<dyn IndexQueryResultRefiner>,
         rtree: RTree<f32>,
         indexed_batches: Vec<EvaluatedBatch>,
@@ -155,6 +155,11 @@ impl DefaultSpatialIndex {
         probe_threads_counter: AtomicUsize,
         knn_components: Option<KnnComponents>,
     ) -> Self {
+        let evaluator = create_operand_evaluator(
+            spatial_predicate,
+            Arc::new(DefaultSpatialJoinProvider),
+            options.clone(),
+        );
         Self {
             inner: Arc::new(DefaultSpatialIndexInner {
                 schema,
