@@ -279,7 +279,6 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.memory_used
         );
         Ok(Arc::new(DefaultSpatialIndex::new(
-            &self.spatial_predicate,
             self.schema.clone(),
             self.options.clone(),
             refiner,

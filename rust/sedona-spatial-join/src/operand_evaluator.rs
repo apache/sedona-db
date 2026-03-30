@@ -49,16 +49,6 @@ pub(crate) trait OperandEvaluator: fmt::Debug + Send + Sync {
     /// Evaluate the spatial predicate operand on the probe side.
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray>;
 
-    /// Resolve the distance operand for a given row.
-    fn resolve_distance(
-        &self,
-        _build_distance: &Option<ColumnarValue>,
-        _build_row_idx: usize,
-        _probe_distance: &Option<f64>,
-    ) -> Result<Option<f64>> {
-        Ok(None)
-    }
-
     /// Get the expression for the build side.
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>>;
 
@@ -320,6 +310,14 @@ impl EvaluatedGeometryArray {
         &self.distance
     }
 
+    /// Get the distance value for a specific row, if distances are present.
+    pub fn distance_at(&self, row_idx: usize) -> Result<Option<f64>> {
+        match &self.distance {
+            Some(cv) => distance_value_at(cv, row_idx),
+            None => Ok(None),
+        }
+    }
+
     /// Get the WKBs of the geometries in the geometry array.
     pub fn wkbs(&self) -> &Vec<Option<Wkb<'_>>> {
         // The returned WKBs are guaranteed to be valid for the lifetime of the GeometryBatchResult,
@@ -523,23 +521,6 @@ impl OperandEvaluator for DistanceOperandEvaluator {
     fn probe_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
         Ok(Arc::clone(&self.inner.right))
     }
-
-    fn resolve_distance(
-        &self,
-        build_distance: &Option<ColumnarValue>,
-        build_row_idx: usize,
-        probe_distance: &Option<f64>,
-    ) -> Result<Option<f64>> {
-        match self.inner.distance_side {
-            JoinSide::Left => {
-                let Some(distance) = build_distance else {
-                    return Ok(None);
-                };
-                distance_value_at(distance, build_row_idx)
-            }
-            JoinSide::Right | JoinSide::None => Ok(*probe_distance),
-        }
-    }
 }
 
 impl OperandEvaluator for RelationOperandEvaluator {
@@ -597,17 +578,6 @@ impl OperandEvaluator for KNNOperandEvaluator {
     fn probe_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
         // For KNN, the left side (queries) is the probe side
         Ok(Arc::clone(&self.inner.left))
-    }
-
-    /// Resolve the k value for KNN operation
-    fn resolve_distance(
-        &self,
-        _build_distance: &Option<ColumnarValue>,
-        _build_row_idx: usize,
-        _probe_distance: &Option<f64>,
-    ) -> Result<Option<f64>> {
-        // NOTE: We do not support distance-based refinement for KNN predicates in the refiner phase.
-        Ok(None)
     }
 }
 

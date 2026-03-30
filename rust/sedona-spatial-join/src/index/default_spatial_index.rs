@@ -40,6 +40,7 @@ use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use wkb::reader::Wkb;
 
+use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::index::SpatialIndex;
 use crate::{
     evaluated_batch::EvaluatedBatch,
@@ -47,11 +48,10 @@ use crate::{
         knn_adapter::{KnnComponents, SedonaKnnAdapter},
         IndexQueryResult, QueryResultMetrics,
     },
-    operand_evaluator::{create_operand_evaluator, distance_value_at, OperandEvaluator},
+    operand_evaluator::distance_value_at,
     refine::{create_refiner, IndexQueryResultRefiner},
     spatial_predicate::SpatialPredicate,
 };
-use crate::{index::spatial_index::DISTANCE_TOLERANCE, join_provider::DefaultSpatialJoinProvider};
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
 use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
@@ -59,9 +59,6 @@ use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMo
 struct DefaultSpatialIndexInner {
     pub(crate) schema: SchemaRef,
     pub(crate) options: SpatialJoinOptions,
-
-    /// The spatial predicate evaluator for the spatial predicate.
-    pub(crate) evaluator: Arc<dyn OperandEvaluator>,
 
     /// The refiner for refining the index query results.
     pub(crate) refiner: Arc<dyn IndexQueryResultRefiner>,
@@ -110,11 +107,6 @@ impl DefaultSpatialIndex {
         options: SpatialJoinOptions,
         probe_threads_counter: AtomicUsize,
     ) -> Self {
-        let evaluator = create_operand_evaluator(
-            &spatial_predicate,
-            Arc::new(DefaultSpatialJoinProvider),
-            options.clone(),
-        );
         let refiner = create_refiner(
             options.spatial_library,
             &spatial_predicate,
@@ -129,7 +121,6 @@ impl DefaultSpatialIndex {
             inner: Arc::new(DefaultSpatialIndexInner {
                 schema,
                 options,
-                evaluator,
                 refiner,
                 rtree,
                 data_id_to_batch_pos: Vec::new(),
@@ -143,7 +134,6 @@ impl DefaultSpatialIndex {
     }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        spatial_predicate: &SpatialPredicate,
         schema: SchemaRef,
         options: SpatialJoinOptions,
         refiner: Arc<dyn IndexQueryResultRefiner>,
@@ -155,16 +145,10 @@ impl DefaultSpatialIndex {
         probe_threads_counter: AtomicUsize,
         knn_components: Option<KnnComponents>,
     ) -> Self {
-        let evaluator = create_operand_evaluator(
-            spatial_predicate,
-            Arc::new(DefaultSpatialJoinProvider),
-            options.clone(),
-        );
         Self {
             inner: Arc::new(DefaultSpatialIndexInner {
                 schema,
                 options,
-                evaluator,
                 refiner,
                 rtree,
                 data_id_to_batch_pos,
@@ -260,11 +244,12 @@ impl DefaultSpatialIndex {
             let Some(build_wkb) = build_wkb else {
                 continue;
             };
-            let distance = self.inner.evaluator.resolve_distance(
-                indexed_batch.geom_array.distance(),
-                row_idx as usize,
-                distance,
-            )?;
+            let build_distance = indexed_batch.geom_array.distance_at(row_idx as usize)?;
+            debug_assert!(
+                build_distance.is_none() || distance.is_none(),
+                "Distance should not be present on both build and probe sides"
+            );
+            let distance = build_distance.map(Some).unwrap_or(*distance);
             let geom_idx = self.inner.geom_idx_vec[*data_idx as usize];
             index_query_results.push(IndexQueryResult {
                 wkb: build_wkb,
