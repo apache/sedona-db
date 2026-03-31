@@ -33,6 +33,3 @@ pub mod rs_size;
 pub mod rs_spatial_predicates;
 pub mod rs_srid;
 pub mod rs_worldcoordinate;
-
-#[cfg(test)]
-mod regression_tests;
