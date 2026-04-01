@@ -221,6 +221,77 @@ pub fn raster_from_single_band(
     builder.finish().expect("finish")
 }
 
+/// Builds a single raster with 3 bands of different types for testing multi-band operations.
+/// Band 1: UInt8 (nodata=255), Band 2: UInt16 (nodata=0), Band 3: Float32 (no nodata).
+/// Each band is 2x2 pixels.
+pub fn generate_multi_band_raster() -> StructArray {
+    let mut builder = RasterBuilder::new(1);
+    let crs = lnglat().unwrap().to_crs_string();
+    let metadata = RasterMetadata {
+        width: 2,
+        height: 2,
+        upperleft_x: 10.0,
+        upperleft_y: 20.0,
+        scale_x: 0.5,
+        scale_y: -0.5,
+        skew_x: 0.0,
+        skew_y: 0.0,
+    };
+    builder.start_raster(&metadata, Some(&crs)).unwrap();
+
+    // Band 1: UInt8, nodata=255
+    builder
+        .start_band(BandMetadata {
+            datatype: BandDataType::UInt8,
+            nodata_value: Some(vec![255u8]),
+            storage_type: StorageType::InDb,
+            outdb_url: None,
+            outdb_band_id: None,
+        })
+        .unwrap();
+    builder
+        .band_data_writer()
+        .append_value(&[1u8, 2u8, 3u8, 4u8]);
+    builder.finish_band().unwrap();
+
+    // Band 2: UInt16, nodata=0
+    builder
+        .start_band(BandMetadata {
+            datatype: BandDataType::UInt16,
+            nodata_value: Some(vec![0u8, 0u8]),
+            storage_type: StorageType::InDb,
+            outdb_url: None,
+            outdb_band_id: None,
+        })
+        .unwrap();
+    let band2_data: Vec<u8> = [100u16, 200u16, 300u16, 400u16]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    builder.band_data_writer().append_value(&band2_data);
+    builder.finish_band().unwrap();
+
+    // Band 3: Float32, no nodata
+    builder
+        .start_band(BandMetadata {
+            datatype: BandDataType::Float32,
+            nodata_value: None,
+            storage_type: StorageType::InDb,
+            outdb_url: None,
+            outdb_band_id: None,
+        })
+        .unwrap();
+    let band3_data: Vec<u8> = [1.5f32, 2.5f32, 3.5f32, 4.5f32]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    builder.band_data_writer().append_value(&band3_data);
+    builder.finish_band().unwrap();
+
+    builder.finish_raster().unwrap();
+    builder.finish().unwrap()
+}
+
 /// Determine if this tile contains a corner of the overall grid and return its position
 /// Returns Some(position) if this tile contains a corner, None otherwise
 fn get_corner_position(
@@ -524,6 +595,39 @@ mod tests {
         let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
         let raster2 = RasterStructArray::new(&raster_array2).get(0).unwrap();
         assert_raster_equal(&raster1, &raster2);
+    }
+
+    #[test]
+    fn test_generate_multi_band_raster() {
+        let struct_array = generate_multi_band_raster();
+        let raster_array = RasterStructArray::new(&struct_array);
+        assert_eq!(raster_array.len(), 1);
+
+        let raster = raster_array.get(0).unwrap();
+        let metadata = raster.metadata();
+        assert_eq!(metadata.width(), 2);
+        assert_eq!(metadata.height(), 2);
+        assert_eq!(metadata.upper_left_x(), 10.0);
+        assert_eq!(metadata.upper_left_y(), 20.0);
+
+        let bands = raster.bands();
+        assert_eq!(bands.len(), 3);
+
+        // Band 1: UInt8, nodata=255
+        let b1 = bands.band(1).unwrap();
+        assert_eq!(b1.metadata().data_type().unwrap(), BandDataType::UInt8);
+        assert_eq!(b1.metadata().nodata_value(), Some(&[255u8][..]));
+        assert_eq!(b1.data(), &[1u8, 2, 3, 4]);
+
+        // Band 2: UInt16, nodata=0
+        let b2 = bands.band(2).unwrap();
+        assert_eq!(b2.metadata().data_type().unwrap(), BandDataType::UInt16);
+        assert_eq!(b2.metadata().nodata_value(), Some(&[0u8, 0][..]));
+
+        // Band 3: Float32, no nodata
+        let b3 = bands.band(3).unwrap();
+        assert_eq!(b3.metadata().data_type().unwrap(), BandDataType::Float32);
+        assert_eq!(b3.metadata().nodata_value(), None);
     }
 
     #[test]

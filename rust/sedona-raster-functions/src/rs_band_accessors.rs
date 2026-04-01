@@ -432,6 +432,64 @@ mod tests {
     }
 
     #[test]
+    fn udf_bandpixeltype_multi_band() {
+        let udf: ScalarUDF = rs_bandpixeltype_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
+
+        let rasters = sedona_testing::rasters::generate_multi_band_raster();
+
+        // Band 1: UInt8
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters.clone()), 1_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(arr.value(0), "UNSIGNED_8BITS");
+
+        // Band 2: UInt16
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters.clone()), 2_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(arr.value(0), "UNSIGNED_16BITS");
+
+        // Band 3: Float32
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters), 3_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+        assert_eq!(arr.value(0), "REAL_32BITS");
+    }
+
+    #[test]
+    fn udf_bandnodatavalue_multi_band() {
+        let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
+
+        let rasters = sedona_testing::rasters::generate_multi_band_raster();
+
+        // Band 1: nodata=255 (UInt8)
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters.clone()), 1_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(arr.value(0), 255.0);
+
+        // Band 2: nodata=0 (UInt16)
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters.clone()), 2_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(arr.value(0), 0.0);
+
+        // Band 3: no nodata (Float32)
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters), 3_i32)
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!(arr.is_null(0));
+    }
+
+    #[test]
     fn udf_bandnodatavalue_non_existing_band() {
         let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);

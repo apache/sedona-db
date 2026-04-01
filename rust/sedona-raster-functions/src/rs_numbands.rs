@@ -108,4 +108,15 @@ mod tests {
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::UInt32(None));
     }
+
+    #[test]
+    fn udf_numbands_multi_band() {
+        let udf: ScalarUDF = rs_numbands_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+
+        let rasters = sedona_testing::rasters::generate_multi_band_raster();
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt32Array::from(vec![Some(3)]));
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        assert_array_equal(&result, &expected);
+    }
 }
