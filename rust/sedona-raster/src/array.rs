@@ -71,19 +71,8 @@ impl<'a> BandRef for BandRefImpl<'a> {
 
     fn data_type(&self) -> BandDataType {
         let value = self.datatype_array.value(self.band_row);
-        match value {
-            1 => BandDataType::UInt8,
-            2 => BandDataType::UInt16,
-            3 => BandDataType::Int16,
-            4 => BandDataType::UInt32,
-            5 => BandDataType::Int32,
-            6 => BandDataType::Float32,
-            7 => BandDataType::Float64,
-            8 => BandDataType::UInt64,
-            9 => BandDataType::Int64,
-            10 => BandDataType::Int8,
-            _ => panic!("Unknown band data type: {value}"),
-        }
+        BandDataType::try_from_u32(value)
+            .unwrap_or_else(|| panic!("Unknown band data type: {value}"))
     }
 
     fn nodata(&self) -> Option<&[u8]> {

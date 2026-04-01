@@ -120,6 +120,23 @@ impl BandDataType {
         }
     }
 
+    /// Try to convert from a u32 discriminant value.
+    pub fn try_from_u32(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(BandDataType::UInt8),
+            2 => Some(BandDataType::UInt16),
+            3 => Some(BandDataType::Int16),
+            4 => Some(BandDataType::UInt32),
+            5 => Some(BandDataType::Int32),
+            6 => Some(BandDataType::Float32),
+            7 => Some(BandDataType::Float64),
+            8 => Some(BandDataType::UInt64),
+            9 => Some(BandDataType::Int64),
+            10 => Some(BandDataType::Int8),
+            _ => None,
+        }
+    }
+
     /// Java/Sedona-compatible pixel type name (e.g. `"UNSIGNED_8BITS"`).
     pub fn pixel_type_name(&self) -> &'static str {
         match self {
@@ -232,13 +249,22 @@ mod tests {
         if let DataType::Struct(band_fields) = band_type {
             assert_eq!(band_fields.len(), 9, "Expected exactly 9 band fields");
             assert_eq!(band_fields[band_indices::NAME].name(), column::NAME);
-            assert_eq!(band_fields[band_indices::DIM_NAMES].name(), column::DIM_NAMES);
+            assert_eq!(
+                band_fields[band_indices::DIM_NAMES].name(),
+                column::DIM_NAMES
+            );
             assert_eq!(band_fields[band_indices::SHAPE].name(), column::SHAPE);
-            assert_eq!(band_fields[band_indices::DATA_TYPE].name(), column::DATATYPE);
+            assert_eq!(
+                band_fields[band_indices::DATA_TYPE].name(),
+                column::DATATYPE
+            );
             assert_eq!(band_fields[band_indices::NODATA].name(), column::NODATA);
             assert_eq!(band_fields[band_indices::STRIDES].name(), column::STRIDES);
             assert_eq!(band_fields[band_indices::OFFSET].name(), column::OFFSET);
-            assert_eq!(band_fields[band_indices::OUTDB_URI].name(), column::OUTDB_URI);
+            assert_eq!(
+                band_fields[band_indices::OUTDB_URI].name(),
+                column::OUTDB_URI
+            );
             assert_eq!(band_fields[band_indices::DATA].name(), column::DATA);
         } else {
             panic!("Expected Struct type for band");
