@@ -18,7 +18,7 @@
 use arrow_array::{
     builder::{
         BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder, Int64Builder,
-        ListBuilder, StringBuilder, StringViewBuilder, UInt32Builder, UInt64Builder,
+        StringBuilder, StringViewBuilder, UInt32Builder, UInt64Builder,
     },
     Array, ArrayRef, ListArray, StructArray,
 };
@@ -311,8 +311,12 @@ impl RasterBuilder {
                 "Expected list type for transform".to_string(),
             ));
         };
-        let transform_list =
-            ListArray::new(transform_field, transform_offsets, Arc::new(transform_values), None);
+        let transform_list = ListArray::new(
+            transform_field,
+            transform_offsets,
+            Arc::new(transform_values),
+            None,
+        );
 
         // Build band dim_names nested list
         let dim_names_values = self.band_dim_names_values.finish();
@@ -322,8 +326,12 @@ impl RasterBuilder {
                 "Expected list type for dim_names".to_string(),
             ));
         };
-        let dim_names_list =
-            ListArray::new(dim_names_field, dim_names_offsets, Arc::new(dim_names_values), None);
+        let dim_names_list = ListArray::new(
+            dim_names_field,
+            dim_names_offsets,
+            Arc::new(dim_names_values),
+            None,
+        );
 
         // Build band shape nested list
         let shape_values = self.band_shape_values.finish();
@@ -333,8 +341,7 @@ impl RasterBuilder {
                 "Expected list type for shape".to_string(),
             ));
         };
-        let shape_list =
-            ListArray::new(shape_field, shape_offsets, Arc::new(shape_values), None);
+        let shape_list = ListArray::new(shape_field, shape_offsets, Arc::new(shape_values), None);
 
         // Build band strides nested list
         let strides_values = self.band_strides_values.finish();
@@ -344,8 +351,12 @@ impl RasterBuilder {
                 "Expected list type for strides".to_string(),
             ));
         };
-        let strides_list =
-            ListArray::new(strides_field, strides_offsets, Arc::new(strides_values), None);
+        let strides_list = ListArray::new(
+            strides_field,
+            strides_offsets,
+            Arc::new(strides_values),
+            None,
+        );
 
         // Build band struct
         let DataType::Struct(band_fields) = RasterSchema::band_type() else {
@@ -404,7 +415,17 @@ mod tests {
     fn test_roundtrip_2d_raster() {
         let mut builder = RasterBuilder::new(1);
         builder
-            .start_raster_2d(10, 20, 100.0, 200.0, 1.0, -2.0, 0.25, 0.5, Some("EPSG:4326"))
+            .start_raster_2d(
+                10,
+                20,
+                100.0,
+                200.0,
+                1.0,
+                -2.0,
+                0.25,
+                0.5,
+                Some("EPSG:4326"),
+            )
             .unwrap();
         builder
             .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
@@ -446,15 +467,11 @@ mod tests {
         builder
             .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
             .unwrap();
-        builder
-            .band_data_writer()
-            .append_value(&[1u8, 2, 3, 4]);
+        builder.band_data_writer().append_value(&[1u8, 2, 3, 4]);
         builder.finish_band().unwrap();
 
         // Band 1: Float32
-        builder
-            .start_band_2d(BandDataType::Float32, None)
-            .unwrap();
+        builder.start_band_2d(BandDataType::Float32, None).unwrap();
         let f32_data: Vec<u8> = [1.5f32, 2.5, 3.5, 4.5]
             .iter()
             .flat_map(|v| v.to_le_bytes())
@@ -484,9 +501,7 @@ mod tests {
         builder
             .start_raster_2d(1, 1, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
-        builder
-            .start_band_2d(BandDataType::UInt8, None)
-            .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value(&[0u8]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
@@ -504,9 +519,7 @@ mod tests {
     fn test_nd_band() {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder
-            .start_raster(&transform, "x", "y", None)
-            .unwrap();
+        builder.start_raster(&transform, "x", "y", None).unwrap();
 
         // 3D band: [time=3, y=4, x=5]
         builder

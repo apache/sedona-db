@@ -33,6 +33,7 @@ use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 /// Arrow-backed implementation of BandRef for a single band within a raster.
 struct BandRefImpl<'a> {
     // Band metadata arrays (indexed by absolute band row)
+    #[allow(dead_code)] // Used via band_name() on RasterRefImpl
     band_name_array: &'a StringArray,
     dim_names_list: &'a ListArray,
     dim_names_values: &'a StringArray,
@@ -133,7 +134,11 @@ pub struct RasterRefImpl<'a> {
 impl<'a> RasterRefImpl<'a> {
     /// Returns the raw CRS string reference with the array's lifetime.
     pub fn crs_str_ref(&self) -> Option<&'a str> {
-        if self.raster_struct_array.crs_array.is_null(self.raster_index) {
+        if self
+            .raster_struct_array
+            .crs_array
+            .is_null(self.raster_index)
+        {
             None
         } else {
             Some(self.raster_struct_array.crs_array.value(self.raster_index))
@@ -152,8 +157,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start =
-            self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
         Some(Box::new(BandRefImpl {
             band_name_array: self.raster_struct_array.band_name_array,
@@ -176,8 +180,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start =
-            self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
         if self.raster_struct_array.band_name_array.is_null(band_row) {
             None
@@ -207,7 +210,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             .y_dim_array
             .value(self.raster_index)
     }
-
 }
 
 // ---------------------------------------------------------------------------

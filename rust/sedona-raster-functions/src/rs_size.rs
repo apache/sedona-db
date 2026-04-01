@@ -85,11 +85,11 @@ impl SedonaScalarKernel for RsSize {
                 None => builder.append_null(),
                 Some(raster) => match self.size_type {
                     SizeType::Width => {
-                        let width = raster.metadata().width();
+                        let width = raster.width().unwrap();
                         builder.append_value(width);
                     }
                     SizeType::Height => {
-                        let height = raster.metadata().height();
+                        let height = raster.height().unwrap();
                         builder.append_value(height);
                     }
                 },
