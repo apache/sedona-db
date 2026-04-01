@@ -286,6 +286,48 @@ mod tests {
     }
 
     #[test]
+    fn test_band_data_type_try_from_u32() {
+        assert_eq!(BandDataType::try_from_u32(1), Some(BandDataType::UInt8));
+        assert_eq!(BandDataType::try_from_u32(2), Some(BandDataType::UInt16));
+        assert_eq!(BandDataType::try_from_u32(3), Some(BandDataType::Int16));
+        assert_eq!(BandDataType::try_from_u32(4), Some(BandDataType::UInt32));
+        assert_eq!(BandDataType::try_from_u32(5), Some(BandDataType::Int32));
+        assert_eq!(BandDataType::try_from_u32(6), Some(BandDataType::Float32));
+        assert_eq!(BandDataType::try_from_u32(7), Some(BandDataType::Float64));
+        assert_eq!(BandDataType::try_from_u32(8), Some(BandDataType::UInt64));
+        assert_eq!(BandDataType::try_from_u32(9), Some(BandDataType::Int64));
+        assert_eq!(BandDataType::try_from_u32(10), Some(BandDataType::Int8));
+        assert_eq!(BandDataType::try_from_u32(0), None);
+        assert_eq!(BandDataType::try_from_u32(11), None);
+        assert_eq!(BandDataType::try_from_u32(u32::MAX), None);
+    }
+
+    #[test]
+    fn test_band_data_type_roundtrip_u32() {
+        // Verify that discriminant → try_from_u32 round-trips for all variants
+        let all_types = [
+            BandDataType::UInt8,
+            BandDataType::UInt16,
+            BandDataType::Int16,
+            BandDataType::UInt32,
+            BandDataType::Int32,
+            BandDataType::Float32,
+            BandDataType::Float64,
+            BandDataType::UInt64,
+            BandDataType::Int64,
+            BandDataType::Int8,
+        ];
+        for dt in all_types {
+            let value = dt as u32;
+            assert_eq!(
+                BandDataType::try_from_u32(value),
+                Some(dt),
+                "Round-trip failed for {dt:?} (discriminant {value})"
+            );
+        }
+    }
+
+    #[test]
     fn test_band_data_type_pixel_type_name() {
         assert_eq!(BandDataType::UInt8.pixel_type_name(), "UNSIGNED_8BITS");
         assert_eq!(BandDataType::Int8.pixel_type_name(), "SIGNED_8BITS");
