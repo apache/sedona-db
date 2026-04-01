@@ -20,27 +20,6 @@
 //! [`MemDatasetBuilder`] provides a fluent, type-safe API for constructing GDAL MEM
 //! datasets with zero-copy band attachment, optional geo-transform, projection, and
 //! per-band nodata values.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use sedona_gdal::global::with_global_gdal;
-//! use sedona_gdal::mem::{MemDatasetBuilder, Nodata};
-//! use sedona_gdal::GdalDataType;
-//!
-//! with_global_gdal(|gdal| {
-//!     let data: Vec<u8> = vec![0u8; 256 * 256];
-//!     let dataset = unsafe {
-//!         MemDatasetBuilder::new(256, 256)
-//!             .add_band(GdalDataType::UInt8, data.as_ptr())
-//!             .geo_transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
-//!             .projection("EPSG:4326")
-//!             .build(gdal)
-//!             .unwrap()
-//!     };
-//!     assert_eq!(dataset.raster_count(), 1);
-//! }).unwrap();
-//! ```
 
 use crate::dataset::Dataset;
 use crate::errors::Result;
