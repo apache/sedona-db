@@ -23,7 +23,9 @@ use datafusion_common::{JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
-use sedona_query_planner::spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner};
+use sedona_query_planner::spatial_join_physical_planner::{
+    PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
+};
 use sedona_query_planner::spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;

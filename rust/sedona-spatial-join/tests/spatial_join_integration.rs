@@ -159,8 +159,9 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     if let Some(options) = options {
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(
-            SedonaQueryPlanner::new()
-                .with_spatial_join_physical_planner(Arc::new(DefaultSpatialJoinPhysicalPlanner::new())),
+            SedonaQueryPlanner::new().with_spatial_join_physical_planner(Arc::new(
+                DefaultSpatialJoinPhysicalPlanner::new(),
+            )),
         ));
         let opts = session_config
             .options_mut()

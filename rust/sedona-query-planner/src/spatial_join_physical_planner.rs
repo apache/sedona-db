@@ -85,7 +85,10 @@ impl SpatialJoinExtensionPlanner {
     ///
     /// Implementations are checked in reverse order such that more recently added
     /// implementations can override the default join.
-    pub fn append_spatial_join_physical_planner(&mut self, factory: Arc<dyn SpatialJoinPhysicalPlanner>) {
+    pub fn append_spatial_join_physical_planner(
+        &mut self,
+        factory: Arc<dyn SpatialJoinPhysicalPlanner>,
+    ) {
         self.factories.push(factory);
     }
 }
