@@ -33,8 +33,8 @@ impl RasterSchema {
         Fields::from(vec![
             Field::new(column::CRS, Self::crs_type(), true),
             Field::new(column::TRANSFORM, Self::transform_type(), false),
-            Field::new(column::X_DIM, DataType::Utf8, false),
-            Field::new(column::Y_DIM, DataType::Utf8, false),
+            Field::new(column::X_DIM, DataType::Utf8View, false),
+            Field::new(column::Y_DIM, DataType::Utf8View, false),
             Field::new(column::BANDS, Self::bands_type(), true),
         ])
     }

@@ -42,7 +42,7 @@ pub trait RasterRef {
     fn num_bands(&self) -> usize;
 
     /// Access a band by 0-based index
-    fn band(&self, index: usize) -> Option<&dyn BandRef>;
+    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
     fn band_name(&self, index: usize) -> Option<&str>;
@@ -62,12 +62,12 @@ pub trait RasterRef {
 
     /// Width in pixels — size of the X spatial dimension in band(0).
     fn width(&self) -> Option<u64> {
-        self.band(0)?.dim_size(self.x_dim())
+        self.band(0).and_then(|b| b.dim_size(self.x_dim()))
     }
 
     /// Height in pixels — size of the Y spatial dimension in band(0).
     fn height(&self) -> Option<u64> {
-        self.band(0)?.dim_size(self.y_dim())
+        self.band(0).and_then(|b| b.dim_size(self.y_dim()))
     }
 }
 

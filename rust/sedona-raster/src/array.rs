@@ -148,21 +148,28 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             .value_length(self.raster_index) as usize
     }
 
-    fn band(&self, index: usize) -> Option<&dyn BandRef> {
+    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>> {
         if index >= self.num_bands() {
             return None;
         }
         let start =
             self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        // Safety: we store pre-built BandRefImpls in the parent RasterStructArray
-        // and return references to them. But we can't easily do that with the current
-        // design. Instead, we'll use a different approach — see band_boxed().
-        //
-        // For now, return None and use band_boxed() from call sites.
-        // TODO: This needs a different design for zero-allocation band access.
-        let _ = band_row;
-        None
+        Some(Box::new(BandRefImpl {
+            band_name_array: self.raster_struct_array.band_name_array,
+            dim_names_list: self.raster_struct_array.band_dim_names_list,
+            dim_names_values: self.raster_struct_array.band_dim_names_values,
+            shape_list: self.raster_struct_array.band_shape_list,
+            shape_values: self.raster_struct_array.band_shape_values,
+            datatype_array: self.raster_struct_array.band_datatype_array,
+            nodata_array: self.raster_struct_array.band_nodata_array,
+            strides_list: self.raster_struct_array.band_strides_list,
+            strides_values: self.raster_struct_array.band_strides_values,
+            offset_array: self.raster_struct_array.band_offset_array,
+            outdb_uri_array: self.raster_struct_array.band_outdb_uri_array,
+            data_array: self.raster_struct_array.band_data_array,
+            band_row,
+        }))
     }
 
     fn band_name(&self, index: usize) -> Option<&str> {
@@ -201,50 +208,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             .value(self.raster_index)
     }
 
-    fn width(&self) -> Option<u64> {
-        self.band_boxed(0)
-            .ok()
-            .flatten()
-            .and_then(|b| b.dim_size(self.x_dim()))
-    }
-
-    fn height(&self) -> Option<u64> {
-        self.band_boxed(0)
-            .ok()
-            .flatten()
-            .and_then(|b| b.dim_size(self.y_dim()))
-    }
-}
-
-impl<'a> RasterRefImpl<'a> {
-    /// Access a band by 0-based index, returning a boxed BandRef.
-    ///
-    /// This is the primary way to access bands. Returns Ok(None) if index is
-    /// out of range, or Err on data access errors.
-    pub fn band_boxed(&self, index: usize) -> Result<Option<Box<dyn BandRef + '_>>, ArrowError> {
-        if index >= self.num_bands() {
-            return Ok(None);
-        }
-        let start =
-            self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
-        let band_row = start + index;
-
-        Ok(Some(Box::new(BandRefImpl {
-            band_name_array: self.raster_struct_array.band_name_array,
-            dim_names_list: self.raster_struct_array.band_dim_names_list,
-            dim_names_values: self.raster_struct_array.band_dim_names_values,
-            shape_list: self.raster_struct_array.band_shape_list,
-            shape_values: self.raster_struct_array.band_shape_values,
-            datatype_array: self.raster_struct_array.band_datatype_array,
-            nodata_array: self.raster_struct_array.band_nodata_array,
-            strides_list: self.raster_struct_array.band_strides_list,
-            strides_values: self.raster_struct_array.band_strides_values,
-            offset_array: self.raster_struct_array.band_offset_array,
-            outdb_uri_array: self.raster_struct_array.band_outdb_uri_array,
-            data_array: self.raster_struct_array.band_data_array,
-            band_row,
-        })))
-    }
 }
 
 // ---------------------------------------------------------------------------
