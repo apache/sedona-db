@@ -25,7 +25,7 @@ use datafusion_common::Result;
 
 /// Builder for constructing a SpatialIndex from geometry batches.
 #[async_trait]
-pub(crate) trait SpatialIndexBuilder: Send + Sync {
+pub trait SpatialIndexBuilder: Send + Sync {
     /// Add a stream to this builder
     async fn add_stream(
         &mut self,
@@ -39,7 +39,7 @@ pub(crate) trait SpatialIndexBuilder: Send + Sync {
 
 /// Metrics for the build phase of the spatial join.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct SpatialJoinBuildMetrics {
+pub struct SpatialJoinBuildMetrics {
     /// Total time for collecting build-side of join
     pub(crate) build_time: metrics::Time,
     /// Memory used by the spatial-index in bytes

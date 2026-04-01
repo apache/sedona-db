@@ -18,7 +18,7 @@
 pub mod evaluated_batch;
 pub mod exec;
 mod index;
-mod join_provider;
+pub mod join_provider;
 pub mod operand_evaluator;
 pub mod partitioning;
 pub mod physical_planner;

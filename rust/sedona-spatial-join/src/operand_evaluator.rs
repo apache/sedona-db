@@ -45,7 +45,7 @@ use crate::{
 /// support non-Cartesian bounding or non-WKB backed geometry arrays. This also may
 /// expand to support more compact or efficient serialization/deserialization of the
 /// evaluated array when spilling.
-pub(crate) trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
+pub trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
     /// Create a new [EvaluatedGeometryArray]
     fn try_new_evaluated_array(
         &self,

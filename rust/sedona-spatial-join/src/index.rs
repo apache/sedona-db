@@ -42,7 +42,7 @@ pub(crate) struct IndexQueryResult<'a, 'b> {
 
 /// The metrics for a spatial index query
 #[derive(Debug)]
-pub(crate) struct QueryResultMetrics {
+pub struct QueryResultMetrics {
     pub count: usize,
     pub candidate_count: usize,
 }
