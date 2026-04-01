@@ -555,4 +555,260 @@ mod tests {
         assert_eq!(buf.strides, &[80, 20, 4]);
         assert_eq!(buf.offset, 0);
     }
+
+    #[test]
+    fn test_nonstandard_spatial_dim_names() {
+        // Zarr-style dataset with lat/lon instead of y/x
+        let mut builder = RasterBuilder::new(1);
+        let transform = [10.0, 0.01, 0.0, 50.0, 0.0, -0.01];
+        builder
+            .start_raster(&transform, "longitude", "latitude", Some("EPSG:4326"))
+            .unwrap();
+        builder
+            .start_band(
+                Some("sst"),
+                &["latitude", "longitude"],
+                &[180, 360],
+                BandDataType::Float32,
+                None,
+            )
+            .unwrap();
+        let data = vec![0u8; 180 * 360 * 4];
+        builder.band_data_writer().append_value(&data);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.x_dim(), "longitude");
+        assert_eq!(r.y_dim(), "latitude");
+        // width = size of "longitude" dim, height = size of "latitude" dim
+        assert_eq!(r.width(), Some(360));
+        assert_eq!(r.height(), Some(180));
+    }
+
+    #[test]
+    fn test_mixed_dimensionality_bands() {
+        // One 3D band and one 2D band in the same raster
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, "x", "y", None).unwrap();
+
+        // Band 0: 3D [time=12, y=64, x=64]
+        builder
+            .start_band(
+                Some("temperature"),
+                &["time", "y", "x"],
+                &[12, 64, 64],
+                BandDataType::Float32,
+                None,
+            )
+            .unwrap();
+        let data_3d = vec![0u8; 12 * 64 * 64 * 4];
+        builder.band_data_writer().append_value(&data_3d);
+        builder.finish_band().unwrap();
+
+        // Band 1: 2D [y=64, x=64]
+        builder
+            .start_band(
+                Some("elevation"),
+                &["y", "x"],
+                &[64, 64],
+                BandDataType::Float64,
+                None,
+            )
+            .unwrap();
+        let data_2d = vec![0u8; 64 * 64 * 8];
+        builder.band_data_writer().append_value(&data_2d);
+        builder.finish_band().unwrap();
+
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.num_bands(), 2);
+        // width/height derived from band(0) which is 3D
+        assert_eq!(r.width(), Some(64));
+        assert_eq!(r.height(), Some(64));
+
+        let b0 = r.band(0).unwrap();
+        assert_eq!(b0.ndim(), 3);
+        assert_eq!(b0.dim_names(), vec!["time", "y", "x"]);
+        assert_eq!(b0.shape(), &[12, 64, 64]);
+        assert_eq!(b0.dim_size("time"), Some(12));
+
+        let b1 = r.band(1).unwrap();
+        assert_eq!(b1.ndim(), 2);
+        assert_eq!(b1.dim_names(), vec!["y", "x"]);
+        assert_eq!(b1.shape(), &[64, 64]);
+        assert_eq!(b1.dim_size("time"), None);
+    }
+
+    #[test]
+    fn test_dim_index_lookup() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, "x", "y", None).unwrap();
+        builder
+            .start_band(
+                None,
+                &["time", "pressure", "y", "x"],
+                &[6, 10, 32, 32],
+                BandDataType::Float32,
+                None,
+            )
+            .unwrap();
+        let data = vec![0u8; 6 * 10 * 32 * 32 * 4];
+        builder.band_data_writer().append_value(&data);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        assert_eq!(band.dim_index("time"), Some(0));
+        assert_eq!(band.dim_index("pressure"), Some(1));
+        assert_eq!(band.dim_index("y"), Some(2));
+        assert_eq!(band.dim_index("x"), Some(3));
+        assert_eq!(band.dim_index("wavelength"), None);
+
+        assert_eq!(band.dim_size("time"), Some(6));
+        assert_eq!(band.dim_size("pressure"), Some(10));
+        assert_eq!(band.dim_size("wavelength"), None);
+    }
+
+    #[test]
+    fn test_contiguous_data_is_borrowed() {
+        use std::borrow::Cow;
+
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
+        builder.band_data_writer().append_value(&[1u8; 16]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let data = band.contiguous_data().unwrap();
+        // Phase 1: all data is contiguous, so should be Cow::Borrowed
+        assert!(matches!(data, Cow::Borrowed(_)));
+        assert_eq!(data.len(), 16);
+    }
+
+    #[test]
+    fn test_nd_buffer_strides_various_types() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, "x", "y", None).unwrap();
+
+        // UInt8: element size = 1, shape [3, 4] → strides [4, 1]
+        builder
+            .start_band(None, &["y", "x"], &[3, 4], BandDataType::UInt8, None)
+            .unwrap();
+        builder.band_data_writer().append_value(&vec![0u8; 12]);
+        builder.finish_band().unwrap();
+
+        // Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
+        builder
+            .start_band(
+                None,
+                &["z", "y", "x"],
+                &[2, 3, 5],
+                BandDataType::Float64,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(&vec![0u8; 2 * 3 * 5 * 8]);
+        builder.finish_band().unwrap();
+
+        // UInt16: element size = 2, shape [10] → strides [2]
+        builder
+            .start_band(None, &["x"], &[10], BandDataType::UInt16, None)
+            .unwrap();
+        builder.band_data_writer().append_value(&vec![0u8; 20]);
+        builder.finish_band().unwrap();
+
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        let b0 = r.band(0).unwrap();
+        let buf0 = b0.nd_buffer().unwrap();
+        assert_eq!(buf0.strides, &[4, 1]); // UInt8 [3, 4]
+
+        let b1 = r.band(1).unwrap();
+        let buf1 = b1.nd_buffer().unwrap();
+        assert_eq!(buf1.strides, &[120, 40, 8]); // Float64 [2, 3, 5]
+
+        let b2 = r.band(2).unwrap();
+        let buf2 = b2.nd_buffer().unwrap();
+        assert_eq!(buf2.strides, &[2]); // UInt16 [10]
+    }
+
+    #[test]
+    fn test_width_height_no_bands() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, "x", "y", None).unwrap();
+        // No bands added
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.num_bands(), 0);
+        assert_eq!(r.width(), None);
+        assert_eq!(r.height(), None);
+    }
+
+    #[test]
+    fn test_band_name_nullable() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, "x", "y", None).unwrap();
+
+        // Named band
+        builder
+            .start_band(
+                Some("temperature"),
+                &["y", "x"],
+                &[4, 4],
+                BandDataType::Float32,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(&vec![0u8; 64]);
+        builder.finish_band().unwrap();
+
+        // Unnamed band (via start_band_2d which passes None for name)
+        builder.current_width = 4;
+        builder.current_height = 4;
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
+        builder.band_data_writer().append_value(&vec![0u8; 16]);
+        builder.finish_band().unwrap();
+
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.band_name(0), Some("temperature"));
+        assert_eq!(r.band_name(1), None); // unnamed
+        assert_eq!(r.band_name(99), None); // out of range
+    }
 }
