@@ -565,7 +565,7 @@ impl SedonaDialect {
 
 impl Dialect for SedonaDialect {
     fn is_identifier_start(&self, ch: char) -> bool {
-        self.inner.is_identifier_start(ch)
+        self.inner.is_identifier_start(ch) || ch.len_utf8() > 2
     }
 
     fn is_identifier_part(&self, ch: char) -> bool {
@@ -573,7 +573,7 @@ impl Dialect for SedonaDialect {
     }
 
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
-        self.inner.is_delimited_identifier_start(ch)
+        self.inner.is_delimited_identifier_start(ch) || ch.len_utf8() > 2
     }
 
     fn identifier_quote_style(&self, identifier: &str) -> Option<char> {
