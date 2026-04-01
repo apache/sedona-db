@@ -162,7 +162,7 @@ mod tests {
         fn num_bands(&self) -> usize {
             0
         }
-        fn band(&self, _index: usize) -> Option<&dyn crate::traits::BandRef> {
+        fn band(&self, _index: usize) -> Option<Box<dyn crate::traits::BandRef + '_>> {
             None
         }
         fn band_name(&self, _index: usize) -> Option<&str> {

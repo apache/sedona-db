@@ -970,8 +970,7 @@ mod test {
         let rasters = RasterStructArray::new(raster_array);
         assert_eq!(rasters.len(), ROWS_PER_BATCH);
         let raster = rasters.get(0).unwrap();
-        let metadata = raster.metadata();
-        assert_eq!(metadata.width(), 10);
-        assert_eq!(metadata.height(), 5);
+        assert_eq!(raster.width(), Some(10));
+        assert_eq!(raster.height(), Some(5));
     }
 }

@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(r.crs(), Some("EPSG:4326"));
         assert_eq!(r.num_bands(), 1);
 
-        let band = r.band_boxed(0).unwrap().unwrap();
+        let band = r.band(0).unwrap();
         assert_eq!(band.ndim(), 2);
         assert_eq!(band.dim_names(), vec!["y", "x"]);
         assert_eq!(band.shape(), &[20, 10]);
@@ -469,11 +469,11 @@ mod tests {
 
         assert_eq!(r.num_bands(), 2);
 
-        let b0 = r.band_boxed(0).unwrap().unwrap();
+        let b0 = r.band(0).unwrap();
         assert_eq!(b0.data_type(), BandDataType::UInt8);
         assert_eq!(b0.nodata(), Some(&[255u8][..]));
 
-        let b1 = r.band_boxed(1).unwrap().unwrap();
+        let b1 = r.band(1).unwrap();
         assert_eq!(b1.data_type(), BandDataType::Float32);
         assert_eq!(b1.nodata(), None);
     }
@@ -528,7 +528,7 @@ mod tests {
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.band_name(0), Some("temperature"));
-        let band = r.band_boxed(0).unwrap().unwrap();
+        let band = r.band(0).unwrap();
         assert_eq!(band.ndim(), 3);
         assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
         assert_eq!(band.shape(), &[3, 4, 5]);

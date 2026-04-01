@@ -69,8 +69,7 @@ impl fmt::Display for RasterDisplay<'_> {
         let has_outdb = (0..nbands).any(|i| {
             raster
                 .band(i)
-                .map(|b| b.outdb_uri().is_some())
-                .unwrap_or(false)
+                .is_some_and(|b| b.outdb_uri().is_some())
         });
 
         write!(
