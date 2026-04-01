@@ -32,7 +32,7 @@ pub mod utils;
 pub use exec::SpatialJoinExec;
 
 // Re-export function for register the spatial join planner
-pub use factory::DefaultSpatialJoinFactory;
+pub use factory::DefaultSpatialJoinPhysicalPlanner;
 
 // Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
 // its presence in optimized physical plans.

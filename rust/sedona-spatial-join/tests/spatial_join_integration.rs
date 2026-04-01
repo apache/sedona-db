@@ -51,7 +51,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use sedona_spatial_join::{
-    spatial_predicate::RelationPredicate, DefaultSpatialJoinFactory, ProbeShuffleExec,
+    spatial_predicate::RelationPredicate, DefaultSpatialJoinPhysicalPlanner, ProbeShuffleExec,
     SpatialJoinExec, SpatialPredicate,
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
@@ -160,7 +160,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(
             SedonaQueryPlanner::new()
-                .with_spatial_join_factory(Arc::new(DefaultSpatialJoinFactory::new())),
+                .with_spatial_join_physical_planner(Arc::new(DefaultSpatialJoinPhysicalPlanner::new())),
         ));
         let opts = session_config
             .options_mut()

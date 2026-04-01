@@ -41,7 +41,7 @@ use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::spatial_expr_utils::transform_join_filter;
 use crate::spatial_predicate::SpatialPredicate;
 
-/// Arguments passed to a [`SpatialJoinFactory`] when planning a spatial join.
+/// Arguments passed to a [`SpatialJoinPhysicalPlanner`] when planning a spatial join.
 pub struct PlanSpatialJoinArgs<'a> {
     pub physical_left: &'a Arc<dyn ExecutionPlan>,
     pub physical_right: &'a Arc<dyn ExecutionPlan>,
@@ -56,7 +56,7 @@ pub struct PlanSpatialJoinArgs<'a> {
 ///
 /// Implementations decide whether they can handle a given spatial predicate and,
 /// if so, produce an appropriate [`ExecutionPlan`].
-pub trait SpatialJoinFactory: std::fmt::Debug + Send + Sync {
+pub trait SpatialJoinPhysicalPlanner: std::fmt::Debug + Send + Sync {
     /// Given the provided arguments, produce an [ExecutionPlan] implementing
     /// the join operation or `None` if this implementation cannot execute the join
     fn plan_spatial_join(
@@ -72,12 +72,12 @@ pub trait SpatialJoinFactory: std::fmt::Debug + Send + Sync {
 /// [`NestedLoopJoinExec`] when no factory can handle the predicate.
 #[derive(Clone, Debug)]
 pub struct SpatialJoinExtensionPlanner {
-    factories: Vec<Arc<dyn SpatialJoinFactory>>,
+    factories: Vec<Arc<dyn SpatialJoinPhysicalPlanner>>,
 }
 
 impl SpatialJoinExtensionPlanner {
     /// Create a new planner with the given factories.
-    pub fn new(factories: Vec<Arc<dyn SpatialJoinFactory>>) -> Self {
+    pub fn new(factories: Vec<Arc<dyn SpatialJoinPhysicalPlanner>>) -> Self {
         Self { factories }
     }
 
@@ -85,7 +85,7 @@ impl SpatialJoinExtensionPlanner {
     ///
     /// Implementations are checked in reverse order such that more recently added
     /// implementations can override the default join.
-    pub fn append_spatial_join_factory(&mut self, factory: Arc<dyn SpatialJoinFactory>) {
+    pub fn append_spatial_join_physical_planner(&mut self, factory: Arc<dyn SpatialJoinPhysicalPlanner>) {
         self.factories.push(factory);
     }
 }

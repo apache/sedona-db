@@ -20,5 +20,5 @@ pub mod optimizer;
 pub mod probe_shuffle_exec;
 pub mod query_planner;
 mod spatial_expr_utils;
-pub mod spatial_join_factory;
+pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;

@@ -23,7 +23,7 @@ use datafusion_common::{JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
-use sedona_query_planner::spatial_join_factory::{PlanSpatialJoinArgs, SpatialJoinFactory};
+use sedona_query_planner::spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner};
 use sedona_query_planner::spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -36,22 +36,22 @@ use crate::spatial_predicate::SpatialPredicate;
 /// This struct is the entrypoint to ensuring the SedonaQueryPlanner is able
 /// to instantiate the [ExecutionPlan] implemented in this crate.
 #[derive(Debug)]
-pub struct DefaultSpatialJoinFactory;
+pub struct DefaultSpatialJoinPhysicalPlanner;
 
-impl DefaultSpatialJoinFactory {
+impl DefaultSpatialJoinPhysicalPlanner {
     /// Create a new default join factory
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl Default for DefaultSpatialJoinFactory {
+impl Default for DefaultSpatialJoinPhysicalPlanner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SpatialJoinFactory for DefaultSpatialJoinFactory {
+impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,
