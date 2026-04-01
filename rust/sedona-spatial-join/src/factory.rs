@@ -21,7 +21,7 @@ use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_factory::{PlanSpatialJoinArgs, SpatialJoinFactory};
 use sedona_query_planner::spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate};
@@ -68,7 +68,11 @@ impl SpatialJoinFactory for DefaultSpatialJoinFactory {
             args.spatial_predicate,
             SpatialPredicate::KNearestNeighbors(_)
         ) && args.join_type.supports_swap()
-            && should_swap_join_order(args.physical_left.as_ref(), args.physical_right.as_ref())?;
+            && should_swap_join_order(
+                args.join_options,
+                args.physical_left.as_ref(),
+                args.physical_right.as_ref(),
+            )?;
 
         // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
         // datasets, leading to more balanced workloads during out-of-core spatial join.
@@ -109,8 +113,20 @@ impl SpatialJoinFactory for DefaultSpatialJoinFactory {
 ///    produce a smaller and more efficient spatial index (R-tree).
 /// 2. If row-count statistics are unavailable (for example, for CSV sources),
 ///    fall back to total input size as an estimate.
-/// 3. Do not swap the join order if no relevant statistics are available.
-fn should_swap_join_order(left: &dyn ExecutionPlan, right: &dyn ExecutionPlan) -> Result<bool> {
+/// 3. Do not swap the join order if join reordering is disabled or no relevant
+///    statistics are available.
+fn should_swap_join_order(
+    spatial_join_options: &SpatialJoinOptions,
+    left: &dyn ExecutionPlan,
+    right: &dyn ExecutionPlan,
+) -> Result<bool> {
+    if !spatial_join_options.spatial_join_reordering {
+        log::info!(
+            "spatial join swap heuristic disabled via sedona.spatial_join.spatial_join_reordering"
+        );
+        return Ok(false);
+    }
+
     let left_stats = left.partition_statistics(None)?;
     let right_stats = right.partition_statistics(None)?;
 
