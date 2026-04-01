@@ -66,11 +66,8 @@ impl fmt::Display for RasterDisplay<'_> {
         let skew_y = t[4];
         let has_skew = skew_x != 0.0 || skew_y != 0.0;
 
-        let has_outdb = (0..nbands).any(|i| {
-            raster
-                .band(i)
-                .is_some_and(|b| b.outdb_uri().is_some())
-        });
+        let has_outdb =
+            (0..nbands).any(|i| raster.band(i).is_some_and(|b| b.outdb_uri().is_some()));
 
         write!(
             f,

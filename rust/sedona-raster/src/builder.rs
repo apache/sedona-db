@@ -156,6 +156,7 @@ impl RasterBuilder {
     ///
     /// Sets `x_dim="x"`, `y_dim="y"`, and builds the 6-element GDAL transform
     /// from the individual parameters.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_raster_2d(
         &mut self,
         width: u64,
@@ -430,7 +431,7 @@ mod tests {
         builder
             .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
             .unwrap();
-        builder.band_data_writer().append_value(&vec![1u8; 200]);
+        builder.band_data_writer().append_value(vec![1u8; 200]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
@@ -467,7 +468,7 @@ mod tests {
         builder
             .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
             .unwrap();
-        builder.band_data_writer().append_value(&[1u8, 2, 3, 4]);
+        builder.band_data_writer().append_value([1u8, 2, 3, 4]);
         builder.finish_band().unwrap();
 
         // Band 1: Float32
@@ -502,7 +503,7 @@ mod tests {
             .start_raster_2d(1, 1, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder.start_band_2d(BandDataType::UInt8, None).unwrap();
-        builder.band_data_writer().append_value(&[0u8]);
+        builder.band_data_writer().append_value([0u8]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
@@ -691,7 +692,7 @@ mod tests {
             .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder.start_band_2d(BandDataType::UInt8, None).unwrap();
-        builder.band_data_writer().append_value(&[1u8; 16]);
+        builder.band_data_writer().append_value([1u8; 16]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
@@ -716,7 +717,7 @@ mod tests {
         builder
             .start_band(None, &["y", "x"], &[3, 4], BandDataType::UInt8, None)
             .unwrap();
-        builder.band_data_writer().append_value(&vec![0u8; 12]);
+        builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
 
         // Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
@@ -731,14 +732,14 @@ mod tests {
             .unwrap();
         builder
             .band_data_writer()
-            .append_value(&vec![0u8; 2 * 3 * 5 * 8]);
+            .append_value(vec![0u8; 2 * 3 * 5 * 8]);
         builder.finish_band().unwrap();
 
         // UInt16: element size = 2, shape [10] → strides [2]
         builder
             .start_band(None, &["x"], &[10], BandDataType::UInt16, None)
             .unwrap();
-        builder.band_data_writer().append_value(&vec![0u8; 20]);
+        builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
 
         builder.finish_raster().unwrap();
@@ -792,14 +793,14 @@ mod tests {
                 None,
             )
             .unwrap();
-        builder.band_data_writer().append_value(&vec![0u8; 64]);
+        builder.band_data_writer().append_value(vec![0u8; 64]);
         builder.finish_band().unwrap();
 
         // Unnamed band (via start_band_2d which passes None for name)
         builder.current_width = 4;
         builder.current_height = 4;
         builder.start_band_2d(BandDataType::UInt8, None).unwrap();
-        builder.band_data_writer().append_value(&vec![0u8; 16]);
+        builder.band_data_writer().append_value(vec![0u8; 16]);
         builder.finish_band().unwrap();
 
         builder.finish_raster().unwrap();

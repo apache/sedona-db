@@ -42,12 +42,12 @@ pub fn generate_test_rasters(
         builder.start_raster_2d(
             width,
             height,
-            i as f64 + 1.0,       // origin_x
-            i as f64 + 2.0,       // origin_y
-            i.max(1) as f64 * 0.1, // scale_x
+            i as f64 + 1.0,         // origin_x
+            i as f64 + 2.0,         // origin_y
+            i.max(1) as f64 * 0.1,  // scale_x
             i.max(1) as f64 * -0.2, // scale_y
-            i as f64 * 0.03,      // skew_x
-            i as f64 * 0.04,      // skew_y
+            i as f64 * 0.03,        // skew_x
+            i as f64 * 0.04,        // skew_y
             Some(&crs),
         )?;
         builder.start_band_2d(BandDataType::UInt16, Some(&[0u8, 0u8]))?;
@@ -167,9 +167,7 @@ pub fn raster_from_single_band(
             crs,
         )
         .expect("start raster");
-    builder
-        .start_band_2d(data_type, None)
-        .expect("start band");
+    builder.start_band_2d(data_type, None).expect("start band");
     builder.band_data_writer().append_value(band_bytes);
     builder.finish_band().expect("finish band");
     builder.finish_raster().expect("finish raster");
@@ -190,7 +188,7 @@ pub fn generate_multi_band_raster() -> StructArray {
         .unwrap();
     builder
         .band_data_writer()
-        .append_value(&[1u8, 2u8, 3u8, 4u8]);
+        .append_value([1u8, 2u8, 3u8, 4u8]);
     builder.finish_band().unwrap();
 
     // Band 2: UInt16, nodata=0
@@ -205,9 +203,7 @@ pub fn generate_multi_band_raster() -> StructArray {
     builder.finish_band().unwrap();
 
     // Band 3: Float32, no nodata
-    builder
-        .start_band_2d(BandDataType::Float32, None)
-        .unwrap();
+    builder.start_band_2d(BandDataType::Float32, None).unwrap();
     let band3_data: Vec<u8> = [1.5f32, 2.5f32, 3.5f32, 4.5f32]
         .iter()
         .flat_map(|v| v.to_le_bytes())

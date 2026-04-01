@@ -237,7 +237,10 @@ mod tests {
             (9, 19)
         );
         assert_eq!(to_raster_coordinate(&raster, 101.0, 200.5).unwrap(), (1, 0));
-        assert_eq!(to_raster_coordinate(&raster, 100.25, 198.0).unwrap(), (0, 1));
+        assert_eq!(
+            to_raster_coordinate(&raster, 100.25, 198.0).unwrap(),
+            (0, 1)
+        );
 
         // Zero determinant
         let bad_raster = TestRaster::new(100.0, 200.0, 1.0, 0.0, 0.0, 0.0);
