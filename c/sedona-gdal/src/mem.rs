@@ -35,8 +35,7 @@ use crate::raster::types::GdalDataType;
 /// - [`i64`] for Int64 bands
 /// - [`u64`] for UInt64 bands
 ///
-/// This enum encapsulates all three variants so callers don't need to match on
-/// the band type when setting nodata.
+/// This enum encapsulates the three nodata value representations exposed by GDAL.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Nodata {
     F64(f64),
@@ -47,7 +46,7 @@ pub enum Nodata {
 /// A band specification for [`MemDatasetBuilder`].
 struct MemBand {
     data_type: GdalDataType,
-    data_ptr: *const u8,
+    data_ptr: *mut u8,
     pixel_offset: Option<i64>,
     line_offset: Option<i64>,
     nodata: Option<Nodata>,
@@ -62,7 +61,9 @@ struct MemBand {
 /// # Safety
 ///
 /// All `add_band*` methods are `unsafe` because the caller must ensure that the
-/// provided data pointers remain valid for the lifetime of the built [`Dataset`].
+/// provided data pointers remain valid for the lifetime of the built [`Dataset`],
+/// satisfy the alignment requirements of the band data type, and refer to writable
+/// memory if GDAL may write through the attached `DATAPOINTER` band.
 pub struct MemDatasetBuilder {
     width: usize,
     height: usize,
@@ -128,9 +129,9 @@ impl MemDatasetBuilder {
     /// # Safety
     ///
     /// The caller must ensure `data_ptr` points to a valid buffer of at least
-    /// `height * width * data_type.byte_size()` bytes, and that the buffer
-    /// outlives the built [`Dataset`].
-    pub unsafe fn add_band(self, data_type: GdalDataType, data_ptr: *const u8) -> Self {
+    /// `height * width * data_type.byte_size()` bytes, is properly aligned for
+    /// `data_type`, and outlives the built [`Dataset`].
+    pub unsafe fn add_band(self, data_type: GdalDataType, data_ptr: *mut u8) -> Self {
         self.add_band_with_options(data_type, data_ptr, None, None, None)
     }
 
@@ -139,12 +140,12 @@ impl MemDatasetBuilder {
     /// # Safety
     ///
     /// The caller must ensure `data_ptr` points to a valid buffer of sufficient size
-    /// for the given dimensions and offsets, and that the buffer outlives the built
-    /// [`Dataset`].
+    /// for the given dimensions and offsets, is properly aligned for `data_type`, and
+    /// outlives the built [`Dataset`].
     pub unsafe fn add_band_with_options(
         mut self,
         data_type: GdalDataType,
-        data_ptr: *const u8,
+        data_ptr: *mut u8,
         pixel_offset: Option<i64>,
         line_offset: Option<i64>,
         nodata: Option<Nodata>,
@@ -177,7 +178,8 @@ impl MemDatasetBuilder {
     ///
     /// This method is unsafe because the built dataset references memory provided via
     /// the `add_band*` methods. The caller must ensure all data pointers remain valid
-    /// for the lifetime of the returned [`Dataset`].
+    /// for the lifetime of the returned [`Dataset`] and satisfy the alignment
+    /// requirements of their band data types.
     pub unsafe fn build(self, gdal: &Gdal) -> Result<Dataset> {
         let dataset = gdal.create_mem_dataset(
             self.width,
@@ -261,10 +263,10 @@ mod tests {
     #[test]
     fn test_mem_builder_single_band() {
         with_global_gdal(|gdal| {
-            let data = vec![42u8; 64 * 64];
+            let mut data = vec![42u8; 64 * 64];
             let dataset = unsafe {
                 MemDatasetBuilder::new(64, 64)
-                    .add_band(GdalDataType::UInt8, data.as_ptr())
+                    .add_band(GdalDataType::UInt8, data.as_mut_ptr())
                     .build(gdal)
                     .unwrap()
             };
@@ -277,14 +279,14 @@ mod tests {
     #[test]
     fn test_mem_builder_multi_band() {
         with_global_gdal(|gdal| {
-            let band1 = vec![1u16; 32 * 32];
-            let band2 = vec![2u16; 32 * 32];
-            let band3 = vec![3u16; 32 * 32];
+            let mut band1 = vec![1u16; 32 * 32];
+            let mut band2 = vec![2u16; 32 * 32];
+            let mut band3 = vec![3u16; 32 * 32];
             let dataset = unsafe {
                 MemDatasetBuilder::new(32, 32)
-                    .add_band(GdalDataType::UInt16, band1.as_ptr() as *const u8)
-                    .add_band(GdalDataType::UInt16, band2.as_ptr() as *const u8)
-                    .add_band(GdalDataType::UInt16, band3.as_ptr() as *const u8)
+                    .add_band(GdalDataType::UInt16, band1.as_mut_ptr() as *mut u8)
+                    .add_band(GdalDataType::UInt16, band2.as_mut_ptr() as *mut u8)
+                    .add_band(GdalDataType::UInt16, band3.as_mut_ptr() as *mut u8)
                     .build(gdal)
                     .unwrap()
             };
@@ -296,11 +298,11 @@ mod tests {
     #[test]
     fn test_mem_builder_with_geo_transform() {
         with_global_gdal(|gdal| {
-            let data = vec![0f32; 10 * 10];
+            let mut data = vec![0f32; 10 * 10];
             let gt = [100.0, 0.5, 0.0, 200.0, 0.0, -0.5];
             let dataset = unsafe {
                 MemDatasetBuilder::new(10, 10)
-                    .add_band(GdalDataType::Float32, data.as_ptr() as *const u8)
+                    .add_band(GdalDataType::Float32, data.as_mut_ptr() as *mut u8)
                     .geo_transform(gt)
                     .build(gdal)
                     .unwrap()
@@ -314,10 +316,10 @@ mod tests {
     #[test]
     fn test_mem_builder_with_projection() {
         with_global_gdal(|gdal| {
-            let data = [0u8; 8 * 8];
+            let mut data = [0u8; 8 * 8];
             let dataset = unsafe {
                 MemDatasetBuilder::new(8, 8)
-                    .add_band(GdalDataType::UInt8, data.as_ptr())
+                    .add_band(GdalDataType::UInt8, data.as_mut_ptr())
                     .projection(r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#)
                     .build(gdal)
                     .unwrap()
@@ -331,12 +333,12 @@ mod tests {
     #[test]
     fn test_mem_builder_with_nodata() {
         with_global_gdal(|gdal| {
-            let data = [0f64; 4 * 4];
+            let mut data = [0f64; 4 * 4];
             let dataset = unsafe {
                 MemDatasetBuilder::new(4, 4)
                     .add_band_with_options(
                         GdalDataType::Float64,
-                        data.as_ptr() as *const u8,
+                        data.as_mut_ptr() as *mut u8,
                         None,
                         None,
                         Some(Nodata::F64(-9999.0)),
@@ -364,12 +366,12 @@ mod tests {
     #[test]
     fn test_mem_builder_mixed_band_types() {
         with_global_gdal(|gdal| {
-            let band_u8 = [0u8; 8 * 8];
-            let band_f64 = vec![0f64; 8 * 8];
+            let mut band_u8 = [0u8; 8 * 8];
+            let mut band_f64 = vec![0f64; 8 * 8];
             let dataset = unsafe {
                 MemDatasetBuilder::new(8, 8)
-                    .add_band(GdalDataType::UInt8, band_u8.as_ptr())
-                    .add_band(GdalDataType::Float64, band_f64.as_ptr() as *const u8)
+                    .add_band(GdalDataType::UInt8, band_u8.as_mut_ptr())
+                    .add_band(GdalDataType::Float64, band_f64.as_mut_ptr() as *mut u8)
                     .build(gdal)
                     .unwrap()
             };
@@ -409,12 +411,12 @@ mod tests {
     #[test]
     pub fn test_mem_builder_mixed_owned_and_external_bands() {
         with_global_gdal(|gdal| {
-            let external_band = [0u8; 8 * 8];
+            let mut external_band = [0u8; 8 * 8];
             let dataset = unsafe {
                 MemDatasetBuilder::new_with_owned_bands(8, 8, 1, GdalDataType::Float32)
                     .add_band_with_options(
                         GdalDataType::UInt8,
-                        external_band.as_ptr(),
+                        external_band.as_mut_ptr(),
                         None,
                         None,
                         Some(Nodata::U64(255)),

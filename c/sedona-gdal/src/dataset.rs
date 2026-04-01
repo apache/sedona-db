@@ -300,11 +300,11 @@ impl Dataset {
     ///
     /// # Safety
     ///
-    /// `data_ptr` must point to valid band data that outlives this dataset.
+    /// `data_ptr` must point to valid mutable band data that outlives this dataset.
     pub unsafe fn add_band_with_data(
         &self,
         data_type: RustGdalDataType,
-        data_ptr: *const u8,
+        data_ptr: *mut u8,
         pixel_offset: Option<i64>,
         line_offset: Option<i64>,
     ) -> Result<()> {
