@@ -41,7 +41,7 @@ pub fn st_xmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⬅️".to_string()])
 }
 
 pub fn st_xmax_udf() -> SedonaScalarUDF {
@@ -52,7 +52,7 @@ pub fn st_xmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_➡️".to_string()])
 }
 
 pub fn st_ymin_udf() -> SedonaScalarUDF {
@@ -63,7 +63,7 @@ pub fn st_ymin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⬇️".to_string()])
 }
 
 pub fn st_ymax_udf() -> SedonaScalarUDF {
@@ -74,7 +74,7 @@ pub fn st_ymax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⬆️".to_string()])
 }
 
 pub fn st_zmin_udf() -> SedonaScalarUDF {
@@ -85,7 +85,7 @@ pub fn st_zmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🏝️".to_string()])
 }
 
 pub fn st_zmax_udf() -> SedonaScalarUDF {
@@ -96,7 +96,7 @@ pub fn st_zmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🏔️".to_string()])
 }
 
 pub fn st_mmin_udf() -> SedonaScalarUDF {
@@ -107,7 +107,7 @@ pub fn st_mmin_udf() -> SedonaScalarUDF {
             is_max: false,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⏬".to_string()])
 }
 
 pub fn st_mmax_udf() -> SedonaScalarUDF {
@@ -118,7 +118,7 @@ pub fn st_mmax_udf() -> SedonaScalarUDF {
             is_max: true,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⏫".to_string()])
 }
 
 #[derive(Debug)]

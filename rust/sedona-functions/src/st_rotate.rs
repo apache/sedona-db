@@ -44,7 +44,7 @@ pub fn st_rotate_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Z,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🌀".to_string()])
 }
 
 /// ST_RotateX() scalar UDF
@@ -57,7 +57,7 @@ pub fn st_rotate_x_udf() -> SedonaScalarUDF {
             axis: RotateAxis::X,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🎡".to_string()])
 }
 
 /// ST_RotateY() scalar UDF
@@ -70,7 +70,7 @@ pub fn st_rotate_y_udf() -> SedonaScalarUDF {
             axis: RotateAxis::Y,
         })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🎠".to_string()])
 }
 
 #[derive(Debug)]

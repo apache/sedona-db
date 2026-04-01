@@ -56,7 +56,7 @@ pub fn st_set_srid_with_engine_udf(
         "st_setsrid",
         vec![Arc::new(STSetSRID { engine })],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🏷️".to_string()])
 }
 
 /// ST_SetCRS() scalar UDF implementation without CRS validation
@@ -71,7 +71,7 @@ pub fn st_set_crs_with_engine_udf(
         "st_setcrs",
         vec![Arc::new(STSetCRS { engine })],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📌".to_string()])
 }
 
 /// ST_SetSRID() scalar UDF implementation without CRS validation

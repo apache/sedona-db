@@ -81,7 +81,7 @@ pub fn st_force2d_udf() -> SedonaScalarUDF {
             Arc::new(STForce2D { is_geography: true }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_2️⃣".to_string()])
 }
 
 #[derive(Debug)]
@@ -154,7 +154,7 @@ pub fn st_force3d_udf() -> SedonaScalarUDF {
             Arc::new(STForce3D { is_geography: true }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_3️⃣".to_string()])
 }
 
 #[derive(Debug)]
@@ -244,7 +244,7 @@ pub fn st_force3dm_udf() -> SedonaScalarUDF {
             Arc::new(STForce3DM { is_geography: true }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🧊".to_string()])
 }
 
 #[derive(Debug)]
@@ -335,7 +335,7 @@ pub fn st_force4d_udf() -> SedonaScalarUDF {
             Arc::new(STForce4D { is_geography: true }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_4️⃣".to_string()])
 }
 
 #[derive(Debug)]

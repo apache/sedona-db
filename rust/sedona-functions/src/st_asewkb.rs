@@ -39,7 +39,7 @@ pub fn st_asewkb_udf() -> SedonaScalarUDF {
         "st_asewkb",
         vec![Arc::new(STAsEWKBItemCrs {}), Arc::new(STAsEWKB {})],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📦".to_string()])
 }
 
 #[derive(Debug)]

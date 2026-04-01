@@ -56,6 +56,7 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
     udf.with_aliases(vec![
         "st_geomfromtext".to_string(),
         "st_geometryfromtext".to_string(),
+        "st_📝".to_string(),
     ])
 }
 
@@ -71,7 +72,7 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
         })],
         Volatility::Immutable,
     );
-    udf.with_aliases(vec!["st_geogfromtext".to_string()])
+    udf.with_aliases(vec!["st_geogfromtext".to_string(), "st_🌏".to_string()])
 }
 
 #[derive(Debug)]
@@ -136,7 +137,7 @@ pub fn st_geomfromewkt_udf() -> SedonaScalarUDF {
         "st_geomfromewkt",
         vec![Arc::new(STGeoFromEWKT {})],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📜".to_string()])
 }
 
 #[derive(Debug)]

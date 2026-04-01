@@ -55,7 +55,7 @@ pub fn st_pointz_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyz,
         })],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⛰️".to_string()])
 }
 
 /// ST_PointM() scalar UDF implementation
@@ -69,7 +69,7 @@ pub fn st_pointm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xym,
         })],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⏱️".to_string()])
 }
 
 /// ST_PointZM() scalar UDF implementation
@@ -83,7 +83,7 @@ pub fn st_pointzm_udf() -> SedonaScalarUDF {
             dim: Dimensions::Xyzm,
         })],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🗻".to_string()])
 }
 
 #[derive(Debug)]

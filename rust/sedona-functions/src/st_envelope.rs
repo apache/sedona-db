@@ -50,7 +50,7 @@ pub fn st_envelope_udf() -> SedonaScalarUDF {
         "st_envelope",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope {})]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_✉️".to_string()])
 }
 
 #[derive(Debug)]

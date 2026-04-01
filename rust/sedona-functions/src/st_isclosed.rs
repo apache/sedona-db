@@ -40,7 +40,7 @@ pub fn st_isclosed_udf() -> SedonaScalarUDF {
         "st_isclosed",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STIsClosed {})]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🔒".to_string()])
 }
 
 #[derive(Debug)]
