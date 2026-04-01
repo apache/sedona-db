@@ -17,11 +17,11 @@
 
 pub mod evaluated_batch;
 pub mod exec;
-pub mod factory;
 mod index;
 mod join_provider;
 pub mod operand_evaluator;
 pub mod partitioning;
+pub mod physical_planner;
 mod prepare;
 mod probe;
 pub mod refine;
@@ -32,7 +32,7 @@ pub mod utils;
 pub use exec::SpatialJoinExec;
 
 // Re-export function for register the spatial join planner
-pub use factory::DefaultSpatialJoinPhysicalPlanner;
+pub use physical_planner::DefaultSpatialJoinPhysicalPlanner;
 
 // Re-export ProbeShuffleExec so that integration tests (and other crates) can verify
 // its presence in optimized physical plans.

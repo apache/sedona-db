@@ -149,7 +149,7 @@ impl SedonaContext {
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            use sedona_spatial_join::factory::DefaultSpatialJoinPhysicalPlanner;
+            use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
 
             planner = planner.with_spatial_join_physical_planner(Arc::new(
                 DefaultSpatialJoinPhysicalPlanner::new(),
