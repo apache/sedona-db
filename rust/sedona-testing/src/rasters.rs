@@ -251,7 +251,7 @@ pub fn generate_multi_band_raster() -> StructArray {
         .unwrap();
     builder
         .band_data_writer()
-        .append_value(&[1u8, 2u8, 3u8, 4u8]);
+        .append_value([1u8, 2u8, 3u8, 4u8]);
     builder.finish_band().unwrap();
 
     // Band 2: UInt16, nodata=0
