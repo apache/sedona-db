@@ -69,6 +69,13 @@ pub trait RasterRef {
     fn height(&self) -> Option<u64> {
         self.band(0).and_then(|b| b.dim_size(self.y_dim()))
     }
+
+    /// Look up a band by name. Returns None if no band has that name.
+    fn band_by_name(&self, name: &str) -> Option<Box<dyn BandRef + '_>> {
+        (0..self.num_bands())
+            .find(|&i| self.band_name(i) == Some(name))
+            .and_then(|i| self.band(i))
+    }
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
