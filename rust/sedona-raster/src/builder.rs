@@ -184,6 +184,7 @@ impl RasterBuilder {
         shape: &[u64],
         data_type: BandDataType,
         nodata: Option<&[u8]>,
+        outdb_uri: Option<&str>,
     ) -> Result<(), ArrowError> {
         // Name
         match name {
@@ -233,8 +234,11 @@ impl RasterBuilder {
         // Offset (always 0 in Phase 1)
         self.band_offset.append_value(0);
 
-        // OutDb URI (None for in-memory)
-        self.band_outdb_uri.append_null();
+        // OutDb URI
+        match outdb_uri {
+            Some(uri) => self.band_outdb_uri.append_value(uri),
+            None => self.band_outdb_uri.append_null(),
+        }
 
         self.current_band_count += 1;
 
@@ -255,6 +259,7 @@ impl RasterBuilder {
             &[self.current_height, self.current_width],
             data_type,
             nodata,
+            None,
         )
     }
 
@@ -530,6 +535,7 @@ mod tests {
                 &[3, 4, 5],
                 BandDataType::Float32,
                 None,
+                None,
             )
             .unwrap();
         let data = vec![0u8; 3 * 4 * 5 * 4]; // 3*4*5 Float32 elements
@@ -572,6 +578,7 @@ mod tests {
                 &[180, 360],
                 BandDataType::Float32,
                 None,
+                None,
             )
             .unwrap();
         let data = vec![0u8; 180 * 360 * 4];
@@ -605,6 +612,7 @@ mod tests {
                 &[12, 64, 64],
                 BandDataType::Float32,
                 None,
+                None,
             )
             .unwrap();
         let data_3d = vec![0u8; 12 * 64 * 64 * 4];
@@ -618,6 +626,7 @@ mod tests {
                 &["y", "x"],
                 &[64, 64],
                 BandDataType::Float64,
+                None,
                 None,
             )
             .unwrap();
@@ -659,6 +668,7 @@ mod tests {
                 &["time", "pressure", "y", "x"],
                 &[6, 10, 32, 32],
                 BandDataType::Float32,
+                None,
                 None,
             )
             .unwrap();
@@ -715,7 +725,7 @@ mod tests {
 
         // UInt8: element size = 1, shape [3, 4] → strides [4, 1]
         builder
-            .start_band(None, &["y", "x"], &[3, 4], BandDataType::UInt8, None)
+            .start_band(None, &["y", "x"], &[3, 4], BandDataType::UInt8, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
@@ -728,6 +738,7 @@ mod tests {
                 &[2, 3, 5],
                 BandDataType::Float64,
                 None,
+                None,
             )
             .unwrap();
         builder
@@ -737,7 +748,7 @@ mod tests {
 
         // UInt16: element size = 2, shape [10] → strides [2]
         builder
-            .start_band(None, &["x"], &[10], BandDataType::UInt16, None)
+            .start_band(None, &["x"], &[10], BandDataType::UInt16, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
@@ -790,6 +801,7 @@ mod tests {
                 &["y", "x"],
                 &[4, 4],
                 BandDataType::Float32,
+                None,
                 None,
             )
             .unwrap();
