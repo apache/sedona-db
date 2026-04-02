@@ -218,12 +218,12 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0, band 1: InDb (builder does not support outdb_uri yet) -> null
-        assert!(string_array.is_null(0));
-        // Raster 1: null raster -> null
+        // Raster 0, band 1: OutDbRef → URI
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
+        // Raster 1: null raster → null
         assert!(string_array.is_null(1));
-        // Raster 2, band 2: InDb (builder does not support outdb_uri yet) -> null
-        assert!(string_array.is_null(2));
+        // Raster 2, band 2: OutDbRef → URI
+        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
     #[test]
@@ -251,9 +251,9 @@ mod tests {
 
     /// Build a raster array with out-db bands for testing RS_BandPath.
     /// Returns a StructArray with 3 rasters:
-    ///   [0] OutDbRef band with URL "s3://bucket/raster_0.tif"
+    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif"
     ///   [1] null raster
-    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URL "s3://bucket/raster_2.tif"
+    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif"
     fn build_outdb_rasters() -> arrow_array::StructArray {
         use sedona_raster::builder::RasterBuilder;
         use sedona_schema::raster::BandDataType;
@@ -261,16 +261,19 @@ mod tests {
         let mut builder = RasterBuilder::new(3);
 
         // Raster 0: single OutDbRef band
-        // Note: The new builder doesn't support outdb_uri directly in start_band.
-        // We use the low-level start_raster and start_band API, but outdb_uri is
-        // always null in the current builder. For testing RS_BandPath with outdb
-        // bands, we need to construct the test data differently. Since the builder
-        // always sets outdb_uri to null, outdb tests will return null for bandpath.
-        // This is acceptable since outdb support will be added later.
         builder
             .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326"))
             .unwrap();
-        builder.start_band_2d(BandDataType::Float32, None).unwrap();
+        builder
+            .start_band(
+                None,
+                &["y", "x"],
+                &[4, 4],
+                BandDataType::Float32,
+                None,
+                Some("s3://bucket/raster_0.tif"),
+            )
+            .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
@@ -278,14 +281,23 @@ mod tests {
         // Raster 1: null
         builder.append_null().unwrap();
 
-        // Raster 2: two bands — InDb (band 1) + InDb (band 2)
+        // Raster 2: two bands — InDb (band 1) + OutDbRef (band 2)
         builder
             .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326"))
             .unwrap();
         builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value([0u8; 16]);
         builder.finish_band().unwrap();
-        builder.start_band_2d(BandDataType::Float32, None).unwrap();
+        builder
+            .start_band(
+                None,
+                &["y", "x"],
+                &[4, 4],
+                BandDataType::Float32,
+                None,
+                Some("s3://bucket/raster_2.tif"),
+            )
+            .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
@@ -306,8 +318,8 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0: InDb band (builder does not support outdb_uri yet) → null
-        assert!(string_array.is_null(0));
+        // Raster 0: OutDbRef band → URI
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2: band 1 is InDb → null
@@ -331,12 +343,12 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0, band 1: InDb (builder does not support outdb_uri yet) → null
-        assert!(string_array.is_null(0));
+        // Raster 0, band 1: OutDbRef → URI
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
-        // Raster 2, band 2: InDb (builder does not support outdb_uri yet) → null
-        assert!(string_array.is_null(2));
+        // Raster 2, band 2: OutDbRef → URI
+        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
     #[test]
