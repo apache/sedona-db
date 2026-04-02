@@ -219,11 +219,17 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0, band 1: OutDbRef → URI
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
+        assert_eq!(
+            string_array.value(0),
+            "geotiff://s3://bucket/raster_0.tif#band=1"
+        );
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2, band 2: OutDbRef → URI
-        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
+        assert_eq!(
+            string_array.value(2),
+            "geotiff://s3://bucket/raster_2.tif#band=3"
+        );
     }
 
     #[test]
@@ -251,9 +257,9 @@ mod tests {
 
     /// Build a raster array with out-db bands for testing RS_BandPath.
     /// Returns a StructArray with 3 rasters:
-    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif"
+    ///   [0] OutDbRef band with URI "geotiff://s3://bucket/raster_0.tif#band=1"
     ///   [1] null raster
-    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif"
+    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "geotiff://s3://bucket/raster_2.tif#band=3"
     fn build_outdb_rasters() -> arrow_array::StructArray {
         use sedona_raster::builder::RasterBuilder;
         use sedona_schema::raster::BandDataType;
@@ -271,7 +277,7 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("s3://bucket/raster_0.tif"),
+                Some("geotiff://s3://bucket/raster_0.tif#band=1"),
             )
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -295,7 +301,7 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("s3://bucket/raster_2.tif"),
+                Some("geotiff://s3://bucket/raster_2.tif#band=3"),
             )
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -319,7 +325,10 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0: OutDbRef band → URI
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
+        assert_eq!(
+            string_array.value(0),
+            "geotiff://s3://bucket/raster_0.tif#band=1"
+        );
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2: band 1 is InDb → null
@@ -344,11 +353,17 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0, band 1: OutDbRef → URI
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
+        assert_eq!(
+            string_array.value(0),
+            "geotiff://s3://bucket/raster_0.tif#band=1"
+        );
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2, band 2: OutDbRef → URI
-        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
+        assert_eq!(
+            string_array.value(2),
+            "geotiff://s3://bucket/raster_2.tif#band=3"
+        );
     }
 
     #[test]
