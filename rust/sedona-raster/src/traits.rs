@@ -121,8 +121,9 @@ pub trait BandRef {
     /// Returns an NdBuffer with shape, strides, offset, and raw byte buffer.
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
 
-    /// Contiguous row-major bytes. Calls nd_buffer() internally and copies
-    /// only if strides are non-standard. Most RS_* functions use this.
+    /// Contiguous row-major bytes. Zero-copy (`Cow::Borrowed`) when data
+    /// has standard C-order strides; copies into a new buffer only when
+    /// strides are non-standard. Most RS_* functions use this.
     fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError>;
 
     /// Nodata value interpreted as f64.
