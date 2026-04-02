@@ -210,7 +210,7 @@ impl RasterBuilder {
 
         // Nodata
         match nodata {
-            Some(nd) => self.band_nodata.append_value(nd),
+            Some(nodata_bytes) => self.band_nodata.append_value(nodata_bytes),
             None => self.band_nodata.append_null(),
         }
 
