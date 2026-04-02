@@ -41,6 +41,11 @@ impl AffineMatrix {
     /// Index mapping: `[0]=origin_x, [1]=scale_x, [2]=skew_x, [3]=origin_y, [4]=skew_y, [5]=scale_y`
     #[inline]
     pub fn from_transform(t: &[f64]) -> Self {
+        debug_assert!(
+            t.len() >= 6,
+            "transform slice must have at least 6 elements, got {}",
+            t.len()
+        );
         Self {
             offset_x: t[0],
             scale_x: t[1],

@@ -17,8 +17,8 @@
 
 use arrow_array::{
     builder::{
-        BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder, Int64Builder,
-        StringBuilder, StringViewBuilder, UInt32Builder, UInt64Builder,
+        ArrayBuilder, BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder,
+        Int64Builder, StringBuilder, StringViewBuilder, UInt32Builder, UInt64Builder,
     },
     Array, ArrayRef, ListArray, StructArray,
 };
@@ -82,6 +82,9 @@ pub struct RasterBuilder {
     current_width: u64,
     current_height: u64,
 
+    // Track band_data count at the start of each band for finish_band validation
+    band_data_count_at_start: usize,
+
     raster_validity: BooleanBuilder,
 }
 
@@ -112,6 +115,8 @@ impl RasterBuilder {
             current_band_count: 0,
             current_width: 0,
             current_height: 0,
+
+            band_data_count_at_start: 0,
 
             raster_validity: BooleanBuilder::with_capacity(capacity),
         }
@@ -241,6 +246,7 @@ impl RasterBuilder {
         }
 
         self.current_band_count += 1;
+        self.band_data_count_at_start = self.band_data.len();
 
         Ok(())
     }
@@ -253,6 +259,11 @@ impl RasterBuilder {
         data_type: BandDataType,
         nodata: Option<&[u8]>,
     ) -> Result<(), ArrowError> {
+        if self.current_width == 0 && self.current_height == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_2d requires prior start_raster_2d (width and height are 0)".into(),
+            ));
+        }
         self.start_band(
             None,
             &["y", "x"],
@@ -269,7 +280,18 @@ impl RasterBuilder {
     }
 
     /// Finish writing the current band.
+    ///
+    /// Validates that exactly one data value was appended since `start_band()`.
     pub fn finish_band(&mut self) -> Result<(), ArrowError> {
+        let current_count = self.band_data.len();
+        if current_count != self.band_data_count_at_start + 1 {
+            return Err(ArrowError::InvalidArgumentError(
+                format!(
+                    "Expected exactly one band data value per band, but got {} appended since start_band()",
+                    current_count - self.band_data_count_at_start
+                ),
+            ));
+        }
         Ok(())
     }
 

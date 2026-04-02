@@ -377,8 +377,18 @@ const CONVEXHULL_WKB_SIZE: usize = 93;
 
 /// Create WKB for a convex hull polygon for the raster
 fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.width().unwrap() as i64;
-    let height = raster.height().unwrap() as i64;
+    let Some(width) = raster.width() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine width".into(),
+        ));
+    };
+    let Some(height) = raster.height() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine height".into(),
+        ));
+    };
+    let width = width as i64;
+    let height = height as i64;
 
     let (ulx, uly) = to_world_coordinate(raster, 0, 0);
     let (urx, ury) = to_world_coordinate(raster, width, 0);

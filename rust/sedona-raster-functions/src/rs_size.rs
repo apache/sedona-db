@@ -20,6 +20,7 @@ use crate::executor::RasterExecutor;
 use arrow_array::builder::UInt64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
+use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
@@ -85,11 +86,19 @@ impl SedonaScalarKernel for RsSize {
                 None => builder.append_null(),
                 Some(raster) => match self.size_type {
                     SizeType::Width => {
-                        let width = raster.width().unwrap();
+                        let Some(width) = raster.width() else {
+                            return Err(DataFusionError::Execution(
+                                "Raster has no bands; cannot determine width".into(),
+                            ));
+                        };
                         builder.append_value(width);
                     }
                     SizeType::Height => {
-                        let height = raster.height().unwrap();
+                        let Some(height) = raster.height() else {
+                            return Err(DataFusionError::Execution(
+                                "Raster has no bands; cannot determine height".into(),
+                            ));
+                        };
                         builder.append_value(height);
                     }
                 },

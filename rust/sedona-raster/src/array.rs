@@ -33,8 +33,6 @@ use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 /// Arrow-backed implementation of BandRef for a single band within a raster.
 struct BandRefImpl<'a> {
     // Band metadata arrays (indexed by absolute band row)
-    #[allow(dead_code)] // Used via band_name() on RasterRefImpl
-    band_name_array: &'a StringArray,
     dim_names_list: &'a ListArray,
     dim_names_values: &'a StringArray,
     shape_list: &'a ListArray,
@@ -149,7 +147,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
         Some(Box::new(BandRefImpl {
-            band_name_array: self.raster_struct_array.band_name_array,
             dim_names_list: self.raster_struct_array.band_dim_names_list,
             dim_names_values: self.raster_struct_array.band_dim_names_values,
             shape_list: self.raster_struct_array.band_shape_list,
@@ -185,6 +182,14 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     fn transform(&self) -> &[f64] {
         let start =
             self.raster_struct_array.transform_list.value_offsets()[self.raster_index] as usize;
+        let end =
+            self.raster_struct_array.transform_list.value_offsets()[self.raster_index + 1] as usize;
+        debug_assert!(
+            end - start >= 6,
+            "transform list must have at least 6 elements for raster {}, got {}",
+            self.raster_index,
+            end - start
+        );
         &self.raster_struct_array.transform_values.values()[start..start + 6]
     }
 

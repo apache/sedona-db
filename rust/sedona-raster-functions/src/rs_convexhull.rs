@@ -107,8 +107,18 @@ impl SedonaScalarKernel for RsConvexHull {
 /// of the raster in world coordinates. Due to skew/rotation in the affine
 /// transformation, each corner must be computed individually.
 fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.width().unwrap() as i64;
-    let height = raster.height().unwrap() as i64;
+    let Some(width) = raster.width() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine width".into(),
+        ));
+    };
+    let Some(height) = raster.height() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine height".into(),
+        ));
+    };
+    let width = width as i64;
+    let height = height as i64;
 
     // Compute the four corners in pixel coordinates:
     // Upper-left (0, 0), Upper-right (width, 0), Lower-right (width, height), Lower-left (0, height)
