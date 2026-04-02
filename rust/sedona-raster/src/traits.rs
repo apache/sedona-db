@@ -74,8 +74,11 @@ pub trait RasterRef {
 /// Trait for accessing a single band/variable within an N-D raster.
 ///
 /// This is the consumer interface. Implementations handle storage details
-/// (in-memory, GDAL/VRT, Zarr, strided views) internally. Consumers never
-/// deal with strides, offsets, or lazy loading directly.
+/// Two data access paths:
+/// - `contiguous_data()` — flat row-major bytes for consumers that don't need
+///   stride awareness (most RS_* functions, GDAL boundary, serialization).
+/// - `nd_buffer()` — raw buffer + shape + strides + offset for stride-aware
+///   consumers (numpy zero-copy views, Arrow FFI) that want to avoid copies.
 pub trait BandRef {
     // -- Dimension metadata --
 
