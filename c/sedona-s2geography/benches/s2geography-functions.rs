@@ -396,6 +396,39 @@ fn criterion_benchmark(c: &mut Criterion) {
             Float64(0.0, 1.0),
         ),
     );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(10).into(), to_geography()),
+            Float64(0.1, 0.11),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Polygon(10).into(), to_geography()),
+            Float64(0.1, 0.11),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(PolygonWithHole(10).into(), to_geography()),
+            Float64(0.1, 0.11),
+        ),
+    );
 }
 
 fn to_geography() -> ScalarUDF {
