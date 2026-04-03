@@ -128,7 +128,14 @@ fn get_band_path(
                 builder.append_null();
             } else if let Some(band) = raster.band((band_index - 1) as usize) {
                 match band.outdb_uri() {
-                    Some(uri) => builder.append_value(uri),
+                    Some(uri) => {
+                        // Return just the path portion, stripping the internal
+                        // scheme prefix and fragment from the outdb_uri.
+                        let path = sedona_raster::outdb_uri::parse_outdb_uri(uri)
+                            .map(|parsed| parsed.path)
+                            .unwrap_or(uri);
+                        builder.append_value(path);
+                    }
                     None => builder.append_null(),
                 }
             } else {
@@ -219,17 +226,11 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0, band 1: OutDbRef → URI
-        assert_eq!(
-            string_array.value(0),
-            "geotiff://s3://bucket/raster_0.tif#band=1"
-        );
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2, band 2: OutDbRef → URI
-        assert_eq!(
-            string_array.value(2),
-            "geotiff://s3://bucket/raster_2.tif#band=3"
-        );
+        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
     #[test]
@@ -325,10 +326,7 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0: OutDbRef band → URI
-        assert_eq!(
-            string_array.value(0),
-            "geotiff://s3://bucket/raster_0.tif#band=1"
-        );
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2: band 1 is InDb → null
@@ -353,17 +351,11 @@ mod tests {
             .expect("Expected StringArray");
 
         // Raster 0, band 1: OutDbRef → URI
-        assert_eq!(
-            string_array.value(0),
-            "geotiff://s3://bucket/raster_0.tif#band=1"
-        );
+        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
         // Raster 2, band 2: OutDbRef → URI
-        assert_eq!(
-            string_array.value(2),
-            "geotiff://s3://bucket/raster_2.tif#band=3"
-        );
+        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
     #[test]
