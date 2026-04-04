@@ -518,13 +518,6 @@ def test_st_relate(eng, geom1, geom2, expected):
             "0F2FF1FF2",
             True,
         ),
-        # Disjoint — does not match contains pattern
-        (
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-            "POINT (5 5)",
-            "0F2FF1FF2",
-            False,
-        ),
         # Touching polygons
         (
             "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
@@ -538,6 +531,47 @@ def test_st_relate(eng, geom1, geom2, expected):
             "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
             "212101212",
             True,
+        ),
+        # Point in polygon hole — point is inside the hole, not the polygon interior
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (2 2, 4 2, 4 4, 2 4, 2 2))",
+            "POINT (1 1)",
+            "0F2FF1FF2",
+            True,
+        ),
+        # Linestring relates to linestring
+        (
+            "LINESTRING (0 0, 2 2)",
+            "LINESTRING (1 1, 3 3)",
+            "1010F0102",
+            True,
+        ),
+        # Geometry collection relates to point
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))",
+            "POINT (0 0)",
+            "FF10F0FF2",
+            True,
+        ),
+        # False cases — wrong pattern for the geometry pair
+        (
+            "POINT (0 0)",
+            "POINT (1 1)",
+            "0FFFFFFF2",
+            False,
+        ),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            "212101212",
+            False,
+        ),
+        # Disjoint — does not match contains pattern
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POINT (5 5)",
+            "0F2FF1FF2",
+            False,
         ),
     ],
 )
