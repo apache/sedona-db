@@ -124,7 +124,7 @@ serde_json = { version = "1" }
 serde_with = { version = "1" }
 tempfile = { version = "3"}
 thiserror = { version = "2" }
-tokio = { version = "1.48", features = ["macros", "rt", "sync"] }
+tokio = { version = "1.51", features = ["macros", "rt", "sync"] }
 url = "2.5.7"
 wkb = "0.9.2"
 wkt = "0.14.0"
