@@ -1,0 +1,67 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_DimSize
+description: Returns the size of a named dimension in a raster band.
+kernels:
+  - returns: int64
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to query (e.g., 'x', 'y', 'time').
+  - returns: int64
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to query.
+    - name: band
+      type: int
+      description: Band index (1-based). Defaults to 1 if not specified.
+---
+
+## Description
+
+Returns the size of a named dimension in a raster band. For example,
+`RS_DimSize(raster, 'x')` returns the width and `RS_DimSize(raster, 'time')`
+returns the number of time steps. Returns null if the dimension does not exist
+in the band.
+
+This is equivalent to looking up a specific entry in
+[RS_Shape](rs_shape.qmd) by name rather than by position.
+
+When the band index is omitted, returns the dimension size from band 1. If
+bands disagree on the size (or some bands are missing the dimension), an error
+is returned prompting the user to specify a band index.
+
+## Examples
+
+```sql
+-- Get the width (x dimension size)
+SELECT RS_DimSize(raster, 'x');
+
+-- Get the number of time steps
+SELECT RS_DimSize(raster, 'time');
+
+-- Returns null if the dimension doesn't exist
+SELECT RS_DimSize(raster, 'wavelength');
+
+-- Query a specific band
+SELECT RS_DimSize(raster, 'time', 2);
+```

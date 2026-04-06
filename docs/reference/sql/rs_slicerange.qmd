@@ -1,0 +1,60 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_SliceRange
+description: Narrows a dimension to a half-open range, keeping the dimension with reduced size.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to narrow (e.g., 'time').
+    - name: start
+      type: int
+      description: Start index (inclusive, zero-based).
+    - name: end
+      type: int
+      description: End index (exclusive).
+---
+
+## Description
+
+Narrows a named non-spatial dimension to the half-open range `[start, end)`,
+keeping that dimension in the output with reduced size. For example,
+narrowing a raster with shape `[time=12, y=256, x=256]` on `'time'` with
+range `[2, 7)` produces a raster with shape `[time=5, y=256, x=256]`.
+
+The spatial dimensions (`x_dim` and `y_dim`) cannot be narrowed — use
+[RS_Clip](rs_clip.qmd) for spatial subsetting.
+
+Returns an error if the dimension does not exist, `start >= end`, or the
+range is out of bounds.
+
+See also [RS_Slice](rs_slice.qmd) to extract a single index and remove the
+dimension entirely.
+
+## Examples
+
+```sql
+-- Extract time steps 0 through 4 from a [time=12, y, x] raster
+SELECT RS_SliceRange(raster, 'time', 0, 5);
+
+-- Extract a range of pressure levels
+SELECT RS_SliceRange(raster, 'pressure', 2, 8);
+```
