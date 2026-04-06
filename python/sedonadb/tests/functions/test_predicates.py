@@ -156,6 +156,7 @@ def test_st_disjoint(eng, geom1, geom2, expected):
     [
         (None, "POINT (0 0)", 1, None),
         ("POINT (1 1)", None, 1.0, None),
+        ("POINT (0 0)", "POINT (0 0)", None, None),
         (None, None, None, None),
         ("POINT (0 0)", "POINT (0 0)", 1.0, True),
         ("POINT (0 0)", "POINT (5 0)", 2.0, False),
@@ -575,7 +576,8 @@ def test_st_relate(eng, geom1, geom2, expected):
 )
 def test_st_relate_pattern(eng, geom1, geom2, pattern, expected):
     eng = eng.create_or_skip()
+    pattern_sql = "NULL" if pattern is None else f"'{pattern}'"
     eng.assert_query_result(
-        f"SELECT ST_Relate({geom_or_null(geom1)}, {geom_or_null(geom2)}, '{val_or_null(pattern)}')",
+        f"SELECT ST_Relate({geom_or_null(geom1)}, {geom_or_null(geom2)}, {pattern_sql})",
         expected,
     )
