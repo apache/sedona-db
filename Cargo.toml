@@ -118,7 +118,7 @@ pin-project-lite = "0.2"
 rand = "0.10"
 regex = "1.12"
 rstest = "0.26.1"
-serde = { version = "1" }
+serde = { version = "1", features = ["derive"] }
 sysinfo = "0.38"
 serde_json = { version = "1" }
 serde_with = { version = "3" }

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 
 use crate::error::SedonaGeometryError;
 
@@ -126,20 +127,21 @@ pub trait IntervalTrait: std::fmt::Debug + PartialEq + Sized {
 ///
 /// Represents a minimum and maximum value without wraparound logic (see [WraparoundInterval]
 /// for a wraparound implementation).
+#[serde_as]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Interval {
     /// Lower bound
     ///
     /// This is serialized and deserialized using its string representation to
     /// preserve NaN and Infinity values when using serde_json.
-    #[serde(with = "serde_with::rust::display_fromstr")]
+    #[serde_as(as = "serde_with::DisplayFromStr")]
     lo: f64,
 
     /// Upper bound
     ///
     /// This is serialized and deserialized using its string representation to
     /// preserve NaN and Infinity values when using serde_json.
-    #[serde(with = "serde_with::rust::display_fromstr")]
+    #[serde_as(as = "serde_with::DisplayFromStr")]
     hi: f64,
 }
 
