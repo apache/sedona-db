@@ -41,9 +41,9 @@ pub trait SpatialIndexBuilder: Send + Sync {
 #[derive(Clone, Debug, Default)]
 pub struct SpatialJoinBuildMetrics {
     /// Total time for collecting build-side of join
-    pub(crate) build_time: metrics::Time,
+    pub build_time: metrics::Time,
     /// Memory used by the spatial-index in bytes
-    pub(crate) build_mem_used: metrics::Gauge,
+    pub build_mem_used: metrics::Gauge,
 }
 
 impl SpatialJoinBuildMetrics {

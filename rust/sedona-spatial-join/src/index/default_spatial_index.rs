@@ -283,7 +283,6 @@ impl SpatialIndex for DefaultSpatialIndex {
         self.inner.schema.clone()
     }
 
-    #[cfg(test)]
     fn num_indexed_batches(&self) -> usize {
         self.inner.indexed_batches.len()
     }

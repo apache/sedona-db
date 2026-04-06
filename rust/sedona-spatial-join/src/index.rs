@@ -27,9 +27,8 @@ pub(crate) mod spatial_index_builder;
 pub(crate) use build_side_collector::{
     BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
 };
-pub(crate) use spatial_index::SpatialIndex;
-
 pub(crate) use default_spatial_index_builder::DefaultSpatialIndexBuilder;
+
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query
@@ -39,6 +38,10 @@ pub(crate) struct IndexQueryResult<'a, 'b> {
     pub geom_idx: usize,
     pub position: (i32, i32),
 }
+
+// Public definitions for extensions that define their own indexing
+pub use spatial_index::SpatialIndex;
+pub use spatial_index_builder::SpatialIndexBuilder;
 
 /// The metrics for a spatial index query
 #[derive(Debug)]

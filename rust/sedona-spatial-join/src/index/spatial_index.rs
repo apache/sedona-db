@@ -40,7 +40,6 @@ pub trait SpatialIndex {
     /// Returns the schema of the indexed data.
     fn schema(&self) -> SchemaRef;
     /// Returns the number of batches that have been indexed.
-    #[cfg(test)] // This is used for tests
     fn num_indexed_batches(&self) -> usize;
     /// Get the batch at the given index.
     fn get_indexed_batch(&self, batch_idx: usize) -> &RecordBatch;
