@@ -1,0 +1,61 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_DimToBand
+description: Promotes a within-band dimension into separate bands.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to promote (e.g., 'wavelength', 'time').
+---
+
+## Description
+
+Promotes a named non-spatial dimension into separate bands. Each index along
+the dimension becomes its own band with that dimension removed. This bridges
+the gap between the dimension model (where all indices live in one band) and
+the band model (where each index is a separate band accessible by number).
+
+For example, a raster with 1 band of shape `[wavelength=200, y=256, x=256]`
+becomes a raster with 200 bands, each of shape `[y=256, x=256]`. Standard
+band math functions can then operate on individual wavelength bands by
+index.
+
+Bands that do not contain the named dimension are passed through unchanged.
+
+The spatial dimensions (`x_dim` and `y_dim`) cannot be promoted.
+
+The inverse operation is [RS_BandToDim](rs_bandtodim.qmd).
+
+## Examples
+
+```
+-- Promote wavelength into separate bands for band math
+SELECT RS_DimToBand(raster, 'wavelength');
+
+-- Compute NDVI from specific wavelength bands
+SELECT RS_NormalizedDifference(
+  RS_DimToBand(raster, 'wavelength'), 77, 54
+);
+
+-- Promote time steps into bands
+SELECT RS_DimToBand(raster, 'time');
+```
