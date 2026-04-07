@@ -134,7 +134,7 @@ mod test {
 
     #[test]
     fn test_versions() {
-        assert_eq!(Versions::s2geometry(), "0.11.1");
+        assert_eq!(Versions::s2geometry(), "0.13.1");
         assert!(Versions::abseil().starts_with("20"));
         assert!(Versions::openssl().contains("."));
         assert!(Versions::test_linkage() > 0.0);
